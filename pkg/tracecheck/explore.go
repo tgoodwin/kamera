@@ -33,14 +33,17 @@ type StateNode struct {
 	action *ReconcileResult // the action that led to this state
 }
 
+type reconciler interface {
+	doReconcile(readset ObjectVersions) (ObjectVersions, error)
+}
+
+type resourceDeps map[string]util.Set[string]
+
 type Explorer struct {
 	// reconciler implementations keyed by ID
 	reconcilers map[string]reconciler
-	// maps Kinds to a list of controllers that depend on them
-	dependencies map[string]util.Set[string]
-
-	// TODO move this somewhere else?
-	manager *manager
+	// maps Kinds to a list of reconcilerIDs that depend on them
+	dependencies resourceDeps
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
@@ -53,14 +56,14 @@ func (e *Explorer) Explore(initialState StateNode) {
 	for len(queue) > 0 {
 		currentState := queue[0]
 		queue = queue[1:]
-		stateKey := currentState.Hash()
+		stateKey := serializeState(currentState)
 		if seenStates[stateKey] {
 			continue
 		}
 		seenStates[stateKey] = true
 
 		if len(currentState.PendingReconciles) == 0 {
-			// TODO evaluate some predicates upon the converged state
+			// TODO evaluate some predicates upon the converged state and then classify the execution
 			fmt.Println("Found a converged state: ", currentState)
 			continue
 		}
@@ -74,8 +77,7 @@ func (e *Explorer) Explore(initialState StateNode) {
 	}
 }
 
-// takeReconcileStep returns the FULL state of the world, not just the writeset of
-// that particular Reconcile().
+// takeReconcileStep transitions the execution from one StateNode to another StateNode
 func (e *Explorer) takeReconcileStep(state StateNode, controllerID string) StateNode {
 
 	// remove the current controller from the pending reconciles list
@@ -103,7 +105,8 @@ func (e *Explorer) takeReconcileStep(state StateNode, controllerID string) State
 	}
 
 	// get the controllers that depend on the objects that were changed
-	// and add them to the pending reconciles list
+	// and add them to the pending reconciles list. n.b. this may potentially
+	// include the controller that was just executed.
 	triggeredReconcilers := e.getTriggeredReconcilers(versionChanges)
 	newPendingReconciles = append(newPendingReconciles, triggeredReconcilers...)
 
@@ -113,11 +116,6 @@ func (e *Explorer) takeReconcileStep(state StateNode, controllerID string) State
 		parent:            &state,
 		action:            action,
 	}
-}
-
-func (s StateNode) Hash() string {
-	// TODO
-	return serializeState(s)
 }
 
 func (e *Explorer) reconcileAtState(state StateNode, controllerID string) ObjectVersions {

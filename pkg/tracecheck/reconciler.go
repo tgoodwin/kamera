@@ -12,10 +12,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-type reconciler interface {
-	doReconcile(readset ObjectVersions) (ObjectVersions, error)
-}
-
 type effectReader interface {
 	// TODO how to more idiomatically represent "not found" ?
 	retrieveEffects(frameID string) (ObjectVersions, error)
@@ -28,8 +24,8 @@ type reconcileImpl struct {
 
 	client *replay.Client
 
-	versionResolver VersionManager
-
+	// both implemented by teh manager type
+	versionManager VersionManager
 	effectReader
 }
 
@@ -65,7 +61,7 @@ func Wrap(name string, r reconcile.Reconciler) reconciler {
 func (r *reconcileImpl) inferReconcileRequest(readset ObjectVersions) (reconcile.Request, error) {
 	for key, version := range readset {
 		if key.Kind == r.Name {
-			obj := r.versionResolver.Resolve(version)
+			obj := r.versionManager.Resolve(version)
 			if obj == nil {
 				return reconcile.Request{}, errors.New("no object found for version")
 			}
@@ -89,7 +85,7 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.FrameData {
 		if _, ok := out[kind]; !ok {
 			out[kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
 		}
-		obj := r.versionResolver.Resolve(hash)
+		obj := r.versionManager.Resolve(hash)
 		if obj == nil {
 			panic("unable to resolve object hash")
 		}

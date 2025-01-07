@@ -28,8 +28,18 @@ type LifecycleContainer struct {
 	mu   sync.RWMutex
 }
 
-func (l *LifecycleContainer) InsertSynthesized(key IdentityKey, val VersionHash, reconcileID string) {
+func NewLifecycleContainer() *LifecycleContainer {
+	return &LifecycleContainer{
+		data: make(map[IdentityKey][]LifeEvent),
+	}
+}
+
+func (l *LifecycleContainer) InsertSynthesizedVersion(key IdentityKey, val VersionHash, reconcileID string) {
 	l.Insert(key, val, reconcileID, Synthetic)
+}
+
+func (l *LifecycleContainer) InsertTracedVersion(key IdentityKey, val VersionHash, reconcileID string) {
+	l.Insert(key, val, reconcileID, Traced)
 }
 
 func (l *LifecycleContainer) Insert(key IdentityKey, val VersionHash, reconcileID string, source LifeEventSource) {

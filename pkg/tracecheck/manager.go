@@ -37,43 +37,25 @@ func newEffect(kind, uid string, version snapshot.VersionHash) effect {
 	}
 }
 
+// manager is the "database" for the tracecheck package. It handles
+// all state management responsibilities for tracechecking.
 type manager struct {
 	*versionStore // maps hashes to full object values
 	// (Kind+objectID) -> []versionHash
 	*snapshot.LifecycleContainer // for each Object IdentityKey, store all value hashes and the reconciles that produced them
 
+	// populated by RecordEffect
 	effects map[string]reconcileEffects
 
 	mu sync.RWMutex
 }
 
+// ensure that manager implements the necessary interfaces
 var _ VersionManager = (*manager)(nil)
-
 var _ effectReader = (*manager)(nil)
+var _ replay.EffectRecorder = (*manager)(nil)
 
 var DefaultHasher = snapshot.JSONHasher{}
-
-func FromBuilder(b *replay.Builder) *manager {
-	store := b.Store()
-	// vStore := fromReplayStore(store, DefaultHasher)
-	vStore := &versionStore{
-		store:  make(Store),
-		hasher: DefaultHasher,
-	}
-
-	events := b.Events()
-	for _, event := range events {
-		ckey := event.CausalKey()
-		versionValue := store[ckey]
-		vStore.Publish(versionValue)
-
-		// now hydrate lifecycle info
-	}
-
-	return &manager{
-		versionStore: vStore,
-	}
-}
 
 func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType sleeveclient.OperationType) error {
 	m.mu.Lock()
@@ -91,7 +73,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType sl
 		ObjectID: string(u.GetUID()),
 	}
 	// add the version to the object's lifecycle
-	m.InsertSynthesized(ikey, version, frameID)
+	m.InsertSynthesizedVersion(ikey, version, frameID)
 
 	// now manifest an event and record it as an effect
 	reffects, ok := m.effects[frameID]
