@@ -12,9 +12,11 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+type Store map[event.CausalKey]*unstructured.Unstructured
+
 type replayStore struct {
 	// indexes all of the objects in the trace
-	store map[event.CausalKey]*unstructured.Unstructured
+	store Store
 	mu    sync.RWMutex
 }
 

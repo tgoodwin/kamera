@@ -40,6 +40,14 @@ type Builder struct {
 	reconcilerIDs map[string]struct{}
 }
 
+func (b *Builder) Store() Store {
+	return b.replayStore.store
+}
+
+func (b *Builder) Events() []event.Event {
+	return b.events
+}
+
 func (b *Builder) fromTrace(traceData []byte) error {
 	rs := newReplayStore()
 	if err := rs.HydrateFromTrace(traceData); err != nil {

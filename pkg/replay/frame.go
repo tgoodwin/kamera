@@ -35,7 +35,7 @@ func WithFrameID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, frameIDKey{}, id)
 }
 
-func frameIDFromContext(ctx context.Context) string {
+func FrameIDFromContext(ctx context.Context) string {
 	id, ok := ctx.Value(frameIDKey{}).(string)
 	if !ok {
 		return ""

@@ -17,26 +17,32 @@ import (
 
 var logger logr.Logger
 
-type EffectRecorder interface {
-	RecordEffect(ctx context.Context, obj client.Object, opType sleeveclient.OperationType) error
-}
-
 type Client struct {
 	// dummyClient is a useless type that implements the remainder of the client.Client interface
+	reconcilerID string
 	*dummyClient
-	framesByID     map[string]frameData
-	effectRecorder EffectRecorder
+	framesByID map[string]FrameData
+
+	recorder EffectRecorder
 
 	scheme *runtime.Scheme
 }
 
-func NewClient(scheme *runtime.Scheme, frameData map[string]frameData, effectRecorder EffectRecorder) *Client {
+func NewClient(reconcilerID string, scheme *runtime.Scheme, frameData map[string]FrameData, recorder EffectRecorder) *Client {
 	return &Client{
-		scheme:         scheme,
-		dummyClient:    &dummyClient{},
-		framesByID:     frameData,
-		effectRecorder: effectRecorder,
+		reconcilerID: reconcilerID,
+		scheme:       scheme,
+		dummyClient:  &dummyClient{},
+		framesByID:   frameData,
+		recorder:     recorder,
 	}
+}
+
+func (c *Client) InsertFrame(id string, data FrameData) {
+	if _, ok := c.framesByID[id]; ok {
+		panic(fmt.Sprintf("frame %s already exists", id))
+	}
+	c.framesByID[id] = data
 }
 
 var _ client.Client = (*Client)(nil)
@@ -68,14 +74,14 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	// 	}
 	// }
 
-	frameID := frameIDFromContext(ctx)
+	frameID := FrameIDFromContext(ctx)
 	kind := inferKind(obj)
 	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
 	if frame, ok := c.framesByID[frameID]; ok {
 		// DumpCacheFrameContents(frame)
 		if frozenObj, ok := frame[kind][key]; ok {
 			logger.V(2).Info("client:found object in frame")
-			c.effectRecorder.RecordEffect(ctx, frozenObj, sleeveclient.GET)
+			c.recorder.RecordEffect(ctx, frozenObj, sleeveclient.GET)
 
 			// use json.Marshal to copy the frozen object into the obj
 			data, err := json.Marshal(frozenObj)
@@ -95,7 +101,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 }
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	frameID := frameIDFromContext(ctx)
+	frameID := FrameIDFromContext(ctx)
 	kind := inferListKind(list)
 
 	if frame, ok := c.framesByID[frameID]; ok {
@@ -103,7 +109,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 			// get a slice of the objects from the map values
 			objs := make([]client.Object, 0, len(objsForKind))
 			for _, obj := range objsForKind {
-				c.effectRecorder.RecordEffect(ctx, obj, sleeveclient.LIST)
+				c.recorder.RecordEffect(ctx, obj, sleeveclient.LIST)
 				objs = append(objs, obj)
 			}
 			// set the Items field of the list object to the slice of objects
@@ -117,26 +123,26 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	c.effectRecorder.RecordEffect(ctx, obj, sleeveclient.CREATE)
+	c.recorder.RecordEffect(ctx, obj, sleeveclient.CREATE)
 	return nil
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	c.effectRecorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
+	c.recorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
 	return nil
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	c.effectRecorder.RecordEffect(ctx, obj, sleeveclient.UPDATE)
+	c.recorder.RecordEffect(ctx, obj, sleeveclient.UPDATE)
 	return nil
 }
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
-	c.effectRecorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
+	c.recorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
 	return nil
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	c.effectRecorder.RecordEffect(ctx, obj, sleeveclient.PATCH)
+	c.recorder.RecordEffect(ctx, obj, sleeveclient.PATCH)
 	return nil
 }
