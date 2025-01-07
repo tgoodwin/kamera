@@ -1,10 +1,12 @@
 package util
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 
 	"github.com/google/uuid"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -33,4 +35,19 @@ func GetKind(obj client.Object) string {
 
 func UUID() string {
 	return uuid.New().String()
+}
+
+func ConvertToUnstructured(obj client.Object) (*unstructured.Unstructured, error) {
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return nil, err
+	}
+	u := &unstructured.Unstructured{}
+	if err := json.Unmarshal(data, u); err != nil {
+		return nil, err
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	u.SetGroupVersionKind(gvk)
+
+	return u, nil
 }
