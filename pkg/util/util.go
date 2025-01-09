@@ -2,11 +2,13 @@ package util
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 
 	"github.com/google/uuid"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -38,16 +40,35 @@ func UUID() string {
 }
 
 func ConvertToUnstructured(obj client.Object) (*unstructured.Unstructured, error) {
+	// Get the GroupVersionKind (GVK) using reflection or Scheme
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Kind == "" {
+		// Fallback: use reflection to infer GVK if not set
+		typ := reflect.TypeOf(obj).Elem()
+		gvk = schema.GroupVersionKind{
+			Group:   "", // Update as needed if group can be inferred
+			Version: "v1",
+			Kind:    typ.Name(),
+		}
+	}
+
+	// Serialize the object to JSON
 	data, err := json.Marshal(obj)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to serialize object: %w", err)
 	}
-	u := &unstructured.Unstructured{}
-	if err := json.Unmarshal(data, u); err != nil {
-		return nil, err
-	}
-	gvk := obj.GetObjectKind().GroupVersionKind()
-	u.SetGroupVersionKind(gvk)
 
-	return u, nil
+	// Deserialize into map for manipulation
+	var objMap map[string]interface{}
+	if err := json.Unmarshal(data, &objMap); err != nil {
+		return nil, fmt.Errorf("failed to deserialize object into map: %w", err)
+	}
+
+	// Inject apiVersion and kind
+	objMap["apiVersion"] = gvk.GroupVersion().String()
+	objMap["kind"] = gvk.Kind
+
+	// Convert map to *unstructured.Unstructured
+	unstructuredObj := &unstructured.Unstructured{Object: objMap}
+	return unstructuredObj, nil
 }
