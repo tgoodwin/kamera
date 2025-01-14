@@ -29,6 +29,9 @@ type Client struct {
 }
 
 func NewClient(reconcilerID string, scheme *runtime.Scheme, frameData map[string]FrameData, recorder EffectRecorder) *Client {
+	if frameData == nil {
+		frameData = make(map[string]FrameData)
+	}
 	return &Client{
 		reconcilerID: reconcilerID,
 		scheme:       scheme,

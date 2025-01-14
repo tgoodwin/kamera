@@ -5,7 +5,7 @@ import (
 
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -59,8 +59,12 @@ func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType s
 }
 
 func (r *Recorder) evaluatePredicates(_ context.Context, obj client.Object) {
+	uns, err := util.ConvertToUnstructured(obj)
+	if err != nil {
+		panic(err)
+	}
 	for _, p := range r.predicates {
-		if p.evaluate(obj.(*unstructured.Unstructured)) {
+		if p.evaluate(uns) {
 			p.satisfied = true
 		}
 	}

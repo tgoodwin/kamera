@@ -10,7 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-type ReplayHarness struct {
+type Harness struct {
 	ReconcilerID       string
 	frames             []Frame
 	frameDataByFrameID map[string]FrameData
@@ -24,9 +24,9 @@ type ReplayHarness struct {
 	predicates []*executionPredicate
 }
 
-func newHarness(reconcilerID string, frames []Frame, frameData map[string]FrameData, effects map[string]DataEffect) *ReplayHarness {
+func newHarness(reconcilerID string, frames []Frame, frameData map[string]FrameData, effects map[string]DataEffect) *Harness {
 	replayEffects := make(map[string]DataEffect)
-	return &ReplayHarness{
+	return &Harness{
 		frames:             frames,
 		frameDataByFrameID: frameData,
 		ReconcilerID:       reconcilerID,
@@ -36,7 +36,7 @@ func newHarness(reconcilerID string, frames []Frame, frameData map[string]FrameD
 	}
 }
 
-func (p *ReplayHarness) EffectfulFrames() []Frame {
+func (p *Harness) EffectfulFrames() []Frame {
 	out := make([]Frame, 0)
 	for _, f := range p.frames {
 		if len(p.tracedEffects[f.ID].Writes) > 0 {
@@ -47,7 +47,7 @@ func (p *ReplayHarness) EffectfulFrames() []Frame {
 }
 
 // return the index of the frame that is closest to the given timestamp while still preceding it
-func (p *ReplayHarness) priorFrame(ts string) int {
+func (p *Harness) priorFrame(ts string) int {
 	nearestIndex := -1
 	for i, f := range p.frames {
 		if f.sequenceID < ts {
@@ -59,7 +59,7 @@ func (p *ReplayHarness) priorFrame(ts string) int {
 	return nearestIndex
 }
 
-func (p *ReplayHarness) nextFrame(ts string) int {
+func (p *Harness) nextFrame(ts string) int {
 	for i, f := range p.frames {
 		if f.sequenceID > ts {
 			return i
@@ -68,7 +68,7 @@ func (p *ReplayHarness) nextFrame(ts string) int {
 	return -1
 }
 
-func (p *ReplayHarness) nearestFrame(ts string) Frame {
+func (p *Harness) nearestFrame(ts string) Frame {
 	upperIdx := p.nextFrame(ts)
 	lowerIdx := p.priorFrame(ts)
 
@@ -89,7 +89,7 @@ func (p *ReplayHarness) nearestFrame(ts string) Frame {
 	panic("ambiguous frame")
 }
 
-func (p *ReplayHarness) insertFrame(f Frame) {
+func (p *Harness) insertFrame(f Frame) {
 	ts := f.sequenceID
 	prevIdx := p.priorFrame(ts)
 	nextIdx := p.nextFrame(ts)
@@ -116,12 +116,12 @@ func (p *ReplayHarness) insertFrame(f Frame) {
 	p.frames = out
 }
 
-func (p *ReplayHarness) WithPredicate(predicate Predicate) *ReplayHarness {
+func (p *Harness) WithPredicate(predicate Predicate) *Harness {
 	p.predicates = append(p.predicates, &executionPredicate{evaluate: predicate})
 	return p
 }
 
-func (p *ReplayHarness) ReplayClient(scheme *runtime.Scheme) *Client {
+func (p *Harness) ReplayClient(scheme *runtime.Scheme) *Client {
 	recorder := &Recorder{
 		reconcilerID:    p.ReconcilerID,
 		effectContainer: p.replayEffects,
@@ -130,7 +130,7 @@ func (p *ReplayHarness) ReplayClient(scheme *runtime.Scheme) *Client {
 	return NewClient(p.ReconcilerID, scheme, p.frameDataByFrameID, recorder)
 }
 
-func (p *ReplayHarness) Load(r reconcile.Reconciler) *Player {
+func (p *Harness) Load(r reconcile.Reconciler) *Player {
 	return &Player{
 		reconciler: r,
 		harness:    p,
@@ -139,7 +139,7 @@ func (p *ReplayHarness) Load(r reconcile.Reconciler) *Player {
 
 type Player struct {
 	reconciler reconcile.Reconciler
-	harness    *ReplayHarness
+	harness    *Harness
 }
 
 func (r *Player) Play() error {

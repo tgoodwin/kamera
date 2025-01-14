@@ -43,6 +43,8 @@ func FrameIDFromContext(ctx context.Context) string {
 	return id
 }
 
+// FrameData is a map of kind -> namespace/name -> object
+// and it is keyed by namespace/name cause that is the access pattern that controller code uses.
 type FrameData map[string]map[types.NamespacedName]*unstructured.Unstructured
 
 func (c FrameData) Copy() FrameData {

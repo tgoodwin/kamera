@@ -64,7 +64,7 @@ func TestInsertFrame(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			harness := &ReplayHarness{
+			harness := &Harness{
 				frames: tt.args.framesBefore,
 			}
 			harness.insertFrame(tt.args.toInsert)

@@ -105,7 +105,7 @@ func (b *Builder) FindMissedObservations(controllerID string) (map[string]util.S
 }
 
 // KnowledgeSet is keyed by ChangeID
-func (b *Builder) InterpolateFrames(controllerID string, missedKnowledge util.Set[event.CausalKey]) (*ReplayHarness, error) {
+func (b *Builder) InterpolateFrames(controllerID string, missedKnowledge util.Set[event.CausalKey]) (*Harness, error) {
 	harness, err := b.BuildHarness(controllerID)
 	if err != nil {
 		return nil, fmt.Errorf("building harness: %w", err)

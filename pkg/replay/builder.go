@@ -5,8 +5,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -37,7 +39,7 @@ type Builder struct {
 	events []event.Event
 
 	// for bookkeeping and validation
-	reconcilerIDs map[string]struct{}
+	reconcilerIDs util.Set[string]
 }
 
 func (b *Builder) Store() Store {
@@ -49,14 +51,12 @@ func (b *Builder) Events() []event.Event {
 }
 
 func (b *Builder) fromTrace(traceData []byte) error {
-	rs := newReplayStore()
-	if err := rs.HydrateFromTrace(traceData); err != nil {
-		return err
+	if err := b.hydrateObjectValues(traceData); err != nil {
+		return errors.Wrap(err, "hydrating object values")
 	}
-	b.replayStore = rs
 
 	// track all reconciler IDs in the trace
-	b.reconcilerIDs = make(map[string]struct{})
+	b.reconcilerIDs = make(util.Set[string])
 
 	lines := strings.Split(string(traceData), "\n")
 	events, err := ParseEventsFromLines(lines)
@@ -78,7 +78,7 @@ func (b *Builder) fromTrace(traceData []byte) error {
 			fmt.Printf("WARNING: object not found in store: %#v\n", key)
 			continue
 		}
-		b.reconcilerIDs[e.ControllerID] = struct{}{}
+		b.reconcilerIDs.Add(e.ControllerID)
 	}
 
 	b.events = events
@@ -89,7 +89,17 @@ func (b *Builder) fromTrace(traceData []byte) error {
 	return nil
 }
 
-func (b *Builder) BuildHarness(controllerID string) (*ReplayHarness, error) {
+func (b *Builder) hydrateObjectValues(traceData []byte) error {
+	// hydrate object values
+	rs := newReplayStore()
+	if err := rs.HydrateFromTrace(traceData); err != nil {
+		return err
+	}
+	b.replayStore = rs
+	return nil
+}
+
+func (b *Builder) BuildHarness(controllerID string) (*Harness, error) {
 	if _, ok := b.reconcilerIDs[controllerID]; !ok {
 		return nil, fmt.Errorf("controllerID not found in trace: %s", controllerID)
 	}
@@ -146,7 +156,7 @@ func (r *Builder) generateCacheFrame(events []event.Event) (FrameData, error) {
 			}
 			cacheFrame[e.Kind][types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}] = obj
 		} else {
-			return nil, fmt.Errorf("generating cache frame: object not found in store: %#v", key)
+			return nil, fmt.Errorf("object not found in store: %#v", key)
 		}
 	}
 	return cacheFrame, nil
