@@ -116,7 +116,7 @@ func main() {
 
 	for _, k := range sortedKeys {
 		v := comp[k]
-		fmt.Printf("Kind: %s, VersionKey: %s\nCausalKey: %v\n", k.Kind, k.Version, v.Version)
+		fmt.Printf("Kind: %s, VersionKey: %s\nCausalKey: %v\n", k.Kind, k.Version, v.ChangeID)
 	}
 
 	// recordsByVersion := lo.GroupBy(records, func(r snapshot.Record) string {

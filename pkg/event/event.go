@@ -28,7 +28,7 @@ func (e *Event) CausalKey() CausalKey {
 	return CausalKey{
 		Kind:     e.Kind,
 		ObjectID: e.ObjectID,
-		Version:  e.ChangeID(),
+		ChangeID: e.ChangeID(),
 	}
 }
 

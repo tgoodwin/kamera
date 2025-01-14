@@ -17,11 +17,11 @@ type ChangeID string
 type CausalKey struct {
 	Kind     string
 	ObjectID string
-	Version  ChangeID
+	ChangeID ChangeID
 }
 
 func (c CausalKey) String() string {
-	return fmt.Sprintf("%s:%s@%s", c.Kind, c.ObjectID, c.Version)
+	return fmt.Sprintf("%s:%s@%s", c.Kind, c.ObjectID, c.ChangeID)
 }
 
 func GetCausalKey(obj *unstructured.Unstructured) (CausalKey, error) {
@@ -33,7 +33,7 @@ func GetCausalKey(obj *unstructured.Unstructured) (CausalKey, error) {
 	k := CausalKey{
 		Kind:     obj.GetKind(),
 		ObjectID: string(obj.GetUID()),
-		Version:  cid,
+		ChangeID: cid,
 	}
 	return k, nil
 }

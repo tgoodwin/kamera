@@ -114,7 +114,7 @@ func (b *Builder) InterpolateFrames(controllerID string, missedKnowledge util.Se
 	HARDCODED_KEY := "81e0be03-fa11-4103-9054-e8e4e1b6abeb"
 
 	for causalKey := range missedKnowledge {
-		if causalKey.Version != event.ChangeID(HARDCODED_KEY) {
+		if causalKey.ChangeID != event.ChangeID(HARDCODED_KEY) {
 			continue
 		}
 		// key represents a causalID
@@ -176,7 +176,7 @@ func (b *Builder) InterpolateFrames(controllerID string, missedKnowledge util.Se
 
 func (b *Builder) getEarlistTimestampForKey(key event.CausalKey) (string, error) {
 	for _, event := range b.events {
-		if event.ChangeID() == key.Version {
+		if event.ChangeID() == key.ChangeID {
 			if event.OpType == "GET" || event.OpType == "LIST" {
 				return event.Timestamp, nil
 			}
@@ -193,7 +193,7 @@ func asKnowledge(elems []*unstructured.Unstructured) util.Set[event.CausalKey] {
 		key := event.CausalKey{
 			Kind:     elem.GetKind(),
 			ObjectID: string(elem.GetUID()),
-			Version:  cid,
+			ChangeID: cid,
 		}
 		versions[key] = struct{}{}
 	}
