@@ -170,7 +170,7 @@ func (c *Client) logOperation(obj client.Object, op OperationType) {
 	if err != nil {
 		panic("failed to marshal event")
 	}
-	c.logger.WithValues("LogType", tag.ControllerOperationKey).Info(string(eventJSON))
+	c.logger.WithValues("LogType", tag.ControllerOperationKey, "Observer", c.id).Info(string(eventJSON))
 }
 
 func (c *Client) logObjectVersion(obj client.Object) {
