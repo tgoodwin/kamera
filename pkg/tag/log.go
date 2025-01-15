@@ -15,9 +15,12 @@ const (
 )
 
 var logTypes = []string{ControllerOperationKey, ObjectVersionKey}
-var pattern = regexp.MustCompile(`{"LogType": "(?:` + strings.Join(logTypes, "|") + `)"}`)
+
+// var pattern = regexp.MustCompile(`{"LogType": "(?:` + strings.Join(logTypes, "|") + `)"}`)
+var pattern = regexp.MustCompile(`\{[^{}]*"LogType":\s*"(?:` + strings.Join(logTypes, "|") + `)"[^{}]*\}`)
 
 func StripLogKey(line string) string {
+	// This regex matches the entire curly braces block containing LogType key
 	return pattern.ReplaceAllString(line, "")
 }
 
