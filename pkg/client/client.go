@@ -175,7 +175,7 @@ func (c *Client) logOperation(obj client.Object, op OperationType) {
 
 func (c *Client) logObjectVersion(obj client.Object) {
 	r := snapshot.RecordValue(obj)
-	c.logger.WithValues("LogType", tag.ObjectVersionKey).Info(r)
+	c.logger.WithValues("LogType", tag.ObjectVersionKey, "Observer", c.id).Info(r)
 }
 
 func (c *Client) setRootContext(obj client.Object) {
@@ -234,9 +234,16 @@ func (c *Client) trackOperation(ctx context.Context, obj client.Object, op Opera
 			c.logObjectVersion(obj)
 		}
 	}
+	// assign a label to each event that changes the object
 	if _, ok := mutationTypes[op]; ok {
 		tag.LabelChange(obj)
 	}
+
+	// assign a sleeve object ID to the object if it is being created
+	if op == CREATE {
+		tag.AddSleeveObjectID(obj)
+	}
+
 	c.logOperation(obj, op)
 	// propagate labels after logging so we capture the label values prior to the operation
 	// e.g. we want to log out "prev-write-reconcile-id" before it gets overwritten with the current reconcileID
@@ -339,11 +346,22 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	c.trackOperation(ctx, obj, UPDATE)
-	return c.Client.Update(ctx, obj, opts...)
+	err := c.Client.Update(ctx, obj, opts...)
+	if err == nil {
+		// only track successful updates
+		c.trackOperation(ctx, obj, UPDATE)
+	} else {
+		c.logger.Error(err, "operation failed, not tracking it")
+	}
+	return err
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	c.trackOperation(ctx, obj, PATCH)
-	return c.Client.Patch(ctx, obj, patch, opts...)
+	err := c.Client.Patch(ctx, obj, patch, opts...)
+	if err == nil {
+		c.trackOperation(ctx, obj, PATCH)
+	} else {
+		c.logger.Error(err, "operation failed, not tracking it")
+	}
+	return err
 }
