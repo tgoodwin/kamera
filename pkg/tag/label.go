@@ -28,25 +28,33 @@ const (
 	TraceyRootID = "discrete.events/root-event-id"
 
 	ChangeID = "discrete.events/change-id"
+
+	// Special stable ID for deletion events
+	DeletionID = "discrete.events/deletion-id"
 )
 
 // LabelChange sets a change-id on the object to associate an object's current value with the change event that produced it.
 func LabelChange(obj client.Object) {
-	originalLabels := obj.GetLabels()
-	labels := make(map[string]string)
-	for k, v := range originalLabels {
-		labels[k] = v
-	}
-	labels[ChangeID] = uuid.New().String()
-	obj.SetLabels(labels)
+	addUIDTag(obj, ChangeID)
 }
 
 func AddSleeveObjectID(obj client.Object) {
+	addUIDTag(obj, TraceyObjectID)
+}
+
+func AddDeletionID(obj client.Object) {
+	labels := obj.GetLabels()
+	if _, ok := labels[DeletionID]; !ok {
+		addUIDTag(obj, DeletionID)
+	}
+}
+
+func addUIDTag(obj client.Object, key string) {
 	labels := obj.GetLabels()
 	if labels == nil {
 		labels = make(map[string]string)
 	}
-	labels[TraceyObjectID] = uuid.New().String()
+	labels[key] = uuid.New().String()
 	obj.SetLabels(labels)
 }
 
