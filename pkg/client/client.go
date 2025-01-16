@@ -289,20 +289,32 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	origLabels := obj.GetLabels()
+	tag.AddDeletionID(obj)
 	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
 		fmt.Println("Error deleting object")
+		// revert object labels to original state
+		obj.SetLabels(origLabels)
 		return err
 	}
-	c.trackOperation(ctx, obj, DELETE)
+	// c.logObjectVersion(obj)
+	c.logOperation(obj, DELETE)
+	// c.trackOperation(ctx, obj, DELETE)
 	return nil
 }
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
+	origLabels := obj.GetLabels()
+	tag.AddDeletionID(obj)
 	if err := c.Client.DeleteAllOf(ctx, obj, opts...); err != nil {
 		fmt.Println("Error deleting objects")
+		// revert object labels to original state
+		obj.SetLabels(origLabels)
 		return err
 	}
-	c.trackOperation(ctx, obj, DELETE)
+	// c.logObjectVersion(obj)
+	c.logOperation(obj, DELETE)
+	// c.trackOperation(ctx, obj, DELETE)
 	return nil
 }
 
