@@ -31,10 +31,7 @@ const (
 )
 
 // LabelChange sets a change-id on the object to associate an object's current value with the change event that produced it.
-// It returns a function that can be used to revert the object to its original state
-// because we add a label before issuing a mutting API call, but if the call fails we need to revert the object to its original state
-// so we dont incorrectly associate the object with a change event that did not actually occur.
-func LabelChange(obj client.Object) func(o client.Object) {
+func LabelChange(obj client.Object) {
 	originalLabels := obj.GetLabels()
 	labels := make(map[string]string)
 	for k, v := range originalLabels {
@@ -42,9 +39,6 @@ func LabelChange(obj client.Object) func(o client.Object) {
 	}
 	labels[ChangeID] = uuid.New().String()
 	obj.SetLabels(labels)
-	return func(o client.Object) {
-		o.SetLabels(originalLabels)
-	}
 }
 
 func AddSleeveObjectID(obj client.Object) {
