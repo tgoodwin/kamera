@@ -125,11 +125,18 @@ func (c *Client) WithEnvConfig() *Client {
 	return c
 }
 
+type reconcileIDKey struct{}
+
 func (c *Client) setReconcileID(ctx context.Context) {
-	rid := string(ctrl.ReconcileIDFromContext(ctx))
+	var rid string
+	rid = string(ctrl.ReconcileIDFromContext(ctx))
 	if rid == "" {
-		// this should never happen given our assumptions
-		panic("reconcileID not set in context")
+		r, ok := ctx.Value(reconcileIDKey{}).(string)
+		if !ok {
+			// this should never happen given our assumptions
+			panic("reconcileID not set in context")
+		}
+		rid = r
 	}
 
 	currReconcileID := c.reconcileContext.GetReconcileID()
@@ -210,6 +217,8 @@ func (c *Client) propagateLabels(obj client.Object) {
 	}
 	out[tag.TraceyCreatorID] = c.id
 	out[tag.TraceyRootID] = c.reconcileContext.GetRootID()
+
+	// update prev-write-reconcile-id to the current reconcileID
 	out[tag.TraceyReconcileID] = c.reconcileContext.GetReconcileID()
 
 	obj.SetLabels(out)
@@ -246,13 +255,29 @@ func (c *Client) trackOperation(ctx context.Context, obj client.Object, op Opera
 
 	c.logOperation(obj, op)
 	// propagate labels after logging so we capture the label values prior to the operation
-	// e.g. we want to log out "prev-write-reconcile-id" before it gets overwritten with the current reconcileID
+	// e.g. we want to log out "prev-write-reconcile-id" before we overwrite it
+	// with the current reconcileID when we are propagating labels
 	c.propagateLabels(obj)
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	c.trackOperation(ctx, obj, CREATE)
-	return c.Client.Create(ctx, obj, opts...)
+	currLabels := obj.GetLabels()
+	// make a copy of the object before we propagate labels
+	objCopy := obj.DeepCopyObject().(client.Object)
+	tag.AddSleeveObjectID(obj)
+	tag.LabelChange(obj)
+	c.propagateLabels(obj)
+
+	// TODO log object version here??
+
+	if err := c.Client.Create(ctx, obj, opts...); err != nil {
+		// revert object labels to original state
+		obj.SetLabels(currLabels)
+		return err
+	}
+
+	c.logOperation(objCopy, CREATE)
+	return nil
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
@@ -346,22 +371,40 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	err := c.Client.Update(ctx, obj, opts...)
-	if err == nil {
-		// only track successful updates
-		c.trackOperation(ctx, obj, UPDATE)
-	} else {
+	currLabels := obj.GetLabels()
+
+	// generate a label to the object to associate it with the change event
+	tag.LabelChange(obj)
+	// make a copy of the object before we propagate labels
+	objPrePropagation := obj.DeepCopyObject().(client.Object)
+	c.propagateLabels(obj)
+
+	// TODO log object version here??
+
+	if err := c.Client.Update(ctx, obj, opts...); err != nil {
 		c.logger.Error(err, "operation failed, not tracking it")
+		// revert object labels to original state
+		obj.SetLabels(currLabels)
+		return err
 	}
-	return err
+
+	// happy path! the update went through successfully - let's record that!
+	c.logOperation(objPrePropagation, UPDATE)
+
+	return nil
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	err := c.Client.Patch(ctx, obj, patch, opts...)
-	if err == nil {
-		c.trackOperation(ctx, obj, PATCH)
-	} else {
+	currLabels := obj.GetLabels()
+	tag.LabelChange(obj)
+	objPrePropagation := obj.DeepCopyObject().(client.Object)
+	c.propagateLabels(obj)
+
+	if err := c.Client.Patch(ctx, obj, patch, opts...); err != nil {
 		c.logger.Error(err, "operation failed, not tracking it")
+		obj.SetLabels(currLabels)
+		return err
 	}
-	return err
+	c.logOperation(objPrePropagation, PATCH)
+	return nil
 }
