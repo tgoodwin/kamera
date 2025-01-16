@@ -10,6 +10,8 @@ import (
 	"github.com/tgoodwin/sleeve/mocks"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 func Test_createFixedLengthHash(t *testing.T) {
@@ -33,6 +35,35 @@ func Test_createFixedLengthHash(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_Get(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mocks.NewMockClient(ctrl)
+	c := newClient(mockClient)
+	c.id = "test-reconcilerID"
+
+	ctx := context.WithValue(context.TODO(), reconcileIDKey{}, "test-reconcileID")
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+			Name:      "test-pod",
+		},
+	}
+	origLabels := map[string]string{"key": "value", "tracey-uid": "test-uid"}
+	pod.SetLabels(origLabels)
+	key := types.NamespacedName{Namespace: "default", Name: "test-pod"}
+
+	// TODO clean this up. Do we need to call Get multiple times in our implementation?
+	mockClient.EXPECT().Get(ctx, key, pod).Return(nil).AnyTimes()
+
+	err := c.Get(ctx, key, pod)
+	assert.NoError(t, err)
+
+	assert.Equal(t, c.reconcileContext.reconcileID, "test-reconcileID")
+	assert.Equal(t, c.reconcileContext.rootID, "test-uid")
 }
 
 func Test_UpdateFail(t *testing.T) {

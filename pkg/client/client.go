@@ -257,7 +257,10 @@ func (c *Client) trackOperation(ctx context.Context, obj client.Object, op Opera
 	// propagate labels after logging so we capture the label values prior to the operation
 	// e.g. we want to log out "prev-write-reconcile-id" before we overwrite it
 	// with the current reconcileID when we are propagating labels
-	c.propagateLabels(obj)
+	// however, only do this for mutation operations
+	if _, isMutation := mutationTypes[op]; isMutation {
+		c.propagateLabels(obj)
+	}
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
