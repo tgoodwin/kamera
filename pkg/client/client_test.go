@@ -1,6 +1,15 @@
 package client
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/golang/mock/gomock"
+	"github.com/stretchr/testify/assert"
+	"github.com/tgoodwin/sleeve/mocks"
+	corev1 "k8s.io/api/core/v1"
+)
 
 func Test_createFixedLengthHash(t *testing.T) {
 	type args struct {
@@ -23,4 +32,21 @@ func Test_createFixedLengthHash(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_Update(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mocks.NewMockClient(ctrl)
+	c := newClient(mockClient)
+
+	ctx := context.TODO()
+	pod := &corev1.Pod{}
+
+	mockClient.EXPECT().Update(ctx, pod).Return(errors.New("API call failed"))
+
+	err := c.Update(ctx, pod)
+	assert.Error(t, err)
+	assert.Equal(t, "API call failed", err.Error())
 }
