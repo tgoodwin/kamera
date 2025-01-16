@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 )
 
 type Event struct {
@@ -33,19 +34,27 @@ func (e *Event) CausalKey() CausalKey {
 }
 
 func (e *Event) ChangeID() ChangeID {
-	if changeID, ok := e.Labels["discrete.events/change-id"]; ok {
+	// special deletion case
+	if e.OpType == "DELETE" {
+		if deleteID, ok := e.Labels[tag.DeletionID]; ok {
+			return ChangeID(deleteID)
+		}
+		panic("DELETE event does not have a deletion ID")
+	}
+	if changeID, ok := e.Labels[tag.ChangeID]; ok {
 		return ChangeID(changeID)
 	}
 
 	// when there has not been a change yet, only reads
-	if rootID, ok := e.Labels["discrete.events/root-event-id"]; ok {
+	if rootID, ok := e.Labels[tag.TraceyRootID]; ok {
 		return ChangeID(rootID)
 	}
 	// case where its a top-level GET event from a declared resource that has only
-	// been tagged by the webhook with a tracey-uid
-	if rootID, ok := e.Labels["tracey-uid"]; ok {
+	// been tagged by the webhook with a tracey-uid and has not been processed by a sleeve reconciler
+	if rootID, ok := e.Labels[tag.TraceyWebhookLabel]; ok {
 		return ChangeID(rootID)
 	}
+	fmt.Println("WARNING: Event does not have a change ID", e)
 	return ChangeID("")
 }
 
