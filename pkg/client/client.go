@@ -152,7 +152,7 @@ func (c *Client) setReconcileID(ctx context.Context) {
 }
 
 func Operation(obj client.Object, reconcileID, controllerID, rootEventID string, op OperationType) *event.Event {
-	return &event.Event{
+	e := &event.Event{
 		Timestamp:    event.FormatTimeStr(time.Now()),
 		ReconcileID:  reconcileID,
 		ControllerID: controllerID,
@@ -163,6 +163,11 @@ func Operation(obj client.Object, reconcileID, controllerID, rootEventID string,
 		Version:      obj.GetResourceVersion(),
 		Labels:       obj.GetLabels(),
 	}
+	changeID := e.ChangeID()
+	if changeID == "" {
+		panic(fmt.Sprintf("event does not have a change ID: %v", e))
+	}
+	return e
 }
 
 func (c *Client) logOperation(obj client.Object, op OperationType) {
@@ -265,8 +270,6 @@ func (c *Client) trackOperation(ctx context.Context, obj client.Object, op Opera
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	currLabels := obj.GetLabels()
-	// make a copy of the object before we propagate labels
-	objCopy := obj.DeepCopyObject().(client.Object)
 	tag.AddSleeveObjectID(obj)
 	tag.LabelChange(obj)
 	c.propagateLabels(obj)
@@ -279,18 +282,28 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 		return err
 	}
 
-	c.logOperation(objCopy, CREATE)
+	// this is the *first* time the object is being updated (definition of create)
+	// so we don't need to worry about logging before propagating labels here
+	c.logOperation(obj, CREATE)
 	return nil
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
+		fmt.Println("Error deleting object")
+		return err
+	}
 	c.trackOperation(ctx, obj, DELETE)
-	return c.Client.Delete(ctx, obj, opts...)
+	return nil
 }
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
+	if err := c.Client.DeleteAllOf(ctx, obj, opts...); err != nil {
+		fmt.Println("Error deleting objects")
+		return err
+	}
 	c.trackOperation(ctx, obj, DELETE)
-	return c.Client.DeleteAllOf(ctx, obj, opts...)
+	return nil
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
