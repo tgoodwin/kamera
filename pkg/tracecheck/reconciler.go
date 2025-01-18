@@ -4,13 +4,17 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+var logger logr.Logger
 
 type effectReader interface {
 	// TODO how to more idiomatically represent "not found" ?
@@ -29,14 +33,15 @@ type reconcileImpl struct {
 	effectReader
 }
 
-func (r *reconcileImpl) doReconcile(currState ObjectVersions) (ObjectVersions, error) {
+func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersions) (ObjectVersions, error) {
 	// create a new cache frame from the current state of the world of objects.
 	// the Reconciler's readset will be a subset of this frame
 	frameID := util.UUID()
-	r.client.InsertFrame(frameID, r.toFrameData(currState))
-	ctx := replay.WithFrameID(context.Background(), frameID)
+	ctx = replay.WithFrameID(ctx, frameID)
+	logger = log.FromContext(ctx)
 
 	req, err := r.inferReconcileRequest(currState)
+	r.client.InsertFrame(frameID, r.toFrameData(currState))
 	if err != nil {
 		return nil, errors.Wrap(err, "inferring reconcile request")
 	}
@@ -45,6 +50,7 @@ func (r *reconcileImpl) doReconcile(currState ObjectVersions) (ObjectVersions, e
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
 	effects, err := r.retrieveEffects(frameID)
+	logger.WithValues("reconciler", r.Name, "effects", len(effects)).Info("reconcile complete")
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}

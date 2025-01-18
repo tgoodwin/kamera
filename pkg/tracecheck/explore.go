@@ -1,6 +1,7 @@
 package tracecheck
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -8,15 +9,11 @@ import (
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-type ObjectKey struct {
-	Kind     string // resource type
-	ObjectID string // uid
-}
-
 // ObjectVersions is a map of object IDs to their version hashes
-type ObjectVersions map[ObjectKey]snapshot.VersionHash
+type ObjectVersions map[snapshot.IdentityKey]snapshot.VersionHash
 
 type ReconcileResult struct {
 	ControllerID string
@@ -34,7 +31,7 @@ type StateNode struct {
 }
 
 type reconciler interface {
-	doReconcile(readset ObjectVersions) (ObjectVersions, error)
+	doReconcile(ctx context.Context, readset ObjectVersions) (ObjectVersions, error)
 }
 
 type resourceDeps map[string]util.Set[string]
@@ -48,10 +45,12 @@ type Explorer struct {
 
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
-func (e *Explorer) Explore(initialState StateNode) {
+func (e *Explorer) Explore(ctx context.Context, initialState StateNode) []StateNode {
 	queue := []StateNode{initialState}
 
 	seenStates := make(map[string]bool)
+
+	convergedStates := make([]StateNode, 0)
 
 	for len(queue) > 0 {
 		currentState := queue[0]
@@ -64,22 +63,25 @@ func (e *Explorer) Explore(initialState StateNode) {
 
 		if len(currentState.PendingReconciles) == 0 {
 			// TODO evaluate some predicates upon the converged state and then classify the execution
-			fmt.Println("Found a converged state: ", currentState)
+			fmt.Println("Found a converged state!")
+			convergedStates = append(convergedStates, currentState)
 			continue
 		}
 
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state. We explore each pending reconcile in a breadth-first manner.
 		for _, controller := range currentState.PendingReconciles {
-			newState := e.takeReconcileStep(currentState, controller)
+			newState := e.takeReconcileStep(ctx, currentState, controller)
 			queue = append(queue, newState)
 		}
 	}
+
+	return convergedStates
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
-func (e *Explorer) takeReconcileStep(state StateNode, controllerID string) StateNode {
-
+func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, controllerID string) StateNode {
+	logger = log.FromContext(ctx)
 	// remove the current controller from the pending reconciles list
 	newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending string, _ int) bool {
 		return pending != controllerID
@@ -87,16 +89,15 @@ func (e *Explorer) takeReconcileStep(state StateNode, controllerID string) State
 
 	// get the state diff after executing the controller.
 	// if the state diff is empty, then the controller did not change anything
-	versionChanges := e.reconcileAtState(state, controllerID)
+	versionChanges := e.reconcileAtState(ctx, state, controllerID)
 
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
 	for objID, version := range state.ObjectVersions {
-		if newVersion, ok := versionChanges[objID]; ok {
-			newObjectVersions[objID] = newVersion
-		} else {
-			newObjectVersions[objID] = version
-		}
+		newObjectVersions[objID] = version
+	}
+	for objID, newVersion := range versionChanges {
+		newObjectVersions[objID] = newVersion
 	}
 
 	action := &ReconcileResult{
@@ -109,6 +110,7 @@ func (e *Explorer) takeReconcileStep(state StateNode, controllerID string) State
 	// include the controller that was just executed.
 	triggeredReconcilers := e.getTriggeredReconcilers(versionChanges)
 	newPendingReconciles = append(newPendingReconciles, triggeredReconcilers...)
+	logger.V(2).Info("New pending reconciles", newPendingReconciles)
 
 	return StateNode{
 		ObjectVersions:    newObjectVersions,
@@ -118,13 +120,16 @@ func (e *Explorer) takeReconcileStep(state StateNode, controllerID string) State
 	}
 }
 
-func (e *Explorer) reconcileAtState(state StateNode, controllerID string) ObjectVersions {
-	reconciler := e.reconcilers[controllerID]
+func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, controllerID string) ObjectVersions {
+	reconciler, ok := e.reconcilers[controllerID]
+	if !ok {
+		panic(fmt.Sprintf("implementation for reconciler %s not found", controllerID))
+	}
 	// get the read set
 	readSet := state.ObjectVersions
 	// execute the controller
 	// convert the write set to object versions
-	writeSet, _ := reconciler.doReconcile(readSet)
+	writeSet, _ := reconciler.doReconcile(ctx, readSet)
 	return writeSet
 }
 
@@ -133,7 +138,7 @@ func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []string {
 	for objKey := range changes {
 		// get the controllers that depend on this object
 		triggeredForKind := e.dependencies[objKey.Kind]
-		triggered.Union(triggeredForKind)
+		triggered = triggered.Union(triggeredForKind)
 	}
 	// convert the set to a list that is sorted
 	triggeredList := triggered.List()

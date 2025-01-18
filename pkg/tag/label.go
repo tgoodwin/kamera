@@ -64,6 +64,18 @@ func GetChangeLabel() map[string]string {
 	return labels
 }
 
+func GetSleeveObjectID(obj client.Object) string {
+	fallback := string(obj.GetUID())
+	labels := obj.GetLabels()
+	if labels == nil {
+		return fallback
+	}
+	if id, ok := labels[TraceyObjectID]; ok {
+		return id
+	}
+	return fallback
+}
+
 func SanityCheckLabels(obj client.Object) error {
 	labels := obj.GetLabels()
 	if labels == nil {
