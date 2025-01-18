@@ -4,7 +4,6 @@ import (
 	"sync"
 
 	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -21,13 +20,12 @@ type versionStore struct {
 
 var _ VersionManager = (*versionStore)(nil)
 
-func fromReplayStore(rs replay.Store, hasher snapshot.JSONHasher) Store {
-	out := make(Store)
-	for _, elem := range rs {
-		hash := hasher.Hash(elem)
-		out[hash] = elem
+func newVersionStore() *versionStore {
+	return &versionStore{
+		store:              make(Store),
+		causalKeyToVersion: make(map[event.CausalKey]snapshot.VersionHash),
+		hasher:             snapshot.JSONHasher{},
 	}
-	return out
 }
 
 func (vs *versionStore) Resolve(key snapshot.VersionHash) *unstructured.Unstructured {
