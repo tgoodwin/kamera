@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -79,12 +80,13 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 
 	frameID := FrameIDFromContext(ctx)
 	kind := inferKind(obj)
-	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
+	logger.V(0).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
 	if frame, ok := c.framesByID[frameID]; ok {
-		// DumpCacheFrameContents(frame)
 		if frozenObj, ok := frame[kind][key]; ok {
-			logger.V(2).Info("client:found object in frame")
-			c.recorder.RecordEffect(ctx, frozenObj, sleeveclient.GET)
+			logger.V(0).Info("client:found object in frame")
+			if err := c.recorder.RecordEffect(ctx, frozenObj, sleeveclient.GET); err != nil {
+				return err
+			}
 
 			// use json.Marshal to copy the frozen object into the obj
 			data, err := json.Marshal(frozenObj)
@@ -109,15 +111,39 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 
 	if frame, ok := c.framesByID[frameID]; ok {
 		if objsForKind, ok := frame[kind]; ok {
-			// get a slice of the objects from the map values
-			objs := make([]client.Object, 0, len(objsForKind))
-			for _, obj := range objsForKind {
-				c.recorder.RecordEffect(ctx, obj, sleeveclient.LIST)
-				objs = append(objs, obj)
-			}
-			// set the Items field of the list object to the slice of objects
+			// get the Items field of the list object
 			itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
-			itemsValue.Set(reflect.ValueOf(objs))
+			if !itemsValue.IsValid() {
+				return fmt.Errorf("List object does not have Items field")
+			}
+
+			// create a new slice of the correct type
+			itemType := itemsValue.Type().Elem()
+			newSlice := reflect.MakeSlice(reflect.SliceOf(itemType), 0, len(objsForKind))
+
+			for _, obj := range objsForKind {
+				if err := c.recorder.RecordEffect(ctx, obj, sleeveclient.LIST); err != nil {
+					return err
+				}
+
+				// create a new object of the correct type
+				newObj := reflect.New(itemType).Interface().(client.Object)
+
+				// use json.Marshal to copy the unstructured object into the new object
+				data, err := json.Marshal(obj)
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(data, newObj); err != nil {
+					return err
+				}
+
+				// append the new object to the slice
+				newSlice = reflect.Append(newSlice, reflect.ValueOf(newObj).Elem())
+			}
+
+			// set the Items field of the list object to the new slice
+			itemsValue.Set(newSlice)
 		}
 		return nil
 	}
@@ -126,26 +152,33 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	c.recorder.RecordEffect(ctx, obj, sleeveclient.CREATE)
-	return nil
+	logger = log.FromContext(ctx)
+	tag.AddSleeveObjectID(obj)
+	tag.LabelChange(obj)
+
+	// TODO create a trace
+	// TODO propagate labels
+
+	// logger.V(0).Info("client:creating object", "object", obj)
+	return c.recorder.RecordEffect(ctx, obj, sleeveclient.CREATE)
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	c.recorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
-	return nil
+	tag.AddDeletionID(obj)
+	return c.recorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	c.recorder.RecordEffect(ctx, obj, sleeveclient.UPDATE)
-	return nil
+	tag.LabelChange(obj)
+	return c.recorder.RecordEffect(ctx, obj, sleeveclient.UPDATE)
 }
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
-	c.recorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
-	return nil
+	tag.AddDeletionID(obj)
+	return c.recorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	c.recorder.RecordEffect(ctx, obj, sleeveclient.PATCH)
-	return nil
+	tag.LabelChange(obj)
+	return c.recorder.RecordEffect(ctx, obj, sleeveclient.PATCH)
 }
