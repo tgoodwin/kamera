@@ -21,6 +21,8 @@ var logger logr.Logger
 type Client struct {
 	// dummyClient is a useless type that implements the remainder of the client.Client interface
 	reconcilerID string
+
+	// TODO address this
 	*dummyClient
 	framesByID map[string]FrameData
 
@@ -28,6 +30,8 @@ type Client struct {
 
 	scheme *runtime.Scheme
 }
+
+var _ client.Client = (*Client)(nil)
 
 func NewClient(reconcilerID string, scheme *runtime.Scheme, frameData map[string]FrameData, recorder EffectRecorder) *Client {
 	if frameData == nil {
@@ -80,10 +84,9 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 
 	frameID := FrameIDFromContext(ctx)
 	kind := inferKind(obj)
-	logger.V(0).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
+	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
 	if frame, ok := c.framesByID[frameID]; ok {
 		if frozenObj, ok := frame[kind][key]; ok {
-			logger.V(0).Info("client:found object in frame")
 			if err := c.recorder.RecordEffect(ctx, frozenObj, sleeveclient.GET); err != nil {
 				return err
 			}
@@ -181,4 +184,30 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 	tag.LabelChange(obj)
 	return c.recorder.RecordEffect(ctx, obj, sleeveclient.PATCH)
+}
+
+func (c *Client) Status() client.SubResourceWriter {
+	return &subResourceClient{wrapped: c}
+}
+
+type subResourceClient struct {
+	wrapped *Client
+}
+
+var _ client.SubResourceWriter = (*subResourceClient)(nil)
+
+func (c *subResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+	tag.LabelChange(obj)
+	return c.wrapped.recorder.RecordEffect(ctx, obj, sleeveclient.UPDATE)
+}
+
+func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	tag.LabelChange(obj)
+	return c.wrapped.recorder.RecordEffect(ctx, obj, sleeveclient.PATCH)
+}
+
+func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
+	tag.LabelChange(obj)
+	tag.AddSleeveObjectID(sub)
+	return c.wrapped.recorder.RecordEffect(ctx, obj, sleeveclient.CREATE)
 }
