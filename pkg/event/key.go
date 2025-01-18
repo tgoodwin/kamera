@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -22,6 +23,10 @@ type CausalKey struct {
 
 func (c CausalKey) String() string {
 	return fmt.Sprintf("%s:%s@%s", c.Kind, c.ObjectID, c.ChangeID)
+}
+
+func (c CausalKey) Short() string {
+	return fmt.Sprintf("%s:%s@%s", c.Kind, util.Shorter(c.ObjectID), util.Shorter(string(c.ChangeID)))
 }
 
 func GetCausalKey(obj *unstructured.Unstructured) (CausalKey, error) {

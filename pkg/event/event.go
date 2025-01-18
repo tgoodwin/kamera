@@ -54,7 +54,7 @@ func (e *Event) ChangeID() ChangeID {
 	if rootID, ok := e.Labels[tag.TraceyWebhookLabel]; ok {
 		return ChangeID(rootID)
 	}
-	fmt.Println("WARNING: Event does not have a change ID", e)
+	fmt.Println("WARNING: Event does not have a change ID", fmt.Sprintf("%+v", e))
 	return ChangeID("")
 }
 

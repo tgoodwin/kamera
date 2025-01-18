@@ -28,6 +28,8 @@ type StateNode struct {
 
 	parent *StateNode
 	action *ReconcileResult // the action that led to this state
+
+	depth int
 }
 
 type reconciler interface {
@@ -41,11 +43,17 @@ type Explorer struct {
 	reconcilers map[string]reconciler
 	// maps Kinds to a list of reconcilerIDs that depend on them
 	dependencies resourceDeps
+
+	maxDepth int
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) []StateNode {
+	if e.maxDepth == 0 {
+		e.maxDepth = 10
+	}
+
 	queue := []StateNode{initialState}
 
 	seenStates := make(map[string]bool)
@@ -57,14 +65,16 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) []StateN
 		queue = queue[1:]
 		stateKey := serializeState(currentState)
 		if seenStates[stateKey] {
+			fmt.Println("Skipping already seen state at depth", currentState.depth)
 			continue
 		}
 		seenStates[stateKey] = true
 
 		if len(currentState.PendingReconciles) == 0 {
 			// TODO evaluate some predicates upon the converged state and then classify the execution
-			fmt.Println("Found a converged state!")
+			fmt.Println("Found a converged state at depth", currentState.depth)
 			convergedStates = append(convergedStates, currentState)
+			// time.Sleep(1 * time.Second)
 			continue
 		}
 
@@ -72,7 +82,12 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) []StateN
 		// from the current state. We explore each pending reconcile in a breadth-first manner.
 		for _, controller := range currentState.PendingReconciles {
 			newState := e.takeReconcileStep(ctx, currentState, controller)
-			queue = append(queue, newState)
+			newState.depth = currentState.depth + 1
+			if newState.depth > e.maxDepth {
+				fmt.Println("Reached max depth", e.maxDepth)
+			} else {
+				queue = append(queue, newState)
+			}
 		}
 	}
 
@@ -110,7 +125,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 	// include the controller that was just executed.
 	triggeredReconcilers := e.getTriggeredReconcilers(versionChanges)
 	newPendingReconciles = append(newPendingReconciles, triggeredReconcilers...)
-	logger.V(2).Info("New pending reconciles", newPendingReconciles)
+	logger.V(0).WithValues("controllerID", controllerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
 
 	return StateNode{
 		ObjectVersions:    newObjectVersions,
@@ -129,7 +144,10 @@ func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, contro
 	readSet := state.ObjectVersions
 	// execute the controller
 	// convert the write set to object versions
-	writeSet, _ := reconciler.doReconcile(ctx, readSet)
+	writeSet, err := reconciler.doReconcile(ctx, readSet)
+	if err != nil {
+		panic(fmt.Sprintf("error executing reconcile for %s: %s", controllerID, err))
+	}
 	return writeSet
 }
 
