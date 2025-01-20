@@ -11,6 +11,7 @@ type ObjectVersions map[snapshot.IdentityKey]snapshot.VersionHash
 
 type ReconcileResult struct {
 	ControllerID string
+	FrameID      string
 	Changes      ObjectVersions // this is just the writeset, not the resulting full state of the world
 }
 
@@ -32,14 +33,15 @@ func (sn StateNode) IsConverged() bool {
 
 func (sn StateNode) Summarize() {
 	// TODO
-	fmt.Println("---StateNode Summary---")
-	if sn.action == nil {
-		fmt.Println("top level state")
+	fmt.Printf("---StateNode Summary: depth %d---\n", sn.depth)
+	if sn.parent == nil {
+		fmt.Println("Top-Level StateNode")
 	}
 
 	// print the controller that created this state
 	if sn.action != nil {
 		fmt.Println("ControllerID: ", sn.action.ControllerID)
+		fmt.Println("FrameID: ", sn.action.FrameID)
 		fmt.Println("Num Changes: ", len(sn.action.Changes))
 		fmt.Println("Pending Reconciles: ", sn.PendingReconciles)
 	}

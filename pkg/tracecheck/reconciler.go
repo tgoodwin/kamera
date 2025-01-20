@@ -33,12 +33,14 @@ type reconcileImpl struct {
 	effectReader
 }
 
-func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersions) (ObjectVersions, error) {
+func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersions) (*ReconcileResult, error) {
 	// create a new cache frame from the current state of the world of objects.
 	// the Reconciler's readset will be a subset of this frame
 	frameID := util.UUID()
 	ctx = replay.WithFrameID(ctx, frameID)
-	logger = log.FromContext(ctx)
+	logger = log.FromContext(ctx).WithValues("reconciler", r.Name, "frameID", frameID)
+	// add the logger back to the context
+	ctx = log.IntoContext(ctx, logger)
 
 	req, err := r.inferReconcileRequest(currState)
 	r.client.InsertFrame(frameID, r.toFrameData(currState))
@@ -50,11 +52,15 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
 	effects, err := r.retrieveEffects(frameID)
-	logger.V(1).WithValues("reconciler", r.Name, "effects", len(effects)).Info("reconcile complete")
+	logger.V(1).Info("reconcile complete")
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
-	return effects, nil
+	return &ReconcileResult{
+		ControllerID: r.Name,
+		FrameID:      frameID,
+		Changes:      effects,
+	}, nil
 }
 
 func Wrap(name string, r reconcile.Reconciler) reconciler {

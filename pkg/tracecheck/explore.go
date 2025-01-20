@@ -12,7 +12,7 @@ import (
 )
 
 type reconciler interface {
-	doReconcile(ctx context.Context, readset ObjectVersions) (ObjectVersions, error)
+	doReconcile(ctx context.Context, readset ObjectVersions) (*ReconcileResult, error)
 }
 
 type resourceDeps map[string]util.Set[string]
@@ -83,26 +83,21 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 
 	// get the state diff after executing the controller.
 	// if the state diff is empty, then the controller did not change anything
-	versionChanges := e.reconcileAtState(ctx, state, controllerID)
+	reconcileResult := e.reconcileAtState(ctx, state, controllerID)
 
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
 	for objID, version := range state.ObjectVersions {
 		newObjectVersions[objID] = version
 	}
-	for objID, newVersion := range versionChanges {
+	for objID, newVersion := range reconcileResult.Changes {
 		newObjectVersions[objID] = newVersion
-	}
-
-	action := &ReconcileResult{
-		ControllerID: controllerID,
-		Changes:      versionChanges,
 	}
 
 	// get the controllers that depend on the objects that were changed
 	// and add them to the pending reconciles list. n.b. this may potentially
 	// include the controller that was just executed.
-	triggeredReconcilers := e.getTriggeredReconcilers(versionChanges)
+	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
 	newPendingReconciles = append(newPendingReconciles, triggeredReconcilers...)
 	logger.V(0).WithValues("controllerID", controllerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
 
@@ -110,11 +105,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 		ObjectVersions:    newObjectVersions,
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
-		action:            action,
+		action:            reconcileResult,
 	}
 }
 
-func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, controllerID string) ObjectVersions {
+func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, controllerID string) *ReconcileResult {
 	reconciler, ok := e.reconcilers[controllerID]
 	if !ok {
 		panic(fmt.Sprintf("implementation for reconciler %s not found", controllerID))
@@ -123,11 +118,11 @@ func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, contro
 	readSet := state.ObjectVersions
 	// execute the controller
 	// convert the write set to object versions
-	writeSet, err := reconciler.doReconcile(ctx, readSet)
+	result, err := reconciler.doReconcile(ctx, readSet)
 	if err != nil {
 		panic(fmt.Sprintf("error executing reconcile for %s: %s", controllerID, err))
 	}
-	return writeSet
+	return result
 }
 
 func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []string {
