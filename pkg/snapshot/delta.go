@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -107,20 +108,25 @@ func (r Record) Diff(other Record) (string, error) {
 	return fmt.Sprintf("%s\nDeltas:\n%s", header, computeDelta(reporter, &this, &otherObj)), nil
 }
 
-var toIgnore = map[string]struct{}{
-	"resourceVersion":    {},
-	"managedFields":      {},
-	"generation":         {},
-	"observedGeneration": {},
-
-	// sleeve labels
-	"discrete.events/change-id":               {},
-	"discrete.events/creator-id":              {},
-	"discrete.events/root-event-id":           {},
-	"discrete.events/prev-write-reconcile-id": {},
+func DiffObjects(first, other *unstructured.Unstructured) (string, error) {
+	reporter := DiffReporter{}
+	return computeDelta(reporter, first, other), nil
 }
 
-func shouldIgnore(k string, v interface{}) bool {
+var toIgnore = map[string]struct{}{
+	"resourceVersion": {},
+	"managedFields":   {},
+	// "generation":         {},
+	// "observedGeneration": {},
+
+	// sleeve annotations
+	tag.ChangeID:          {},
+	tag.TraceyCreatorID:   {},
+	tag.TraceyRootID:      {},
+	tag.TraceyReconcileID: {},
+}
+
+func DefaultIgnore(k string, v interface{}) bool {
 	if _, ok := toIgnore[k]; ok {
 		return true
 	}
@@ -128,13 +134,13 @@ func shouldIgnore(k string, v interface{}) bool {
 }
 
 func computeDelta(dr DiffReporter, old, new *unstructured.Unstructured) string {
-	cmpOpt := cmpopts.IgnoreMapEntries(shouldIgnore)
+	cmpOpt := cmpopts.IgnoreMapEntries(DefaultIgnore)
 	cmp.Diff(old, new, cmpOpt, cmp.Reporter(&dr))
 	rdiff := dr.String()
 	return rdiff
 }
 
-func ComputeDelta(old, new *unstructured.Unstructured) string {
+func ComputeDelta(old, new *unstructured.Unstructured, opts ...cmp.Option) string {
 	reporter := DiffReporter{}
 	return computeDelta(reporter, old, new)
 }

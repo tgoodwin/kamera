@@ -15,15 +15,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-type converter interface {
-	getStateAtReconcile(reconcileID string) ObjectVersions
-}
-
 // 1. need to map from reconcileID to the object versions that were read at that reconcile
 
 type VersionManager interface {
 	Resolve(key snapshot.VersionHash) *unstructured.Unstructured
 	Publish(obj *unstructured.Unstructured) snapshot.VersionHash
+	Diff(prev, curr *snapshot.VersionHash) string
 }
 
 type effect struct {

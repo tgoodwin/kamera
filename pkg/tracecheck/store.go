@@ -29,7 +29,12 @@ func newVersionStore() *versionStore {
 }
 
 func (vs *versionStore) Resolve(key snapshot.VersionHash) *unstructured.Unstructured {
-	return vs.store[key]
+	res, ok := vs.store[key]
+	if !ok {
+		panic("could not resolve key in versionStore")
+	}
+	return res
+
 }
 
 func (vs *versionStore) Publish(obj *unstructured.Unstructured) snapshot.VersionHash {
@@ -41,8 +46,22 @@ func (vs *versionStore) Publish(obj *unstructured.Unstructured) snapshot.Version
 	vs.store[hash] = objCopy
 
 	// TODO ensure that all objects being mutated are still instrumented with Sleeve labels
-	ckey, _ := event.GetCausalKey(objCopy)
+	ckey, err := event.GetCausalKey(objCopy)
+	if err != nil {
+		panic("object does not have causal key")
+	}
 	vs.causalKeyToVersion[ckey] = hash
 
 	return hash
+}
+
+func (vs *versionStore) Diff(prev, curr *snapshot.VersionHash) string {
+	var prevObj, currObj *unstructured.Unstructured
+	if prev != nil {
+		prevObj = vs.Resolve(*prev)
+	}
+	if curr != nil {
+		currObj = vs.Resolve(*curr)
+	}
+	return snapshot.ComputeDelta(prevObj, currObj)
 }

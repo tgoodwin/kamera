@@ -157,3 +157,28 @@ func (tc *TraceChecker) NewExplorer() *Explorer {
 		dependencies: tc.resourceDeps,
 	}
 }
+
+func (tc *TraceChecker) showDeltas(prevState, currState *StateNode) {
+	changes := currState.action.Changes
+	for k, v := range changes {
+		if prevVersion, ok := prevState.ObjectVersions[k]; ok {
+			delta := tc.manager.Diff(&prevVersion, &v)
+			fmt.Println(delta)
+		} else {
+			// creation event
+			fmt.Println("New Object")
+			fmt.Println(tc.manager.Diff(nil, &v))
+		}
+	}
+}
+
+func (tc *TraceChecker) SummarizeFromRoot(sn *StateNode) {
+	if sn.parent != nil {
+		tc.SummarizeFromRoot(sn.parent)
+		sn.Summarize()
+		tc.showDeltas(sn.parent, sn)
+	} else {
+		fmt.Println("Root StateNode")
+		sn.Summarize()
+	}
+}
