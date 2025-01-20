@@ -1,0 +1,55 @@
+package tracecheck
+
+import (
+	"fmt"
+
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
+)
+
+// ObjectVersions is a map of object IDs to their version hashes
+type ObjectVersions map[snapshot.IdentityKey]snapshot.VersionHash
+
+type ReconcileResult struct {
+	ControllerID string
+	Changes      ObjectVersions // this is just the writeset, not the resulting full state of the world
+}
+
+type StateNode struct {
+	ObjectVersions ObjectVersions
+	// PendingReconciles is a list of controller IDs that are pending reconciliation.
+	// In our "game tree", they represent branches that we can explore.
+	PendingReconciles []string
+
+	parent *StateNode
+	action *ReconcileResult // the action that led to this state
+
+	depth int
+}
+
+func (sn StateNode) IsConverged() bool {
+	return len(sn.PendingReconciles) == 0
+}
+
+func (sn StateNode) Summarize() {
+	// TODO
+	fmt.Println("---StateNode Summary---")
+	if sn.action == nil {
+		fmt.Println("top level state")
+	}
+
+	// print the controller that created this state
+	if sn.action != nil {
+		fmt.Println("ControllerID: ", sn.action.ControllerID)
+		fmt.Println("Num Changes: ", len(sn.action.Changes))
+		fmt.Println("Pending Reconciles: ", sn.PendingReconciles)
+	}
+}
+
+func (sn StateNode) SummarizeFromRoot() {
+	if sn.parent != nil {
+		sn.parent.SummarizeFromRoot()
+	} else {
+		fmt.Println("Root StateNode")
+	}
+	sn.Summarize()
+}

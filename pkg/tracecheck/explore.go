@@ -7,30 +7,9 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
-
-// ObjectVersions is a map of object IDs to their version hashes
-type ObjectVersions map[snapshot.IdentityKey]snapshot.VersionHash
-
-type ReconcileResult struct {
-	ControllerID string
-	Changes      ObjectVersions // this is just the writeset, not the resulting full state of the world
-}
-
-type StateNode struct {
-	ObjectVersions ObjectVersions
-	// PendingReconciles is a list of controller IDs that are pending reconciliation.
-	// In our "game tree", they represent branches that we can explore.
-	PendingReconciles []string
-
-	parent *StateNode
-	action *ReconcileResult // the action that led to this state
-
-	depth int
-}
 
 type reconciler interface {
 	doReconcile(ctx context.Context, readset ObjectVersions) (ObjectVersions, error)
