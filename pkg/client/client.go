@@ -9,7 +9,6 @@ import (
 
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -77,7 +76,9 @@ type Client struct {
 
 	reconcileContext *ReconcileContext
 
-	logger logr.Logger
+	logger logr.Logger // legacy
+	// handles logging of events
+	emitter event.Emitter
 
 	config *Config
 }
@@ -88,6 +89,7 @@ func newClient(wrapped client.Client) *Client {
 	return &Client{
 		Client:           wrapped,
 		logger:           log,
+		emitter:          event.NewLogEmitter(log),
 		reconcileContext: &ReconcileContext{},
 		config:           NewConfig(),
 	}
@@ -178,16 +180,12 @@ func (c *Client) logOperation(obj client.Object, op OperationType) {
 		c.reconcileContext.GetRootID(),
 		op,
 	)
-	eventJSON, err := json.Marshal(event)
-	if err != nil {
-		panic("failed to marshal event")
-	}
-	c.logger.WithValues("LogType", tag.ControllerOperationKey, "Observer", c.id).Info(string(eventJSON))
+	c.emitter.LogOperation(event)
 }
 
 func (c *Client) logObjectVersion(obj client.Object) {
-	r := snapshot.RecordValue(obj)
-	c.logger.WithValues("LogType", tag.ObjectVersionKey, "Observer", c.id).Info(r)
+	r := snapshot.AsRecord(obj)
+	c.emitter.LogObjectVersion(r)
 }
 
 func (c *Client) setRootContext(obj client.Object) {
