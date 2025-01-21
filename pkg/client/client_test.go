@@ -42,7 +42,13 @@ func Test_Get(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockClient := mocks.NewMockClient(ctrl)
-	c := newClient(mockClient)
+	mockEmitter := mocks.NewMockEmitter(ctrl)
+	c := &Client{
+		Client:           mockClient,
+		emitter:          mockEmitter,
+		reconcileContext: &ReconcileContext{},
+		config:           NewConfig(),
+	}
 	c.id = "test-reconcilerID"
 
 	ctx := context.WithValue(context.TODO(), reconcileIDKey{}, "test-reconcileID")
@@ -58,6 +64,8 @@ func Test_Get(t *testing.T) {
 
 	// TODO clean this up. Do we need to call Get multiple times in our implementation?
 	mockClient.EXPECT().Get(ctx, key, pod).Return(nil).AnyTimes()
+	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(1)
 
 	err := c.Get(ctx, key, pod)
 	assert.NoError(t, err)
@@ -71,7 +79,13 @@ func Test_UpdateFail(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockClient := mocks.NewMockClient(ctrl)
-	c := newClient(mockClient)
+	mockEmitter := mocks.NewMockEmitter(ctrl)
+	c := &Client{
+		Client:           mockClient,
+		emitter:          mockEmitter,
+		reconcileContext: &ReconcileContext{},
+		config:           NewConfig(),
+	}
 
 	ctx := context.TODO()
 	pod := &corev1.Pod{}
@@ -79,6 +93,7 @@ func Test_UpdateFail(t *testing.T) {
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Update(ctx, pod).Return(errors.New("API call failed"))
+	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(0)
 
 	err := c.Update(ctx, pod)
 	assert.Error(t, err)
@@ -91,7 +106,13 @@ func Test_CreateSuccess(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockClient := mocks.NewMockClient(ctrl)
-	c := newClient(mockClient)
+	mockEmitter := mocks.NewMockEmitter(ctrl)
+	c := &Client{
+		Client:           mockClient,
+		emitter:          mockEmitter,
+		reconcileContext: &ReconcileContext{},
+		config:           NewConfig(),
+	}
 
 	rc := ReconcileContext{
 		reconcileID: "reconcileID",
@@ -105,6 +126,7 @@ func Test_CreateSuccess(t *testing.T) {
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Create(ctx, pod).Return(nil)
+	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
 
 	shouldBePresent := []string{
 		tag.TraceyCreatorID,
