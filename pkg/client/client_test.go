@@ -49,7 +49,7 @@ func Test_Get(t *testing.T) {
 		reconcileContext: &ReconcileContext{},
 		config:           NewConfig(),
 	}
-	c.id = "test-reconcilerID"
+	c.reconcilerID = "test-reconcilerID"
 
 	ctx := context.WithValue(context.TODO(), reconcileIDKey{}, "test-reconcileID")
 	pod := &corev1.Pod{

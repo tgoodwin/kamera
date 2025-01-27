@@ -93,6 +93,22 @@ func SanityCheckLabels(obj client.Object) error {
 	return nil
 }
 
+func GetRootID(obj client.Object) (string, error) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		return "", fmt.Errorf("no labels found")
+	}
+	// set by the webhook
+	rootID, ok := labels[TraceyWebhookLabel]
+	if !ok {
+		rootID, ok = labels[TraceyRootID]
+		if !ok {
+			return "", fmt.Errorf("no root ID set on object labels")
+		}
+	}
+	return rootID, nil
+}
+
 type LabelContext struct {
 	RootID       string
 	TraceID      string

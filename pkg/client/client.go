@@ -72,7 +72,7 @@ type Client struct {
 	client.Client
 
 	// identifier for the reconciler (controller name)
-	id string
+	reconcilerID string
 
 	reconcileContext *ReconcileContext
 
@@ -100,7 +100,7 @@ func Wrap(c client.Client) *Client {
 }
 
 func (c *Client) WithName(name string) *Client {
-	c.id = name
+	c.reconcilerID = name
 	return c
 }
 
@@ -176,7 +176,7 @@ func (c *Client) logOperation(obj client.Object, op OperationType) {
 	event := Operation(
 		obj,
 		c.reconcileContext.GetReconcileID(),
-		c.id,
+		c.reconcilerID,
 		c.reconcileContext.GetRootID(),
 		op,
 	)
@@ -189,21 +189,16 @@ func (c *Client) logObjectVersion(obj client.Object) {
 }
 
 func (c *Client) setRootContext(obj client.Object) {
-	labels := obj.GetLabels()
 	// set by the webhook
-	rootID, ok := labels[tag.TraceyWebhookLabel]
-	if !ok {
-		rootID, ok = labels[tag.TraceyRootID]
-		if !ok {
-			// no root context to set
-			c.logger.V(2).Error(nil, fmt.Sprintf("Root context not set on %s object", util.GetKind(obj)))
-			return
-		}
+	rootID, err := tag.GetRootID(obj)
+	if err != nil {
+		c.logger.V(2).Error(nil, fmt.Sprintf("Root context not set on %s object", util.GetKind(obj)))
+		return
 	}
 	currRootID := c.reconcileContext.GetRootID()
 	if currRootID != "" && currRootID != rootID {
 		c.logger.WithValues(
-			"ControllerID", c.id,
+			"ControllerID", c.reconcilerID,
 			"ReconcileID", c.reconcileContext.GetReconcileID(),
 			"RootID", c.reconcileContext.GetRootID(),
 			"NewRootID", rootID,
@@ -212,19 +207,19 @@ func (c *Client) setRootContext(obj client.Object) {
 	c.reconcileContext.SetRootID(rootID)
 }
 
-func (c *Client) propagateLabels(obj client.Object) {
-	currLabels := obj.GetLabels()
+func (c *Client) propagateLabels(target client.Object) {
+	currLabels := target.GetLabels()
 	out := make(map[string]string)
 	for k, v := range currLabels {
 		out[k] = v
 	}
-	out[tag.TraceyCreatorID] = c.id
+	out[tag.TraceyCreatorID] = c.reconcilerID
 	out[tag.TraceyRootID] = c.reconcileContext.GetRootID()
 
 	// update prev-write-reconcile-id to the current reconcileID
 	out[tag.TraceyReconcileID] = c.reconcileContext.GetReconcileID()
 
-	obj.SetLabels(out)
+	target.SetLabels(out)
 }
 
 func (c *Client) trackOperation(ctx context.Context, obj client.Object, op OperationType) {
