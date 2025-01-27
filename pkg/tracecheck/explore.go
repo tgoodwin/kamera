@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/util"
@@ -24,74 +25,50 @@ type Explorer struct {
 	dependencies resourceDeps
 
 	maxDepth int
+	mode     exploreMode
 }
 
-// Explore takes an initial state and explores the state space to find all execution paths
-// that end in a converged state.
-func (e *Explorer) ExploreDFS(ctx context.Context, initialState StateNode) []StateNode {
-	if e.maxDepth == 0 {
-		e.maxDepth = 12
+type exploreMode string
+
+const (
+	DFS exploreMode = "DFS"
+	BFS exploreMode = "BFS"
+)
+
+type ExploreResult struct {
+	ConvergedStates []StateNode
+	Duration        time.Duration
+}
+
+func getNext(stackQueue []StateNode, mode exploreMode) (StateNode, []StateNode) {
+	if mode == DFS {
+		// pop the last element from the stack
+		return stackQueue[len(stackQueue)-1], stackQueue[:len(stackQueue)-1]
+	} else if mode == BFS {
+		// pop the first element from the queue
+		return stackQueue[0], stackQueue[1:]
 	}
-
-	stack := []StateNode{initialState}
-
-	seenStates := make(map[string]bool)
-
-	convergedStates := make([]StateNode, 0)
-
-	for len(stack) > 0 {
-		currentState := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		stateKey := serializeState(currentState)
-		if seenStates[stateKey] {
-			fmt.Println("Skipping already seen state at depth", currentState.depth)
-			continue
-		}
-		seenStates[stateKey] = true
-
-		if len(currentState.PendingReconciles) == 0 {
-			// TODO evaluate some predicates upon the converged state and then classify the execution
-			fmt.Println("Found a converged state at depth", currentState.depth)
-			convergedStates = append(convergedStates, currentState)
-			return convergedStates
-			// time.Sleep(1 * time.Second)
-			// continue
-		}
-
-		// Each controller in the pending reconciles list is a potential branch point
-		// from the current state. We explore each pending reconcile in a depth-first manner.
-		for _, controller := range currentState.PendingReconciles {
-			newState := e.takeReconcileStep(ctx, currentState, controller)
-			newState.depth = currentState.depth + 1
-			if newState.depth > e.maxDepth {
-				fmt.Println("Reached max depth", e.maxDepth)
-				if newState.proceed {
-					fmt.Println("Proceeding to next depth anyways")
-					stack = append(stack, newState)
-				}
-			} else {
-				stack = append(stack, newState)
-			}
-		}
-	}
-
-	return convergedStates
+	panic("Invalid mode")
 }
 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) []StateNode {
+	if e.mode == "" {
+		e.mode = BFS
+	}
+	return e.explore(ctx, initialState, e.mode)
+}
+
+func (e *Explorer) explore(ctx context.Context, initialState StateNode, mode exploreMode) []StateNode {
 	if e.maxDepth == 0 {
 		e.maxDepth = 10
 	}
 
 	queue := []StateNode{initialState}
-
 	seenStates := make(map[string]bool)
-
 	convergedStates := make([]StateNode, 0)
 
 	for len(queue) > 0 {
-		currentState := queue[0]
-		queue = queue[1:]
+		currentState, queue := getNext(queue, mode)
 		stateKey := serializeState(currentState)
 		if seenStates[stateKey] {
 			fmt.Println("Skipping already seen state at depth", currentState.depth)
