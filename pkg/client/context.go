@@ -8,6 +8,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrl "sigs.k8s.io/controller-runtime/pkg/controller"
 )
 
 type ReconcileContext struct {
@@ -44,8 +45,19 @@ func (rc *ReconcileContext) GetRootID() string {
 type ContextTracker struct {
 	rc           *ReconcileContext
 	emitter      event.Emitter
-	getReconcile func(ctx context.Context) string
+	getFrameID   func(ctx context.Context) string
 	reconcilerID string
+}
+
+func NewProdTracker(reconcilerID string) *ContextTracker {
+	return &ContextTracker{
+		rc: &ReconcileContext{},
+		getFrameID: func(ctx context.Context) string {
+			return string(ctrl.ReconcileIDFromContext(ctx))
+		},
+		reconcilerID: reconcilerID,
+		emitter:      event.NewLogEmitter(log),
+	}
 }
 
 func (ct *ContextTracker) propagateLabels(target client.Object) {
@@ -63,19 +75,52 @@ func (ct *ContextTracker) propagateLabels(target client.Object) {
 	target.SetLabels(out)
 }
 
-func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object, op OperationType) {
-	if err := tag.SanityCheckLabels(obj); err != nil {
+type reconcileIDKey struct{}
+
+func (ct *ContextTracker) setReconcileID(ctx context.Context) {
+	var frameID string
+	frameID = ct.getFrameID(ctx)
+	if frameID == "" {
+		f, ok := ctx.Value(reconcileIDKey{}).(string)
+		if !ok {
+			panic("reconcileID not set in context")
+		}
+		frameID = f
+	}
+	currFrameID := ct.rc.GetReconcileID()
+	if currFrameID == "" {
+		// first time setting the frameID
+		ct.rc.SetReconcileID(frameID)
+	} else if currFrameID != frameID {
+		log.V(2).Info("frameID changed", "currFrameID", currFrameID, "newFrameID", frameID)
+		// frameID changed within the reconcile, so reset the rootID
+		ct.rc.SetRootID("")
+		ct.rc.SetReconcileID(frameID)
+	}
+}
+
+func (ct *ContextTracker) setRootContext(obj client.Object) {
+	rootID, err := tag.GetRootID(obj)
+	if err != nil {
 		panic(err)
 	}
-	rid := ct.getReconcile(ctx)
+	currRootID := ct.rc.GetRootID()
+	if currRootID != "" && currRootID != rootID {
+		log.V(0).Error(err, "rootID changed within the reconcile", "currRootID", currRootID, "newRootID", rootID)
+	}
+
+	ct.rc.SetRootID(rootID)
+}
+
+func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object, op OperationType) {
+	if err := tag.SanityCheckLabels(obj); err != nil {
+		log.V(0).Error(err, "sanity checking object labels")
+	}
+	rid := ct.getFrameID(ctx)
 	ct.rc.SetReconcileID(rid)
 
 	if op == GET || op == LIST {
-		rootID, err := tag.GetRootID(obj)
-		if err != nil {
-			panic(err)
-		}
-		ct.rc.SetRootID(rootID)
+		ct.setRootContext(obj)
 
 		// log the observed object version
 		r := snapshot.AsRecord(obj)

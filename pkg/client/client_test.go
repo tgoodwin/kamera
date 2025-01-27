@@ -14,27 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-func Test_createFixedLengthHash(t *testing.T) {
-	type args struct {
-	}
-	tests := []struct {
-		name string
-		args args
-		want string
-	}{
-		{
-			name: "Test createFixedLengthHash",
-			args: args{},
-			want: "f4e3d2c1b0a9",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := createFixedLengthHash(); got != tt.want {
-				t.Errorf("createFixedLengthHash() = %v, want %v", got, tt.want)
-			}
-		})
-	}
+func getFrameID(ctx context.Context) string {
+	return ctx.Value(reconcileIDKey{}).(string)
 }
 
 func Test_Get(t *testing.T) {
@@ -44,10 +25,14 @@ func Test_Get(t *testing.T) {
 	mockClient := mocks.NewMockClient(ctrl)
 	mockEmitter := mocks.NewMockEmitter(ctrl)
 	c := &Client{
-		Client:           mockClient,
-		emitter:          mockEmitter,
-		reconcileContext: &ReconcileContext{},
-		config:           NewConfig(),
+		Client:  mockClient,
+		emitter: mockEmitter,
+		config:  NewConfig(),
+		tracker: &ContextTracker{
+			rc:         &ReconcileContext{},
+			emitter:    mockEmitter,
+			getFrameID: getFrameID,
+		},
 	}
 	c.reconcilerID = "test-reconcilerID"
 
@@ -62,7 +47,6 @@ func Test_Get(t *testing.T) {
 	pod.SetLabels(origLabels)
 	key := types.NamespacedName{Namespace: "default", Name: "test-pod"}
 
-	// TODO clean this up. Do we need to call Get multiple times in our implementation?
 	mockClient.EXPECT().Get(ctx, key, pod).Return(nil).AnyTimes()
 	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
 	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(1)
@@ -70,8 +54,8 @@ func Test_Get(t *testing.T) {
 	err := c.Get(ctx, key, pod)
 	assert.NoError(t, err)
 
-	assert.Equal(t, c.reconcileContext.reconcileID, "test-reconcileID")
-	assert.Equal(t, c.reconcileContext.rootID, "test-uid")
+	assert.Equal(t, c.tracker.rc.reconcileID, "test-reconcileID")
+	assert.Equal(t, c.tracker.rc.rootID, "test-uid")
 }
 
 func Test_UpdateFail(t *testing.T) {
@@ -81,10 +65,14 @@ func Test_UpdateFail(t *testing.T) {
 	mockClient := mocks.NewMockClient(ctrl)
 	mockEmitter := mocks.NewMockEmitter(ctrl)
 	c := &Client{
-		Client:           mockClient,
-		emitter:          mockEmitter,
-		reconcileContext: &ReconcileContext{},
-		config:           NewConfig(),
+		Client:  mockClient,
+		emitter: mockEmitter,
+		config:  NewConfig(),
+		tracker: &ContextTracker{
+			rc:         &ReconcileContext{},
+			emitter:    mockEmitter,
+			getFrameID: getFrameID,
+		},
 	}
 
 	ctx := context.TODO()
@@ -108,17 +96,18 @@ func Test_CreateSuccess(t *testing.T) {
 	mockClient := mocks.NewMockClient(ctrl)
 	mockEmitter := mocks.NewMockEmitter(ctrl)
 	c := &Client{
-		Client:           mockClient,
-		emitter:          mockEmitter,
-		reconcileContext: &ReconcileContext{},
-		config:           NewConfig(),
+		Client:  mockClient,
+		emitter: mockEmitter,
+		config:  NewConfig(),
+		tracker: &ContextTracker{
+			rc: &ReconcileContext{
+				reconcileID: "reconcileID",
+				rootID:      "rootID",
+			},
+			emitter:    mockEmitter,
+			getFrameID: getFrameID,
+		},
 	}
-
-	rc := ReconcileContext{
-		reconcileID: "reconcileID",
-		rootID:      "rootID",
-	}
-	c.reconcileContext = &rc
 
 	ctx := context.WithValue(context.TODO(), reconcileIDKey{}, "reconcileID")
 	pod := &corev1.Pod{}
@@ -148,13 +137,20 @@ func Test_UpdateSuccess(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockClient := mocks.NewMockClient(ctrl)
-	c := newClient(mockClient)
-
-	rc := ReconcileContext{
-		reconcileID: "reconcileID",
-		rootID:      "rootID",
+	mockEmitter := mocks.NewMockEmitter(ctrl)
+	c := &Client{
+		Client:  mockClient,
+		emitter: mockEmitter,
+		config:  NewConfig(),
+		tracker: &ContextTracker{
+			rc: &ReconcileContext{
+				reconcileID: "reconcileID",
+				rootID:      "rootID",
+			},
+			emitter:    mockEmitter,
+			getFrameID: getFrameID,
+		},
 	}
-	c.reconcileContext = &rc
 
 	ctx := context.TODO()
 	pod := &corev1.Pod{}
@@ -162,6 +158,7 @@ func Test_UpdateSuccess(t *testing.T) {
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Update(ctx, pod).Return(nil)
+	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
 
 	err := c.Update(ctx, pod)
 	assert.NoError(t, err)
@@ -177,12 +174,23 @@ func Test_UpdateSuccess(t *testing.T) {
 		assert.True(t, exists, "label %s should be present", label)
 	}
 }
+
 func Test_PatchFail(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockClient := mocks.NewMockClient(ctrl)
-	c := newClient(mockClient)
+	mockEmitter := mocks.NewMockEmitter(ctrl)
+	c := &Client{
+		Client:  mockClient,
+		emitter: mockEmitter,
+		config:  NewConfig(),
+		tracker: &ContextTracker{
+			rc:         &ReconcileContext{},
+			emitter:    mockEmitter,
+			getFrameID: getFrameID,
+		},
+	}
 
 	ctx := context.TODO()
 	pod := &corev1.Pod{}
@@ -202,13 +210,20 @@ func Test_PatchSuccess(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockClient := mocks.NewMockClient(ctrl)
-	c := newClient(mockClient)
-
-	rc := ReconcileContext{
-		reconcileID: "reconcileID",
-		rootID:      "rootID",
+	mockEmitter := mocks.NewMockEmitter(ctrl)
+	c := &Client{
+		Client:  mockClient,
+		emitter: mockEmitter,
+		config:  NewConfig(),
+		tracker: &ContextTracker{
+			rc: &ReconcileContext{
+				reconcileID: "reconcileID",
+				rootID:      "rootID",
+			},
+			emitter:    mockEmitter,
+			getFrameID: getFrameID,
+		},
 	}
-	c.reconcileContext = &rc
 
 	ctx := context.TODO()
 	pod := &corev1.Pod{}
@@ -216,6 +231,7 @@ func Test_PatchSuccess(t *testing.T) {
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Patch(ctx, pod, gomock.Any()).Return(nil)
+	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
 
 	err := c.Patch(ctx, pod, nil)
 	assert.NoError(t, err)

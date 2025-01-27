@@ -30,10 +30,10 @@ func (s *SubResourceClient) logOperation(obj kclient.Object, action OperationTyp
 }
 
 func (s *SubResourceClient) Update(ctx context.Context, obj kclient.Object, opts ...kclient.SubResourceUpdateOption) error {
-	s.client.setReconcileID(ctx)
+	s.client.tracker.setReconcileID(ctx)
 	tag.LabelChange(obj)
 	s.logOperation(obj, UPDATE)
-	s.client.propagateLabels(obj)
+	s.client.tracker.propagateLabels(obj)
 	// fmt.Printf("extracted conditions: %v", conditions)
 	// persist the labels to the object before updating status
 
@@ -45,7 +45,7 @@ func (s *SubResourceClient) Update(ctx context.Context, obj kclient.Object, opts
 }
 
 func (s *SubResourceClient) Patch(ctx context.Context, obj kclient.Object, patch kclient.Patch, opts ...kclient.SubResourcePatchOption) error {
-	s.client.setReconcileID(ctx)
+	s.client.tracker.setReconcileID(ctx)
 	tag.LabelChange(obj)
 	s.logOperation(obj, PATCH)
 	// persist the labels to the object before updating status
@@ -54,10 +54,10 @@ func (s *SubResourceClient) Patch(ctx context.Context, obj kclient.Object, patch
 }
 
 func (s *SubResourceClient) Create(ctx context.Context, obj kclient.Object, sub kclient.Object, opts ...kclient.SubResourceCreateOption) error {
-	s.client.setReconcileID(ctx)
+	s.client.tracker.setReconcileID(ctx)
 	tag.LabelChange(obj)
 	s.logOperation(obj, CREATE)
-	s.client.propagateLabels(obj)
+	s.client.tracker.propagateLabels(obj)
 	s.client.Update(ctx, obj)
 
 	return s.writer.Create(ctx, obj, sub, opts...)

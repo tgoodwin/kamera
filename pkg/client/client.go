@@ -7,21 +7,16 @@ import (
 	"reflect"
 	"strings"
 
-	"crypto/sha256"
-	"encoding/hex"
 	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-
-	ctrl "sigs.k8s.io/controller-runtime/pkg/controller"
 )
 
 var log = logf.Log.WithName(tag.LoggerName)
@@ -46,25 +41,6 @@ var mutationTypes = map[OperationType]struct{}{
 	PATCH:  {},
 }
 
-func createFixedLengthHash() string {
-	// Get the current time
-	currentTime := time.Now()
-
-	// Convert the current time to a byte slice
-	timeBytes := []byte(currentTime.String())
-
-	// Hash the byte slice using SHA256
-	hash := sha256.Sum256(timeBytes)
-
-	// Convert the hash to a fixed length string
-	hashString := hex.EncodeToString(hash[:])
-
-	// Take the first 6 characters of the hash string
-	shortHash := hashString[:6]
-
-	return shortHash
-}
-
 type Client struct {
 	// this syntax is "embedding" the client.Client interface in the Client struct
 	// this means that the Client struct will have all the methods of the client.Client interface.
@@ -74,33 +50,35 @@ type Client struct {
 	// identifier for the reconciler (controller name)
 	reconcilerID string
 
-	reconcileContext *ReconcileContext
-
 	logger logr.Logger // legacy
 	// handles logging of events
 	emitter event.Emitter
 
 	config *Config
+
+	tracker *ContextTracker
 }
 
 var _ client.Client = (*Client)(nil)
 
-func newClient(wrapped client.Client) *Client {
+func newClient(wrapped client.Client, id string) *Client {
 	return &Client{
-		Client:           wrapped,
-		logger:           log,
-		emitter:          event.NewLogEmitter(log),
-		reconcileContext: &ReconcileContext{},
-		config:           NewConfig(),
+		reconcilerID: id,
+		Client:       wrapped,
+		logger:       log,
+		emitter:      event.NewLogEmitter(log),
+		config:       NewConfig(),
+		tracker:      NewProdTracker(id),
 	}
 }
 
-func Wrap(c client.Client) *Client {
-	return newClient(c)
+func Wrap(c client.Client, id string) *Client {
+	return newClient(c, id)
 }
 
 func (c *Client) WithName(name string) *Client {
 	c.reconcilerID = name
+	c.tracker.reconcilerID = name
 	return c
 }
 
@@ -127,32 +105,6 @@ func (c *Client) WithEnvConfig() *Client {
 	return c
 }
 
-type reconcileIDKey struct{}
-
-func (c *Client) setReconcileID(ctx context.Context) {
-	var rid string
-	rid = string(ctrl.ReconcileIDFromContext(ctx))
-	if rid == "" {
-		r, ok := ctx.Value(reconcileIDKey{}).(string)
-		if !ok {
-			// this should never happen given our assumptions
-			panic("reconcileID not set in context")
-		}
-		rid = r
-	}
-
-	currReconcileID := c.reconcileContext.GetReconcileID()
-	if currReconcileID == "" {
-		// first time setting reconcileID
-		c.reconcileContext.SetReconcileID(string(rid))
-	} else if rid != currReconcileID {
-		c.logger.V(2).Info("reconcileID changed", "old", currReconcileID, "new", rid)
-		// unset rootID if reconcileID changes
-		c.reconcileContext.SetRootID("")
-		c.reconcileContext.SetReconcileID(string(rid))
-	}
-}
-
 func Operation(obj client.Object, reconcileID, controllerID, rootEventID string, op OperationType) *event.Event {
 	e := &event.Event{
 		Timestamp:    event.FormatTimeStr(time.Now()),
@@ -175,97 +127,19 @@ func Operation(obj client.Object, reconcileID, controllerID, rootEventID string,
 func (c *Client) logOperation(obj client.Object, op OperationType) {
 	event := Operation(
 		obj,
-		c.reconcileContext.GetReconcileID(),
+		c.tracker.rc.GetReconcileID(),
 		c.reconcilerID,
-		c.reconcileContext.GetRootID(),
+		c.tracker.rc.GetRootID(),
 		op,
 	)
 	c.emitter.LogOperation(event)
-}
-
-func (c *Client) logObjectVersion(obj client.Object) {
-	r := snapshot.AsRecord(obj)
-	c.emitter.LogObjectVersion(r)
-}
-
-func (c *Client) setRootContext(obj client.Object) {
-	// set by the webhook
-	rootID, err := tag.GetRootID(obj)
-	if err != nil {
-		c.logger.V(2).Error(nil, fmt.Sprintf("Root context not set on %s object", util.GetKind(obj)))
-		return
-	}
-	currRootID := c.reconcileContext.GetRootID()
-	if currRootID != "" && currRootID != rootID {
-		c.logger.WithValues(
-			"ControllerID", c.reconcilerID,
-			"ReconcileID", c.reconcileContext.GetReconcileID(),
-			"RootID", c.reconcileContext.GetRootID(),
-			"NewRootID", rootID,
-		).V(2).Error(nil, "Root context changed during reconcile")
-	}
-	c.reconcileContext.SetRootID(rootID)
-}
-
-func (c *Client) propagateLabels(target client.Object) {
-	currLabels := target.GetLabels()
-	out := make(map[string]string)
-	for k, v := range currLabels {
-		out[k] = v
-	}
-	out[tag.TraceyCreatorID] = c.reconcilerID
-	out[tag.TraceyRootID] = c.reconcileContext.GetRootID()
-
-	// update prev-write-reconcile-id to the current reconcileID
-	out[tag.TraceyReconcileID] = c.reconcileContext.GetReconcileID()
-
-	target.SetLabels(out)
-}
-
-func (c *Client) trackOperation(ctx context.Context, obj client.Object, op OperationType) {
-	// crash if any of our labeling assumptions are violated
-	if err := tag.SanityCheckLabels(obj); err != nil {
-		panic(err)
-	}
-
-	c.setReconcileID(ctx)
-
-	// for read operations, set the root context for this reconcile invocation
-	if op == GET || op == LIST {
-		c.setRootContext(obj)
-
-		// only log versions as they are observed during read operations
-		// otherwise the logged version might miss some defaulted values
-		// that downstream APIs may depend on
-		if c.config.LogObjectSnapshots {
-			c.logObjectVersion(obj)
-		}
-	}
-	// assign a label to each event that changes the object
-	if _, ok := mutationTypes[op]; ok {
-		tag.LabelChange(obj)
-	}
-
-	// assign a sleeve object ID to the object if it is being created
-	if op == CREATE {
-		tag.AddSleeveObjectID(obj)
-	}
-
-	c.logOperation(obj, op)
-	// propagate labels after logging so we capture the label values prior to the operation
-	// e.g. we want to log out "prev-write-reconcile-id" before we overwrite it
-	// with the current reconcileID when we are propagating labels
-	// however, only do this for mutation operations
-	if _, isMutation := mutationTypes[op]; isMutation {
-		c.propagateLabels(obj)
-	}
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	currLabels := obj.GetLabels()
 	tag.AddSleeveObjectID(obj)
 	tag.LabelChange(obj)
-	c.propagateLabels(obj)
+	c.tracker.propagateLabels(obj)
 
 	// TODO log object version here??
 
@@ -326,7 +200,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return apierrors.NewNotFound(schema.GroupResource{}, key.Name)
 	}
 	err := c.Client.Get(ctx, key, obj, opts...)
-	c.trackOperation(ctx, obj, GET)
+	c.tracker.TrackOperation(ctx, obj, GET)
 	return err
 }
 
@@ -377,7 +251,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		item := itemsValue.Index(i).Addr().Interface().(client.Object)
 		// instead of treating the LIST operation as a singular observation event,
 		// we treat each item in the list as a separate event
-		c.trackOperation(ctx, item, LIST)
+		c.tracker.TrackOperation(ctx, item, LIST)
 		out = reflect.Append(out, itemsValue.Index(i))
 	}
 
@@ -398,7 +272,7 @@ func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.U
 	tag.LabelChange(obj)
 	// make a copy of the object before we propagate labels
 	objPrePropagation := obj.DeepCopyObject().(client.Object)
-	c.propagateLabels(obj)
+	c.tracker.propagateLabels(obj)
 
 	// TODO log object version here??
 
@@ -419,7 +293,7 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 	currLabels := obj.GetLabels()
 	tag.LabelChange(obj)
 	objPrePropagation := obj.DeepCopyObject().(client.Object)
-	c.propagateLabels(obj)
+	c.tracker.propagateLabels(obj)
 
 	if err := c.Client.Patch(ctx, obj, patch, opts...); err != nil {
 		c.logger.Error(err, "operation failed, not tracking it")
