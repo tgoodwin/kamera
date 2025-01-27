@@ -105,15 +105,17 @@ func (tc *TraceChecker) AddReconciler(reconcilerID string, constructor Reconcile
 	tc.reconcilers[reconcilerID] = constructor
 }
 
-func (tc *TraceChecker) client(reconcilerID string) *replay.Client {
-	return replay.NewClient(reconcilerID, tc.scheme, nil, tc.manager)
-}
-
 func (tc *TraceChecker) instantiateReconcilers() map[string]reconciler {
 	out := make(map[string]reconciler)
 	harnesses := make(map[string]*replay.Harness)
 	for reconcilerID, constructor := range tc.reconcilers {
-		client := tc.client(reconcilerID)
+		frameManager := replay.NewFrameManager()
+		client := replay.NewClient(
+			reconcilerID,
+			tc.scheme,
+			frameManager.Frames,
+			tc.manager,
+		)
 		r := constructor(client)
 		rImpl := reconcileImpl{
 			Name:           reconcilerID,
@@ -121,6 +123,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]reconciler {
 			client:         client,
 			versionManager: tc.manager,
 			effectReader:   tc.manager,
+			frameInserter:  frameManager,
 		}
 		out[reconcilerID] = &rImpl
 

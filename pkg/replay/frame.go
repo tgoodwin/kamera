@@ -65,3 +65,22 @@ func (c FrameData) Dump() {
 		}
 	}
 }
+
+type frameContainer map[string]FrameData
+
+type FrameManager struct {
+	Frames frameContainer
+}
+
+func NewFrameManager() *FrameManager {
+	return &FrameManager{
+		Frames: make(frameContainer),
+	}
+}
+
+func (fm *FrameManager) InsertFrame(id string, data FrameData) {
+	if _, ok := fm.Frames[id]; ok {
+		panic(fmt.Sprintf("frame %s already exists", id))
+	}
+	fm.Frames[id] = data
+}

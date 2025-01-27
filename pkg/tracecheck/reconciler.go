@@ -10,6 +10,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -21,16 +22,21 @@ type effectReader interface {
 	retrieveEffects(frameID string) (ObjectVersions, error)
 }
 
+type frameInserter interface {
+	InsertFrame(id string, data replay.FrameData)
+}
+
 type reconcileImpl struct {
 	// The name of the reconciler
 	Name string
 	reconcile.Reconciler
 
-	client *replay.Client
+	client client.Client
 
 	// both implemented by teh manager type
 	versionManager VersionManager
 	effectReader
+	frameInserter
 }
 
 func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersions) (*ReconcileResult, error) {
@@ -43,7 +49,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	ctx = log.IntoContext(ctx, logger)
 
 	req, err := r.inferReconcileRequest(currState)
-	r.client.InsertFrame(frameID, r.toFrameData(currState))
+	r.InsertFrame(frameID, r.toFrameData(currState))
 	if err != nil {
 		return nil, errors.Wrap(err, "inferring reconcile request")
 	}
