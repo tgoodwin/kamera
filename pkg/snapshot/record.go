@@ -79,13 +79,12 @@ func Serialize(obj interface{}) string {
 	return string(asJSON)
 }
 
-func RecordValue(obj client.Object) string {
+func AsRecord(obj client.Object) Record {
 	r := Record{
 		ObjectID: string(obj.GetUID()),
 		Kind:     util.GetKind(obj),
 		Version:  obj.GetResourceVersion(),
 		Value:    Serialize(obj),
 	}
-	asJSON, _ := json.Marshal(r)
-	return string(asJSON)
+	return r
 }

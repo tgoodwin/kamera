@@ -8,6 +8,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -48,6 +49,80 @@ func (b *Builder) Store() Store {
 
 func (b *Builder) Events() []event.Event {
 	return b.events
+}
+func (b *Builder) Debug() {
+	fmt.Println("--- store contents ---")
+	b.DumpKeys()
+	fmt.Println("--- end store contents ---")
+	fmt.Println("--- events ---")
+	seenKeys := make(util.Set[event.CausalKey])
+	eventsMissingRecords := make(util.Set[event.CausalKey])
+	for _, e := range b.events {
+		seenKeys.Add(e.CausalKey())
+		if _, ok := b.Store()[e.CausalKey()]; !ok {
+			eventsMissingRecords.Add(e.CausalKey())
+		}
+	}
+	for key := range seenKeys {
+		fmt.Println(key)
+	}
+	fmt.Println("--- end events ---")
+	fmt.Println("--- events missing records ---")
+	for key := range eventsMissingRecords {
+		fmt.Println(key)
+	}
+	fmt.Println("--- end events missing records ---")
+}
+
+func (b *Builder) AnalyzeReconcile(reconcileID string) {
+	reconcileEvents := lo.Filter(b.events, func(e event.Event, _ int) bool {
+		return strings.HasPrefix(e.ReconcileID, reconcileID)
+	})
+	sort.Slice(reconcileEvents, func(i, j int) bool {
+		return reconcileEvents[i].Timestamp < reconcileEvents[j].Timestamp
+	})
+	reads, writes := event.FilterReadsWrites(reconcileEvents)
+	fmt.Println("ReconcileID:", reconcileID)
+	fmt.Println("Reads:")
+	for _, e := range reads {
+		fmt.Println(e)
+	}
+	fmt.Println("Writes:")
+	for _, e := range writes {
+		fmt.Println(e)
+	}
+}
+
+func (b *Builder) AnalyzeObject(objectID string) {
+	objectEvents := lo.Filter(b.events, func(e event.Event, _ int) bool {
+		return strings.HasPrefix(e.ObjectID, objectID)
+	})
+	sort.Slice(objectEvents, func(i, j int) bool {
+		return objectEvents[i].Timestamp < objectEvents[j].Timestamp
+	})
+	var previousVersion *unstructured.Unstructured
+	var prevKey event.CausalKey
+	for _, e := range objectEvents {
+		ckey := e.CausalKey()
+		if event.IsWriteOp(e) {
+			currentVersion, ok := b.Store()[ckey]
+			if !ok {
+				// fmt.Printf("WARNING: object not found in store: %#v\n", ckey)
+				continue
+			}
+			if previousVersion != nil {
+				delta, err := snapshot.DiffObjects(previousVersion, currentVersion)
+				if err != nil {
+					fmt.Println("Error diffing objects:", err)
+				}
+				fmt.Printf("ReconcileID: %s\n \tPrevKey: %s\n\tCurrKey: %s\n", e.ReconcileID, prevKey.Short(), ckey.Short())
+				fmt.Println(delta)
+			}
+			previousVersion = currentVersion
+			prevKey = ckey
+		}
+		// fmt.Println(e)
+	}
 }
 
 func (b *Builder) fromTrace(traceData []byte) error {
@@ -199,36 +274,3 @@ func getRootIDFromEvents(readset []event.Event) string {
 	}
 	return rootID
 }
-
-// func (f *replayStore) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-// 	f.mu.RLock()
-// 	defer f.mu.RUnlock()
-
-// 	// Construct the key as "namespace/name"
-// 	cacheKey := fmt.Sprintf("%s/%s", key.Namespace, key.Name)
-// 	if cachedObj, exists := f.store[cacheKey]; exists {
-// 		// Use DeepCopyObject to create a deep copy
-// 		deepCopiedObj, ok := cachedObj.DeepCopyObject().(client.Object)
-// 		if !ok {
-// 			return fmt.Errorf("failed to cast deep copied object to client.Object")
-// 		}
-
-// 		// Use json.Marshal and json.Unmarshal to populate the obj parameter
-// 		data, err := json.Marshal(deepCopiedObj)
-// 		if err != nil {
-// 			return fmt.Errorf("failed to marshal cached object: %v", err)
-// 		}
-
-// 		if err := json.Unmarshal(data, obj); err != nil {
-// 			return fmt.Errorf("failed to unmarshal into provided object: %v", err)
-// 		}
-
-// 		return nil
-// 	}
-// 	gvk := obj.GetObjectKind().GroupVersionKind()
-// 	gr := schema.GroupResource{
-// 		Group:    gvk.Group,
-// 		Resource: gvk.Kind, // Assuming Kind is used as Resource here
-// 	}
-// 	return apierrors.NewNotFound(gr, key.Name)
-// }

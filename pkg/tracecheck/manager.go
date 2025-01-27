@@ -24,6 +24,7 @@ type VersionManager interface {
 }
 
 type effect struct {
+	Op        sleeveclient.OperationType
 	ObjectKey snapshot.IdentityKey
 	version   snapshot.VersionHash
 }
@@ -33,8 +34,9 @@ type reconcileEffects struct {
 	writes []effect
 }
 
-func newEffect(kind, uid string, version snapshot.VersionHash) effect {
+func newEffect(kind, uid string, version snapshot.VersionHash, op sleeveclient.OperationType) effect {
 	return effect{
+		Op: op,
 		ObjectKey: snapshot.IdentityKey{
 			Kind:     kind,
 			ObjectID: uid,
@@ -109,7 +111,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType sl
 		}
 	}
 
-	eff := newEffect(kind, objectID, versionHash)
+	eff := newEffect(kind, objectID, versionHash, opType)
 	if opType == sleeveclient.GET || opType == sleeveclient.LIST {
 		reffects.reads = append(reffects.reads, eff)
 	} else {

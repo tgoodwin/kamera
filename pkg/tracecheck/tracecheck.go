@@ -13,6 +13,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+var MaxDepth int
+
 type Client client.Client
 type Reconciler reconcile.Reconciler
 
@@ -54,7 +56,6 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		ikey := snapshot.IdentityKey{Kind: ckey.Kind, ObjectID: ckey.ObjectID}
 		lc.InsertSynthesizedVersion(ikey, vHash, e.ReconcileID)
 
-		// fmt.Println("VersionValue: ", versionValue)
 		nsName := types.NamespacedName{Namespace: versionValue.GetNamespace(), Name: versionValue.GetName()}
 
 		// this is logically representing a "join" between the sleeve event model
@@ -151,10 +152,11 @@ func (tc *TraceChecker) PrintState(s StateNode) {
 	fmt.Println("Pending Reconciles: ", s.PendingReconciles)
 }
 
-func (tc *TraceChecker) NewExplorer() *Explorer {
+func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 	return &Explorer{
 		reconcilers:  tc.instantiateReconcilers(),
 		dependencies: tc.resourceDeps,
+		maxDepth:     maxDepth,
 	}
 }
 
@@ -162,11 +164,15 @@ func (tc *TraceChecker) showDeltas(prevState, currState *StateNode) {
 	changes := currState.action.Changes
 	for k, v := range changes {
 		if prevVersion, ok := prevState.ObjectVersions[k]; ok {
+			fmt.Printf("Delta for object %s-%s:\n", k.Kind, util.Shorter(k.ObjectID))
 			delta := tc.manager.Diff(&prevVersion, &v)
+			if currState.action.ControllerID == "Deployment" && k.Kind == "Deployment" {
+				panic("ahhh")
+			}
 			fmt.Println(delta)
 		} else {
 			// creation event
-			fmt.Println("New Object")
+			fmt.Println("New Object:")
 			fmt.Println(tc.manager.Diff(nil, &v))
 		}
 	}
@@ -176,9 +182,30 @@ func (tc *TraceChecker) SummarizeFromRoot(sn *StateNode) {
 	if sn.parent != nil {
 		tc.SummarizeFromRoot(sn.parent)
 		sn.Summarize()
+		fmt.Println("Deltas:")
 		tc.showDeltas(sn.parent, sn)
+		// effects := tc.manager.effects[sn.action.FrameID]
+		// for _, eff := range effects.reads {
+		// 	fmt.Println("Read: ", eff)
+		// }
+		// for _, eff := range effects.writes {
+		// 	fmt.Println("Write: ", eff)
+		// }
 	} else {
 		fmt.Println("Root StateNode")
 		sn.Summarize()
 	}
+}
+
+func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
+	ov := sn.ObjectVersions
+	for k, v := range ov {
+		// get the full object value
+		fullObj := tc.manager.Resolve(v)
+		if passed := p(fullObj); passed {
+			fmt.Println("Predicate satisfied for object: ", k)
+			return true
+		}
+	}
+	return false
 }

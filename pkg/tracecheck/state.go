@@ -25,6 +25,8 @@ type StateNode struct {
 	action *ReconcileResult // the action that led to this state
 
 	depth int
+	// TODO remove
+	proceed bool
 }
 
 func (sn StateNode) IsConverged() bool {
@@ -43,7 +45,7 @@ func (sn StateNode) Summarize() {
 		fmt.Println("ControllerID: ", sn.action.ControllerID)
 		fmt.Println("FrameID: ", sn.action.FrameID)
 		fmt.Println("Num Changes: ", len(sn.action.Changes))
-		fmt.Println("Pending Reconciles: ", sn.PendingReconciles)
+		fmt.Println("Resulting Pending Reconciles: ", sn.PendingReconciles)
 	}
 }
 
