@@ -10,7 +10,6 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -30,8 +29,6 @@ type reconcileImpl struct {
 	// The name of the reconciler
 	Name string
 	reconcile.Reconciler
-
-	client client.Client
 
 	// both implemented by teh manager type
 	versionManager VersionManager
@@ -54,6 +51,9 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 		return nil, errors.Wrap(err, "inferring reconcile request")
 	}
 	// TODO handle explicit requeue requests
+	if frameid := replay.FrameIDFromContext(ctx); frameid != frameID {
+		panic("frameID mismatch")
+	}
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}

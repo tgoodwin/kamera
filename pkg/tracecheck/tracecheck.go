@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"fmt"
 
+	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -28,6 +29,8 @@ type TraceChecker struct {
 
 	// TODO move this elsewhere
 	builder *replay.Builder
+
+	emitter event.Emitter
 }
 
 func FromBuilder(b *replay.Builder) *TraceChecker {
@@ -105,22 +108,40 @@ func (tc *TraceChecker) AddReconciler(reconcilerID string, constructor Reconcile
 	tc.reconcilers[reconcilerID] = constructor
 }
 
+func (tc *TraceChecker) AddEmitter(emitter event.Emitter) {
+	tc.emitter = emitter
+}
+
 func (tc *TraceChecker) instantiateReconcilers() map[string]reconciler {
+	if tc.emitter == nil {
+		panic("Must set emitter on TraceChecker before instantiating reconcilers")
+	}
 	out := make(map[string]reconciler)
 	harnesses := make(map[string]*replay.Harness)
 	for reconcilerID, constructor := range tc.reconcilers {
 		frameManager := replay.NewFrameManager()
-		client := replay.NewClient(
+		replayClient := replay.NewClient(
 			reconcilerID,
 			tc.scheme,
 			frameManager.Frames,
 			tc.manager,
 		)
-		r := constructor(client)
+		wrappedClient := sleeveclient.New(
+			replayClient,
+			reconcilerID,
+			tc.emitter,
+			sleeveclient.NewContextTracker(
+				reconcilerID,
+				tc.emitter,
+				replay.FrameIDFromContext,
+			),
+		)
+		r := constructor(wrappedClient)
+
+		// TODO configure file emitter here
 		rImpl := reconcileImpl{
 			Name:           reconcilerID,
 			Reconciler:     r,
-			client:         client,
 			versionManager: tc.manager,
 			effectReader:   tc.manager,
 			frameInserter:  frameManager,
