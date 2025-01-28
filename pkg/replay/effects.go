@@ -10,7 +10,7 @@ import (
 )
 
 type EffectRecorder interface {
-	RecordEffect(ctx context.Context, obj client.Object, opType sleeveclient.OperationType) error
+	RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType) error
 }
 
 type DataEffect struct {
@@ -44,7 +44,7 @@ type Recorder struct {
 
 var _ EffectRecorder = (*Recorder)(nil)
 
-func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType sleeveclient.OperationType) error {
+func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType) error {
 	reconcileID := FrameIDFromContext(ctx)
 	e := sleeveclient.Operation(obj, reconcileID, r.reconcilerID, "<REPLAY>", opType)
 	r.effectContainer.AddEffect(reconcileID, e)

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
@@ -24,7 +24,7 @@ type VersionManager interface {
 }
 
 type effect struct {
-	Op        sleeveclient.OperationType
+	Op        event.OperationType
 	ObjectKey snapshot.IdentityKey
 	version   snapshot.VersionHash
 }
@@ -34,7 +34,7 @@ type reconcileEffects struct {
 	writes []effect
 }
 
-func newEffect(kind, uid string, version snapshot.VersionHash, op sleeveclient.OperationType) effect {
+func newEffect(kind, uid string, version snapshot.VersionHash, op event.OperationType) effect {
 	return effect{
 		Op: op,
 		ObjectKey: snapshot.IdentityKey{
@@ -75,7 +75,7 @@ var _ replay.EffectRecorder = (*manager)(nil)
 
 var DefaultHasher = snapshot.JSONHasher{}
 
-func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType sleeveclient.OperationType) error {
+func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -112,7 +112,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType sl
 	}
 
 	eff := newEffect(kind, objectID, versionHash, opType)
-	if opType == sleeveclient.GET || opType == sleeveclient.LIST {
+	if opType == event.GET || opType == event.LIST {
 		reffects.reads = append(reffects.reads, eff)
 	} else {
 		reffects.writes = append(reffects.writes, eff)

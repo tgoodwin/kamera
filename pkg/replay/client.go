@@ -7,8 +7,9 @@ import (
 	"reflect"
 
 	"github.com/go-logr/logr"
-	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -24,25 +25,25 @@ type Client struct {
 
 	// TODO address this
 	*dummyClient
-	framesByID map[string]FrameData
+
+	framesByID frameContainer
 
 	recorder EffectRecorder
+	// emitter  event.Emitter
 
 	scheme *runtime.Scheme
 }
 
 var _ client.Client = (*Client)(nil)
 
-func NewClient(reconcilerID string, scheme *runtime.Scheme, frameData map[string]FrameData, recorder EffectRecorder) *Client {
-	if frameData == nil {
-		frameData = make(map[string]FrameData)
-	}
+func NewClient(reconcilerID string, scheme *runtime.Scheme, frameData frameContainer, recorder EffectRecorder) *Client {
 	return &Client{
 		reconcilerID: reconcilerID,
 		scheme:       scheme,
 		dummyClient:  &dummyClient{},
 		framesByID:   frameData,
 		recorder:     recorder,
+		// emitter:      event.NewLogEmitter(logger),
 	}
 }
 
@@ -54,12 +55,6 @@ func (c *Client) InsertFrame(id string, data FrameData) {
 }
 
 var _ client.Client = (*Client)(nil)
-
-func inferKind(obj client.Object) string {
-	// assumption: the object is a pointer to a struct
-	t := reflect.TypeOf(obj).Elem()
-	return t.Name()
-}
 
 func inferListKind(list client.ObjectList) string {
 	itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
@@ -83,11 +78,11 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	// }
 
 	frameID := FrameIDFromContext(ctx)
-	kind := inferKind(obj)
+	kind := util.GetKind(obj)
 	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
 	if frame, ok := c.framesByID[frameID]; ok {
 		if frozenObj, ok := frame[kind][key]; ok {
-			if err := c.recorder.RecordEffect(ctx, frozenObj, sleeveclient.GET); err != nil {
+			if err := c.recorder.RecordEffect(ctx, frozenObj, event.GET); err != nil {
 				return err
 			}
 
@@ -105,6 +100,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	} else {
 		return fmt.Errorf("frame %s not found", frameID)
 	}
+	c.logOperation(ctx, obj, event.GET)
 	return nil
 }
 
@@ -125,9 +121,10 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 			newSlice := reflect.MakeSlice(reflect.SliceOf(itemType), 0, len(objsForKind))
 
 			for _, obj := range objsForKind {
-				if err := c.recorder.RecordEffect(ctx, obj, sleeveclient.LIST); err != nil {
+				if err := c.recorder.RecordEffect(ctx, obj, event.LIST); err != nil {
 					return err
 				}
+				c.logOperation(ctx, obj, event.LIST)
 
 				// create a new object of the correct type
 				newObj := reflect.New(itemType).Interface().(client.Object)
@@ -163,27 +160,27 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 	// TODO propagate labels
 
 	// logger.V(0).Info("client:creating object", "object", obj)
-	return c.recorder.RecordEffect(ctx, obj, sleeveclient.CREATE)
+	return c.recorder.RecordEffect(ctx, obj, event.CREATE)
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
 	tag.AddDeletionID(obj)
-	return c.recorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
+	return c.recorder.RecordEffect(ctx, obj, event.DELETE)
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	tag.LabelChange(obj)
-	return c.recorder.RecordEffect(ctx, obj, sleeveclient.UPDATE)
+	return c.recorder.RecordEffect(ctx, obj, event.UPDATE)
 }
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
 	tag.AddDeletionID(obj)
-	return c.recorder.RecordEffect(ctx, obj, sleeveclient.DELETE)
+	return c.recorder.RecordEffect(ctx, obj, event.DELETE)
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 	tag.LabelChange(obj)
-	return c.recorder.RecordEffect(ctx, obj, sleeveclient.PATCH)
+	return c.recorder.RecordEffect(ctx, obj, event.PATCH)
 }
 
 func (c *Client) Status() client.SubResourceWriter {
@@ -198,16 +195,28 @@ var _ client.SubResourceWriter = (*subResourceClient)(nil)
 
 func (c *subResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
 	tag.LabelChange(obj)
-	return c.wrapped.recorder.RecordEffect(ctx, obj, sleeveclient.UPDATE)
+	return c.wrapped.recorder.RecordEffect(ctx, obj, event.UPDATE)
 }
 
 func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 	tag.LabelChange(obj)
-	return c.wrapped.recorder.RecordEffect(ctx, obj, sleeveclient.PATCH)
+	return c.wrapped.recorder.RecordEffect(ctx, obj, event.PATCH)
 }
 
 func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
 	tag.LabelChange(obj)
 	tag.AddSleeveObjectID(sub)
-	return c.wrapped.recorder.RecordEffect(ctx, obj, sleeveclient.CREATE)
+	return c.wrapped.recorder.RecordEffect(ctx, obj, event.CREATE)
+}
+
+func (c *Client) logOperation(ctx context.Context, obj client.Object, op event.OperationType) {
+	// frameID := FrameIDFromContext(ctx)
+	// event := event.Operation(
+	// 	obj,
+	// 	frameID,
+	// 	c.reconcilerID,
+	// 	"rootID",
+	// 	operation,
+	// )
+	// c.emitter.LogOperation(event)
 }

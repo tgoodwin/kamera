@@ -21,25 +21,25 @@ import (
 
 var log = logf.Log.WithName(tag.LoggerName)
 
-// enum for controller operation types
-type OperationType string
+// // enum for controller operation types
+// type OperationType string
 
-const (
-	INIT   OperationType = "INIT"
-	GET    OperationType = "GET"
-	LIST   OperationType = "LIST"
-	CREATE OperationType = "CREATE"
-	UPDATE OperationType = "UPDATE"
-	DELETE OperationType = "DELETE"
-	PATCH  OperationType = "PATCH"
-)
+// const (
+// 	INIT   OperationType = "INIT"
+// 	GET    OperationType = "GET"
+// 	LIST   OperationType = "LIST"
+// 	CREATE OperationType = "CREATE"
+// 	UPDATE OperationType = "UPDATE"
+// 	DELETE OperationType = "DELETE"
+// 	PATCH  OperationType = "PATCH"
+// )
 
-var mutationTypes = map[OperationType]struct{}{
-	CREATE: {},
-	UPDATE: {},
-	DELETE: {},
-	PATCH:  {},
-}
+// var mutationTypes = map[OperationType]struct{}{
+// 	CREATE: {},
+// 	UPDATE: {},
+// 	DELETE: {},
+// 	PATCH:  {},
+// }
 
 type Client struct {
 	// this syntax is "embedding" the client.Client interface in the Client struct
@@ -60,6 +60,17 @@ type Client struct {
 }
 
 var _ client.Client = (*Client)(nil)
+
+func New(wrapped client.Client, reconcilerID string, emitter event.Emitter, tracker *ContextTracker) *Client {
+	return &Client{
+		reconcilerID: reconcilerID,
+		Client:       wrapped,
+		logger:       log,
+		emitter:      emitter,
+		config:       NewConfig(),
+		tracker:      NewProdTracker(reconcilerID),
+	}
+}
 
 func newClient(wrapped client.Client, id string) *Client {
 	return &Client{
@@ -105,7 +116,7 @@ func (c *Client) WithEnvConfig() *Client {
 	return c
 }
 
-func Operation(obj client.Object, reconcileID, controllerID, rootEventID string, op OperationType) *event.Event {
+func Operation(obj client.Object, reconcileID, controllerID, rootEventID string, op event.OperationType) *event.Event {
 	e := &event.Event{
 		Timestamp:    event.FormatTimeStr(time.Now()),
 		ReconcileID:  reconcileID,
@@ -124,7 +135,7 @@ func Operation(obj client.Object, reconcileID, controllerID, rootEventID string,
 	return e
 }
 
-func (c *Client) logOperation(obj client.Object, op OperationType) {
+func (c *Client) logOperation(obj client.Object, op event.OperationType) {
 	event := Operation(
 		obj,
 		c.tracker.rc.GetReconcileID(),
@@ -151,7 +162,7 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 
 	// this is the *first* time the object is being updated (definition of create)
 	// so we don't need to worry about logging before propagating labels here
-	c.logOperation(obj, CREATE)
+	c.logOperation(obj, event.CREATE)
 	return nil
 }
 
@@ -165,7 +176,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 		return err
 	}
 	// c.logObjectVersion(obj)
-	c.logOperation(obj, DELETE)
+	c.logOperation(obj, event.DELETE)
 	// c.trackOperation(ctx, obj, DELETE)
 	return nil
 }
@@ -180,7 +191,7 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 		return err
 	}
 	// c.logObjectVersion(obj)
-	c.logOperation(obj, DELETE)
+	c.logOperation(obj, event.DELETE)
 	// c.trackOperation(ctx, obj, DELETE)
 	return nil
 }
@@ -200,7 +211,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return apierrors.NewNotFound(schema.GroupResource{}, key.Name)
 	}
 	err := c.Client.Get(ctx, key, obj, opts...)
-	c.tracker.TrackOperation(ctx, obj, GET)
+	c.tracker.TrackOperation(ctx, obj, event.GET)
 	return err
 }
 
@@ -251,7 +262,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		item := itemsValue.Index(i).Addr().Interface().(client.Object)
 		// instead of treating the LIST operation as a singular observation event,
 		// we treat each item in the list as a separate event
-		c.tracker.TrackOperation(ctx, item, LIST)
+		c.tracker.TrackOperation(ctx, item, event.LIST)
 		out = reflect.Append(out, itemsValue.Index(i))
 	}
 
@@ -284,7 +295,7 @@ func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.U
 	}
 
 	// happy path! the update went through successfully - let's record that!
-	c.logOperation(objPrePropagation, UPDATE)
+	c.logOperation(objPrePropagation, event.UPDATE)
 
 	return nil
 }
@@ -300,6 +311,6 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 		obj.SetLabels(currLabels)
 		return err
 	}
-	c.logOperation(objPrePropagation, PATCH)
+	c.logOperation(objPrePropagation, event.PATCH)
 	return nil
 }

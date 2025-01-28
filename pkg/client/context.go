@@ -112,14 +112,14 @@ func (ct *ContextTracker) setRootContext(obj client.Object) {
 	ct.rc.SetRootID(rootID)
 }
 
-func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object, op OperationType) {
+func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object, op event.OperationType) {
 	if err := tag.SanityCheckLabels(obj); err != nil {
 		log.V(0).Error(err, "sanity checking object labels")
 	}
 	rid := ct.getFrameID(ctx)
 	ct.rc.SetReconcileID(rid)
 
-	if op == GET || op == LIST {
+	if op == event.GET || op == event.LIST {
 		ct.setRootContext(obj)
 
 		// log the observed object version
@@ -128,16 +128,16 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 	}
 
 	// assign a change label to the object
-	if _, ok := mutationTypes[op]; ok {
+	if _, ok := event.MutationTypes[op]; ok {
 		tag.LabelChange(obj)
 	}
 
 	// assign a sleeve objectID to the object if it is being created
-	if op == CREATE {
+	if op == event.CREATE {
 		tag.AddSleeveObjectID(obj)
 	}
 
-	if op == DELETE {
+	if op == event.DELETE {
 		tag.AddDeletionID(obj)
 	}
 
@@ -147,7 +147,7 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 	// with the current reconcileID when we are propagating labels
 	// however, only do this for mutation operations
 
-	if _, ok := mutationTypes[op]; ok {
+	if _, ok := event.MutationTypes[op]; ok {
 		ct.propagateLabels(obj)
 	}
 }

@@ -8,19 +8,18 @@ import (
 
 	"github.com/goccy/go-graphviz"
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/util"
 )
 
-var readOps map[client.OperationType]struct{} = map[client.OperationType]struct{}{
-	client.GET:  {},
-	client.LIST: {},
+var readOps map[event.OperationType]struct{} = map[event.OperationType]struct{}{
+	event.GET:  {},
+	event.LIST: {},
 }
 
 func BackfillLabels(events []*event.Event) []*event.Event {
 	readEvents := lo.Filter(events, func(e *event.Event, _ int) bool {
-		_, ok := readOps[client.OperationType(e.OpType)]
+		_, ok := readOps[event.OperationType(e.OpType)]
 		return ok
 	})
 
@@ -36,7 +35,7 @@ func BackfillLabels(events []*event.Event) []*event.Event {
 	}
 
 	for _, e := range events {
-		if _, ok := readOps[client.OperationType(e.OpType)]; ok {
+		if _, ok := readOps[event.OperationType(e.OpType)]; ok {
 			continue
 		}
 
@@ -83,11 +82,11 @@ func Graph(events []*event.Event) {
 	for rid, events := range byReconcileID {
 		fmt.Println("ReconcileID", rid, "has", len(events), "events")
 		readEvents := lo.Filter(events, func(e *event.Event, _ int) bool {
-			_, ok := readOps[client.OperationType(e.OpType)]
+			_, ok := readOps[event.OperationType(e.OpType)]
 			return ok
 		})
 		writeEvents := lo.Filter(events, func(e *event.Event, _ int) bool {
-			_, ok := readOps[client.OperationType(e.OpType)]
+			_, ok := readOps[event.OperationType(e.OpType)]
 			return !ok
 		})
 		fmt.Println("Read events:", len(readEvents))
