@@ -38,7 +38,10 @@ func WithFrameID(ctx context.Context, id string) context.Context {
 func FrameIDFromContext(ctx context.Context) string {
 	id, ok := ctx.Value(frameIDKey{}).(string)
 	if !ok {
-		return ""
+		panic("frame id not found in context")
+	}
+	if id == "" {
+		panic("frame id from context is empty")
 	}
 	return id
 }

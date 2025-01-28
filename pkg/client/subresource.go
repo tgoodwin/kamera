@@ -31,7 +31,6 @@ func (s *SubResourceClient) logOperation(obj kclient.Object, action event.Operat
 }
 
 func (s *SubResourceClient) Update(ctx context.Context, obj kclient.Object, opts ...kclient.SubResourceUpdateOption) error {
-	s.client.tracker.setReconcileID(ctx)
 	tag.LabelChange(obj)
 	s.logOperation(obj, event.UPDATE)
 	s.client.tracker.propagateLabels(obj)
@@ -46,7 +45,6 @@ func (s *SubResourceClient) Update(ctx context.Context, obj kclient.Object, opts
 }
 
 func (s *SubResourceClient) Patch(ctx context.Context, obj kclient.Object, patch kclient.Patch, opts ...kclient.SubResourcePatchOption) error {
-	s.client.tracker.setReconcileID(ctx)
 	tag.LabelChange(obj)
 	s.logOperation(obj, event.PATCH)
 	// persist the labels to the object before updating status
@@ -55,7 +53,6 @@ func (s *SubResourceClient) Patch(ctx context.Context, obj kclient.Object, patch
 }
 
 func (s *SubResourceClient) Create(ctx context.Context, obj kclient.Object, sub kclient.Object, opts ...kclient.SubResourceCreateOption) error {
-	s.client.tracker.setReconcileID(ctx)
 	tag.LabelChange(obj)
 	s.logOperation(obj, event.CREATE)
 	s.client.tracker.propagateLabels(obj)

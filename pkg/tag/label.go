@@ -83,7 +83,7 @@ func SanityCheckLabels(obj client.Object) error {
 	}
 	if webhookLabel, ok := labels[TraceyWebhookLabel]; ok {
 		if rootID, ok := labels[TraceyRootID]; ok {
-			if webhookLabel != rootID {
+			if webhookLabel != rootID && rootID != "" {
 				// logf.Log.WithValues("key", "val").Error(nil, "labeling assumptions violated")
 				return fmt.Errorf("labeling assumptions violated: tracey-uid=%s, root-event-id=%s", webhookLabel, rootID)
 
@@ -100,9 +100,12 @@ func GetRootID(obj client.Object) (string, error) {
 	}
 	// set by the webhook
 	rootID, ok := labels[TraceyWebhookLabel]
+	if ok {
+		return rootID, nil
+	}
 	if !ok {
 		rootID, ok = labels[TraceyRootID]
-		if !ok {
+		if !ok || rootID == "" {
 			return "", fmt.Errorf("no root ID set on object labels")
 		}
 	}
