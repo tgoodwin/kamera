@@ -69,7 +69,10 @@ func Test_UpdateFail(t *testing.T) {
 		emitter: mockEmitter,
 		config:  NewConfig(),
 		tracker: &ContextTracker{
-			rc:         &ReconcileContext{},
+			rc: &ReconcileContext{
+				reconcileID: "reconcileID",
+				rootID:      "rootID",
+			},
 			emitter:    mockEmitter,
 			getFrameID: getFrameID,
 		},
@@ -186,7 +189,10 @@ func Test_PatchFail(t *testing.T) {
 		emitter: mockEmitter,
 		config:  NewConfig(),
 		tracker: &ContextTracker{
-			rc:         &ReconcileContext{},
+			rc: &ReconcileContext{
+				reconcileID: "reconcileID",
+				rootID:      "rootID",
+			},
 			emitter:    mockEmitter,
 			getFrameID: getFrameID,
 		},
