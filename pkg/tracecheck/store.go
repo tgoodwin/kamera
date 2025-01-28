@@ -13,7 +13,7 @@ type Store map[snapshot.VersionHash]*unstructured.Unstructured
 type versionStore struct {
 	store              Store
 	causalKeyToVersion map[event.CausalKey]snapshot.VersionHash
-	hasher             snapshot.JSONHasher
+	hasher             snapshot.Hasher
 
 	mu sync.RWMutex
 }
@@ -24,7 +24,9 @@ func newVersionStore() *versionStore {
 	return &versionStore{
 		store:              make(Store),
 		causalKeyToVersion: make(map[event.CausalKey]snapshot.VersionHash),
-		hasher:             snapshot.JSONHasher{},
+		hasher: snapshot.NewAnonymizingHasher(
+			snapshot.DefaultLabelReplacements,
+		),
 	}
 }
 
