@@ -21,26 +21,6 @@ import (
 
 var log = logf.Log.WithName(tag.LoggerName)
 
-// // enum for controller operation types
-// type OperationType string
-
-// const (
-// 	INIT   OperationType = "INIT"
-// 	GET    OperationType = "GET"
-// 	LIST   OperationType = "LIST"
-// 	CREATE OperationType = "CREATE"
-// 	UPDATE OperationType = "UPDATE"
-// 	DELETE OperationType = "DELETE"
-// 	PATCH  OperationType = "PATCH"
-// )
-
-// var mutationTypes = map[OperationType]struct{}{
-// 	CREATE: {},
-// 	UPDATE: {},
-// 	DELETE: {},
-// 	PATCH:  {},
-// }
-
 type Client struct {
 	// this syntax is "embedding" the client.Client interface in the Client struct
 	// this means that the Client struct will have all the methods of the client.Client interface.
@@ -68,7 +48,7 @@ func New(wrapped client.Client, reconcilerID string, emitter event.Emitter, trac
 		logger:       log,
 		emitter:      emitter,
 		config:       NewConfig(),
-		tracker:      NewProdTracker(reconcilerID),
+		tracker:      tracker,
 	}
 }
 
