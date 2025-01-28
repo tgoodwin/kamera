@@ -151,7 +151,7 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 		ct.setReconcileID(ctx)
 
 		// log the observed object version
-		r := snapshot.AsRecord(obj)
+		r := snapshot.AsRecord(obj, ct.rc.GetReconcileID())
 		ct.emitter.LogObjectVersion(r)
 	}
 

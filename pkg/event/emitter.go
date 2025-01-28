@@ -2,6 +2,7 @@ package event
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 
 	"github.com/go-logr/logr"
@@ -78,4 +79,45 @@ func (f *FileEmitter) appendToFile(data string) {
 	if _, err := file.WriteString(data + "\n"); err != nil {
 		panic("failed to write to file")
 	}
+}
+
+type InMemoryEmitter struct {
+	blobsByRecordID map[string][]string
+}
+
+func NewInMemoryEmitter() *InMemoryEmitter {
+	return &InMemoryEmitter{
+		blobsByRecordID: make(map[string][]string),
+	}
+}
+
+func (i *InMemoryEmitter) LogOperation(e *Event) {
+	eventJSON, err := json.Marshal(e)
+	if err != nil {
+		panic("failed to serialize event")
+	}
+	if _, ok := i.blobsByRecordID[e.ReconcileID]; !ok {
+		i.blobsByRecordID[e.ReconcileID] = make([]string, 0)
+	}
+	i.blobsByRecordID[e.ReconcileID] = append(i.blobsByRecordID[e.ReconcileID], string(eventJSON))
+}
+
+func (i *InMemoryEmitter) LogObjectVersion(r snapshot.Record) {
+	recordJSON, err := json.Marshal(r)
+	if err != nil {
+		panic("failed to serialize record")
+	}
+	if _, ok := i.blobsByRecordID[r.ReconcileID]; !ok {
+		i.blobsByRecordID[r.ReconcileID] = make([]string, 0)
+	}
+	i.blobsByRecordID[r.ReconcileID] = append(i.blobsByRecordID[r.ReconcileID], string(recordJSON))
+}
+
+func (i *InMemoryEmitter) Dump(frameID string) []string {
+	logs, ok := i.blobsByRecordID[frameID]
+	if !ok {
+		fmt.Println("Error: frameID not found")
+		panic("frameID not found")
+	}
+	return logs
 }

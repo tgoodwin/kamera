@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"fmt"
+	"os"
 
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
@@ -232,4 +233,42 @@ func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
 		}
 	}
 	return false
+}
+
+func (tc *TraceChecker) SummarizeResults(results []StateNode) {
+	for i, sn := range results {
+		fmt.Println("Result ", i)
+		tc.SummarizeFromRoot(&sn)
+	}
+}
+
+func (tc *TraceChecker) materializeTrace(endState *StateNode, outfile *os.File) {
+	if endState.action == nil {
+		return
+	}
+	if endState.parent != nil {
+		tc.materializeTrace(endState.parent, outfile)
+	}
+	frameID := endState.action.FrameID
+	logs := tc.emitter.(*event.InMemoryEmitter).Dump(frameID)
+
+	for _, log := range logs {
+		if _, err := outfile.WriteString(log + "\n"); err != nil {
+			fmt.Println("Error writing to file: ", err)
+		}
+	}
+}
+
+func (tc *TraceChecker) MaterializeTraces(results []StateNode) {
+	for i, sn := range results {
+		filename := fmt.Sprintf("execution-%d.trace", i+1)
+		file, err := os.Create(filename)
+		if err != nil {
+			fmt.Println("Error creating file: ", err)
+			continue
+		}
+		defer file.Close()
+
+		tc.materializeTrace(&sn, file)
+	}
 }

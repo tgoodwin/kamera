@@ -13,10 +13,11 @@ import (
 
 // Record represents a snapshot of a Kubernetes object as it appears in a Sleeve log
 type Record struct {
-	ObjectID string `json:"object_id"`
-	Kind     string `json:"kind"`
-	Version  string `json:"version"`
-	Value    string `json:"value"`
+	ObjectID    string `json:"object_id"`
+	ReconcileID string `json:"reconcile_id"`
+	Kind        string `json:"kind"`
+	Version     string `json:"version"`
+	Value       string `json:"value"`
 }
 
 func (r Record) ToUnstructured() *unstructured.Unstructured {
@@ -79,12 +80,13 @@ func Serialize(obj interface{}) string {
 	return string(asJSON)
 }
 
-func AsRecord(obj client.Object) Record {
+func AsRecord(obj client.Object, frameID string) Record {
 	r := Record{
-		ObjectID: string(obj.GetUID()),
-		Kind:     util.GetKind(obj),
-		Version:  obj.GetResourceVersion(),
-		Value:    Serialize(obj),
+		ObjectID:    string(obj.GetUID()),
+		ReconcileID: frameID,
+		Kind:        util.GetKind(obj),
+		Version:     obj.GetResourceVersion(),
+		Value:       Serialize(obj),
 	}
 	return r
 }
