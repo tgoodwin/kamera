@@ -5,7 +5,8 @@ import re
 SLEEVE_LOG_KEYWORD = "sleeveless"
 
 LOG_TYPES = ["sleeve:controller-operation", "sleeve:object-version"]
-pattern = re.compile(r'{"LogType": "(?:' + '|'.join(LOG_TYPES) + ')".*?"Observer": ".*?"}$')
+pattern = re.compile(r'{"LogType": "(?:' + '|'.join(LOG_TYPES) + ')"}$')
+# pattern = re.compile(r'{"LogType": "(?:' + '|'.join(LOG_TYPES) + ')".*?"Observer": ".*?"}$')
 
 def strip_logtype_from_lines(lines):
     return [strip_logtype(line) for line in lines]

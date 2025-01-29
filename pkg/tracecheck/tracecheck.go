@@ -191,9 +191,6 @@ func (tc *TraceChecker) showDeltas(prevState, currState *StateNode) {
 		if prevVersion, ok := prevState.ObjectVersions[k]; ok {
 			fmt.Printf("Delta for object %s-%s:\n", k.Kind, util.Shorter(k.ObjectID))
 			delta := tc.manager.Diff(&prevVersion, &v)
-			if currState.action.ControllerID == "Deployment" && k.Kind == "Deployment" {
-				panic("ahhh")
-			}
 			fmt.Println(delta)
 		} else {
 			// creation event

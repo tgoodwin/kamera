@@ -85,7 +85,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	kind := util.GetKind(obj)
 	objectID := tag.GetSleeveObjectID(obj)
 	if objectID == "" {
-		return fmt.Errorf("object does not have a sleeve object ID")
+		panic("object does not have a sleeve object ID")
 	}
 
 	frameID := replay.FrameIDFromContext(ctx)

@@ -7,6 +7,8 @@ from log2json import strip_logtype_from_lines
 from versionmapper import process as version_process
 
 SLEEVE_LOG_KEYWORD = "sleevelog"
+EVENT_KEYWORD = "sleeve:controller-operation"
+RECORD_KEYWORD = "sleeve:object-version"
 
 READ_OPERATIONS = {"GET", "LIST"}
 WRITE_OPERATIONS = {"CREATE", "PATCH", "UPDATE", "DELETE"}
@@ -193,27 +195,35 @@ def readsets_to_writesets(events_by_reconcile_id):
     return out
 
 
-def process(lines):
+def process_raw_logs(lines):
     # first, separate out controller observations
     # log lines from our instrumentation
     content = [line for line in lines if SLEEVE_LOG_KEYWORD in line]
     content = [line.split(SLEEVE_LOG_KEYWORD)[1].strip() for line in content]
 
     # split into conroller-operation and object-version
-    controller_ops = [line for line in content if "sleeve:controller-operation" in line]
-    object_versions = [line for line in content if "sleeve:object-version" in line]
+    controller_ops = [line for line in content if EVENT_KEYWORD in line]
+    object_versions = [line for line in content if RECORD_KEYWORD in line]
 
     controller_ops = strip_logtype_from_lines(controller_ops)
     object_versions = strip_logtype_from_lines(object_versions)
-    versions = version_process(object_versions)
+    process_json(controller_ops, object_versions)
 
+
+def process_json(controller_ops, object_versions):
+    versions = version_process(object_versions)
     analyze(controller_ops, versions)
 
 
 def main():
     with open(args.logfile, "r") as infile:
         lines = infile.readlines()
-        process(lines)
+        if args.mode == "raw":
+            process_raw_logs(lines)
+        else:
+            controller_ops = [line for line in lines if "op_type" in line]
+            versions = [line for line in lines if "op_type" not in line]
+            process_json(controller_ops, versions)
 
     return 0
 
@@ -225,6 +235,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process sleeve log files into an event graph.")
     parser.add_argument("logfile", help="Path to the log file")
     parser.add_argument("--outfile", help="Name of the output file", default=f'event_graph-{int(time.time())}')
+    parser.add_argument("--mode", choices=["raw", "synthesized"], help="Mode of processing the log file", default="raw")
     args = parser.parse_args()
 
     sys.exit(main())
