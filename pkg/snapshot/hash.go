@@ -35,7 +35,8 @@ func NewAnonymizingHasher(labelReplacements map[string]string) *AnonymizingHashe
 }
 
 func (h *AnonymizingHasher) Hash(obj *unstructured.Unstructured) VersionHash {
-	origLabels := obj.GetLabels()
+	objCopy := obj.DeepCopy()
+	origLabels := objCopy.GetLabels()
 	anonymizedLabels := make(map[string]string, len(origLabels))
 	for k, v := range origLabels {
 		if replacement, ok := h.Replacements[k]; ok {
@@ -44,8 +45,8 @@ func (h *AnonymizingHasher) Hash(obj *unstructured.Unstructured) VersionHash {
 			anonymizedLabels[k] = v
 		}
 	}
-	obj.SetLabels(anonymizedLabels)
-	str, err := json.Marshal(obj)
+	objCopy.SetLabels(anonymizedLabels)
+	str, err := json.Marshal(objCopy)
 	if err != nil {
 		panic("version hashing object")
 	}
