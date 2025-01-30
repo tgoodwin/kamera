@@ -16,6 +16,8 @@ type ReconcileContext struct {
 	reconcileID string
 	rootID      string
 
+	rootIDByReconcileID map[string]string
+
 	mu sync.Mutex
 }
 
@@ -25,10 +27,16 @@ func (rc *ReconcileContext) SetReconcileID(id string) {
 	rc.reconcileID = id
 }
 
-func (rc *ReconcileContext) SetRootID(id string) {
+func (rc *ReconcileContext) SetRootID(reconcileID, rootID string) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
-	rc.rootID = id
+
+	if rc.rootIDByReconcileID == nil {
+		rc.rootIDByReconcileID = make(map[string]string)
+	}
+	rc.rootID = rootID
+
+	rc.rootIDByReconcileID[rc.reconcileID] = rootID
 }
 
 func (rc *ReconcileContext) GetReconcileID() string {
@@ -37,10 +45,10 @@ func (rc *ReconcileContext) GetReconcileID() string {
 	return rc.reconcileID
 }
 
-func (rc *ReconcileContext) GetRootID() string {
+func (rc *ReconcileContext) GetRootID(reconcileID string) string {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
-	return rc.rootID
+	return rc.rootIDByReconcileID[reconcileID]
 }
 
 type frameExtractor func(ctx context.Context) string
@@ -80,11 +88,11 @@ func (ct *ContextTracker) propagateLabels(target client.Object) {
 	for k, v := range currLabels {
 		out[k] = v
 	}
-	rootID := ct.rc.GetRootID()
+	rootID := ct.rc.GetRootID(ct.rc.reconcileID)
 	out[tag.TraceyCreatorID] = ct.reconcilerID
 	if _, ok := out[tag.TraceyRootID]; !ok {
 		if rootID == "" {
-			fmt.Println("current labels: ", target.GetLabels())
+			fmt.Printf("current propagation target: %#v\n", target)
 			panic("rootID is empty")
 		}
 		out[tag.TraceyRootID] = rootID
@@ -115,12 +123,13 @@ func (ct *ContextTracker) setReconcileID(ctx context.Context) {
 	} else if currFrameID != frameID {
 		log.V(2).Info("frameID changed", "currFrameID", currFrameID, "newFrameID", frameID)
 		// frameID changed, so reset the rootID
-		ct.rc.SetRootID("")
+		ct.rc.SetRootID(currFrameID, "")
 		ct.rc.SetReconcileID(frameID)
 	}
 }
 
-func (ct *ContextTracker) setRootContext(obj client.Object) {
+func (ct *ContextTracker) setRootContext(ctx context.Context, obj client.Object) {
+	ct.setReconcileID(ctx)
 	rootID, err := tag.GetRootID(obj)
 	if err != nil {
 		log.V(2).WithValues("labels", obj.GetLabels()).Error(err, "setting root context")
@@ -130,12 +139,13 @@ func (ct *ContextTracker) setRootContext(obj client.Object) {
 		log.Error(nil, "rootID is empty")
 		panic("rootID is empty")
 	}
-	currRootID := ct.rc.GetRootID()
-	if currRootID != "" && currRootID != rootID {
+	currRootID, ok := ct.rc.rootIDByReconcileID[ct.rc.GetReconcileID()]
+	if ok && currRootID != rootID {
 		log.V(0).Error(err, "rootID changed within the reconcile", "currRootID", currRootID, "newRootID", rootID)
 	}
 
-	ct.rc.SetRootID(rootID)
+	currReconcileID := ct.rc.GetReconcileID()
+	ct.rc.SetRootID(currReconcileID, rootID)
 }
 
 func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object, op event.OperationType) {
@@ -147,8 +157,7 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 	}
 
 	if op == event.GET || op == event.LIST {
-		ct.setRootContext(obj)
-		ct.setReconcileID(ctx)
+		ct.setRootContext(ctx, obj)
 
 		// log the observed object version
 		r := snapshot.AsRecord(obj, ct.rc.GetReconcileID())
@@ -169,7 +178,7 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 		tag.AddDeletionID(obj)
 	}
 
-	ct.emitter.LogOperation(Operation(obj, ct.rc.reconcileID, ct.reconcilerID, ct.rc.GetRootID(), op))
+	ct.emitter.LogOperation(Operation(obj, ct.rc.reconcileID, ct.reconcilerID, ct.rc.GetRootID(ct.rc.reconcileID), op))
 	// propagate labels after logging so we capture the label values prior to the operation
 	// e.g. we want to log out "prev-write-reconcile-id" before we overwrite it
 	// with the current reconcileID when we are propagating labels

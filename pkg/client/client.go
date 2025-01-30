@@ -116,11 +116,12 @@ func Operation(obj client.Object, reconcileID, controllerID, rootEventID string,
 }
 
 func (c *Client) logOperation(obj client.Object, op event.OperationType) {
+	reconcileID := c.tracker.rc.GetReconcileID()
 	event := Operation(
 		obj,
-		c.tracker.rc.GetReconcileID(),
+		reconcileID,
 		c.reconcilerID,
-		c.tracker.rc.GetRootID(),
+		c.tracker.rc.GetRootID(reconcileID),
 		op,
 	)
 	c.emitter.LogOperation(event)
