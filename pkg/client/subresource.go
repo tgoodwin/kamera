@@ -2,35 +2,30 @@ package client
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/tag"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var _ client.StatusClient = &Client{}
 
 type SubResourceClient struct {
-	// reader kclient.SubResourceReader
+	// reader client.SubResourceReader
 	client *Client
-	writer kclient.SubResourceWriter
+	writer client.SubResourceWriter
 }
 
-func (c *Client) Status() kclient.SubResourceWriter {
+func (c *Client) Status() client.SubResourceWriter {
 	statusClient := c.Client.Status()
 	return &SubResourceClient{writer: statusClient, client: c}
 }
 
-func (s *SubResourceClient) logOperation(obj kclient.Object, action event.OperationType) {
+func (s *SubResourceClient) logOperation(obj client.Object, action event.OperationType) {
 	s.client.logOperation(obj, action)
 }
 
-func (s *SubResourceClient) Update(ctx context.Context, obj kclient.Object, opts ...kclient.SubResourceUpdateOption) error {
+func (s *SubResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
 	tag.LabelChange(obj)
 	s.logOperation(obj, event.UPDATE)
 	s.client.tracker.propagateLabels(obj)
@@ -44,7 +39,7 @@ func (s *SubResourceClient) Update(ctx context.Context, obj kclient.Object, opts
 	return res
 }
 
-func (s *SubResourceClient) Patch(ctx context.Context, obj kclient.Object, patch kclient.Patch, opts ...kclient.SubResourcePatchOption) error {
+func (s *SubResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 	tag.LabelChange(obj)
 	s.logOperation(obj, event.PATCH)
 	// persist the labels to the object before updating status
@@ -52,45 +47,11 @@ func (s *SubResourceClient) Patch(ctx context.Context, obj kclient.Object, patch
 	return s.writer.Patch(ctx, obj, patch, opts...)
 }
 
-func (s *SubResourceClient) Create(ctx context.Context, obj kclient.Object, sub kclient.Object, opts ...kclient.SubResourceCreateOption) error {
+func (s *SubResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
 	tag.LabelChange(obj)
 	s.logOperation(obj, event.CREATE)
 	s.client.tracker.propagateLabels(obj)
 	s.client.Update(ctx, obj)
 
 	return s.writer.Create(ctx, obj, sub, opts...)
-}
-
-// Extracts status.conditions from an arbitrary client.Object
-func getUnstructuredStatusConditions(obj client.Object) ([]metav1.Condition, error) {
-	// Convert to unstructured.Unstructured to access fields dynamically
-	u, ok := obj.(*unstructured.Unstructured)
-	if !ok {
-		return nil, fmt.Errorf("object is not of type unstructured.Unstructured")
-	}
-
-	// Access the "status" field
-	status, found, err := unstructured.NestedFieldNoCopy(u.Object, "status")
-	if !found || err != nil {
-		return nil, fmt.Errorf("status not found or error occurred: %v", err)
-	}
-
-	// Extract the "conditions" field
-	conditions, found, err := unstructured.NestedFieldNoCopy(status.(map[string]interface{}), "conditions")
-	if !found || err != nil {
-		return nil, fmt.Errorf("conditions not found in status or error occurred: %v", err)
-	}
-
-	// Marshal and unmarshal conditions into metav1.Condition
-	conditionBytes, err := json.Marshal(conditions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal conditions: %v", err)
-	}
-
-	var result []metav1.Condition
-	if err := json.Unmarshal(conditionBytes, &result); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal conditions: %v", err)
-	}
-
-	return result, nil
 }
