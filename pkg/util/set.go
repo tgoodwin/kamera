@@ -38,3 +38,31 @@ func (s Set[T]) List() []T {
 	}
 	return result
 }
+
+// For maintaining unique collections of items via a custom
+type AnySet[T any] struct {
+	items   []T
+	compare func(a, b T) bool
+}
+
+func NewAnySet[T any](compare func(a, b T) bool) *AnySet[T] {
+	return &AnySet[T]{
+		items:   make([]T, 0),
+		compare: compare,
+	}
+}
+
+func (us *AnySet[T]) Add(item T) {
+	alreadyPresent := false
+	for _, elem := range us.items {
+		same := us.compare(item, elem)
+		alreadyPresent = alreadyPresent || same
+	}
+	if !alreadyPresent {
+		us.items = append(us.items, item)
+	}
+}
+
+func (us *AnySet[T]) Items() []T {
+	return us.items
+}
