@@ -27,21 +27,27 @@ type Explorer struct {
 	maxDepth int
 }
 
-type ExploreResult struct {
+type Result struct {
 	ConvergedStates []StateNode
 	Duration        time.Duration
+	AbortedPaths    int
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
-func (e *Explorer) exploreDFS(ctx context.Context, initialState StateNode) []StateNode {
+func (e *Explorer) exploreDFS(ctx context.Context, initialState StateNode) *Result {
 	if e.maxDepth == 0 {
 		e.maxDepth = 10
 	}
 
+	startTime := time.Now()
+	result := &Result{
+		ConvergedStates: make([]StateNode, 0),
+	}
+
 	stack := []StateNode{initialState}
 	seenStates := make(map[string]bool)
-	convergedStates := make([]StateNode, 0)
+	// convergedStates := make([]StateNode, 0)
 
 	for len(stack) > 0 {
 		currentState := stack[len(stack)-1]
@@ -56,7 +62,7 @@ func (e *Explorer) exploreDFS(ctx context.Context, initialState StateNode) []Sta
 		if len(currentState.PendingReconciles) == 0 {
 			// TODO evaluate some predicates upon the converged state and then classify the execution
 			fmt.Println("Found a converged state at depth", currentState.depth)
-			convergedStates = append(convergedStates, currentState)
+			result.ConvergedStates = append(result.ConvergedStates, currentState)
 		}
 
 		// Each controller in the pending reconciles list is a potential branch point
@@ -65,18 +71,18 @@ func (e *Explorer) exploreDFS(ctx context.Context, initialState StateNode) []Sta
 			newState := e.takeReconcileStep(ctx, currentState, controller)
 			newState.depth = currentState.depth + 1
 			if newState.depth > e.maxDepth {
+				result.AbortedPaths += 1
 				fmt.Println("Reached max depth", e.maxDepth)
-				if newState.proceed {
-					fmt.Println("Proceeding to next depth anyways")
-					stack = append(stack, newState)
-				}
 			} else {
 				stack = append(stack, newState)
 			}
 		}
 	}
+	endTime := time.Now()
+	delta := endTime.Sub(startTime)
+	result.Duration = delta
 
-	return convergedStates
+	return result
 }
 
 func getNext(stackQueue []StateNode, mode string) (StateNode, []StateNode) {
@@ -88,18 +94,22 @@ func getNext(stackQueue []StateNode, mode string) (StateNode, []StateNode) {
 	panic("Invalid mode")
 }
 
-func (e *Explorer) Explore(ctx context.Context, initialState StateNode) []StateNode {
+func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
 	return e.exploreBFS(ctx, initialState)
 }
 
-func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) []StateNode {
+func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Result {
 	if e.maxDepth == 0 {
 		e.maxDepth = 10
 	}
 
+	result := &Result{
+		ConvergedStates: make([]StateNode, 0),
+	}
+	start := time.Now()
+
 	queue := []StateNode{initialState}
 	seenStates := make(map[string]bool)
-	convergedStates := make([]StateNode, 0)
 
 	for len(queue) > 0 {
 		currentState := queue[0]
@@ -114,7 +124,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) []Sta
 		if len(currentState.PendingReconciles) == 0 {
 			// TODO evaluate some predicates upon the converged state and then classify the execution
 			fmt.Println("Found a converged state at depth", currentState.depth)
-			convergedStates = append(convergedStates, currentState)
+			result.ConvergedStates = append(result.ConvergedStates, currentState)
 			continue
 		}
 
@@ -125,13 +135,15 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) []Sta
 			newState.depth = currentState.depth + 1
 			if newState.depth > e.maxDepth {
 				fmt.Println("Reached max depth", e.maxDepth)
+				result.AbortedPaths += 1
 			} else {
 				queue = append(queue, newState)
 			}
 		}
 	}
 
-	return convergedStates
+	result.Duration = time.Since(start)
+	return result
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
@@ -208,7 +220,15 @@ func serializeState(state StateNode) string {
 	for objID, version := range state.ObjectVersions {
 		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objID, version))
 	}
+	// Sort objectPairs to ensure deterministic order
+	sort.Strings(objectPairs)
 	objectsStr := strings.Join(objectPairs, ",")
 	reconcilesStr := strings.Join(state.PendingReconciles, ",")
+
+	// Sort PendingReconciles to ensure deterministic order
+	// sortedPendingReconciles := append([]string{}, state.PendingReconciles...)
+	// sort.Strings(sortedPendingReconciles)
+	// reconcilesStr := strings.Join(sortedPendingReconciles, ",")
+
 	return fmt.Sprintf("Objects:{%s}|PendingReconciles:{%s}", objectsStr, reconcilesStr)
 }
