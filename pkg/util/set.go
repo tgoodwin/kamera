@@ -39,7 +39,8 @@ func (s Set[T]) List() []T {
 	return result
 }
 
-// For maintaining unique collections of items via a custom
+// For maintaining unique collections of items that are not hashable
+// or require some custom comparison strategy
 type AnySet[T any] struct {
 	items   []T
 	compare func(a, b T) bool
@@ -52,17 +53,17 @@ func NewAnySet[T any](compare func(a, b T) bool) *AnySet[T] {
 	}
 }
 
-func (us *AnySet[T]) Add(item T) {
+func (s *AnySet[T]) Add(item T) {
 	alreadyPresent := false
-	for _, elem := range us.items {
-		same := us.compare(item, elem)
+	for _, elem := range s.items {
+		same := s.compare(item, elem)
 		alreadyPresent = alreadyPresent || same
 	}
 	if !alreadyPresent {
-		us.items = append(us.items, item)
+		s.items = append(s.items, item)
 	}
 }
 
-func (us *AnySet[T]) Items() []T {
-	return us.items
+func (s *AnySet[T]) Items() []T {
+	return s.items
 }
