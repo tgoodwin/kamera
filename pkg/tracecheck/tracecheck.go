@@ -269,3 +269,30 @@ func (tc *TraceChecker) MaterializeTraces(results []StateNode) {
 		tc.materializeTrace(&sn, file)
 	}
 }
+
+func (tc *TraceChecker) DiffStates(a, b StateNode) []string {
+	diffs := make([]string, 0)
+	for key, vHash := range a.ObjectVersions {
+		currKind := key.Kind
+		for otherKey, otherHash := range b.ObjectVersions {
+			if otherKey.Kind == currKind {
+				// disregarding ID, let's identify the difference between teh two objects of kind
+				if diff := tc.manager.Diff(&vHash, &otherHash); diff != "" {
+					diffs = append(diffs, diff)
+				}
+			}
+		}
+	}
+	return diffs
+}
+
+func (tc *TraceChecker) DiffResults(results []StateNode) {
+	unique := util.NewAnySet[StateNode](func(a, b StateNode) bool {
+		diffs := tc.DiffStates(a, b)
+		return len(diffs) == 0
+	})
+	for _, res := range results {
+		unique.Add(res)
+	}
+	fmt.Println("# unique: ", len(unique.Items()))
+}
