@@ -58,7 +58,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
 	effects, err := r.retrieveEffects(frameID)
-	logger.V(1).Info("reconcile complete")
+	logger.V(2).Info("reconcile complete")
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}

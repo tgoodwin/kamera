@@ -173,7 +173,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 	// include the controller that was just executed.
 	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
 	newPendingReconciles = append(newPendingReconciles, triggeredReconcilers...)
-	logger.V(0).WithValues("controllerID", controllerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
+	logger.V(2).WithValues("controllerID", controllerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
 
 	return StateNode{
 		ObjectVersions:    newObjectVersions,

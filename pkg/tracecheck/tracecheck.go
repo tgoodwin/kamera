@@ -234,7 +234,7 @@ func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
 
 func (tc *TraceChecker) SummarizeResults(results []StateNode) {
 	for i, sn := range results {
-		fmt.Println("Result ", i)
+		fmt.Println("Result #", i+1)
 		tc.SummarizeFromRoot(&sn)
 	}
 }
