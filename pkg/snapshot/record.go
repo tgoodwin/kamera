@@ -72,21 +72,15 @@ func maskFields(in map[string]string) map[string]interface{} {
 }
 
 // check out https://github.com/cisco-open/k8s-objectmatcher
-
-// TODO this needs to handle nested objects
-func Serialize(obj interface{}) string {
+func AsRecord(obj client.Object, frameID string) Record {
 	serialized := serialize(obj)
 	asJSON, _ := json.Marshal(serialized)
-	return string(asJSON)
-}
-
-func AsRecord(obj client.Object, frameID string) Record {
 	r := Record{
 		ObjectID:    string(obj.GetUID()),
 		ReconcileID: frameID,
 		Kind:        util.GetKind(obj),
 		Version:     obj.GetResourceVersion(),
-		Value:       Serialize(obj),
+		Value:       string(asJSON),
 	}
 	return r
 }
