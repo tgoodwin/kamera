@@ -80,7 +80,7 @@ func Test_UpdateFail(t *testing.T) {
 
 	ctx := context.TODO()
 	pod := &corev1.Pod{}
-	origLabels := map[string]string{"key": "value"}
+	origLabels := map[string]string{"key": "value", tag.TraceyRootID: "rootID"}
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Update(ctx, pod).Return(errors.New("API call failed"))
@@ -114,11 +114,12 @@ func Test_CreateSuccess(t *testing.T) {
 
 	ctx := context.WithValue(context.TODO(), reconcileIDKey{}, "reconcileID")
 	pod := &corev1.Pod{}
-	origLabels := map[string]string{"key": "value"}
+	origLabels := map[string]string{"key": "value", tag.TraceyRootID: "rootID"}
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Create(ctx, pod).Return(nil)
 	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(1)
 
 	shouldBePresent := []string{
 		tag.TraceyCreatorID,
@@ -157,11 +158,12 @@ func Test_UpdateSuccess(t *testing.T) {
 
 	ctx := context.TODO()
 	pod := &corev1.Pod{}
-	origLabels := map[string]string{"key": "value"}
+	origLabels := map[string]string{"key": "value", tag.TraceyRootID: "rootID"}
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Update(ctx, pod).Return(nil)
 	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(1)
 
 	err := c.Update(ctx, pod)
 	assert.NoError(t, err)
@@ -200,7 +202,7 @@ func Test_PatchFail(t *testing.T) {
 
 	ctx := context.TODO()
 	pod := &corev1.Pod{}
-	origLabels := map[string]string{"key": "value"}
+	origLabels := map[string]string{"key": "value", tag.TraceyRootID: "rootID"}
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Patch(ctx, pod, gomock.Any()).Return(errors.New("API call failed"))
@@ -233,11 +235,12 @@ func Test_PatchSuccess(t *testing.T) {
 
 	ctx := context.TODO()
 	pod := &corev1.Pod{}
-	origLabels := map[string]string{"key": "value"}
+	origLabels := map[string]string{"key": "value", tag.TraceyRootID: "rootID"}
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Patch(ctx, pod, gomock.Any()).Return(nil)
 	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(1)
 
 	err := c.Patch(ctx, pod, nil)
 	assert.NoError(t, err)

@@ -10,6 +10,7 @@ import (
 )
 
 type Event struct {
+	ID           string            `json:"id"`
 	Timestamp    string            `json:"timestamp"`
 	ReconcileID  string            `json:"reconcile_id"`
 	ControllerID string            `json:"controller_id"`

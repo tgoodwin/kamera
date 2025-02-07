@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/google/uuid"
 	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -97,7 +99,9 @@ func (c *Client) WithEnvConfig() *Client {
 }
 
 func Operation(obj client.Object, reconcileID, controllerID, rootEventID string, op event.OperationType) *event.Event {
+	id := uuid.New().String()
 	e := &event.Event{
+		ID:           id,
 		Timestamp:    event.FormatTimeStr(time.Now()),
 		ReconcileID:  reconcileID,
 		ControllerID: controllerID,
@@ -124,7 +128,10 @@ func (c *Client) logOperation(obj client.Object, op event.OperationType) {
 		c.tracker.rc.GetRootID(reconcileID),
 		op,
 	)
+	r := snapshot.AsRecord(obj, reconcileID)
 	c.emitter.LogOperation(event)
+	r.OperationID = event.ID
+	c.emitter.LogObjectVersion(r)
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
