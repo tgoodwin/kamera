@@ -29,21 +29,13 @@ func (s *SubResourceClient) Update(ctx context.Context, obj client.Object, opts 
 	tag.LabelChange(obj)
 	s.logOperation(obj, event.UPDATE)
 	s.client.tracker.propagateLabels(obj)
-	// fmt.Printf("extracted conditions: %v", conditions)
-	// persist the labels to the object before updating status
-
-	// update status
-	// TODO this does not work. "the object has been modified; please apply your changes to the latest version and try again"
-	res := s.writer.Update(ctx, obj, opts...)
-	s.client.Update(ctx, obj)
-	return res
+	return s.writer.Update(ctx, obj, opts...)
 }
 
 func (s *SubResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 	tag.LabelChange(obj)
 	s.logOperation(obj, event.PATCH)
-	// persist the labels to the object before updating status
-	s.client.Update(ctx, obj)
+	s.client.tracker.propagateLabels(obj)
 	return s.writer.Patch(ctx, obj, patch, opts...)
 }
 
@@ -51,7 +43,5 @@ func (s *SubResourceClient) Create(ctx context.Context, obj client.Object, sub c
 	tag.LabelChange(obj)
 	s.logOperation(obj, event.CREATE)
 	s.client.tracker.propagateLabels(obj)
-	s.client.Update(ctx, obj)
-
 	return s.writer.Create(ctx, obj, sub, opts...)
 }
