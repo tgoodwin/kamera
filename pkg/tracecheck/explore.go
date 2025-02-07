@@ -33,9 +33,9 @@ type ConvergedState struct {
 }
 
 type Result struct {
-	ConvergedStates []ConvergedState
-	Duration        time.Duration
-	AbortedPaths    int
+	ConvergedState []ConvergedState
+	Duration       time.Duration
+	AbortedPaths   int
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
@@ -59,52 +59,35 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 	}
 
 	result := &Result{
-		ConvergedStates: make([]ConvergedState, 0),
+		ConvergedState: make([]ConvergedState, 0),
 	}
 	start := time.Now()
 
 	queue := []StateNode{initialState}
 
-	// seenStates is a map of stateKey -> ExecutionHistory
+	// executionPathsToState is a map of stateKey -> ExecutionHistory
 	// because we want to track which states we've visited but
 	// also want to track all the ways a given state can be reached
-	seenStates := make(map[string][]ExecutionHistory)
+	executionPathsToState := make(map[string][]ExecutionHistory)
 
-	seenConvergedStates := make(map[string]bool)
+	seenConvergedStates := make(map[string]StateNode)
 
 	// var currentState StateNode
 	for len(queue) > 0 {
 		currentState := queue[0]
 		queue = queue[1:]
-		// currentState, queue = getNext(queue, "queue")
 		stateKey := serializeState(currentState)
 
-		if _, seen := seenStates[stateKey]; !seen {
-			seenStates[stateKey] = make([]ExecutionHistory, 0)
-			seenStates[stateKey] = append(seenStates[stateKey], currentState.ExecutionHistory)
+		if _, seen := executionPathsToState[stateKey]; !seen {
+			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
+			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 		} else {
-			seenStates[stateKey] = append(seenStates[stateKey], currentState.ExecutionHistory)
+			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 			// continue
 		}
-		// if _, seen := seenStates[stateKey]; seen {
-		// 	fmt.Println("Skipping already seen state at depth", currentState.depth)
-		// 	continue
-		// }
-		// seenStates[stateKey] = true
 
 		if len(currentState.PendingReconciles) == 0 {
-			// TODO evaluate some predicates upon the converged state and then classify the execution
-			if _, seen := seenConvergedStates[stateKey]; !seen {
-				fmt.Println("Found a converged state at depth", currentState.depth)
-				// fmt.Println(stateKey)
-				convergedState := ConvergedState{
-					State: currentState,
-					Paths: seenStates[stateKey],
-				}
-				result.ConvergedStates = append(result.ConvergedStates, convergedState)
-			}
-			seenConvergedStates[stateKey] = true
-			continue
+			seenConvergedStates[stateKey] = currentState
 		}
 
 		// Each controller in the pending reconciles list is a potential branch point
@@ -114,7 +97,6 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 			newState.depth = currentState.depth + 1
 			if newState.depth > e.maxDepth {
 				// fmt.Println("Reached max depth", e.maxDepth)
-				// newState.ExecutionHistory.Summarize()
 				result.AbortedPaths += 1
 			} else {
 				queue = append(queue, newState)
@@ -122,15 +104,16 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		}
 	}
 
+	// Graph search has ended, summarize the results
 	result.Duration = time.Since(start)
+	for stateKey, convergedState := range seenConvergedStates {
+		paths := executionPathsToState[stateKey]
 
-	for stateKey, paths := range seenStates {
-		fmt.Println("StateKey:", stateKey)
-		fmt.Println("paths:", len(paths))
-		for i, path := range paths {
-			fmt.Println("Path:", i)
-			path.Summarize()
+		convergedState := ConvergedState{
+			State: convergedState,
+			Paths: paths,
 		}
+		result.ConvergedState = append(result.ConvergedState, convergedState)
 	}
 
 	return result
