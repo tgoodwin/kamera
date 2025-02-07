@@ -9,10 +9,24 @@ import (
 // ObjectVersions is a map of object IDs to their version hashes
 type ObjectVersions map[snapshot.IdentityKey]snapshot.VersionHash
 
+type Delta string
+
 type ReconcileResult struct {
 	ControllerID string
 	FrameID      string
 	Changes      ObjectVersions // this is just the writeset, not the resulting full state of the world
+	Deltas       map[snapshot.IdentityKey]Delta
+}
+
+type ExecutionHistory []*ReconcileResult
+
+func (eh ExecutionHistory) Summarize() {
+	for _, r := range eh {
+		fmt.Printf("\t%s:%s - #changes=%d\n", r.ControllerID, r.FrameID, len(r.Deltas))
+		for key, d := range r.Deltas {
+			fmt.Printf("\t%s: %s\n", key, d)
+		}
+	}
 }
 
 type StateNode struct {
@@ -24,9 +38,10 @@ type StateNode struct {
 	parent *StateNode
 	action *ReconcileResult // the action that led to this state
 
+	// ExecutionHistory tracks the sequence of reconciles that led to this state
+	ExecutionHistory ExecutionHistory
+
 	depth int
-	// TODO remove
-	proceed bool
 }
 
 func (sn StateNode) IsConverged() bool {
@@ -35,7 +50,7 @@ func (sn StateNode) IsConverged() bool {
 
 func (sn StateNode) Summarize() {
 	// TODO
-	fmt.Printf("---StateNode Summary: depth %d---\n", sn.depth)
+	fmt.Printf("---------StateNode Summary: depth %d---------\n", sn.depth)
 	if sn.parent == nil {
 		fmt.Println("Top-Level StateNode")
 	}
@@ -43,9 +58,8 @@ func (sn StateNode) Summarize() {
 	// print the controller that created this state
 	if sn.action != nil {
 		fmt.Println("ControllerID: ", sn.action.ControllerID)
-		fmt.Println("FrameID: ", sn.action.FrameID)
 		fmt.Println("Num Changes: ", len(sn.action.Changes))
-		fmt.Println("Resulting Pending Reconciles: ", sn.PendingReconciles)
+		fmt.Println("Pending Reconciles: ", sn.PendingReconciles)
 	}
 }
 

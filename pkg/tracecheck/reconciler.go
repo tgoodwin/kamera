@@ -7,6 +7,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/tgoodwin/sleeve/pkg/replay"
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -28,6 +29,10 @@ type frameInserter interface {
 type reconcileImpl struct {
 	// The name of the reconciler
 	Name string
+
+	// the primary resource type that this reconciler manages
+	For string
+
 	reconcile.Reconciler
 
 	// both implemented by teh manager type
@@ -58,14 +63,17 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
 	effects, err := r.retrieveEffects(frameID)
-	logger.V(2).Info("reconcile complete")
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
+	deltas := r.computeDeltas(currState, effects)
+	logger.V(2).Info("reconcile complete")
+
 	return &ReconcileResult{
 		ControllerID: r.Name,
 		FrameID:      frameID,
 		Changes:      effects,
+		Deltas:       deltas,
 	}, nil
 }
 
@@ -78,7 +86,7 @@ func Wrap(name string, r reconcile.Reconciler) reconciler {
 
 func (r *reconcileImpl) inferReconcileRequest(readset ObjectVersions) (reconcile.Request, error) {
 	for key, version := range readset {
-		if key.Kind == r.Name {
+		if key.Kind == r.For {
 			obj := r.versionManager.Resolve(version)
 			if obj == nil {
 				return reconcile.Request{}, errors.New("no object found for version")
@@ -114,5 +122,16 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.FrameData {
 		out[kind][namespacedName] = obj
 	}
 
+	return out
+}
+
+func (r *reconcileImpl) computeDeltas(readSet, writeSet ObjectVersions) map[snapshot.IdentityKey]Delta {
+	out := make(map[snapshot.IdentityKey]Delta)
+	for key, hash := range writeSet {
+		if prevHash, ok := readSet[key]; ok {
+			delta := r.versionManager.Diff(&prevHash, &hash)
+			out[key] = Delta(delta)
+		}
+	}
 	return out
 }
