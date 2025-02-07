@@ -2,8 +2,12 @@ package util
 
 type Set[T comparable] map[T]struct{}
 
-func NewSet[T comparable]() Set[T] {
-	return make(Set[T])
+func NewSet[T comparable](items ...T) Set[T] {
+	s := make(Set[T])
+	for _, item := range items {
+		s[item] = struct{}{}
+	}
+	return s
 }
 
 func (s Set[T]) Add(item T) {
