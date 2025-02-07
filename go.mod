@@ -5,6 +5,7 @@ go 1.23
 require (
 	github.com/go-logr/logr v1.4.1
 	github.com/goccy/go-graphviz v0.2.9
+	github.com/golang/mock v1.6.0
 	github.com/google/go-cmp v0.6.0
 	github.com/google/uuid v1.3.0
 	github.com/pkg/errors v0.9.1
@@ -14,7 +15,6 @@ require (
 	k8s.io/apimachinery v0.30.1
 	k8s.io/client-go v0.30.1
 	sigs.k8s.io/controller-runtime v0.18.4
-	github.com/golang/mock v1.6.0
 )
 
 require (

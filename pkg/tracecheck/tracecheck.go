@@ -8,6 +8,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -24,9 +25,11 @@ type ReconcilerConstructor func(client Client) Reconciler
 
 type TraceChecker struct {
 	reconcilers  map[string]ReconcilerConstructor
-	resourceDeps resourceDeps
+	ResourceDeps ResourceDeps
 	manager      *manager
 	scheme       *runtime.Scheme
+
+	reconcilerToKind map[string]string
 
 	// TODO move this elsewhere
 	builder *replay.Builder
@@ -34,9 +37,31 @@ type TraceChecker struct {
 	emitter event.Emitter
 }
 
+func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
+	vStore := newVersionStore()
+	readDeps := make(ResourceDeps)
+	lc := snapshot.NewLifecycleContainer()
+
+	mgr := &manager{
+		versionStore:       vStore,
+		LifecycleContainer: lc,
+		effects:            make(map[string]reconcileEffects),
+	}
+
+	return &TraceChecker{
+		reconcilers:  make(map[string]ReconcilerConstructor),
+		ResourceDeps: readDeps,
+		manager:      mgr,
+		scheme:       scheme,
+
+		// TODO refactor
+		reconcilerToKind: make(map[string]string),
+	}
+}
+
 func FromBuilder(b *replay.Builder) *TraceChecker {
 	vStore := newVersionStore()
-	readDeps := make(resourceDeps)
+	readDeps := make(ResourceDeps)
 	lc := snapshot.NewLifecycleContainer()
 
 	store := b.Store()
@@ -98,15 +123,37 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 
 	return &TraceChecker{
 		reconcilers:  make(map[string]ReconcilerConstructor),
-		resourceDeps: readDeps,
+		ResourceDeps: readDeps,
 		manager:      mgr,
 
 		builder: b,
 	}
 }
 
+func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentControllers ...string) StateNode {
+	r := snapshot.AsRecord(obj, "start").ToUnstructured()
+	vHash := tc.manager.versionStore.Publish(r)
+	sleeveObjectID := tag.GetSleeveObjectID(obj)
+	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
+	tc.manager.InsertSynthesizedVersion(ikey, vHash, "start")
+
+	// HACK TODO REFACTOR
+	tc.builder = &replay.Builder{
+		ReconcilerIDs: util.NewSet(dependentControllers...),
+	}
+
+	return StateNode{
+		ObjectVersions:    ObjectVersions{ikey: vHash},
+		PendingReconciles: dependentControllers,
+	}
+}
+
 func (tc *TraceChecker) AddReconciler(reconcilerID string, constructor ReconcilerConstructor) {
 	tc.reconcilers[reconcilerID] = constructor
+}
+
+func (tc *TraceChecker) AssignReconcilerToKind(reconcilerID, kind string) {
+	tc.reconcilerToKind[reconcilerID] = kind
 }
 
 func (tc *TraceChecker) AddEmitter(emitter event.Emitter) {
@@ -139,9 +186,15 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]reconciler {
 		)
 		r := constructor(wrappedClient)
 
+		kindforReconciler, ok := tc.reconcilerToKind[reconcilerID]
+		if !ok {
+			panic(fmt.Sprintf("No kind assigned to reconciler: %s", reconcilerID))
+		}
+
 		// TODO configure file emitter here
 		rImpl := reconcileImpl{
 			Name:           reconcilerID,
+			For:            kindforReconciler,
 			Reconciler:     r,
 			versionManager: tc.manager,
 			effectReader:   tc.manager,
@@ -160,7 +213,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]reconciler {
 }
 
 func (tc *TraceChecker) ShowDeps() {
-	for k, v := range tc.resourceDeps {
+	for k, v := range tc.ResourceDeps {
 		fmt.Printf("Kind: %s, Reconcilers: %v\n", k, v)
 	}
 }
@@ -180,7 +233,7 @@ func (tc *TraceChecker) PrintState(s StateNode) {
 func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 	return &Explorer{
 		reconcilers:  tc.instantiateReconcilers(),
-		dependencies: tc.resourceDeps,
+		dependencies: tc.ResourceDeps,
 		maxDepth:     maxDepth,
 	}
 }
