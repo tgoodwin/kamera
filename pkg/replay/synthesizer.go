@@ -12,7 +12,7 @@ import (
 )
 
 func (b *Builder) FindMissedObservations(controllerID string) (map[string]util.Set[event.CausalKey], error) {
-	if _, ok := b.reconcilerIDs[controllerID]; !ok {
+	if _, ok := b.ReconcilerIDs[controllerID]; !ok {
 		return nil, fmt.Errorf("controllerID not found in trace: %s", controllerID)
 	}
 

@@ -40,7 +40,7 @@ type Builder struct {
 	events []event.Event
 
 	// for bookkeeping and validation
-	reconcilerIDs util.Set[string]
+	ReconcilerIDs util.Set[string]
 }
 
 func (b *Builder) Store() Store {
@@ -131,7 +131,7 @@ func (b *Builder) fromTrace(traceData []byte) error {
 	}
 
 	// track all reconciler IDs in the trace
-	b.reconcilerIDs = make(util.Set[string])
+	b.ReconcilerIDs = make(util.Set[string])
 
 	lines := strings.Split(string(traceData), "\n")
 	events, err := ParseEventsFromLines(lines)
@@ -153,11 +153,11 @@ func (b *Builder) fromTrace(traceData []byte) error {
 			fmt.Printf("WARNING: object not found in store: %#v\n", key)
 			continue
 		}
-		b.reconcilerIDs.Add(e.ControllerID)
+		b.ReconcilerIDs.Add(e.ControllerID)
 	}
 
 	b.events = events
-	for controllerID := range b.reconcilerIDs {
+	for controllerID := range b.ReconcilerIDs {
 		fmt.Println("Found controllerID in trace", controllerID)
 	}
 
@@ -175,7 +175,7 @@ func (b *Builder) hydrateObjectValues(traceData []byte) error {
 }
 
 func (b *Builder) BuildHarness(controllerID string) (*Harness, error) {
-	if _, ok := b.reconcilerIDs[controllerID]; !ok {
+	if _, ok := b.ReconcilerIDs[controllerID]; !ok {
 		return nil, fmt.Errorf("controllerID not found in trace: %s", controllerID)
 	}
 
