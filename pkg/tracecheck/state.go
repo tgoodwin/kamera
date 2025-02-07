@@ -2,7 +2,9 @@ package tracecheck
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 )
 
@@ -27,6 +29,35 @@ func (eh ExecutionHistory) Summarize() {
 			fmt.Printf("\t%s: %s\n", key, d)
 		}
 	}
+}
+
+func (eh ExecutionHistory) FilterNoOps() ExecutionHistory {
+	var filtered ExecutionHistory
+	for _, r := range eh {
+		if len(r.Deltas) > 0 {
+			filtered = append(filtered, r)
+		}
+	}
+	return filtered
+}
+
+func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
+	pathsWithoutNoOps := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
+		return path.FilterNoOps()
+	})
+	// filter out empty paths
+	pathsWithoutNoOps = lo.Filter(pathsWithoutNoOps, func(path ExecutionHistory, _ int) bool {
+		return len(path) > 0
+	})
+	unique := lo.UniqBy(pathsWithoutNoOps, func(path ExecutionHistory) string {
+		return strings.Join(
+			lo.Map(path, func(r *ReconcileResult, _ int) string {
+				return r.ControllerID
+			}), ",",
+		)
+	})
+
+	return unique
 }
 
 type StateNode struct {

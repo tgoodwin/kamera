@@ -33,9 +33,9 @@ type ConvergedState struct {
 }
 
 type Result struct {
-	ConvergedState []ConvergedState
-	Duration       time.Duration
-	AbortedPaths   int
+	ConvergedStates []ConvergedState
+	Duration        time.Duration
+	AbortedPaths    int
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
@@ -59,7 +59,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 	}
 
 	result := &Result{
-		ConvergedState: make([]ConvergedState, 0),
+		ConvergedStates: make([]ConvergedState, 0),
 	}
 	start := time.Now()
 
@@ -113,7 +113,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 			State: convergedState,
 			Paths: paths,
 		}
-		result.ConvergedState = append(result.ConvergedState, convergedState)
+		result.ConvergedStates = append(result.ConvergedStates, convergedState)
 	}
 
 	return result
