@@ -7,6 +7,7 @@ import (
 )
 
 var mockEventJSON = `{
+	"id": "event-id",
 	"timestamp": "2021-08-02T15:04:05Z",
 	"reconcile_id": "reconcile-id",
 	"controller_id": "controller-id",
@@ -23,6 +24,7 @@ var mockEventJSON = `{
 
 func TestUnmarshal(t *testing.T) {
 	expected := &Event{
+		ID:           "event-id",
 		Timestamp:    "2021-08-02T15:04:05Z",
 		ReconcileID:  "reconcile-id",
 		ControllerID: "controller-id",
@@ -50,6 +52,7 @@ func TestUnmarshal(t *testing.T) {
 func TestMarshal(t *testing.T) {
 	expected := mockEventJSON
 	actual := &Event{
+		ID:           "event-id",
 		Timestamp:    "2021-08-02T15:04:05Z",
 		ReconcileID:  "reconcile-id",
 		ControllerID: "controller-id",
