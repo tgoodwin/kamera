@@ -285,10 +285,15 @@ func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
 	return false
 }
 
-func (tc *TraceChecker) SummarizeResults(results []StateNode) {
-	for i, sn := range results {
+func (tc *TraceChecker) SummarizeResults(result *Result) {
+	for i, sn := range result.ConvergedState {
 		fmt.Println("Result #", i+1)
-		tc.SummarizeFromRoot(&sn)
+		fmt.Println("result converged state: ", sn.State.ObjectVersions)
+		fmt.Println("paths to this state: ", len(sn.Paths))
+		for i, path := range sn.Paths {
+			fmt.Println("Path #", i+1)
+			path.Summarize()
+		}
 	}
 }
 
