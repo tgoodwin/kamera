@@ -16,75 +16,30 @@ type reconciler interface {
 	doReconcile(ctx context.Context, readset ObjectVersions) (*ReconcileResult, error)
 }
 
-type resourceDeps map[string]util.Set[string]
+type ResourceDeps map[string]util.Set[string]
 
 type Explorer struct {
 	// reconciler implementations keyed by ID
 	reconcilers map[string]reconciler
 	// maps Kinds to a list of reconcilerIDs that depend on them
-	dependencies resourceDeps
+	dependencies ResourceDeps
 
 	maxDepth int
 }
 
+type ConvergedState struct {
+	State StateNode
+	Paths []ExecutionHistory
+}
+
 type Result struct {
-	ConvergedStates []StateNode
+	ConvergedStates []ConvergedState
 	Duration        time.Duration
 	AbortedPaths    int
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
-func (e *Explorer) exploreDFS(ctx context.Context, initialState StateNode) *Result {
-	if e.maxDepth == 0 {
-		e.maxDepth = 10
-	}
-
-	startTime := time.Now()
-	result := &Result{
-		ConvergedStates: make([]StateNode, 0),
-	}
-
-	stack := []StateNode{initialState}
-	seenStates := make(map[string]bool)
-	// convergedStates := make([]StateNode, 0)
-
-	for len(stack) > 0 {
-		currentState := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		stateKey := serializeState(currentState)
-		if seenStates[stateKey] {
-			fmt.Println("Skipping already seen state at depth", currentState.depth)
-			continue
-		}
-		seenStates[stateKey] = true
-
-		if len(currentState.PendingReconciles) == 0 {
-			// TODO evaluate some predicates upon the converged state and then classify the execution
-			fmt.Println("Found a converged state at depth", currentState.depth)
-			result.ConvergedStates = append(result.ConvergedStates, currentState)
-		}
-
-		// Each controller in the pending reconciles list is a potential branch point
-		// from the current state. We explore each pending reconcile in a depth-first manner.
-		for _, controller := range currentState.PendingReconciles {
-			newState := e.takeReconcileStep(ctx, currentState, controller)
-			newState.depth = currentState.depth + 1
-			if newState.depth > e.maxDepth {
-				result.AbortedPaths += 1
-				fmt.Println("Reached max depth", e.maxDepth)
-			} else {
-				stack = append(stack, newState)
-			}
-		}
-	}
-	endTime := time.Now()
-	delta := endTime.Sub(startTime)
-	result.Duration = delta
-
-	return result
-}
-
 func getNext(stackQueue []StateNode, mode string) (StateNode, []StateNode) {
 	if mode == "stack" {
 		return stackQueue[len(stackQueue)-1], stackQueue[:len(stackQueue)-1]
@@ -104,27 +59,51 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 	}
 
 	result := &Result{
-		ConvergedStates: make([]StateNode, 0),
+		ConvergedStates: make([]ConvergedState, 0),
 	}
 	start := time.Now()
 
 	queue := []StateNode{initialState}
-	seenStates := make(map[string]bool)
 
+	// seenStates is a map of stateKey -> ExecutionHistory
+	// because we want to track which states we've visited but
+	// also want to track all the ways a given state can be reached
+	seenStates := make(map[string][]ExecutionHistory)
+
+	seenConvergedStates := make(map[string]bool)
+
+	// var currentState StateNode
 	for len(queue) > 0 {
 		currentState := queue[0]
 		queue = queue[1:]
+		// currentState, queue = getNext(queue, "queue")
 		stateKey := serializeState(currentState)
-		if seenStates[stateKey] {
-			fmt.Println("Skipping already seen state at depth", currentState.depth)
-			continue
+
+		if _, seen := seenStates[stateKey]; !seen {
+			seenStates[stateKey] = make([]ExecutionHistory, 0)
+			seenStates[stateKey] = append(seenStates[stateKey], currentState.ExecutionHistory)
+		} else {
+			seenStates[stateKey] = append(seenStates[stateKey], currentState.ExecutionHistory)
+			// continue
 		}
-		seenStates[stateKey] = true
+		// if _, seen := seenStates[stateKey]; seen {
+		// 	fmt.Println("Skipping already seen state at depth", currentState.depth)
+		// 	continue
+		// }
+		// seenStates[stateKey] = true
 
 		if len(currentState.PendingReconciles) == 0 {
 			// TODO evaluate some predicates upon the converged state and then classify the execution
-			fmt.Println("Found a converged state at depth", currentState.depth)
-			result.ConvergedStates = append(result.ConvergedStates, currentState)
+			if _, seen := seenConvergedStates[stateKey]; !seen {
+				fmt.Println("Found a converged state at depth", currentState.depth)
+				// fmt.Println(stateKey)
+				convergedState := ConvergedState{
+					State: currentState,
+					Paths: seenStates[stateKey],
+				}
+				result.ConvergedStates = append(result.ConvergedStates, convergedState)
+			}
+			seenConvergedStates[stateKey] = true
 			continue
 		}
 
@@ -134,7 +113,8 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 			newState := e.takeReconcileStep(ctx, currentState, controller)
 			newState.depth = currentState.depth + 1
 			if newState.depth > e.maxDepth {
-				fmt.Println("Reached max depth", e.maxDepth)
+				// fmt.Println("Reached max depth", e.maxDepth)
+				// newState.ExecutionHistory.Summarize()
 				result.AbortedPaths += 1
 			} else {
 				queue = append(queue, newState)
@@ -143,6 +123,16 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 	}
 
 	result.Duration = time.Since(start)
+
+	for stateKey, paths := range seenStates {
+		fmt.Println("StateKey:", stateKey)
+		fmt.Println("paths:", len(paths))
+		for i, path := range paths {
+			fmt.Println("Path:", i)
+			path.Summarize()
+		}
+	}
+
 	return result
 }
 
@@ -158,7 +148,6 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 	// if the state diff is empty, then the controller did not change anything
 	reconcileResult := e.reconcileAtState(ctx, state, controllerID)
 
-	proceed := state.proceed
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
 	for objID, version := range state.ObjectVersions {
@@ -172,16 +161,24 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 	// and add them to the pending reconciles list. n.b. this may potentially
 	// include the controller that was just executed.
 	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
-	newPendingReconciles = append(newPendingReconciles, triggeredReconcilers...)
+	newPendingReconciles = getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
 	logger.V(2).WithValues("controllerID", controllerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
+
+	// make a copy of the current execution history
+	currHistory := append([]*ReconcileResult{}, state.ExecutionHistory...)
 
 	return StateNode{
 		ObjectVersions:    newObjectVersions,
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,
-		proceed:           proceed,
+
+		ExecutionHistory: append(currHistory, reconcileResult),
 	}
+}
+
+func getNewPendingReconciles(currPending, triggered []string) []string {
+	return lo.Union(currPending, triggered)
 }
 
 func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, controllerID string) *ReconcileResult {
@@ -217,13 +214,16 @@ func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []string {
 // serializeState converts a State to a unique string representation for deduplication
 func serializeState(state StateNode) string {
 	var objectPairs []string
-	for objID, version := range state.ObjectVersions {
-		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objID, version))
+	for objKey, version := range state.ObjectVersions {
+		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objKey.ObjectID, version))
 	}
 	// Sort objectPairs to ensure deterministic order
 	sort.Strings(objectPairs)
 	objectsStr := strings.Join(objectPairs, ",")
-	reconcilesStr := strings.Join(state.PendingReconciles, ",")
+	sortedPendingReconciles := append([]string{}, state.PendingReconciles...)
+	sort.Strings(sortedPendingReconciles)
+	reconcilesStr := strings.Join(sortedPendingReconciles, ",")
+	// reconcilesStr := strings.Join(state.PendingReconciles, ",")
 
 	// Sort PendingReconciles to ensure deterministic order
 	// sortedPendingReconciles := append([]string{}, state.PendingReconciles...)
