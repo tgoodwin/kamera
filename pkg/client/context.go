@@ -148,6 +148,7 @@ func (ct *ContextTracker) setRootContext(ctx context.Context, obj client.Object)
 	ct.rc.SetRootID(currReconcileID, rootID)
 }
 
+// TODO refactor cause this is only ever called by GET and LIST
 func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object, op event.OperationType) {
 	ct.mu.Lock()
 	defer ct.mu.Unlock()
@@ -160,8 +161,8 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 		ct.setRootContext(ctx, obj)
 
 		// log the observed object version
-		r := snapshot.AsRecord(obj, ct.rc.GetReconcileID())
-		ct.emitter.LogObjectVersion(r)
+		// r := snapshot.AsRecord(obj, ct.rc.GetReconcileID())
+		// ct.emitter.LogObjectVersion(r)
 	}
 
 	// assign a change label to the object
@@ -178,7 +179,17 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 		tag.AddDeletionID(obj)
 	}
 
-	ct.emitter.LogOperation(Operation(obj, ct.rc.reconcileID, ct.reconcilerID, ct.rc.GetRootID(ct.rc.reconcileID), op))
+	operation := Operation(obj, ct.rc.reconcileID, ct.reconcilerID, ct.rc.GetRootID(ct.rc.reconcileID), op)
+	ct.emitter.LogOperation(operation)
+	r := snapshot.AsRecord(obj, ct.rc.GetReconcileID())
+	r.OperationID = operation.ID
+	ct.emitter.LogObjectVersion(r)
+
+	// TODO REMOVE THIS
+	// We need to know if the actual API operation succeeded or not to determine if we should log the operation
+	// but we dont have that information here.
+
+	// OLD COMMENT
 	// propagate labels after logging so we capture the label values prior to the operation
 	// e.g. we want to log out "prev-write-reconcile-id" before we overwrite it
 	// with the current reconcileID when we are propagating labels
