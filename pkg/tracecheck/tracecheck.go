@@ -291,7 +291,7 @@ func (tc *TraceChecker) SummarizeResults(result *Result) {
 		fmt.Println("result converged state: ", sn.State.ObjectVersions)
 		uniquePaths := GetUniquePaths(sn.Paths)
 		fmt.Println("unique paths to this state: ", len(uniquePaths))
-		for i, path := range sn.Paths {
+		for i, path := range uniquePaths {
 			fmt.Println("Path #", i+1)
 			path.Summarize()
 		}
