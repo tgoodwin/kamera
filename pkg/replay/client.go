@@ -8,7 +8,6 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -100,7 +99,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	} else {
 		return fmt.Errorf("frame %s not found", frameID)
 	}
-	c.logOperation(ctx, obj, event.GET)
+	// c.logOperation(ctx, obj, event.GET)
 	return nil
 }
 
@@ -124,7 +123,6 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 				if err := c.recorder.RecordEffect(ctx, obj, event.LIST); err != nil {
 					return err
 				}
-				c.logOperation(ctx, obj, event.LIST)
 
 				// create a new object of the correct type
 				newObj := reflect.New(itemType).Interface().(client.Object)
@@ -152,34 +150,22 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	logger = log.FromContext(ctx)
-	tag.AddSleeveObjectID(obj)
-	tag.LabelChange(obj)
-
-	// TODO create a trace
-	// TODO propagate labels
-
-	// logger.V(0).Info("client:creating object", "object", obj)
 	return c.recorder.RecordEffect(ctx, obj, event.CREATE)
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	tag.AddDeletionID(obj)
 	return c.recorder.RecordEffect(ctx, obj, event.DELETE)
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	tag.LabelChange(obj)
 	return c.recorder.RecordEffect(ctx, obj, event.UPDATE)
 }
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
-	tag.AddDeletionID(obj)
 	return c.recorder.RecordEffect(ctx, obj, event.DELETE)
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	tag.LabelChange(obj)
 	return c.recorder.RecordEffect(ctx, obj, event.PATCH)
 }
 
@@ -194,29 +180,13 @@ type subResourceClient struct {
 var _ client.SubResourceWriter = (*subResourceClient)(nil)
 
 func (c *subResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-	tag.LabelChange(obj)
 	return c.wrapped.recorder.RecordEffect(ctx, obj, event.UPDATE)
 }
 
 func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-	tag.LabelChange(obj)
 	return c.wrapped.recorder.RecordEffect(ctx, obj, event.PATCH)
 }
 
 func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
-	tag.LabelChange(obj)
-	tag.AddSleeveObjectID(sub)
 	return c.wrapped.recorder.RecordEffect(ctx, obj, event.CREATE)
-}
-
-func (c *Client) logOperation(ctx context.Context, obj client.Object, op event.OperationType) {
-	// frameID := FrameIDFromContext(ctx)
-	// event := event.Operation(
-	// 	obj,
-	// 	frameID,
-	// 	c.reconcilerID,
-	// 	"rootID",
-	// 	operation,
-	// )
-	// c.emitter.LogOperation(event)
 }
