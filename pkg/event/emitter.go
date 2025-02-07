@@ -50,6 +50,13 @@ type FileEmitter struct {
 }
 
 func NewFileEmitter(filePath string) *FileEmitter {
+	// Clear the file if it already exists
+	file, err := os.OpenFile(filePath, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		panic("failed to clear file")
+	}
+	file.Close()
+
 	return &FileEmitter{filePath: filePath}
 }
 
