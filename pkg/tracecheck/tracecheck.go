@@ -259,13 +259,6 @@ func (tc *TraceChecker) SummarizeFromRoot(sn *StateNode) {
 		sn.Summarize()
 		fmt.Println("Deltas:")
 		tc.showDeltas(sn.parent, sn)
-		// effects := tc.manager.effects[sn.action.FrameID]
-		// for _, eff := range effects.reads {
-		// 	fmt.Println("Read: ", eff)
-		// }
-		// for _, eff := range effects.writes {
-		// 	fmt.Println("Write: ", eff)
-		// }
 	} else {
 		fmt.Println("Root StateNode")
 		sn.Summarize()
