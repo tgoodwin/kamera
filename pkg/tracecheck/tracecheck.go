@@ -2,7 +2,6 @@ package tracecheck
 
 import (
 	"fmt"
-	"os"
 
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
@@ -238,33 +237,6 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 	}
 }
 
-func (tc *TraceChecker) showDeltas(prevState, currState *StateNode) {
-	changes := currState.action.Changes
-	for k, v := range changes {
-		if prevVersion, ok := prevState.ObjectVersions[k]; ok {
-			fmt.Printf("Delta for object %s-%s:\n", k.Kind, util.Shorter(k.ObjectID))
-			delta := tc.manager.Diff(&prevVersion, &v)
-			fmt.Println(delta)
-		} else {
-			// creation event
-			fmt.Println("New Object:")
-			fmt.Println(tc.manager.Diff(nil, &v))
-		}
-	}
-}
-
-func (tc *TraceChecker) SummarizeFromRoot(sn *StateNode) {
-	if sn.parent != nil {
-		tc.SummarizeFromRoot(sn.parent)
-		sn.Summarize()
-		fmt.Println("Deltas:")
-		tc.showDeltas(sn.parent, sn)
-	} else {
-		fmt.Println("Root StateNode")
-		sn.Summarize()
-	}
-}
-
 func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
 	ov := sn.ObjectVersions
 	for k, v := range ov {
@@ -288,37 +260,6 @@ func (tc *TraceChecker) SummarizeResults(result *Result) {
 			fmt.Println("Path #", i+1)
 			path.Summarize()
 		}
-	}
-}
-
-func (tc *TraceChecker) materializeTrace(endState *StateNode, outfile *os.File) {
-	if endState.action == nil {
-		return
-	}
-	if endState.parent != nil {
-		tc.materializeTrace(endState.parent, outfile)
-	}
-	frameID := endState.action.FrameID
-	logs := tc.emitter.(*event.InMemoryEmitter).Dump(frameID)
-
-	for _, log := range logs {
-		if _, err := outfile.WriteString(log + "\n"); err != nil {
-			fmt.Println("Error writing to file: ", err)
-		}
-	}
-}
-
-func (tc *TraceChecker) MaterializeTraces(results []StateNode) {
-	for i, sn := range results {
-		filename := fmt.Sprintf("execution-%d.trace", i+1)
-		file, err := os.Create(filename)
-		if err != nil {
-			fmt.Println("Error creating file: ", err)
-			continue
-		}
-		defer file.Close()
-
-		tc.materializeTrace(&sn, file)
 	}
 }
 

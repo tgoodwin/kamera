@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/samber/lo"
@@ -22,12 +23,26 @@ type ReconcileResult struct {
 
 type ExecutionHistory []*ReconcileResult
 
-func (eh ExecutionHistory) Summarize() {
+func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 	for _, r := range eh {
-		fmt.Printf("\t%s:%s - #changes=%d\n", r.ControllerID, r.FrameID, len(r.Deltas))
-		for key, d := range r.Deltas {
-			fmt.Printf("\t%s: %s\n", key, d)
+		_, err := fmt.Fprintf(file, "\t%s:%s - #changes=%d\n", r.ControllerID, r.FrameID, len(r.Deltas))
+		if err != nil {
+			return err
 		}
+		for key, d := range r.Deltas {
+			_, err := fmt.Fprintf(file, "\t%s: %s\n", key, d)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (eh ExecutionHistory) Summarize() {
+	err := eh.SummarizeToFile(os.Stdout)
+	if err != nil {
+		fmt.Printf("Error summarizing to stdout: %v\n", err)
 	}
 }
 
