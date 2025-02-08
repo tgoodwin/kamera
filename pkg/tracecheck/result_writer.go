@@ -52,7 +52,8 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 	defer file.Close()
 
 	// Write state summary to the file
-	file.WriteString("# State Summary:\n")
+	file.WriteString("#Converged State Summary:\n")
+	file.WriteString("## Converged Objects:\n")
 	for key, version := range state.State.ObjectVersions {
 		prettyVersion, err := prettyPrintJSON(string(version))
 		if err != nil {
