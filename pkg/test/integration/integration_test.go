@@ -29,7 +29,7 @@ func formatResults(paths []tracecheck.ExecutionHistory) [][]string {
 	return formatted
 }
 
-func TestIntegration(t *testing.T) {
+func TestExhaustiveInterleavings(t *testing.T) {
 	tc := tracecheck.NewTraceChecker(scheme)
 	deps := make(tracecheck.ResourceDeps)
 	deps["Foo"] = make(util.Set[string])
@@ -38,14 +38,16 @@ func TestIntegration(t *testing.T) {
 
 	tc.ResourceDeps = deps
 
+	// Testing two controllers whos behavior is identical
+	// and who both depend on the same object.
 	tc.AddReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
-		return &controller.FooTrivialReconciler{
+		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
 	tc.AddReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
-		return &controller.BarTrivialReconciler{
+		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
