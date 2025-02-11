@@ -80,7 +80,6 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	explorer := tc.NewExplorer(10)
 
 	result := explorer.Explore(context.Background(), initialState)
-	tc.SummarizeResults(result)
 
 	if len(result.ConvergedStates) != 1 {
 		t.Errorf("expected 1 result, got %d", len(result.ConvergedStates))

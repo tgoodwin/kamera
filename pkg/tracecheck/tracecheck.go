@@ -22,6 +22,11 @@ type Reconciler reconcile.Reconciler
 
 type ReconcilerConstructor func(client Client) Reconciler
 
+type testEmitter interface {
+	event.Emitter
+	Dump(frameID string) []string
+}
+
 type TraceChecker struct {
 	reconcilers  map[string]ReconcilerConstructor
 	ResourceDeps ResourceDeps
@@ -33,7 +38,7 @@ type TraceChecker struct {
 	// TODO move this elsewhere
 	builder *replay.Builder
 
-	emitter event.Emitter
+	emitter testEmitter
 }
 
 func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
@@ -52,6 +57,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 		ResourceDeps: readDeps,
 		manager:      mgr,
 		scheme:       scheme,
+		emitter:      NewDebugEmitter(),
 
 		// TODO refactor
 		reconcilerToKind: make(map[string]string),
@@ -155,7 +161,7 @@ func (tc *TraceChecker) AssignReconcilerToKind(reconcilerID, kind string) {
 	tc.reconcilerToKind[reconcilerID] = kind
 }
 
-func (tc *TraceChecker) AddEmitter(emitter event.Emitter) {
+func (tc *TraceChecker) AddEmitter(emitter testEmitter) {
 	tc.emitter = emitter
 }
 

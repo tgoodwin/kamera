@@ -7,8 +7,6 @@ import (
 	"log"
 	"os"
 	"path"
-
-	"github.com/tgoodwin/sleeve/pkg/event"
 )
 
 func prettyPrintJSON(jsonStr string) (string, error) {
@@ -64,9 +62,6 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 			log.Fatalf("failed to write state summary: %v", err)
 		}
 	}
-	// if _, err := file.WriteString(fmt.Sprintf("%#v\n\n", state.State.ObjectVersions)); err != nil {
-	// 	log.Fatalf("failed to write state summary: %v", err)
-	// }
 	file.WriteString("\n## Paths:\n")
 	for i, path := range state.Paths {
 		if _, err := file.WriteString(fmt.Sprintf("\nPath %d:\n", i+1)); err != nil {
@@ -81,26 +76,24 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 }
 
 func (tc *TraceChecker) materializeTraces(state ConvergedState, outPrefix string) {
-	if emitter, ok := tc.emitter.(*event.InMemoryEmitter); ok {
-		for i, path := range state.Paths {
-			paddedIdx := fmt.Sprintf("%02d", i+1)
-			outPath := fmt.Sprintf("%s-path-%s.trace", outPrefix, paddedIdx)
-			file, err := os.Create(outPath)
-			if err != nil {
-				log.Fatalf("failed to create trace file: %v", err)
-			}
-			defer file.Close()
+	// filter out no-ops
+	uniquePaths := GetUniquePaths(state.Paths)
+	for i, path := range uniquePaths {
+		paddedIdx := fmt.Sprintf("%02d", i+1)
+		outPath := fmt.Sprintf("%s-path-%s.trace", outPrefix, paddedIdx)
+		file, err := os.Create(outPath)
+		if err != nil {
+			log.Fatalf("failed to create trace file: %v", err)
+		}
+		defer file.Close()
 
-			for _, reconcileResult := range path {
-				logs := emitter.Dump(reconcileResult.FrameID)
-				for _, line := range logs {
-					if _, err := file.WriteString(line + "\n"); err != nil {
-						log.Fatalf("failed to write trace: %v", err)
-					}
+		for _, reconcileResult := range path {
+			logs := tc.emitter.Dump(reconcileResult.FrameID)
+			for _, line := range logs {
+				if _, err := file.WriteString(line + "\n"); err != nil {
+					log.Fatalf("failed to write trace: %v", err)
 				}
 			}
 		}
-	} else {
-		log.Fatalf("emitter is not an InMemoryEmitter")
 	}
 }
