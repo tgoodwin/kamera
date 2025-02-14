@@ -132,7 +132,8 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		ResourceDeps: readDeps,
 		manager:      mgr,
 
-		builder: b,
+		builder:          b,
+		reconcilerToKind: make(map[string]string),
 	}
 }
 
@@ -286,8 +287,8 @@ func (tc *TraceChecker) DiffStates(a, b StateNode) []string {
 	return diffs
 }
 
-func (tc *TraceChecker) DiffResults(results []StateNode) {
-	unique := util.NewAnySet[StateNode](func(a, b StateNode) bool {
+func (tc *TraceChecker) Unique(results []StateNode) {
+	unique := util.NewAnySet(func(a, b StateNode) bool {
 		diffs := tc.DiffStates(a, b)
 		return len(diffs) == 0
 	})
