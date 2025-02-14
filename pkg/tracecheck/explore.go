@@ -28,6 +28,7 @@ type Explorer struct {
 }
 
 type ConvergedState struct {
+	ID    string
 	State StateNode
 	Paths []ExecutionHistory
 }
@@ -106,11 +107,13 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 
 	// Graph search has ended, summarize the results
 	result.Duration = time.Since(start)
-	for stateKey, convergedState := range seenConvergedStates {
+	for i, stateKey := range lo.Keys(seenConvergedStates) {
+		state := seenConvergedStates[stateKey]
 		paths := executionPathsToState[stateKey]
 
 		convergedState := ConvergedState{
-			State: convergedState,
+			ID:    fmt.Sprintf("state-%d", i),
+			State: state,
 			Paths: paths,
 		}
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
