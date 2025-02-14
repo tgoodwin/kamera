@@ -7,6 +7,9 @@ import (
 	"log"
 	"os"
 	"path"
+	"sort"
+
+	"github.com/samber/lo"
 )
 
 func prettyPrintJSON(jsonStr string) (string, error) {
@@ -50,9 +53,19 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 	defer file.Close()
 
 	// Write state summary to the file
-	file.WriteString("#Converged State Summary:\n")
+	file.WriteString("# Converged State Summary:\n")
 	file.WriteString("## Converged Objects:\n")
-	for key, version := range state.State.ObjectVersions {
+	objectKeys := lo.Keys(state.State.ObjectVersions)
+	sort.Slice(objectKeys, func(i, j int) bool {
+		// first sort by kind, then by objectID
+		if objectKeys[i].Kind != objectKeys[j].Kind {
+			return objectKeys[i].Kind < objectKeys[j].Kind
+		}
+		return objectKeys[i].ObjectID < objectKeys[j].ObjectID
+	})
+
+	for _, key := range objectKeys {
+		version := state.State.ObjectVersions[key]
 		prettyVersion, err := prettyPrintJSON(string(version))
 		if err != nil {
 			log.Fatalf("failed to pretty print version: %v", err)
@@ -62,8 +75,8 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 			log.Fatalf("failed to write state summary: %v", err)
 		}
 	}
-	file.WriteString("\n## Unique Paths:\n")
 	uniquePaths := GetUniquePaths(state.Paths)
+	file.WriteString(fmt.Sprintf("\n## Unique Paths: %d\n", len(uniquePaths)))
 	for i, path := range uniquePaths {
 		if _, err := file.WriteString(fmt.Sprintf("\nPath %d:\n", i+1)); err != nil {
 			log.Fatalf("failed to write state summary: %v", err)
