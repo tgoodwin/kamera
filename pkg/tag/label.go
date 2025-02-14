@@ -65,15 +65,14 @@ func GetChangeLabel() map[string]string {
 }
 
 func GetSleeveObjectID(obj client.Object) string {
-	fallback := string(obj.GetUID())
 	labels := obj.GetLabels()
 	if labels == nil {
-		return fallback
+		return string(obj.GetUID())
 	}
 	if id, ok := labels[TraceyObjectID]; ok {
 		return id
 	}
-	return fallback
+	return string(obj.GetUID())
 }
 
 func SanityCheckLabels(obj client.Object) error {
