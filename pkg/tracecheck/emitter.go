@@ -1,17 +1,15 @@
 package tracecheck
 
 import (
-	"flag"
-
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 )
 
-var outFile = flag.String("outfile", "debug.log", "output file for debug logs")
+// var outFile = flag.String("outfile", "debug.log", "output file for debug logs")
 
-func init() {
-	flag.Parse()
-}
+// func init() {
+// 	flag.Parse()
+// }
 
 type DebugEmitter struct {
 	fileEmitter *event.FileEmitter
@@ -20,7 +18,7 @@ type DebugEmitter struct {
 
 func NewDebugEmitter() *DebugEmitter {
 	return &DebugEmitter{
-		fileEmitter:     event.NewFileEmitter(*outFile),
+		fileEmitter:     event.NewFileEmitter("debug.log"),
 		InMemoryEmitter: event.NewInMemoryEmitter(),
 	}
 }

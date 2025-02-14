@@ -3,10 +3,12 @@ package test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/sleeve/pkg/test/integration/internal/controller"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
@@ -105,5 +107,164 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	actual := formatResults(convergedState.Paths)
 
 	assert.ElementsMatch(t, expected, actual)
+}
 
+func TestConvergedStateIdentification(t *testing.T) {
+	tc := tracecheck.NewTraceChecker(scheme)
+	deps := make(tracecheck.ResourceDeps)
+	deps["Foo"] = make(util.Set[string])
+	deps["Foo"].Add("FooController")
+	deps["Foo"].Add("BarController")
+
+	tc.ResourceDeps = deps
+
+	// Testing two controllers whos behavior is identical
+	// and who both depend on the same object.
+	tc.AddReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
+		return &controller.FooReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	})
+	tc.AddReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
+		return &controller.BarReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	})
+
+	tc.AssignReconcilerToKind("FooController", "Foo")
+	tc.AssignReconcilerToKind("BarController", "Foo")
+
+	tc.AddEmitter(event.NewInMemoryEmitter())
+
+	topLevelObj := &appsv1.Foo{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foo",
+			Namespace: "default",
+			Labels: map[string]string{
+				"tracey-uid":                       "foo",
+				"discrete.events/sleeve-object-id": "foo-123",
+			},
+		},
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "appsv1",
+			Kind:       "Foo",
+		},
+		Spec: appsv1.FooSpec{
+			Mode: "A",
+		},
+	}
+
+	initialState := tc.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
+	explorer := tc.NewExplorer(10)
+
+	result := explorer.Explore(context.Background(), initialState)
+	tc.SummarizeResults(result)
+	assert.Equal(t, 2, len(result.ConvergedStates))
+
+	expected := []struct {
+		objects       tracecheck.ObjectVersions
+		numPaths      int
+		pathSummaries [][]string
+	}{
+		{
+			objects: tracecheck.ObjectVersions{
+				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.VersionHash(
+					`{
+						"apiVersion": "appsv1",
+						"kind": "Foo",
+						"metadata": {
+							"creationTimestamp": null,
+							"labels": {
+								"discrete.events/change-id": "CHANGE_ID",
+								"discrete.events/creator-id": "CREATOR_ID",
+								"discrete.events/prev-write-reconcile-id": "RECONCILE_ID",
+								"discrete.events/root-event-id": "foo",
+								"discrete.events/sleeve-object-id": "OBJECT_ID",
+								"tracey-uid": "foo"
+							},
+							"name": "foo",
+							"namespace": "default"
+						},
+						"spec": {
+							"mode": "A"
+						},
+						"status": {
+							"state": "A-Final"
+						}
+					}`),
+			},
+			numPaths: 2,
+			pathSummaries: [][]string{
+				{"FooController@1", "FooController@1", "BarController@1"},
+				{"FooController@1", "FooController@1", "FooController@1"},
+			},
+		},
+		{
+			objects: tracecheck.ObjectVersions{
+				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.VersionHash(
+					`{
+						"apiVersion": "appsv1",
+						"kind": "Foo",
+						"metadata": {
+							"annotations": {
+								"mode-flip-done": "true"
+							},
+							"creationTimestamp": null,
+							"labels": {
+								"discrete.events/change-id": "CHANGE_ID",
+								"discrete.events/creator-id": "CREATOR_ID",
+								"discrete.events/prev-write-reconcile-id": "RECONCILE_ID",
+								"discrete.events/root-event-id": "foo",
+								"discrete.events/sleeve-object-id": "OBJECT_ID",
+								"tracey-uid": "foo"
+							},
+							"name": "foo",
+							"namespace": "default"
+						},
+						"spec": {
+							"mode": "B"
+						},
+						"status": {
+							"state": "B-Final"
+						}
+					}`),
+			},
+			numPaths: 2,
+			pathSummaries: [][]string{
+				{"FooController@1", "BarController@1", "FooController@1", "FooController@1", "BarController@1"},
+				{"FooController@1", "BarController@1", "FooController@1", "FooController@1", "FooController@1"},
+			},
+		},
+	}
+
+	for _, expectedState := range expected {
+		var matchedState *tracecheck.ConvergedState
+		for _, convergedState := range result.ConvergedStates {
+			match := true
+			for key, vHash := range convergedState.State.ObjectVersions {
+				expectedJSON := string(expectedState.objects[key])
+				expectedJSON = strings.ReplaceAll(expectedJSON, "\n", "")
+				expectedJSON = strings.ReplaceAll(expectedJSON, "\t", "")
+				expectedJSON = strings.ReplaceAll(expectedJSON, " ", "")
+				if expectedJSON != string(vHash) {
+					match = false
+					break
+				}
+			}
+			if match {
+				matchedState = &convergedState
+				break
+			}
+		}
+		if matchedState == nil {
+			t.Errorf("no matching converged state found for expected state: %+v", expectedState.objects)
+			continue
+		}
+		uniquePaths := tracecheck.GetUniquePaths(matchedState.Paths)
+		assert.Equal(t, expectedState.numPaths, len(uniquePaths))
+		actualPathSummaries := formatResults(uniquePaths)
+		assert.ElementsMatch(t, expectedState.pathSummaries, actualPathSummaries)
+	}
 }

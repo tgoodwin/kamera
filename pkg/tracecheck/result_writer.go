@@ -62,8 +62,9 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 			log.Fatalf("failed to write state summary: %v", err)
 		}
 	}
-	file.WriteString("\n## Paths:\n")
-	for i, path := range state.Paths {
+	file.WriteString("\n## Unique Paths:\n")
+	uniquePaths := GetUniquePaths(state.Paths)
+	for i, path := range uniquePaths {
 		if _, err := file.WriteString(fmt.Sprintf("\nPath %d:\n", i+1)); err != nil {
 			log.Fatalf("failed to write state summary: %v", err)
 		}

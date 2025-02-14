@@ -12,6 +12,18 @@ import (
 // ObjectVersions is a map of object IDs to their version hashes
 type ObjectVersions map[snapshot.IdentityKey]snapshot.VersionHash
 
+func (ov ObjectVersions) Equals(other ObjectVersions) bool {
+	if len(ov) != len(other) {
+		return false
+	}
+	for key, value := range ov {
+		if otherValue, exists := other[key]; !exists || otherValue != value {
+			return false
+		}
+	}
+	return true
+}
+
 type Delta string
 
 type ReconcileResult struct {

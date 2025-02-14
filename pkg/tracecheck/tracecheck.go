@@ -57,7 +57,8 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 		ResourceDeps: readDeps,
 		manager:      mgr,
 		scheme:       scheme,
-		emitter:      NewDebugEmitter(),
+
+		emitter: event.NewInMemoryEmitter(),
 
 		// TODO refactor
 		reconcilerToKind: make(map[string]string),

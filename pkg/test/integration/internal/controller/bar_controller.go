@@ -31,9 +31,6 @@ func (r *BarReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 
 	// Flip mode at most once
 	if _, exists := foo.Annotations["mode-flip-done"]; !exists {
-		// if foo.Status.State == "A-2" {
-		// 	panic("ok")
-		// }
 		if foo.Status.State == "A-1" {
 			foo.Spec.Mode = "B"
 			if foo.Annotations == nil {
@@ -53,20 +50,15 @@ func (r *BarReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.R
 			if err := r.Update(ctx, &foo); err != nil {
 				return ctrl.Result{}, err
 			}
+			return ctrl.Result{}, nil
 		}
-		return ctrl.Result{}, nil
 	}
-
-	// if foo.Status.State == "A-1" {
-	// 	panic("ok")
-	// }
 
 	// Some duplicated logic to introduce variation
 	// among paths to convergence
-	if foo.Spec.Mode == "A" && foo.Status.State == "A-1" {
-		foo.Status.State = "A-2"
+	if foo.Status.State == "A-2" {
+		foo.Status.State = "A-Final"
 		updated = true
-		// panic("HERE")
 	} else if foo.Spec.Mode == "B" && foo.Status.State == "B-2" {
 		foo.Status.State = "B-Final"
 		updated = true
