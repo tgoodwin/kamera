@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"fmt"
 
+	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 )
 
@@ -10,13 +11,13 @@ import (
 type DiffResult struct {
 	BaseID         string
 	OtherID        string
-	UniqueElements map[string][]snapshot.IdentityKey
+	UniqueElements map[string][]string
 	// Objects present in the first map but not in the second
 	OnlyInFirst []snapshot.IdentityKey
 	// Objects present in the second map but not in the first
 	OnlyInSecond []snapshot.IdentityKey
 	// Objects present in both maps but with different versions
-	Modified map[snapshot.IdentityKey][]string // key -> deltas
+	Modified map[string]string // key -> deltas
 }
 
 // DiffObjectVersions compares two ObjectVersions maps and returns their differences
@@ -24,34 +25,47 @@ func (tc *TraceChecker) DiffObjectVersions(first, second ConvergedState) DiffRes
 	result := DiffResult{
 		BaseID:         first.ID,
 		OtherID:        second.ID,
-		UniqueElements: make(map[string][]snapshot.IdentityKey),
-		OnlyInFirst:    make([]snapshot.IdentityKey, 0),
-		OnlyInSecond:   make([]snapshot.IdentityKey, 0),
-		Modified:       make(map[snapshot.IdentityKey][]string),
+		UniqueElements: make(map[string][]string),
+		// OnlyInFirst:    make([]snapshot.IdentityKey, 0),
+		// OnlyInSecond:   make([]snapshot.IdentityKey, 0),
+		Modified: make(map[string]string),
 	}
 
 	firstWorld := first.State.ObjectVersions
 	secondWorld := second.State.ObjectVersions
 
-	// Find keys only in first and modified objects
-	for key, firstHash := range firstWorld {
-		if secondHash, exists := secondWorld[key]; !exists {
-			result.OnlyInFirst = append(result.OnlyInFirst, key)
-			result.UniqueElements[first.ID] = append(result.UniqueElements[first.ID], key)
-		} else if firstHash != secondHash {
-			// Objects exist in both maps but have different versions
-			deltas := tc.manager.Diff(&firstHash, &secondHash)
-			if len(deltas) > 0 {
-				result.Modified[key] = append(result.Modified[key], deltas)
+	firstNormalized := lo.MapValues(firstWorld, func(v snapshot.VersionHash, _ snapshot.IdentityKey) snapshot.NormalizedObject {
+		return snapshot.NormalizeObject(v)
+	})
+	secondNormalized := lo.MapValues(secondWorld, func(v snapshot.VersionHash, _ snapshot.IdentityKey) snapshot.NormalizedObject {
+		return snapshot.NormalizeObject(v)
+	})
+
+	fn := lo.MapEntries(firstNormalized, func(k snapshot.IdentityKey, v snapshot.NormalizedObject) (string, snapshot.NormalizedObject) {
+		return v.Identity(), v
+	})
+
+	sn := lo.MapEntries(secondNormalized, func(k snapshot.IdentityKey, v snapshot.NormalizedObject) (string, snapshot.NormalizedObject) {
+		return v.Identity(), v
+	})
+
+	for nkey, nval := range fn {
+		if _, exists := sn[nkey]; !exists {
+			result.UniqueElements[first.ID] = append(result.UniqueElements[first.ID], nval.Identity())
+		} else {
+			nDelta, err := nval.Diff(sn[nkey])
+			if err != nil {
+				fmt.Printf("Error diffing normalized objects: %v\n", err)
+			}
+			if nDelta.SpecDiff != "" || nDelta.StatusDiff != "" {
+				result.Modified[nkey] = fmt.Sprintf("Spec: %s\nStatus: %s", nDelta.SpecDiff, nDelta.StatusDiff)
 			}
 		}
 	}
 
-	// Find keys only in second
-	for key := range secondWorld {
-		if _, exists := firstWorld[key]; !exists {
-			result.OnlyInSecond = append(result.OnlyInSecond, key)
-			result.UniqueElements[second.ID] = append(result.UniqueElements[second.ID], key)
+	for nkey, nval := range sn {
+		if _, exists := fn[nkey]; !exists {
+			result.UniqueElements[second.ID] = append(result.UniqueElements[second.ID], nval.Identity())
 		}
 	}
 
@@ -60,25 +74,25 @@ func (tc *TraceChecker) DiffObjectVersions(first, second ConvergedState) DiffRes
 
 func (tc *TraceChecker) DiffResults(result *Result) {
 	convergedStates := result.ConvergedStates
-	for i, state := range convergedStates {
-		for j, otherState := range convergedStates {
-			if i == j {
-				continue
-			}
-			diff := tc.DiffObjectVersions(state, otherState)
+	for i := 0; i < len(convergedStates); i++ {
+		for j := i + 1; j < len(convergedStates); j++ {
+			diff := tc.DiffObjectVersions(convergedStates[i], convergedStates[j])
 			diff.Print()
 			// tc.writeDiffSummary(diff, i, j)
 		}
 	}
-
 }
 
 func (dr DiffResult) Print() {
+	if len(dr.UniqueElements[dr.BaseID]) == 0 && len(dr.UniqueElements[dr.OtherID]) == 0 && len(dr.Modified) == 0 {
+		fmt.Printf("No differences between %s and %s\n", dr.BaseID, dr.OtherID)
+		return
+	}
 	fmt.Printf("Diff between %s and %s\n", dr.BaseID, dr.OtherID)
-	fmt.Printf("Only in %s: %v\n", dr.BaseID, dr.OnlyInFirst)
-	fmt.Printf("Only in %s: %v\n", dr.OtherID, dr.OnlyInSecond)
-	fmt.Printf("First to Second delta:\n")
+	fmt.Printf("Only in %s: %v\n", dr.BaseID, dr.UniqueElements[dr.BaseID])
+	fmt.Printf("Only in %s: %v\n", dr.OtherID, dr.UniqueElements[dr.OtherID])
+	fmt.Printf("%s to %s delta:\n", dr.BaseID, dr.OtherID)
 	for key, deltas := range dr.Modified {
-		fmt.Printf("\t%s: %v\n", key, deltas)
+		fmt.Printf("Delta for %s:\n%v\n", key, deltas)
 	}
 }
