@@ -6,12 +6,7 @@ import (
 )
 
 func TestNormalize(t *testing.T) {
-	// Test case from the question
-	// key := IdentityKey{
-	// 	Kind:     "Pod",
-	// 	ObjectID: "pod-1",
-	// }
-	value := VersionHash(`{"kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)
+	value := VersionHash(`{"apiVersion":"v1","kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)
 	expected := NormalizedObject{
 		Kind:      "Pod",
 		Namespace: "default",
