@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/muesli/termenv"
+
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -59,6 +61,10 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		e.maxDepth = 10
 	}
 
+	seenDepths := make(map[int]bool)
+
+	p := termenv.ColorProfile()
+
 	result := &Result{
 		ConvergedStates: make([]ConvergedState, 0),
 	}
@@ -96,6 +102,10 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		for _, controller := range currentState.PendingReconciles {
 			newState := e.takeReconcileStep(ctx, currentState, controller)
 			newState.depth = currentState.depth + 1
+			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
+				fmt.Print(termenv.String(fmt.Sprintf("\rexplore reached depth: %d", newState.depth)).Foreground(p.Color("2")))
+				seenDepths[newState.depth] = true
+			}
 			if newState.depth > e.maxDepth {
 				// fmt.Println("Reached max depth", e.maxDepth)
 				result.AbortedPaths += 1
@@ -163,7 +173,9 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 	}
 }
 
+// TODO figure out if we need to append to the front if using DFS
 func getNewPendingReconciles(currPending, triggered []string) []string {
+	// Union does not change the order of elements relatively
 	return lo.Union(currPending, triggered)
 }
 
