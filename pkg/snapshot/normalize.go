@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/google/go-cmp/cmp"
+	"github.com/tgoodwin/sleeve/pkg/diff"
 )
 
 type NormalizedObject struct {
@@ -66,16 +66,16 @@ func (n *NormalizedObject) Identity() string {
 type NormalizedDiff struct {
 	Base       NormalizedObject
 	Other      NormalizedObject
-	SpecDiff   string
-	StatusDiff string
+	SpecDiff   []string
+	StatusDiff []string
 }
 
 func (n NormalizedObject) Diff(other NormalizedObject) (*NormalizedDiff, error) {
 	if n.Identity() != other.Identity() {
 		return nil, errors.New("cannot diff objects with different identities")
 	}
-	specDiff := cmp.Diff(n.Spec, other.Spec)
-	statusDiff := cmp.Diff(n.Status, other.Status)
+	specDiff := diff.CompareJSON(n.Spec, other.Spec).ToRFC6902()
+	statusDiff := diff.CompareJSON(n.Status, other.Status).ToRFC6902()
 
 	return &NormalizedDiff{
 		Base:       n,

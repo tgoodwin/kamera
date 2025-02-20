@@ -3,6 +3,8 @@ package snapshot
 import (
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNormalize(t *testing.T) {
@@ -60,8 +62,8 @@ func TestNormalizedDiff(t *testing.T) {
 			expected: &NormalizedDiff{
 				Base:       NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)),
 				Other:      NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)),
-				SpecDiff:   "",
-				StatusDiff: "",
+				SpecDiff:   []string{},
+				StatusDiff: []string{},
 			},
 		},
 		{
@@ -84,16 +86,10 @@ func TestNormalizedDiff(t *testing.T) {
 			value1: VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]},"status":{"phase":"Running"}}`),
 			value2: VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx:latest"}]},"status":{"phase":"Pending"}}`),
 			expected: &NormalizedDiff{
-				Base:  NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]},"status":{"phase":"Running"}}`)),
-				Other: NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx:latest"}]},"status":{"phase":"Pending"}}`)),
-				SpecDiff: `  containers:
--   - image: nginx
-+   - image: nginx:latest
-	  name: nginx
-`,
-				StatusDiff: `  phase: Running
-- phase: Pending
-`,
+				Base:       NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]},"status":{"phase":"Running"}}`)),
+				Other:      NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx:latest"}]},"status":{"phase":"Pending"}}`)),
+				SpecDiff:   []string{`{"op":"replace","path":"/containers[0]/image","value":"nginx:latest"}`},
+				StatusDiff: []string{`{"op":"replace","path":"/phase","value":"Pending"}`},
 			},
 			expectedError: false,
 		},
@@ -107,10 +103,10 @@ func TestNormalizedDiff(t *testing.T) {
 				t.Fatalf("expected error: %v, got: %v", tt.expectedError, err)
 			}
 			if !tt.expectedError {
-				if actual.SpecDiff != tt.expected.SpecDiff {
+				if !assert.ElementsMatch(t, actual.SpecDiff, tt.expected.SpecDiff) {
 					t.Errorf("expected SpecDiff %v, got %v", tt.expected.SpecDiff, actual.SpecDiff)
 				}
-				if actual.StatusDiff != tt.expected.StatusDiff {
+				if !assert.ElementsMatch(t, actual.StatusDiff, tt.expected.StatusDiff) {
 					t.Errorf("expected StatusDiff %v, got %v", tt.expected.StatusDiff, actual.StatusDiff)
 				}
 			}
