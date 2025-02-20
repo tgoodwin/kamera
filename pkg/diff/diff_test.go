@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -230,6 +231,82 @@ func TestCompareJSON_EdgeCases(t *testing.T) {
 			if !cmp.Equal(report, tt.expected) {
 				t.Errorf("CompareJSON() mismatch:\ngot: %+v\nwant: %+v",
 					report, tt.expected)
+			}
+		})
+	}
+}
+
+func TestDiffReport_ToRFC6902(t *testing.T) {
+	tests := []struct {
+		name   string
+		report DiffReport
+		want   []string
+	}{
+		{
+			name: "simple field changes",
+			report: DiffReport{
+				AddedPaths: []string{"person.address.country"},
+				ModifiedPaths: []ModifiedPath{
+					{Path: "person.address.city", OldValue: "New York", NewValue: "Boston"},
+				},
+			},
+			want: []string{
+				`{"op":"add","path":"/person/address/country","value":null}`,
+				`{"op":"replace","path":"/person/address/city","value":"Boston"}`,
+			},
+		},
+		{
+			name: "array notation",
+			report: DiffReport{
+				ModifiedPaths: []ModifiedPath{
+					{Path: "users[0].name", OldValue: "John", NewValue: "Johnny"},
+					{Path: "numbers[1]", OldValue: 2, NewValue: 4},
+				},
+			},
+			want: []string{
+				`{"op":"replace","path":"/numbers[1]","value":4}`,
+				`{"op":"replace","path":"/users[0]/name","value":"Johnny"}`,
+			},
+		},
+		{
+			name: "add and remove",
+			report: DiffReport{
+				AddedPaths:   []string{"newKey"},
+				RemovedPaths: []string{"oldKey"},
+			},
+			want: []string{
+				`{"op":"add","path":"/newKey","value":null}`,
+				`{"op":"remove","path":"/oldKey"}`,
+			},
+		},
+		{
+			name:   "empty report",
+			report: DiffReport{},
+			want:   []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.report.ToRFC6902()
+
+			if len(got) != len(tt.want) {
+				t.Errorf("ToRFC6902() returned %d patches, want %d", len(got), len(tt.want))
+				return
+			}
+
+			// Verify each string is valid JSON and compare after normalizing
+			for i := range got {
+				var gotJSON, wantJSON interface{}
+				if err := json.Unmarshal([]byte(got[i]), &gotJSON); err != nil {
+					t.Errorf("Invalid JSON in result[%d]: %s", i, got[i])
+				}
+				if err := json.Unmarshal([]byte(tt.want[i]), &wantJSON); err != nil {
+					t.Errorf("Invalid JSON in expected[%d]: %s", i, tt.want[i])
+				}
+				if !cmp.Equal(gotJSON, wantJSON) {
+					t.Errorf("Patch[%d] = %v, want %v", i, got[i], tt.want[i])
+				}
 			}
 		})
 	}

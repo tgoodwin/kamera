@@ -1,6 +1,7 @@
 package diff
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -14,6 +15,72 @@ type DiffReport struct {
 	AddedPaths    []string
 	RemovedPaths  []string
 	ModifiedPaths []ModifiedPath
+}
+
+// ToRFC6902 converts a DiffReport to a slice of RFC 6902 JSON Patch strings.
+// Converts dot notation paths (e.g., "person.address.city") to RFC 6902 paths
+// (e.g., "/person/address/city").
+func (r DiffReport) ToRFC6902() []string {
+	// Pre-allocate slice with total capacity
+	total := len(r.AddedPaths) + len(r.RemovedPaths) + len(r.ModifiedPaths)
+	patches := make([]string, 0, total)
+
+	// Convert dot notation to RFC 6902 path format
+	dotToRFC6902 := func(dotPath string) string {
+		// Handle array indices specially
+		var parts []string
+		for _, part := range strings.Split(dotPath, ".") {
+			if strings.HasPrefix(part, "[") && strings.HasSuffix(part, "]") {
+				// Keep array notation as is
+				parts = append(parts, part)
+			} else {
+				parts = append(parts, part)
+			}
+		}
+		// Join with forward slashes and add leading slash
+		return "/" + strings.Join(parts, "/")
+	}
+
+	// Helper to create and append JSON patch strings
+	addPatch := func(op, path string, value interface{}) {
+		rfcPath := dotToRFC6902(path)
+		// For remove operations, we don't include the value field
+		var patch string
+		if op == "remove" {
+			patch = fmt.Sprintf(`{"op":"%s","path":"%s"}`, op, rfcPath)
+		} else {
+			// Marshal the value to ensure proper JSON escaping
+			valueJSON, err := json.Marshal(value)
+			if err != nil {
+				// If we can't marshal the value, use null
+				valueJSON = []byte("null")
+			}
+			patch = fmt.Sprintf(`{"op":"%s","path":"%s","value":%s}`, op, rfcPath, string(valueJSON))
+		}
+		patches = append(patches, patch)
+	}
+
+	// Add operations
+	for _, path := range r.AddedPaths {
+		// Note: Since DiffReport doesn't store values for added paths,
+		// we use null as a placeholder
+		addPatch("add", path, nil)
+	}
+
+	// Remove operations
+	for _, path := range r.RemovedPaths {
+		addPatch("remove", path, nil)
+	}
+
+	// Replace operations
+	for _, mp := range r.ModifiedPaths {
+		addPatch("replace", mp.Path, mp.NewValue)
+	}
+
+	// Sort for stable output
+	sort.Strings(patches)
+
+	return patches
 }
 
 // ModifiedPath represents a change in value at a specific path
