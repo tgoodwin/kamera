@@ -55,6 +55,7 @@ func TestExhaustiveInterleavings(t *testing.T) {
 		}
 	})
 
+	// tell the model checker which reconcilers subscribe to which kinds
 	tc.AssignReconcilerToKind("FooController", "Foo")
 	tc.AssignReconcilerToKind("BarController", "Foo")
 
@@ -160,7 +161,6 @@ func TestConvergedStateIdentification(t *testing.T) {
 	explorer := tc.NewExplorer(10)
 
 	result := explorer.Explore(context.Background(), initialState)
-	tc.SummarizeResults(result)
 	assert.Equal(t, 2, len(result.ConvergedStates))
 
 	expected := []struct {
