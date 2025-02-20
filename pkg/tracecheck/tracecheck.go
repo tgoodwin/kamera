@@ -33,6 +33,7 @@ type TraceChecker struct {
 	manager      *manager
 	scheme       *runtime.Scheme
 
+	// this just determines which top-level object a reconciler is triggered with
 	reconcilerToKind map[string]string
 
 	// TODO move this elsewhere
@@ -238,6 +239,9 @@ func (tc *TraceChecker) PrintState(s StateNode) {
 }
 
 func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
+	if len(tc.ResourceDeps) == 0 {
+		panic("Warning: No resource dependencies found")
+	}
 	return &Explorer{
 		reconcilers:  tc.instantiateReconcilers(),
 		dependencies: tc.ResourceDeps,
