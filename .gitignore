@@ -28,3 +28,6 @@ webhook/**
 *.pyc
 
 .vscode/**
+**/debug.log
+
+examples/chaos/**
