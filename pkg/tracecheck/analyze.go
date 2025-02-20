@@ -57,7 +57,7 @@ func (tc *TraceChecker) DiffObjectVersions(first, second ConvergedState) DiffRes
 			if err != nil {
 				fmt.Printf("Error diffing normalized objects: %v\n", err)
 			}
-			if nDelta.SpecDiff != "" || nDelta.StatusDiff != "" {
+			if len(nDelta.SpecDiff) > 0 || len(nDelta.StatusDiff) > 0 {
 				result.Modified[nkey] = fmt.Sprintf("Spec: %s\nStatus: %s", nDelta.SpecDiff, nDelta.StatusDiff)
 			}
 		}
