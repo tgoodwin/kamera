@@ -126,6 +126,7 @@ func Test_CreateSuccess(t *testing.T) {
 		tag.TraceyReconcileID,
 		tag.ChangeID,
 		tag.TraceyRootID,
+		tag.TraceyObjectID,
 	}
 	err := c.Create(ctx, pod)
 	assert.NoError(t, err)
