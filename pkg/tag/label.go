@@ -105,7 +105,7 @@ func GetRootID(obj client.Object) (string, error) {
 	if !ok {
 		rootID, ok = labels[TraceyRootID]
 		if !ok || rootID == "" {
-			return "", fmt.Errorf("no root ID set on object labels")
+			return "", fmt.Errorf("no root ID set on object - is this namespace handled by the sleeve webhook?")
 		}
 	}
 	return rootID, nil
