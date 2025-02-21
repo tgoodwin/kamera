@@ -183,6 +183,7 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 	ct.emitter.LogOperation(operation)
 	r := snapshot.AsRecord(obj, ct.rc.GetReconcileID())
 	r.OperationID = operation.ID
+	r.OperationType = string(op)
 	ct.emitter.LogObjectVersion(r)
 
 	// TODO REMOVE THIS

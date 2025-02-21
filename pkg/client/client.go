@@ -130,7 +130,9 @@ func (c *Client) logOperation(obj client.Object, op event.OperationType) {
 	)
 	r := snapshot.AsRecord(obj, reconcileID)
 	c.emitter.LogOperation(event)
+	// associate the operation with the object's snapshot
 	r.OperationID = event.ID
+	r.OperationType = string(op)
 	c.emitter.LogObjectVersion(r)
 }
 
@@ -140,10 +142,8 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 	tag.LabelChange(obj)
 	c.tracker.propagateLabels(obj)
 
-	// TODO log object version here??
-
 	if err := c.Client.Create(ctx, obj, opts...); err != nil {
-		// revert object labels to original state
+		// revert object labels to original state if the operation fails
 		obj.SetLabels(currLabels)
 		return err
 	}
@@ -159,7 +159,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 	tag.AddDeletionID(obj)
 	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
 		c.logger.Error(err, "deleting object")
-		// revert object labels to original state
+		// revert object labels to original state if the operation fails
 		obj.SetLabels(origLabels)
 		return err
 	}
