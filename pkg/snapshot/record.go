@@ -25,7 +25,7 @@ type Record struct {
 func (r Record) ToUnstructured() *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
 	if err := json.Unmarshal([]byte(r.Value), u); err != nil {
-		log.Fatalf("Error unmarshaling JSON to unstructured: %v", err)
+		log.Fatalf("Error unmarshaling JSON to unstructured: record operationID: %v, err: %v", r.OperationID, err)
 	}
 	return u
 }

@@ -3,30 +3,14 @@ package main
 import (
 	"flag"
 	"os"
-	"regexp"
-	"strings"
 
-	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/replay"
-	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/sleeve/pkg/tracecheck"
 )
 
 var inFile = flag.String("logfile", "default.log", "path to the log file")
 var objectID = flag.String("objectID", "", "object ID to analyze")
 var reconcileID = flag.String("reconcileID", "", "object ID to analyze")
-
-var logTypes = []string{tag.ControllerOperationKey, tag.ObjectVersionKey}
-var pattern = regexp.MustCompile(`{"LogType": "(?:` + strings.Join(logTypes, "|") + `)"}`)
-
-func stripLogtype(line string) string {
-	return pattern.ReplaceAllString(line, "")
-}
-
-func stripLogtypeFromLines(lines []string) []string {
-	return lo.Map(lines, func(line string, _ int) string {
-		return stripLogtype(line)
-	})
-}
 
 func main() {
 	flag.Parse()
@@ -50,4 +34,8 @@ func main() {
 	if *objectID != "" {
 		builder.AnalyzeObject(*objectID)
 	}
+
+	events := builder.Events()
+	km := tracecheck.NewGlobalKnowledge()
+	km.Load(events)
 }

@@ -146,11 +146,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
-	for objID, version := range state.ObjectVersions {
-		newObjectVersions[objID] = version
+	for iKey, version := range state.ObjectVersions {
+		newObjectVersions[iKey] = version
 	}
-	for objID, newVersion := range reconcileResult.Changes {
-		newObjectVersions[objID] = newVersion
+	for iKey, newVersion := range reconcileResult.Changes {
+		newObjectVersions[iKey] = newVersion
 	}
 
 	// get the controllers that depend on the objects that were changed

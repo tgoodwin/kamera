@@ -7,7 +7,7 @@ import (
 
 type IdentityKey struct {
 	Kind     string
-	ObjectID string
+	ObjectID string // sleeve object ID
 }
 
 type LifeEventSource string
