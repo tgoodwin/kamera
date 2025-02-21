@@ -29,7 +29,7 @@ const (
 
 	ChangeID = "discrete.events/change-id"
 
-	// Special stable ID for deletion events
+	// Special stable ID for deletion events. Like ChangeID, but it is never overwritten once set.
 	DeletionID = "discrete.events/deletion-id"
 )
 
@@ -56,12 +56,6 @@ func addUIDTag(obj client.Object, key string) {
 	}
 	labels[key] = uuid.New().String()
 	obj.SetLabels(labels)
-}
-
-func GetChangeLabel() map[string]string {
-	labels := make(map[string]string)
-	labels[ChangeID] = uuid.New().String()
-	return labels
 }
 
 func GetSleeveObjectID(obj client.Object) string {
