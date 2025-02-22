@@ -19,7 +19,7 @@ type StateSnapshot struct {
 
 type StateEvent struct {
 	*event.Event
-	ChangeID string
+	ChangeID event.ChangeID
 	Sequence int64
 }
 
@@ -41,6 +41,8 @@ type KindKnowledge struct {
 
 	SequenceIndex map[int64]StateEvent
 
+	ChangeIDIndex map[event.ChangeID]StateEvent
+
 	// finding events by reconcileID
 	ReconcileIndex map[string][]StateEvent
 }
@@ -50,6 +52,7 @@ func NewKindKnowledge() *KindKnowledge {
 		Objects:        make(map[string]*ObjectHistory),
 		EventLog:       make([]StateEvent, 0),
 		SequenceIndex:  make(map[int64]StateEvent),
+		ChangeIDIndex:  make(map[event.ChangeID]StateEvent),
 		ReconcileIndex: make(map[string][]StateEvent),
 	}
 }
@@ -61,12 +64,18 @@ func (k *KindKnowledge) AddEvent(event event.Event) StateEvent {
 	// Create StateEvent with new sequence number
 	stateEvent := StateEvent{
 		Event:    &event,
+		ChangeID: event.ChangeID(),
 		Sequence: k.CurrentSequence,
 	}
 
 	// Add to event log and index
 	k.EventLog = append(k.EventLog, stateEvent)
 	k.SequenceIndex[k.CurrentSequence] = stateEvent
+
+	if _, ok := k.ChangeIDIndex[event.ChangeID()]; ok {
+		panic("duplicate change ID")
+	}
+	k.ChangeIDIndex[event.ChangeID()] = stateEvent
 
 	k.ReconcileIndex[event.ReconcileID] = append(k.ReconcileIndex[event.ReconcileID], stateEvent)
 
@@ -95,6 +104,8 @@ type VersionResolver interface {
 type GlobalKnowledge struct {
 	Kinds    map[string]*KindKnowledge
 	resolver VersionResolver
+	// TODO refactor
+	allEvents []event.Event
 }
 
 func NewGlobalKnowledge(resolver VersionResolver) *GlobalKnowledge {
@@ -105,6 +116,7 @@ func NewGlobalKnowledge(resolver VersionResolver) *GlobalKnowledge {
 }
 
 func (g *GlobalKnowledge) Load(events []event.Event) error {
+	g.allEvents = events
 	// first pass -- ensure KindKnowledge exists for each kind we encounter
 	for _, e := range events {
 		if _, exists := g.Kinds[e.Kind]; !exists {
@@ -162,25 +174,29 @@ func (g *GlobalKnowledge) replayEventsToState(events []StateEvent) *StateSnapsho
 
 func (g *GlobalKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapshot {
 	// First find all events in this reconcile
-	var reconcileEvents []StateEvent
-	for _, kind := range g.Kinds {
-		if events, ok := kind.ReconcileIndex[reconcileID]; ok {
-			reconcileEvents = append(reconcileEvents, events...)
-		}
-	}
+
+	reconcileEvents := lo.Filter(g.allEvents, func(e event.Event, _ int) bool {
+		return e.ReconcileID == reconcileID
+	})
 
 	if len(reconcileEvents) == 0 {
 		return nil
 	}
 
+	readSet := lo.Filter(reconcileEvents, func(e event.Event, _ int) bool {
+		return event.IsReadOp(e)
+	})
+
 	// Find the highest sequence number for each kind among read operations
 	maxReadSequences := make(map[string]int64)
-	for _, e := range reconcileEvents {
-		if event.IsReadOp(*e.Event) {
-			kind := e.Event.Kind
-			if e.Sequence > maxReadSequences[kind] {
-				maxReadSequences[kind] = e.Sequence
-			}
+	for _, e := range readSet {
+		changeID := e.ChangeID()
+		stateEvent, ok := g.Kinds[e.Kind].ChangeIDIndex[changeID]
+		if !ok {
+			panic("event for changeID not found")
+		}
+		if stateEvent.Sequence > maxReadSequences[e.Kind] {
+			maxReadSequences[e.Kind] = stateEvent.Sequence
 		}
 	}
 
