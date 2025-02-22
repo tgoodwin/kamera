@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 )
@@ -35,7 +36,7 @@ type KindKnowledge struct {
 	Objects  map[string]*ObjectHistory
 	EventLog []StateEvent
 
-	// track the latest sequence number for this kind
+	// track the latest change sequence number for this kind
 	CurrentSequence int64
 
 	SequenceIndex map[int64]StateEvent
@@ -118,8 +119,13 @@ func (g *GlobalKnowledge) Load(events []event.Event) error {
 		return sortedEvents[i].Timestamp < sortedEvents[j].Timestamp
 	})
 
+	// we only want to track state change events. This includes top-level state declaration events.
+	changeEvents := lo.Filter(sortedEvents, func(e event.Event, _ int) bool {
+		return event.IsWriteOp(e) || event.IsTopLevel(e)
+	})
+
 	// process each event
-	for _, e := range sortedEvents {
+	for _, e := range changeEvents {
 		g.Kinds[e.Kind].AddEvent(e)
 	}
 
