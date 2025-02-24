@@ -151,7 +151,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 	}
 
 	return StateNode{
-		ObjectVersions:    ObjectVersions{ikey: vHash},
+		objects:           ObjectVersions{ikey: vHash},
 		PendingReconciles: dependentControllers,
 	}
 }
@@ -231,7 +231,7 @@ func (tc *TraceChecker) GetStartState() StateNode {
 }
 
 func (tc *TraceChecker) PrintState(s StateNode) {
-	ov := s.ObjectVersions
+	ov := s.Objects()
 	for k, v := range ov {
 		fmt.Printf("ObjectKey: %s, VersionHash: %s\n", k, v)
 	}
@@ -250,7 +250,7 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 }
 
 func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
-	ov := sn.ObjectVersions
+	ov := sn.Objects()
 	for k, v := range ov {
 		// get the full object value
 		fullObj := tc.manager.Resolve(v)
@@ -265,7 +265,7 @@ func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
 func (tc *TraceChecker) SummarizeResults(result *Result) {
 	for i, sn := range result.ConvergedStates {
 		fmt.Println("Result #", i+1)
-		fmt.Println("result converged state: ", sn.State.ObjectVersions)
+		fmt.Println("result converged state: ", sn.State.Objects())
 		uniquePaths := GetUniquePaths(sn.Paths)
 		fmt.Println("unique paths to this state: ", len(uniquePaths))
 		for i, path := range uniquePaths {
@@ -277,9 +277,9 @@ func (tc *TraceChecker) SummarizeResults(result *Result) {
 
 func (tc *TraceChecker) DiffStates(a, b StateNode) []string {
 	diffs := make([]string, 0)
-	for key, vHash := range a.ObjectVersions {
+	for key, vHash := range a.Objects() {
 		currKind := key.Kind
-		for otherKey, otherHash := range b.ObjectVersions {
+		for otherKey, otherHash := range b.Objects() {
 			if otherKey.Kind == currKind {
 				// disregarding ID, let's identify the difference between teh two objects of kind
 				if diff := tc.manager.Diff(&vHash, &otherHash); diff != "" {

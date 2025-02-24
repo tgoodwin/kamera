@@ -243,7 +243,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 		var matchedState *tracecheck.ConvergedState
 		for _, convergedState := range result.ConvergedStates {
 			match := true
-			for key, vHash := range convergedState.State.ObjectVersions {
+			for key, vHash := range convergedState.State.Objects() {
 				expectedJSON := string(expectedState.objects[key])
 				expectedJSON = strings.ReplaceAll(expectedJSON, "\n", "")
 				expectedJSON = strings.ReplaceAll(expectedJSON, "\t", "")

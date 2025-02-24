@@ -87,8 +87,12 @@ func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 	return unique
 }
 
+type ObjectContainer struct {
+	Objects ObjectVersions
+}
+
 type StateNode struct {
-	ObjectVersions ObjectVersions
+	objects ObjectVersions
 	// PendingReconciles is a list of controller IDs that are pending reconciliation.
 	// In our "game tree", they represent branches that we can explore.
 	PendingReconciles []string
@@ -104,6 +108,10 @@ type StateNode struct {
 
 func (sn StateNode) IsConverged() bool {
 	return len(sn.PendingReconciles) == 0
+}
+
+func (sn StateNode) Objects() ObjectVersions {
+	return sn.objects
 }
 
 func (sn StateNode) Summarize() {

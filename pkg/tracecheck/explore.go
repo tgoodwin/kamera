@@ -146,7 +146,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
-	for iKey, version := range state.ObjectVersions {
+	for iKey, version := range state.Objects() {
 		newObjectVersions[iKey] = version
 	}
 	for iKey, newVersion := range reconcileResult.Changes {
@@ -164,7 +164,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 	currHistory := append([]*ReconcileResult{}, state.ExecutionHistory...)
 
 	return StateNode{
-		ObjectVersions:    newObjectVersions,
+		objects:           newObjectVersions,
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,
@@ -185,7 +185,7 @@ func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, contro
 		panic(fmt.Sprintf("implementation for reconciler %s not found", controllerID))
 	}
 	// get the read set
-	readSet := state.ObjectVersions
+	readSet := state.Objects()
 	// execute the controller
 	// convert the write set to object versions
 	result, err := reconciler.doReconcile(ctx, readSet)
@@ -212,7 +212,7 @@ func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []string {
 // serializeState converts a State to a unique string representation for deduplication
 func serializeState(state StateNode) string {
 	var objectPairs []string
-	for objKey, version := range state.ObjectVersions {
+	for objKey, version := range state.Objects() {
 		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objKey.ObjectID, version))
 	}
 	// Sort objectPairs to ensure deterministic order

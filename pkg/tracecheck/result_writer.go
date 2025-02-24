@@ -55,7 +55,7 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 	// Write state summary to the file
 	file.WriteString("# Converged State Summary:\n")
 	file.WriteString("## Converged Objects:\n")
-	objectKeys := lo.Keys(state.State.ObjectVersions)
+	objectKeys := lo.Keys(state.State.Objects())
 	sort.Slice(objectKeys, func(i, j int) bool {
 		// first sort by kind, then by objectID
 		if objectKeys[i].Kind != objectKeys[j].Kind {
@@ -65,7 +65,7 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 	})
 
 	for _, key := range objectKeys {
-		version := state.State.ObjectVersions[key]
+		version := state.State.Objects()[key]
 		prettyVersion, err := prettyPrintJSON(string(version))
 		if err != nil {
 			log.Fatalf("failed to pretty print version: %v", err)

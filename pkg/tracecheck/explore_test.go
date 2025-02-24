@@ -20,7 +20,7 @@ func Test_serializeState(t *testing.T) {
 			name: "deterministic test",
 			args: args{
 				state: StateNode{
-					ObjectVersions: ObjectVersions{
+					objects: ObjectVersions{
 						snapshot.IdentityKey{
 							Kind:     "kind1",
 							ObjectID: "object1",

@@ -108,7 +108,7 @@ func (c *converterImpl) getStart() StateNode {
 	firstRecord := c.orderedJoinRecords[0]
 	firstOV := c.reconcileIDToReads[firstRecord.event.ReconcileID]
 	return StateNode{
-		ObjectVersions:    firstOV,
+		objects:           firstOV,
 		PendingReconciles: []string{firstRecord.event.ControllerID},
 	}
 }
