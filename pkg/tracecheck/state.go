@@ -24,6 +24,10 @@ func (ov ObjectVersions) Equals(other ObjectVersions) bool {
 	return true
 }
 
+func (ov ObjectVersions) Objects() ObjectVersions {
+	return ov
+}
+
 type Delta string
 
 type ReconcileResult struct {
@@ -87,12 +91,12 @@ func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 	return unique
 }
 
-type ObjectContainer struct {
-	Objects ObjectVersions
+type ObservableState interface {
+	Objects() ObjectVersions
 }
 
 type StateNode struct {
-	objects ObjectVersions
+	objects ObservableState
 	// PendingReconciles is a list of controller IDs that are pending reconciliation.
 	// In our "game tree", they represent branches that we can explore.
 	PendingReconciles []string
@@ -111,7 +115,7 @@ func (sn StateNode) IsConverged() bool {
 }
 
 func (sn StateNode) Objects() ObjectVersions {
-	return sn.objects
+	return sn.objects.Objects()
 }
 
 func (sn StateNode) Summarize() {
