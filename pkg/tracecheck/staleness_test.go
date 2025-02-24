@@ -449,8 +449,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 
 		// Replay all events
 		state := g.GetStateAtReconcileID("r4")
-		if len(state.Objects) != 3 {
-			t.Errorf("Expected 3 objects in state, got %d", len(state.Objects))
+		if len(state.Objects()) != 3 {
+			t.Errorf("Expected 3 objects in state, got %d", len(state.Objects()))
 		}
 		expectedKeys := []snapshot.IdentityKey{
 			{Kind: "Deployment", ObjectID: "dep-1"},
@@ -459,7 +459,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			{Kind: "Pod", ObjectID: "pod-2"},
 		}
 		for _, key := range expectedKeys {
-			if _, exists := state.Objects[key]; !exists {
+			if _, exists := state.Objects()[key]; !exists {
 				t.Errorf("Expected %s in state", key)
 			}
 		}
@@ -478,14 +478,14 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			t.Fatalf("Load failed: %v", err)
 		}
 		state := g.GetStateAtReconcileID("r2")
-		if len(state.Objects) != 4 {
-			t.Errorf("Expected 4 objects in state, got %d", len(state.Objects))
+		if len(state.Objects()) != 4 {
+			t.Errorf("Expected 4 objects in state, got %d", len(state.Objects()))
 		}
 		// ensure the correct objects are in the state
-		if _, exists := state.Objects[snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"}]; !exists {
+		if _, exists := state.Objects()[snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"}]; !exists {
 			t.Error("Expected pod-1 in state")
 		}
-		if _, exists := state.Objects[snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"}]; !exists {
+		if _, exists := state.Objects()[snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"}]; !exists {
 			t.Error("Expected pod-2 in state")
 		}
 		// check kind sequence
@@ -496,7 +496,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 	t.Run("rewind knowledge", func(t *testing.T) {
 		countPods := func(s *StateSnapshot) int {
 			count := 0
-			for k := range s.Objects {
+			for k := range s.Objects() {
 				if k.Kind == "Pod" {
 					count++
 				}
@@ -511,14 +511,14 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		// replay all events
 		state := g.GetStateAtReconcileID("r4")
 		if countPods(state) != 1 {
-			t.Errorf("Expected 1 pods in state, got %d", len(state.Objects))
+			t.Errorf("Expected 1 pods in state, got %d", len(state.Objects()))
 		}
 		rewind, err := g.AdjustKnowledgeForKind(state, "Pod", -1)
 		if err != nil {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}
 		if countPods(rewind) != 2 {
-			t.Errorf("Expected 2 pods in state, got %d", len(rewind.Objects))
+			t.Errorf("Expected 2 pods in state, got %d", len(rewind.Objects()))
 		}
 
 		ff, err := g.AdjustKnowledgeForKind(state, "Pod", 1)
@@ -526,7 +526,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}
 		if countPods(ff) != 0 {
-			t.Errorf("Expected 0 pods in state, got %d", len(ff.Objects))
+			t.Errorf("Expected 0 pods in state, got %d", len(ff.Objects()))
 		}
 	})
 }

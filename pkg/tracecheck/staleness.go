@@ -11,10 +11,16 @@ import (
 
 type StateSnapshot struct {
 	// TODO this is ObjectVersions
-	Objects ObjectVersions
+	contents ObjectVersions
 
 	// per-kind sequence info for computing relative states
 	KindSequences map[string]int64
+
+	knowledgeManager *GlobalKnowledge
+}
+
+func (s *StateSnapshot) Objects() ObjectVersions {
+	return s.contents
 }
 
 type StateEvent struct {
@@ -158,8 +164,9 @@ func (g *GlobalKnowledge) Load(events []event.Event) error {
 
 func (g *GlobalKnowledge) replayEventsToState(events []StateEvent) *StateSnapshot {
 	state := &StateSnapshot{
-		Objects:       make(ObjectVersions),
-		KindSequences: make(map[string]int64),
+		contents:         make(ObjectVersions),
+		KindSequences:    make(map[string]int64),
+		knowledgeManager: g,
 	}
 
 	for _, e := range events {
@@ -169,14 +176,14 @@ func (g *GlobalKnowledge) replayEventsToState(events []StateEvent) *StateSnapsho
 			ObjectID: cKey.ObjectID,
 		}
 		if e.OpType == "DELETE" {
-			delete(state.Objects, iKey)
+			delete(state.contents, iKey)
 		} else {
 			// use resolver to get object version
 			version, err := g.resolver.Resolve(cKey)
 			if err != nil {
 				panic("error resolving version")
 			}
-			state.Objects[iKey] = version
+			state.contents[iKey] = version
 		}
 		state.KindSequences[cKey.Kind] = e.Sequence
 	}
