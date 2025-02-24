@@ -2,10 +2,12 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var inFile = flag.String("logfile", "default.log", "path to the log file")
@@ -36,6 +38,18 @@ func main() {
 	}
 
 	events := builder.Events()
-	km := tracecheck.NewGlobalKnowledge()
+	store := builder.Store()
+
+	logger := zap.New(zap.UseDevMode(true))
+	tracecheck.SetLogger(logger)
+
+	km := tracecheck.NewGlobalKnowledge(store)
 	km.Load(events)
+	rPodKnowledge := km.Kinds["RPod"]
+	rPodKnowledge.Summarize()
+
+	tc := tracecheck.FromBuilder(builder)
+	init := tc.GetStartState()
+	fmt.Println("Initial state:", init)
+	// := tc.NewExplorer(10)
 }

@@ -71,7 +71,7 @@ func main() {
 			Kind:       "Orchestration",
 		},
 		Spec: appsv1.OrchestrationSpec{
-			Services: []string{"users", "auth"},
+			Services: []string{"users", "auth", "billing", "shipping"},
 		},
 	}
 
@@ -80,8 +80,6 @@ func main() {
 
 	ctx := log.IntoContext(context.Background(), logger)
 	result := explorer.Explore(ctx, initialState)
-	tc.SummarizeResults(result)
-	tc.MaterializeResults(result, "results")
 
 	fmt.Printf("# converged states: %v\n", len(result.ConvergedStates))
 	fmt.Println("Duration: ", result.Duration)
@@ -89,7 +87,7 @@ func main() {
 	for _, convergedState := range result.ConvergedStates {
 		state := convergedState.State
 		paths := convergedState.Paths
-		fmt.Printf("Converged state: %v\n", state.ObjectVersions)
+		fmt.Printf("Converged state: %v\n", state.Objects)
 		fmt.Println("# paths to this state: ", len(paths))
 		// for _, path := range paths {
 		// 	path.Summarize()
