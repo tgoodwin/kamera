@@ -57,6 +57,13 @@ func NewKindKnowledge() *KindKnowledge {
 	}
 }
 
+func (k *KindKnowledge) Summarize() {
+	for key, obj := range k.Objects {
+		fmt.Println(key)
+		fmt.Println("isDeleted", obj.IsDeleted, "num lifecycle events", len(obj.Events))
+	}
+}
+
 func (k *KindKnowledge) AddEvent(e event.Event) StateEvent {
 	// Increment sequence
 	k.CurrentSequence++
@@ -185,36 +192,68 @@ func (g *GlobalKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapsh
 	})
 
 	if len(reconcileEvents) == 0 {
-		return nil
+		panic("no events found for reconcileID")
 	}
 
-	readSet := lo.Filter(reconcileEvents, func(e event.Event, _ int) bool {
-		return event.IsReadOp(e)
-	})
-
-	// Find the highest sequence number for each kind among read operations
-	maxReadSequences := make(map[string]int64)
-	for _, e := range readSet {
-		changeID := e.ChangeID()
-		stateEvent, ok := g.Kinds[e.Kind].ChangeIDIndex[changeID]
-		if !ok {
-			panic("event for changeID not found")
-		}
-		if stateEvent.Sequence > maxReadSequences[e.Kind] {
-			maxReadSequences[e.Kind] = stateEvent.Sequence
+	// physical time based heuristic
+	earliestTimestamp := reconcileEvents[0].Timestamp
+	for _, e := range reconcileEvents {
+		if e.Timestamp < earliestTimestamp {
+			earliestTimestamp = e.Timestamp
 		}
 	}
+
+	var relevantEvents []StateEvent
+	for _, kindKnowledge := range g.Kinds {
+		precedingKindEvents := lo.Filter(kindKnowledge.EventLog, func(e StateEvent, _ int) bool {
+			return e.Timestamp < earliestTimestamp
+		})
+		relevantEvents = append(relevantEvents, precedingKindEvents...)
+	}
+
+	if len(reconcileEvents) == 0 {
+		panic("no events found for reconcileID")
+	}
+
+	// readSet := lo.Filter(reconcileEvents, func(e event.Event, _ int) bool {
+	// 	return event.IsReadOp(e)
+	// })
+
+	// if len(readSet) == 0 {
+	// 	logger.Error(nil, "no read events found for reconcileID")
+	// 	panic("no read events found for reconcileID")
+	// }
+
+	// // Find the highest sequence number for each kind among read operations
+	// for _, e := range readSet {
+	// 	fmt.Println("read event", "eventID", e.ID, "changeID", e.ChangeID())
+	// }
+	// maxReadSequences := make(map[string]int64)
+	// for _, e := range readSet {
+	// 	observedChangeID := e.ChangeID()
+	// 	changeEvent, ok := g.Kinds[e.Kind].ChangeIDIndex[observedChangeID]
+	// 	if !ok {
+	// 		panic(fmt.Sprintf("event for changeID not found: %s", observedChangeID))
+	// 	}
+	// 	if changeEvent.Sequence > maxReadSequences[e.Kind] {
+	// 		maxReadSequences[e.Kind] = changeEvent.Sequence
+	// 	}
+	// }
+	// fmt.Println("maxReadSequences", maxReadSequences)
+	// for kind, maxSeq := range maxReadSequences {
+	// 	fmt.Println("kind", kind, "maxSeq", maxSeq)
+	// }
 
 	// Collect all events up to and including the last read for each kind
-	var relevantEvents []StateEvent
-	for kindName, kind := range g.Kinds {
-		maxSeq := maxReadSequences[kindName]
-		for _, event := range kind.EventLog {
-			if event.Sequence <= maxSeq {
-				relevantEvents = append(relevantEvents, event)
-			}
-		}
-	}
+	// var relevantEvents []StateEvent
+	// for kindName, kind := range g.Kinds {
+	// 	maxSeq := maxReadSequences[kindName]
+	// 	for _, event := range kind.EventLog {
+	// 		if event.Sequence <= maxSeq {
+	// 			relevantEvents = append(relevantEvents, event)
+	// 		}
+	// 	}
+	// }
 
 	// Sort by timestamp for replay since sequences aren't comparable across kinds
 	sort.Slice(relevantEvents, func(i, j int) bool {
@@ -245,6 +284,10 @@ func (g *GlobalKnowledge) AdjustKnowledgeForKind(snapshot *StateSnapshot, kind s
 
 	currentSeq := snapshot.KindSequences[kind]
 	targetSeq := currentSeq + steps
+	logger.WithValues(
+		"currentSeq", currentSeq,
+		"targetSeq", targetSeq,
+	).Info("Adjusting knowledge for kind")
 
 	// Check bounds
 	if targetSeq < 0 {
