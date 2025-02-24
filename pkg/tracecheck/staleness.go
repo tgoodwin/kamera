@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -57,14 +58,14 @@ func NewKindKnowledge() *KindKnowledge {
 	}
 }
 
-func (k *KindKnowledge) AddEvent(event event.Event) StateEvent {
+func (k *KindKnowledge) AddEvent(e event.Event) StateEvent {
 	// Increment sequence
 	k.CurrentSequence++
 
 	// Create StateEvent with new sequence number
 	stateEvent := StateEvent{
-		Event:    &event,
-		ChangeID: event.ChangeID(),
+		Event:    &e,
+		ChangeID: e.ChangeID(),
 		Sequence: k.CurrentSequence,
 	}
 
@@ -72,25 +73,30 @@ func (k *KindKnowledge) AddEvent(event event.Event) StateEvent {
 	k.EventLog = append(k.EventLog, stateEvent)
 	k.SequenceIndex[k.CurrentSequence] = stateEvent
 
-	if _, ok := k.ChangeIDIndex[event.ChangeID()]; ok {
-		panic("duplicate change ID")
+	if _, ok := k.ChangeIDIndex[e.ChangeID()]; ok && !event.IsTopLevel(e) {
+		logger.WithValues(
+			"changeID", e.ChangeID(),
+			"eventID", e.ID,
+			"existingEventID", k.ChangeIDIndex[e.ChangeID()].ID,
+		).Error(nil, "duplicate change ID")
+		panic("duplicate change ID for state change event")
 	}
-	k.ChangeIDIndex[event.ChangeID()] = stateEvent
+	k.ChangeIDIndex[e.ChangeID()] = stateEvent
 
-	k.ReconcileIndex[event.ReconcileID] = append(k.ReconcileIndex[event.ReconcileID], stateEvent)
+	k.ReconcileIndex[e.ReconcileID] = append(k.ReconcileIndex[e.ReconcileID], stateEvent)
 
 	// Update or create ObjectHistory
-	if _, exists := k.Objects[event.ObjectID]; !exists {
-		k.Objects[event.ObjectID] = &ObjectHistory{
+	if _, exists := k.Objects[e.ObjectID]; !exists {
+		k.Objects[e.ObjectID] = &ObjectHistory{
 			Events:           make([]StateEvent, 0),
 			EventsBySequence: make(map[int64]StateEvent),
 		}
 	}
 
-	objHistory := k.Objects[event.ObjectID]
+	objHistory := k.Objects[e.ObjectID]
 	objHistory.Events = append(objHistory.Events, stateEvent)
 	objHistory.EventsBySequence[k.CurrentSequence] = stateEvent
-	if event.OpType == "DELETE" {
+	if e.OpType == "DELETE" {
 		objHistory.IsDeleted = true
 	}
 
@@ -113,6 +119,10 @@ func NewGlobalKnowledge(resolver VersionResolver) *GlobalKnowledge {
 		Kinds:    make(map[string]*KindKnowledge),
 		resolver: resolver,
 	}
+}
+
+func SetLogger(l logr.Logger) {
+	logger = l
 }
 
 func (g *GlobalKnowledge) Load(events []event.Event) error {
