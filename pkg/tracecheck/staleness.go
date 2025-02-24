@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/go-logr/logr"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -119,10 +118,6 @@ func NewGlobalKnowledge(resolver VersionResolver) *GlobalKnowledge {
 		Kinds:    make(map[string]*KindKnowledge),
 		resolver: resolver,
 	}
-}
-
-func SetLogger(l logr.Logger) {
-	logger = l
 }
 
 func (g *GlobalKnowledge) Load(events []event.Event) error {
