@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
@@ -14,6 +15,18 @@ import (
 )
 
 type Store map[event.CausalKey]*unstructured.Unstructured
+
+// TODO refactor
+func (f Store) Resolve(key event.CausalKey) (string, error) {
+	elem, ok := f[key]
+	if !ok {
+		return "", errors.Errorf("could not resolve key in replayStore: %v", key)
+	}
+	hasher := snapshot.JSONHasher{}
+	hash := hasher.Hash(elem)
+	return string(hash), nil
+
+}
 
 type replayStore struct {
 	// indexes all of the objects in the trace
@@ -55,6 +68,14 @@ func (f *replayStore) HydrateFromTrace(traceData []byte) error {
 	if err != nil {
 		return err
 	}
+
+	records = lo.Filter(records, func(r snapshot.Record, _ int) bool {
+		// when logging an object version during create, we dont yet have the 'Kind'
+		// field populated in the record value, and this will cause an error when trying
+		// to unmarshal the record into an unstructured object. We will pick these versions
+		// up when they are logged during read events.
+		return r.OperationType != "CREATE"
+	})
 
 	seenKeys := make(util.Set[event.CausalKey])
 

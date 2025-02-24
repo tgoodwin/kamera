@@ -18,3 +18,13 @@ func IsReadOp(e Event) bool {
 func IsWriteOp(e Event) bool {
 	return !IsReadOp(e)
 }
+
+// IsTopLevel returns true if the event is a top-level declarative state change event.
+func IsTopLevel(e Event) bool {
+	labels := e.Labels
+	if labels == nil {
+		return false
+	}
+	_, ok := labels["tracey-uid"]
+	return ok
+}

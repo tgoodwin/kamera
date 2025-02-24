@@ -108,9 +108,10 @@ func Operation(obj client.Object, reconcileID, controllerID, rootEventID string,
 		RootEventID:  rootEventID,
 		OpType:       string(op),
 		Kind:         util.GetKind(obj),
-		ObjectID:     string(obj.GetUID()),
-		Version:      obj.GetResourceVersion(),
-		Labels:       obj.GetLabels(),
+		// CHANGE TO SLEEVE OBJECT ID
+		ObjectID: string(obj.GetUID()),
+		Version:  obj.GetResourceVersion(),
+		Labels:   obj.GetLabels(),
 	}
 	changeID := e.ChangeID()
 	if changeID == "" {

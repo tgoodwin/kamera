@@ -36,7 +36,8 @@ func GetCausalKey(obj *unstructured.Unstructured) (CausalKey, error) {
 	}
 
 	k := CausalKey{
-		Kind:     obj.GetKind(),
+		Kind: obj.GetKind(),
+		// TODO use sleeve ID?
 		ObjectID: string(obj.GetUID()),
 		ChangeID: cid,
 	}
