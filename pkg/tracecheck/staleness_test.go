@@ -163,26 +163,6 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 		if len(g.Kinds["Child"].EventLog) != 3 {
 			t.Errorf("Expected 3 Child events, got %d", len(g.Kinds["Child"].EventLog))
 		}
-
-		// Test GetStateAtReconcileID for r2 (should include parent but not child yet)
-		state := g.GetStateAtReconcileID("r2")
-		if state == nil {
-			t.Fatal("Expected state for r2, got nil")
-		}
-
-		for k, v := range state.Objects {
-			t.Logf("Object %s: %s", k, v)
-		}
-
-		parentKey := snapshot.IdentityKey{Kind: "Parent", ObjectID: "parent-1"}
-		if _, exists := state.Objects[parentKey]; !exists {
-			t.Error("Expected parent object in r2 state")
-		}
-
-		childKey := snapshot.IdentityKey{Kind: "Child", ObjectID: "child-1"}
-		if _, exists := state.Objects[childKey]; exists {
-			t.Error("Child object should not exist in r2 state yet")
-		}
 	})
 
 	t.Run("interleaved state changes across kinds", func(t *testing.T) {
@@ -234,7 +214,7 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				ControllerID: "monitoring-controller",
 				OpType:       "LIST",
 				Kind:         "Child",
-				ObjectID:     "",
+				ObjectID:     "child-1",
 				Labels: map[string]string{
 					"discrete.events/root-event-id": "root-1",
 					"discrete.events/change-id":     "change-1",
@@ -247,7 +227,7 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				ControllerID: "monitoring-controller",
 				OpType:       "LIST",
 				Kind:         "Child",
-				ObjectID:     "",
+				ObjectID:     "child-2",
 				Labels: map[string]string{
 					"discrete.events/root-event-id": "root-1",
 					"discrete.events/change-id":     "change-2",

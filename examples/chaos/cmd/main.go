@@ -87,7 +87,7 @@ func main() {
 	for _, convergedState := range result.ConvergedStates {
 		state := convergedState.State
 		paths := convergedState.Paths
-		fmt.Printf("Converged state: %v\n", state.Objects)
+		fmt.Printf("Converged state: %v\n", state.Objects())
 		fmt.Println("# paths to this state: ", len(paths))
 		// for _, path := range paths {
 		// 	path.Summarize()
