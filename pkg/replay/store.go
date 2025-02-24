@@ -17,14 +17,14 @@ import (
 type Store map[event.CausalKey]*unstructured.Unstructured
 
 // TODO refactor
-func (f Store) Resolve(key event.CausalKey) (string, error) {
+func (f Store) Resolve(key event.CausalKey) (snapshot.VersionHash, error) {
 	elem, ok := f[key]
 	if !ok {
 		return "", errors.Errorf("could not resolve key in replayStore: %v", key)
 	}
 	hasher := snapshot.JSONHasher{}
 	hash := hasher.Hash(elem)
-	return string(hash), nil
+	return hash, nil
 
 }
 

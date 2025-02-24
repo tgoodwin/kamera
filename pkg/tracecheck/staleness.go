@@ -11,7 +11,7 @@ import (
 
 type StateSnapshot struct {
 	// TODO this is ObjectVersions
-	Objects map[snapshot.IdentityKey]string
+	Objects ObjectVersions
 
 	// per-kind sequence info for computing relative states
 	KindSequences map[string]int64
@@ -110,7 +110,7 @@ func (k *KindKnowledge) AddEvent(e event.Event) StateEvent {
 }
 
 type VersionResolver interface {
-	Resolve(causalKey event.CausalKey) (string, error)
+	Resolve(causalKey event.CausalKey) (snapshot.VersionHash, error)
 }
 
 type GlobalKnowledge struct {
@@ -158,7 +158,7 @@ func (g *GlobalKnowledge) Load(events []event.Event) error {
 
 func (g *GlobalKnowledge) replayEventsToState(events []StateEvent) *StateSnapshot {
 	state := &StateSnapshot{
-		Objects:       make(map[snapshot.IdentityKey]string),
+		Objects:       make(ObjectVersions),
 		KindSequences: make(map[string]int64),
 	}
 
