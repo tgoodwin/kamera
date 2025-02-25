@@ -2,17 +2,30 @@ package main
 
 import (
 	"flag"
-	"fmt"
 	"os"
 
+	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
+	controller "github.com/tgoodwin/sleeve/examples/robinhood/controller"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
+	"github.com/tgoodwin/sleeve/pkg/util"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var inFile = flag.String("logfile", "default.log", "path to the log file")
 var objectID = flag.String("objectID", "", "object ID to analyze")
 var reconcileID = flag.String("reconcileID", "", "object ID to analyze")
+
+var scheme = runtime.NewScheme()
+
+func init() {
+	flag.Parse()
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(appsv1.AddToScheme(scheme))
+}
 
 func main() {
 	flag.Parse()
@@ -30,6 +43,10 @@ func main() {
 		panic(err.Error())
 	}
 	builder.Debug()
+
+	builder.AssignReconcilerToKind("RPodReconciler", "RPod")
+	builder.AssignReconcilerToKind("FelixReconciler", "RouteConfig")
+
 	if *reconcileID != "" {
 		builder.AnalyzeReconcile(*reconcileID)
 	}
@@ -49,7 +66,38 @@ func main() {
 	rPodKnowledge.Summarize()
 
 	tc := tracecheck.FromBuilder(builder)
-	init := tc.GetStartState()
-	fmt.Println("Initial state:", init)
-	// := tc.NewExplorer(10)
+	// init := tc.GetStartState()
+	// fmt.Println("Initial state:", init)
+
+	tc.AssignReconcilerToKind("RPodReconciler", "RPod")
+	tc.AssignReconcilerToKind("FelixReconciler", "RouteConfig")
+
+	deps := make(tracecheck.ResourceDeps)
+	deps["RPod"] = make(util.Set[string])
+	deps["RPod"].Add("RPodReconciler")
+	deps["RPod"].Add("FelixReconciler")
+
+	deps["RouteConfig"] = make(util.Set[string])
+	deps["RouteConfig"].Add("FelixReconciler")
+	tc.ResourceDeps = deps
+
+	tc.AddReconciler("RPodReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+		return &controller.RPodReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	})
+
+	tc.AddReconciler("FelixReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+		return &controller.FelixReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	})
+
+	tc.AddEmitter(tracecheck.NewDebugEmitter())
+	explorer := tc.NewExplorer(10)
+
+	reconcileEvents := builder.OrderedReconcileIDs()
+	explorer.Walk(reconcileEvents)
 }

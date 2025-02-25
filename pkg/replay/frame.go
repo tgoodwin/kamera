@@ -75,9 +75,12 @@ type FrameManager struct {
 	Frames frameContainer
 }
 
-func NewFrameManager() *FrameManager {
+func NewFrameManager(initialFrames frameContainer) *FrameManager {
+	if initialFrames == nil {
+		initialFrames = make(frameContainer)
+	}
 	return &FrameManager{
-		Frames: make(frameContainer),
+		Frames: initialFrames,
 	}
 }
 

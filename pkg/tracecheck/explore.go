@@ -17,6 +17,7 @@ import (
 
 type reconciler interface {
 	doReconcile(ctx context.Context, readset ObjectVersions) (*ReconcileResult, error)
+	replayReconcile(ctx context.Context, frame *replay.Frame) (*ReconcileResult, error)
 }
 
 type ResourceDeps map[string]util.Set[string]
@@ -58,7 +59,15 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) {
 		if err != nil {
 			panic(fmt.Sprintf("frame not found for reconcileID %s", reconcile.ReconcileID))
 		}
-		fmt.Println("Frame", frame.ID)
+		fmt.Println("Replaying ReconcileID", frame.ID, "for reconciler", reconcilerID)
+		reconciler := e.reconcilers[reconcilerID].reconciler
+		ctx := replay.WithFrameID(context.Background(), frame.ID)
+		res, err := reconciler.replayReconcile(ctx, frame)
+		if err != nil {
+			logger.Error(err, "replaying reconcile")
+			return
+		}
+		fmt.Println("Result", res.Changes)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"maps"
+
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -13,7 +15,7 @@ import (
 type Harness struct {
 	ReconcilerID       string
 	frames             []Frame
-	frameDataByFrameID map[string]FrameData
+	frameDataByFrameID frameContainer
 
 	// trace data effect by frameID (reconcileID)
 	tracedEffects map[string]DataEffect
@@ -34,6 +36,12 @@ func newHarness(reconcilerID string, frames []Frame, frameData map[string]FrameD
 		replayEffects:      replayEffects,
 		predicates:         make([]*executionPredicate, 0),
 	}
+}
+
+func (p *Harness) FrameData() frameContainer {
+	copy := make(map[string]FrameData)
+	maps.Copy(copy, p.frameDataByFrameID)
+	return copy
 }
 
 func (p *Harness) EffectfulFrames() []Frame {

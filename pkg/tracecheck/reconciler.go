@@ -78,6 +78,24 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	}, nil
 }
 
+func (r *reconcileImpl) replayReconcile(ctx context.Context, frame *replay.Frame) (*ReconcileResult, error) {
+	frameID := frame.ID
+	ctx = replay.WithFrameID(ctx, frameID)
+	if _, err := r.Reconcile(ctx, frame.Req); err != nil {
+		return nil, errors.Wrap(err, "executing reconcile")
+	}
+	effects, err := r.retrieveEffects(frameID)
+	if err != nil {
+		return nil, errors.Wrap(err, "retrieving reconcile effects")
+	}
+	return &ReconcileResult{
+		ControllerID: r.Name,
+		FrameID:      frameID,
+		Changes:      effects,
+		Deltas:       nil,
+	}, nil
+}
+
 func Wrap(name string, r reconcile.Reconciler) reconciler {
 	return &reconcileImpl{
 		Name:       name,

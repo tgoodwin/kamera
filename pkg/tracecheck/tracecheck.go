@@ -174,7 +174,12 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 	}
 	out := make(map[string]ReconcilerContainer)
 	for reconcilerID, constructor := range tc.reconcilers {
-		frameManager := replay.NewFrameManager()
+		h, err := tc.builder.BuildHarness(reconcilerID)
+		if err != nil {
+			panic(fmt.Sprintf("building harness: %s", err))
+		}
+		// initialize the client's frame manager with traced frames
+		frameManager := replay.NewFrameManager(h.FrameData())
 		replayClient := replay.NewClient(
 			reconcilerID,
 			tc.scheme,
@@ -198,11 +203,6 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 			panic(fmt.Sprintf("No kind assigned to reconciler: %s", reconcilerID))
 		}
 
-		// make the harness
-		h, err := tc.builder.BuildHarness(reconcilerID)
-		if err != nil {
-			panic(fmt.Sprintf("Error building harness: %s", err))
-		}
 		rImpl := reconcileImpl{
 			Name:           reconcilerID,
 			For:            kindforReconciler,
