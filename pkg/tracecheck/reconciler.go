@@ -49,12 +49,12 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	ctx = log.IntoContext(ctx, logger)
 
 	req, err := r.inferReconcileRequest(currState)
-
-	// insert a "frame" to hold the readset data ahead of the reconcile
-	r.InsertFrame(frameID, r.toFrameData(currState))
 	if err != nil {
 		return nil, errors.Wrap(err, "inferring reconcile request")
 	}
+
+	// insert a "frame" to hold the readset data ahead of the reconcile
+	r.InsertFrame(frameID, r.toFrameData(currState))
 
 	// TODO handle explicit requeue requests
 	if frameid := replay.FrameIDFromContext(ctx); frameid != frameID {
@@ -121,7 +121,7 @@ func (r *reconcileImpl) inferReconcileRequest(readset ObjectVersions) (reconcile
 			return req, nil
 		}
 	}
-	return reconcile.Request{}, errors.New(fmt.Sprintf("no object of kind %s", r.Name))
+	return reconcile.Request{}, errors.New(fmt.Sprintf("no object of kind %s in readset", r.For))
 }
 
 func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.FrameData {
