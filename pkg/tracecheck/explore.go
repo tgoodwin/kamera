@@ -50,14 +50,21 @@ type Result struct {
 	AbortedPaths    int
 }
 
-func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) {
+func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
+	currExecutionHistory := make(ExecutionHistory, 0)
+
+	result := &Result{
+		ConvergedStates: make([]ConvergedState, 0),
+	}
+
+	var rebuiltState *StateSnapshot
 	for _, reconcile := range reconciles {
 		reconcilerID := reconcile.ControllerID
 		if _, ok := e.reconcilers[reconcilerID]; !ok {
 			panic(fmt.Sprintf("reconciler %s not found", reconcilerID))
 		}
 
-		rebuiltState := e.knowledgeManager.GetStateAtReconcileID(reconcile.ReconcileID)
+		rebuiltState = e.knowledgeManager.GetStateAtReconcileID(reconcile.ReconcileID)
 		fmt.Println("rebuilt state - # objects:", len(rebuiltState.contents))
 
 		harness := e.reconcilers[reconcilerID].harness
@@ -70,12 +77,32 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) {
 		reconciler := e.reconcilers[reconcilerID].reconciler
 		ctx := replay.WithFrameID(context.Background(), frame.ID)
 		res, err := reconciler.replayReconcile(ctx, frame)
+		currExecutionHistory = append(currExecutionHistory, res)
 		if err != nil {
 			logger.Error(err, "replaying reconcile")
-			return
+			return nil
 		}
 		fmt.Println("Result", len(res.Changes))
+
+		// breaking off to explore mode
+		sn := StateNode{
+			objects:           rebuiltState.contents,
+			PendingReconciles: []string{},
+			ExecutionHistory:  currExecutionHistory,
+		}
+		subRes := e.Explore(context.Background(), sn)
+		result.ConvergedStates = append(result.ConvergedStates, subRes.ConvergedStates...)
+
 	}
+
+	traceWalkResult := ConvergedState{
+		State: StateNode{
+			objects:           rebuiltState.contents,
+			PendingReconciles: []string{},
+		},
+	}
+	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
+	return result
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
