@@ -6,5 +6,5 @@ import (
 )
 
 func FormatTimeStr(t time.Time) string {
-	return fmt.Sprintf("%d", t.UnixNano()/int64(time.Millisecond))
+	return fmt.Sprintf("%d", t.UnixMicro())
 }
