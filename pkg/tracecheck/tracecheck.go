@@ -168,12 +168,11 @@ func (tc *TraceChecker) AddEmitter(emitter testEmitter) {
 	tc.emitter = emitter
 }
 
-func (tc *TraceChecker) instantiateReconcilers() map[string]reconciler {
+func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer {
 	if tc.emitter == nil {
 		panic("Must set emitter on TraceChecker before instantiating reconcilers")
 	}
-	out := make(map[string]reconciler)
-	harnesses := make(map[string]*replay.Harness)
+	out := make(map[string]ReconcilerContainer)
 	for reconcilerID, constructor := range tc.reconcilers {
 		frameManager := replay.NewFrameManager()
 		replayClient := replay.NewClient(
@@ -199,7 +198,11 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]reconciler {
 			panic(fmt.Sprintf("No kind assigned to reconciler: %s", reconcilerID))
 		}
 
-		// TODO configure file emitter here
+		// make the harness
+		h, err := tc.builder.BuildHarness(reconcilerID)
+		if err != nil {
+			panic(fmt.Sprintf("Error building harness: %s", err))
+		}
 		rImpl := reconcileImpl{
 			Name:           reconcilerID,
 			For:            kindforReconciler,
@@ -208,14 +211,12 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]reconciler {
 			effectReader:   tc.manager,
 			frameInserter:  frameManager,
 		}
-		out[reconcilerID] = &rImpl
-
-		// build the harness
-		h, err := tc.builder.BuildHarness(reconcilerID)
-		if err != nil {
-			fmt.Println("Error building harness: ", err)
+		container := ReconcilerContainer{
+			reconciler: &rImpl,
+			harness:    h,
 		}
-		harnesses[reconcilerID] = h
+		out[reconcilerID] = container
+
 	}
 	return out
 }
@@ -242,8 +243,14 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 	if len(tc.ResourceDeps) == 0 {
 		panic("Warning: No resource dependencies found")
 	}
+
+	reconcilers := tc.instantiateReconcilers()
+	if len(reconcilers) != len(tc.builder.ReconcilerIDs) {
+		panic("building explorer: not all traced reconcilers were instantiated. forget to add them?")
+	}
+
 	return &Explorer{
-		reconcilers:  tc.instantiateReconcilers(),
+		reconcilers:  reconcilers,
 		dependencies: tc.ResourceDeps,
 		maxDepth:     maxDepth,
 	}

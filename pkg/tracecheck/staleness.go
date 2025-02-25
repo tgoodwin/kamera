@@ -10,7 +10,6 @@ import (
 )
 
 type StateSnapshot struct {
-	// TODO this is ObjectVersions
 	contents ObjectVersions
 
 	// per-kind sequence info for computing relative states

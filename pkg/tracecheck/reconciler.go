@@ -34,6 +34,7 @@ type reconcileImpl struct {
 
 	// both implemented by teh manager type
 	versionManager VersionManager
+	// effectReader lets us observe what the reconciler did
 	effectReader
 	frameInserter
 }
@@ -48,10 +49,13 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	ctx = log.IntoContext(ctx, logger)
 
 	req, err := r.inferReconcileRequest(currState)
+
+	// insert a "frame" to hold the readset data ahead of the reconcile
 	r.InsertFrame(frameID, r.toFrameData(currState))
 	if err != nil {
 		return nil, errors.Wrap(err, "inferring reconcile request")
 	}
+
 	// TODO handle explicit requeue requests
 	if frameid := replay.FrameIDFromContext(ctx); frameid != frameID {
 		panic("frameID mismatch")

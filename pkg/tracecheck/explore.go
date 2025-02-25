@@ -10,6 +10,7 @@ import (
 	"github.com/muesli/termenv"
 
 	"github.com/samber/lo"
+	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -20,9 +21,14 @@ type reconciler interface {
 
 type ResourceDeps map[string]util.Set[string]
 
+type ReconcilerContainer struct {
+	reconciler
+	harness *replay.Harness
+}
+
 type Explorer struct {
 	// reconciler implementations keyed by ID
-	reconcilers map[string]reconciler
+	reconcilers map[string]ReconcilerContainer
 	// maps Kinds to a list of reconcilerIDs that depend on them
 	dependencies ResourceDeps
 
@@ -39,6 +45,21 @@ type Result struct {
 	ConvergedStates []ConvergedState
 	Duration        time.Duration
 	AbortedPaths    int
+}
+
+func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) {
+	for _, reconcile := range reconciles {
+		reconcilerID := reconcile.ControllerID
+		if _, ok := e.reconcilers[reconcilerID]; !ok {
+			panic(fmt.Sprintf("reconciler %s not found", reconcilerID))
+		}
+		harness := e.reconcilers[reconcilerID].harness
+		frame, err := harness.FrameForReconcile(reconcile.ReconcileID)
+		if err != nil {
+			panic(fmt.Sprintf("frame not found for reconcileID %s", reconcile.ReconcileID))
+		}
+		fmt.Println("Frame", frame.ID)
+	}
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths

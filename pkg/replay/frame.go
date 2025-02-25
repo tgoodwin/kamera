@@ -18,7 +18,7 @@ const (
 
 // Like the frames of a movie, a Frame is a snapshot of the state of the world at a particular point in time.
 type Frame struct {
-	ID   string
+	ID   string // ReconcileID
 	Type FrameType
 
 	// for ordering. In practice this is just a timestamp

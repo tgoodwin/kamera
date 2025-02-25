@@ -41,6 +41,16 @@ type Builder struct {
 
 	// for bookkeeping and validation
 	ReconcilerIDs util.Set[string]
+
+	// this just determines which top-level object a reconciler is triggered with
+	reconcilerToKind map[string]string
+}
+
+func (b *Builder) AssignReconcilerToKind(reconcilerID, kind string) {
+	if b.reconcilerToKind == nil {
+		b.reconcilerToKind = make(map[string]string)
+	}
+	b.reconcilerToKind[reconcilerID] = kind
 }
 
 func (b *Builder) Store() Store {
@@ -121,8 +131,25 @@ func (b *Builder) AnalyzeObject(objectID string) {
 			previousVersion = currentVersion
 			prevKey = ckey
 		}
-		// fmt.Println(e)
 	}
+}
+
+type ReconcileEvent struct {
+	ReconcileID  string
+	ControllerID string
+}
+
+func (b *Builder) OrderedReconcileIDs() []ReconcileEvent {
+	traceEvents := b.Events()
+	// sort by timestamp
+	sort.Slice(traceEvents, func(i, j int) bool {
+		return traceEvents[i].Timestamp < traceEvents[j].Timestamp
+	})
+	// map to ReconcileEvent
+	reconcileEvents := lo.Map(traceEvents, func(e event.Event, _ int) ReconcileEvent {
+		return ReconcileEvent{ReconcileID: e.ReconcileID, ControllerID: e.ControllerID}
+	})
+	return reconcileEvents
 }
 
 func (b *Builder) fromTrace(traceData []byte) error {
@@ -241,7 +268,8 @@ func (r *Builder) inferReconcileRequestFromReadset(controllerID string, readset 
 	for _, e := range readset {
 		// Assumption: reconcile routines are invoked upon a Resource that shares the same name (Kind)
 		// as the controller that is managing it.
-		if e.Kind == controllerID {
+		kindForController := r.reconcilerToKind[controllerID]
+		if e.Kind == kindForController || e.Kind == controllerID {
 			if obj, ok := r.store[e.CausalKey()]; ok {
 				name := obj.GetName()
 				namespace := obj.GetNamespace()

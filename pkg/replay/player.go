@@ -46,6 +46,15 @@ func (p *Harness) EffectfulFrames() []Frame {
 	return out
 }
 
+func (p *Harness) FrameForReconcile(reconcileID string) (*Frame, error) {
+	for _, f := range p.frames {
+		if f.ID == reconcileID {
+			return &f, nil
+		}
+	}
+	return nil, fmt.Errorf("frame not found for reconcileID %s", reconcileID)
+}
+
 // return the index of the frame that is closest to the given timestamp while still preceding it
 func (p *Harness) priorFrame(ts string) int {
 	nearestIndex := -1
