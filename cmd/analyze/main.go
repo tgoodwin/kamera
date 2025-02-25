@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 
 	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
@@ -18,6 +19,7 @@ import (
 var inFile = flag.String("logfile", "default.log", "path to the log file")
 var objectID = flag.String("objectID", "", "object ID to analyze")
 var reconcileID = flag.String("reconcileID", "", "object ID to analyze")
+var debug = flag.Bool("debug", false, "enable debug logging")
 
 var scheme = runtime.NewScheme()
 
@@ -42,7 +44,9 @@ func main() {
 	if err != nil {
 		panic(err.Error())
 	}
-	builder.Debug()
+	if *debug {
+		builder.Debug()
+	}
 
 	builder.AssignReconcilerToKind("RPodReconciler", "RPod")
 	builder.AssignReconcilerToKind("FelixReconciler", "RouteConfig")
@@ -99,5 +103,12 @@ func main() {
 	explorer := tc.NewExplorer(10)
 
 	reconcileEvents := builder.OrderedReconcileIDs()
-	explorer.Walk(reconcileEvents)
+	result := explorer.Walk(reconcileEvents)
+	fmt.Println("# converged states: ", len(result.ConvergedStates))
+	stateNodes := make([]tracecheck.StateNode, 0)
+	for _, convergedState := range result.ConvergedStates {
+		stateNodes = append(stateNodes, convergedState.State)
+	}
+	tc.Unique(stateNodes)
+
 }

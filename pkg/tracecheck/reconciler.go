@@ -73,6 +73,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	return &ReconcileResult{
 		ControllerID: r.Name,
 		FrameID:      frameID,
+		FrameType:    FrameTypeExplore,
 		Changes:      effects,
 		Deltas:       deltas,
 	}, nil
@@ -91,6 +92,7 @@ func (r *reconcileImpl) replayReconcile(ctx context.Context, frame *replay.Frame
 	return &ReconcileResult{
 		ControllerID: r.Name,
 		FrameID:      frameID,
+		FrameType:    FrameTypeReplay,
 		Changes:      effects,
 		Deltas:       nil,
 	}, nil

@@ -9,6 +9,8 @@ import (
 
 	"github.com/muesli/termenv"
 
+	"slices"
+
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/util"
@@ -50,6 +52,10 @@ type Result struct {
 	AbortedPaths    int
 }
 
+func (e *Explorer) shouldExplore(frameID string) bool {
+	return true
+}
+
 func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 	currExecutionHistory := make(ExecutionHistory, 0)
 
@@ -77,31 +83,37 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		reconciler := e.reconcilers[reconcilerID].reconciler
 		ctx := replay.WithFrameID(context.Background(), frame.ID)
 		res, err := reconciler.replayReconcile(ctx, frame)
-		currExecutionHistory = append(currExecutionHistory, res)
 		if err != nil {
 			logger.Error(err, "replaying reconcile")
 			return nil
 		}
 		fmt.Println("Result", len(res.Changes))
 
-		// breaking off to explore mode
-		sn := StateNode{
-			objects:           rebuiltState.contents,
-			PendingReconciles: []string{},
-			ExecutionHistory:  currExecutionHistory,
-		}
-		subRes := e.Explore(context.Background(), sn)
-		result.ConvergedStates = append(result.ConvergedStates, subRes.ConvergedStates...)
+		currExecutionHistory = append(currExecutionHistory, res)
 
+		// breaking off to explore mode
+		if e.shouldExplore(reconcile.ReconcileID) {
+			sn := StateNode{
+				// top-level state to explore
+				objects: rebuiltState.contents,
+				// TODO populate this if we want something to happen
+				PendingReconciles: []string{},
+				ExecutionHistory:  slices.Clone(currExecutionHistory),
+			}
+			subRes := e.Explore(context.Background(), sn)
+			result.ConvergedStates = append(result.ConvergedStates, subRes.ConvergedStates...)
+		}
 	}
 
+	// the end of the trace trivially converges
 	traceWalkResult := ConvergedState{
 		State: StateNode{
-			objects:           rebuiltState.contents,
-			PendingReconciles: []string{},
+			objects: rebuiltState.contents,
 		},
+		Paths: []ExecutionHistory{currExecutionHistory},
 	}
 	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
+
 	return result
 }
 

@@ -30,9 +30,17 @@ func (ov ObjectVersions) Objects() ObjectVersions {
 
 type Delta string
 
+type FrameType string
+
+const (
+	FrameTypeReplay  FrameType = "replay"
+	FrameTypeExplore FrameType = "explore"
+)
+
 type ReconcileResult struct {
 	ControllerID string
 	FrameID      string
+	FrameType    FrameType
 	Changes      ObjectVersions // this is just the writeset, not the resulting full state of the world
 	Deltas       map[snapshot.IdentityKey]Delta
 }
