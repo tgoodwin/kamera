@@ -1,0 +1,105 @@
+/*
+Copyright 2025.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+
+	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+)
+
+// RPodReconciler reconciles a RPod object
+type RPodReconciler struct {
+	client.Client
+	Scheme *runtime.Scheme
+}
+
+// +kubebuilder:rbac:groups=apps.discrete.events,resources=rpods,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps.discrete.events,resources=rpods/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=apps.discrete.events,resources=rpods/finalizers,verbs=update
+
+// Reconcile is part of the main kubernetes reconciliation loop which aims to
+// move the current state of the cluster closer to the desired state.
+// TODO(user): Modify the Reconcile function to compare the state specified by
+// the RPod object against the actual cluster state, and then
+// perform operations to make the cluster state reflect the state specified by
+// the user.
+//
+// For more details, check Reconcile and its Result here:
+// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.4/pkg/reconcile
+func (r *RPodReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	log := log.FromContext(ctx)
+
+	var rPod appsv1.RPod
+	if err := r.Get(ctx, req.NamespacedName, &rPod); err != nil {
+		log.Error(err, "unable to fetch RPod")
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	var routeConfig appsv1.RouteConfig
+	if err := r.Get(ctx, types.NamespacedName{
+		Name:      fmt.Sprintf("route-config-%s", rPod.Name),
+		Namespace: rPod.Namespace,
+	}, &routeConfig); err != nil {
+		if !errors.IsNotFound(err) {
+			log.Error(err, "unable to fetch RouteConfig")
+			return ctrl.Result{}, err
+		}
+
+		// routeconig not found, create one
+		routeConfig := &appsv1.RouteConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("route-config-%s", rPod.Name),
+				Namespace: rPod.Namespace,
+				Labels: map[string]string{
+					"app.kubernetes.io/name": rPod.Name,
+				},
+			},
+			Spec: appsv1.RouteConfigSpec{
+				PodName: rPod.Name,
+			},
+		}
+		// set the owner reference. TODO do we want this?
+		if err := ctrl.SetControllerReference(&rPod, routeConfig, r.Scheme); err != nil {
+			log.Error(err, "unable to set owner reference on RouteConfig")
+			return ctrl.Result{}, err
+		}
+		if err := r.Create(ctx, routeConfig); err != nil {
+			log.Error(err, "unable to create RouteConfig")
+			return ctrl.Result{}, err
+		}
+		log.Info("created a new RouteConfig", "name", routeConfig.Name)
+	}
+
+	return ctrl.Result{}, nil
+}
+
+// SetupWithManager sets up the controller with the Manager.
+func (r *RPodReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&appsv1.RPod{}).
+		Complete(r)
+}
