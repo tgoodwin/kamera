@@ -38,6 +38,7 @@ type TraceChecker struct {
 
 	// TODO move this elsewhere
 	builder *replay.Builder
+	mode    string
 
 	emitter testEmitter
 }
@@ -60,6 +61,10 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 		scheme:       scheme,
 
 		emitter: event.NewInMemoryEmitter(),
+
+		mode: "standalone",
+
+		builder: nil,
 
 		// TODO refactor
 		reconcilerToKind: make(map[string]string),
@@ -132,6 +137,7 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		reconcilers:  make(map[string]ReconcilerConstructor),
 		ResourceDeps: readDeps,
 		manager:      mgr,
+		mode:         "traced",
 
 		builder:          b,
 		reconcilerToKind: make(map[string]string),
@@ -178,6 +184,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 		if err != nil {
 			panic(fmt.Sprintf("building harness: %s", err))
 		}
+
 		// initialize the client's frame manager with traced frames
 		frameManager := replay.NewFrameManager(h.FrameData())
 		replayClient := replay.NewClient(
@@ -186,6 +193,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 			frameManager.Frames,
 			tc.manager,
 		)
+
 		wrappedClient := sleeveclient.New(
 			replayClient,
 			reconcilerID,
@@ -249,10 +257,20 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		panic("building explorer: not all traced reconcilers were instantiated. forget to add them?")
 	}
 
+	// if constructing an explorer from trace data, load a knowledge manager.
+	// otherwise we need to skip this step. TODO refactor
+	var knowledgeManager *GlobalKnowledge
+	if tc.mode == "traced" {
+		knowledgeManager = NewGlobalKnowledge(tc.builder.Store())
+		knowledgeManager.Load(tc.builder.Events())
+	}
+
 	return &Explorer{
 		reconcilers:  reconcilers,
 		dependencies: tc.ResourceDeps,
 		maxDepth:     maxDepth,
+
+		knowledgeManager: knowledgeManager,
 	}
 }
 

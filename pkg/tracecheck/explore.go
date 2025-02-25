@@ -34,6 +34,8 @@ type Explorer struct {
 	dependencies ResourceDeps
 
 	maxDepth int
+
+	knowledgeManager *GlobalKnowledge
 }
 
 type ConvergedState struct {
@@ -54,11 +56,16 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) {
 		if _, ok := e.reconcilers[reconcilerID]; !ok {
 			panic(fmt.Sprintf("reconciler %s not found", reconcilerID))
 		}
+
+		rebuiltState := e.knowledgeManager.GetStateAtReconcileID(reconcile.ReconcileID)
+		fmt.Println("rebuilt state - # objects:", len(rebuiltState.contents))
+
 		harness := e.reconcilers[reconcilerID].harness
 		frame, err := harness.FrameForReconcile(reconcile.ReconcileID)
 		if err != nil {
 			panic(fmt.Sprintf("frame not found for reconcileID %s", reconcile.ReconcileID))
 		}
+
 		fmt.Println("Replaying ReconcileID", frame.ID, "for reconciler", reconcilerID)
 		reconciler := e.reconcilers[reconcilerID].reconciler
 		ctx := replay.WithFrameID(context.Background(), frame.ID)
@@ -67,7 +74,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) {
 			logger.Error(err, "replaying reconcile")
 			return
 		}
-		fmt.Println("Result", res.Changes)
+		fmt.Println("Result", len(res.Changes))
 	}
 }
 

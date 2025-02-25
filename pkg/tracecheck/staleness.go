@@ -198,7 +198,7 @@ func (g *GlobalKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapsh
 	})
 
 	if len(reconcileEvents) == 0 {
-		panic("no events found for reconcileID")
+		panic(fmt.Sprintf("no events found for reconcileID: %s", reconcileID))
 	}
 
 	// physical time based heuristic
@@ -216,50 +216,6 @@ func (g *GlobalKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapsh
 		})
 		relevantEvents = append(relevantEvents, precedingKindEvents...)
 	}
-
-	if len(reconcileEvents) == 0 {
-		panic("no events found for reconcileID")
-	}
-
-	// readSet := lo.Filter(reconcileEvents, func(e event.Event, _ int) bool {
-	// 	return event.IsReadOp(e)
-	// })
-
-	// if len(readSet) == 0 {
-	// 	logger.Error(nil, "no read events found for reconcileID")
-	// 	panic("no read events found for reconcileID")
-	// }
-
-	// // Find the highest sequence number for each kind among read operations
-	// for _, e := range readSet {
-	// 	fmt.Println("read event", "eventID", e.ID, "changeID", e.ChangeID())
-	// }
-	// maxReadSequences := make(map[string]int64)
-	// for _, e := range readSet {
-	// 	observedChangeID := e.ChangeID()
-	// 	changeEvent, ok := g.Kinds[e.Kind].ChangeIDIndex[observedChangeID]
-	// 	if !ok {
-	// 		panic(fmt.Sprintf("event for changeID not found: %s", observedChangeID))
-	// 	}
-	// 	if changeEvent.Sequence > maxReadSequences[e.Kind] {
-	// 		maxReadSequences[e.Kind] = changeEvent.Sequence
-	// 	}
-	// }
-	// fmt.Println("maxReadSequences", maxReadSequences)
-	// for kind, maxSeq := range maxReadSequences {
-	// 	fmt.Println("kind", kind, "maxSeq", maxSeq)
-	// }
-
-	// Collect all events up to and including the last read for each kind
-	// var relevantEvents []StateEvent
-	// for kindName, kind := range g.Kinds {
-	// 	maxSeq := maxReadSequences[kindName]
-	// 	for _, event := range kind.EventLog {
-	// 		if event.Sequence <= maxSeq {
-	// 			relevantEvents = append(relevantEvents, event)
-	// 		}
-	// 	}
-	// }
 
 	// Sort by timestamp for replay since sequences aren't comparable across kinds
 	sort.Slice(relevantEvents, func(i, j int) bool {
