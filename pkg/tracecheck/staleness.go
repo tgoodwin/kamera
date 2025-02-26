@@ -63,10 +63,10 @@ func NewKindKnowledge() *KindKnowledge {
 }
 
 func (k *KindKnowledge) Summarize() {
-	for key, obj := range k.Objects {
-		fmt.Println(key)
-		fmt.Println("isDeleted", obj.IsDeleted, "num lifecycle events", len(obj.Events))
-	}
+	// for key, obj := range k.Objects {
+	// 	fmt.Println(key)
+	// 	fmt.Println("isDeleted", obj.IsDeleted, "num lifecycle events", len(obj.Events))
+	// }
 }
 
 func (k *KindKnowledge) AddEvent(e event.Event) StateEvent {
@@ -190,6 +190,24 @@ func (g *GlobalKnowledge) replayEventsToState(events []StateEvent) *StateSnapsho
 	return state
 }
 
+func (g *GlobalKnowledge) eventsBeforeTimestamp(ts string) []StateEvent {
+	// First find all events at this timestamp
+	var relevantEvents []StateEvent
+	for _, kindKnowledge := range g.Kinds {
+		precedingKindEvents := lo.Filter(kindKnowledge.EventLog, func(e StateEvent, _ int) bool {
+			return e.Timestamp < ts
+		})
+		relevantEvents = append(relevantEvents, precedingKindEvents...)
+	}
+
+	// Sort by timestamp for replay since sequences aren't comparable across kinds
+	sort.Slice(relevantEvents, func(i, j int) bool {
+		return relevantEvents[i].Timestamp < relevantEvents[j].Timestamp
+	})
+
+	return relevantEvents
+}
+
 func (g *GlobalKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapshot {
 	// First find all events in this reconcile
 
@@ -208,21 +226,45 @@ func (g *GlobalKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapsh
 			earliestTimestamp = e.Timestamp
 		}
 	}
+	relevantEvents := g.eventsBeforeTimestamp(earliestTimestamp)
+	return g.replayEventsToState(relevantEvents)
+}
 
-	var relevantEvents []StateEvent
-	for _, kindKnowledge := range g.Kinds {
-		precedingKindEvents := lo.Filter(kindKnowledge.EventLog, func(e StateEvent, _ int) bool {
-			return e.Timestamp < earliestTimestamp
-		})
-		relevantEvents = append(relevantEvents, precedingKindEvents...)
-	}
-
-	// Sort by timestamp for replay since sequences aren't comparable across kinds
-	sort.Slice(relevantEvents, func(i, j int) bool {
-		return relevantEvents[i].Timestamp < relevantEvents[j].Timestamp
+func (g *GlobalKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnapshot {
+	reconcileEvents := lo.Filter(g.allEvents, func(e event.Event, _ int) bool {
+		return e.ReconcileID == reconcileID
 	})
 
-	return g.replayEventsToState(relevantEvents)
+	if len(reconcileEvents) == 0 {
+		panic(fmt.Sprintf("no events found for reconcileID: %s", reconcileID))
+	}
+
+	latestTimestamp := reconcileEvents[0].Timestamp
+	for _, e := range reconcileEvents {
+		if e.Timestamp > latestTimestamp {
+			latestTimestamp = e.Timestamp
+		}
+	}
+	// physical time based heuristic
+	earliestTimestamp := reconcileEvents[0].Timestamp
+	relevantEvents := g.eventsBeforeTimestamp(earliestTimestamp)
+	reconcileStateEvents := []StateEvent{}
+
+	// TODO refactor indexing strategy
+	for _, kindKnowledge := range g.Kinds {
+		for _, event := range kindKnowledge.EventLog {
+			if event.ReconcileID == reconcileID {
+				reconcileStateEvents = append(reconcileStateEvents, event)
+			}
+		}
+	}
+	// all events preceding and including the reconcile events
+	events := lo.Union(relevantEvents, reconcileStateEvents)
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].Timestamp < events[j].Timestamp
+	})
+
+	return g.replayEventsToState(events)
 }
 
 // ErrInsufficientEvents indicates we can't adjust knowledge by requested steps

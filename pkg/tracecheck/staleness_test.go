@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
@@ -452,6 +453,10 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		if len(state.Objects()) != 3 {
 			t.Errorf("Expected 3 objects in state, got %d", len(state.Objects()))
 		}
+
+		afterState := g.GetStateAfterReconcileID("r4")
+		assert.Equal(t, 2, len(afterState.Objects()))
+
 		expectedKeys := []snapshot.IdentityKey{
 			{Kind: "Deployment", ObjectID: "dep-1"},
 			{Kind: "Deployment", ObjectID: "dep-2"},
