@@ -66,7 +66,7 @@ type ExecutionHistory []*ReconcileResult
 
 func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 	for _, r := range eh {
-		_, err := fmt.Fprintf(file, "\t%s:%s - #changes=%d\n", r.ControllerID, r.FrameID, len(r.Deltas))
+		_, err := fmt.Fprintf(file, "\t%s:%s - #changes=%d\n", r.ControllerID, r.FrameID, len(r.Changes))
 		if err != nil {
 			return err
 		}
@@ -90,7 +90,7 @@ func (eh ExecutionHistory) Summarize() {
 func (eh ExecutionHistory) FilterNoOps() ExecutionHistory {
 	var filtered ExecutionHistory
 	for _, r := range eh {
-		if len(r.Deltas) > 0 {
+		if len(r.Changes) > 0 {
 			filtered = append(filtered, r)
 		}
 	}
