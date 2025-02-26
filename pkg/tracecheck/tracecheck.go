@@ -44,6 +44,7 @@ type TraceChecker struct {
 }
 
 func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
+	// uses anonymizing hasher
 	vStore := newVersionStore()
 	readDeps := make(ResourceDeps)
 	lc := snapshot.NewLifecycleContainer()
@@ -88,16 +89,16 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 	things := make([]joinRecord, 0)
 	for _, e := range b.Events() {
 		ckey := e.CausalKey()
-		versionValue, ok := store[ckey]
+		unstructuredObj, ok := store[ckey]
 		if !ok {
 			fmt.Println("Could not find object for causal key: ", ckey)
 			continue
 		}
-		vHash := vStore.Publish(versionValue)
+		vHash := vStore.Publish(unstructuredObj)
 		ikey := snapshot.IdentityKey{Kind: ckey.Kind, ObjectID: ckey.ObjectID}
 		lc.InsertSynthesizedVersion(ikey, vHash, e.ReconcileID)
 
-		nsName := types.NamespacedName{Namespace: versionValue.GetNamespace(), Name: versionValue.GetName()}
+		nsName := types.NamespacedName{Namespace: unstructuredObj.GetNamespace(), Name: unstructuredObj.GetName()}
 
 		// this is logically representing a "join" between the sleeve event model
 		// and the tracecheck model which includes the versionHash
@@ -220,8 +221,9 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 			frameInserter:  frameManager,
 		}
 		container := ReconcilerContainer{
-			reconciler: &rImpl,
-			harness:    h,
+			// TODO refactor
+			reconcileImpl: &rImpl,
+			harness:       h,
 		}
 		out[reconcilerID] = container
 
@@ -260,6 +262,7 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 	// if constructing an explorer from trace data, load a knowledge manager.
 	// otherwise we need to skip this step. TODO refactor
 	var knowledgeManager *GlobalKnowledge
+	// TODO should be able to just check if the builder is nil or not
 	if tc.mode == "traced" {
 		knowledgeManager = NewGlobalKnowledge(tc.builder.Store())
 		knowledgeManager.Load(tc.builder.Events())
@@ -274,18 +277,18 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 	}
 }
 
-func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
-	ov := sn.Objects()
-	for k, v := range ov {
-		// get the full object value
-		fullObj := tc.manager.Resolve(v)
-		if passed := p(fullObj); passed {
-			fmt.Println("Predicate satisfied for object: ", k)
-			return true
-		}
-	}
-	return false
-}
+// func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
+// 	ov := sn.Objects()
+// 	for k, v := range ov {
+// 		// get the full object value
+// 		fullObj := tc.manager.Resolve(v)
+// 		if passed := p(fullObj); passed {
+// 			fmt.Println("Predicate satisfied for object: ", k)
+// 			return true
+// 		}
+// 	}
+// 	return false
+// }
 
 func (tc *TraceChecker) SummarizeResults(result *Result) {
 	for i, sn := range result.ConvergedStates {

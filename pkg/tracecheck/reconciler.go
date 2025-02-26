@@ -50,7 +50,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 
 	req, err := r.inferReconcileRequest(currState)
 	if err != nil {
-		return nil, errors.Wrap(err, "inferring reconcile request")
+		return nil, errors.Wrap(err, fmt.Sprintf("inferring reconcile request, frameID: %s", frameID))
 	}
 
 	// insert a "frame" to hold the readset data ahead of the reconcile
@@ -94,7 +94,7 @@ func (r *reconcileImpl) replayReconcile(ctx context.Context, frame *replay.Frame
 		FrameID:      frameID,
 		FrameType:    FrameTypeReplay,
 		Changes:      effects,
-		Deltas:       nil,
+		// Deltas:       effects,
 	}, nil
 }
 
@@ -110,7 +110,8 @@ func (r *reconcileImpl) inferReconcileRequest(readset ObjectVersions) (reconcile
 		if key.Kind == r.For {
 			obj := r.versionManager.Resolve(version)
 			if obj == nil {
-				return reconcile.Request{}, errors.New("no object found for version")
+				fmt.Printf("missing full object for hash %s\n", version)
+				return reconcile.Request{}, errors.Errorf("no object found for key %s", key)
 			}
 			req := reconcile.Request{
 				NamespacedName: types.NamespacedName{
@@ -134,7 +135,7 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.FrameData {
 		}
 		obj := r.versionManager.Resolve(hash)
 		if obj == nil {
-			panic("unable to resolve object hash")
+			panic(fmt.Sprintf("unable to resolve object hash for key: %s", key))
 		}
 		namespacedName := types.NamespacedName{
 			Name:      obj.GetName(),

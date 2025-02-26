@@ -274,8 +274,6 @@ func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.U
 	objPrePropagation := obj.DeepCopyObject().(client.Object)
 	c.tracker.propagateLabels(obj)
 
-	// TODO log object version here??
-
 	if err := c.Client.Update(ctx, obj, opts...); err != nil {
 		c.logger.Error(err, "operation failed, not tracking it")
 		// revert object labels to original state

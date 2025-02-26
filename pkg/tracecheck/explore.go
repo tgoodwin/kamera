@@ -68,19 +68,18 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		if _, ok := e.reconcilers[reconcilerID]; !ok {
 			panic(fmt.Sprintf("reconciler %s not found", reconcilerID))
 		}
-
-		rebuiltState = e.knowledgeManager.GetStateAtReconcileID(reconcile.ReconcileID)
-		fmt.Printf("rebuilt state ahead of %s - # objects: %d\n", util.Shorter(reconcile.ReconcileID), len(rebuiltState.contents))
-		rebuiltState.contents.Summarize()
-
 		harness := e.reconcilers[reconcilerID].harness
 		// this just contains the traced reconcile.Request object
 		frame, err := harness.FrameForReconcile(reconcile.ReconcileID)
 		if err != nil {
 			panic(fmt.Sprintf("frame not found for reconcileID %s", reconcile.ReconcileID))
 		}
+		fmt.Println("\nReplaying ReconcileID", frame.ID, "for reconciler", reconcilerID)
 
-		fmt.Println("Replaying ReconcileID", frame.ID, "for reconciler", reconcilerID)
+		rebuiltState = e.knowledgeManager.GetStateAtReconcileID(reconcile.ReconcileID)
+		fmt.Printf("rebuilt state ahead of reconcile:%s - # objects: %d\n", util.Shorter(reconcile.ReconcileID), len(rebuiltState.contents))
+		rebuiltState.contents.Summarize()
+
 		reconciler := e.reconcilers[reconcilerID]
 		ctx := replay.WithFrameID(context.Background(), frame.ID)
 		res, err := reconciler.replayReconcile(ctx, frame)
@@ -97,13 +96,13 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		changes.Summarize()
 
 		resultingState := e.knowledgeManager.GetStateAfterReconcileID(reconcile.ReconcileID)
-		fmt.Printf("resulting state after %s - # objects: %d\n", util.Shorter(reconcile.ReconcileID), len(resultingState.contents))
+		fmt.Printf("resulting state after reconcile:%s - # objects: %d\n", util.Shorter(reconcile.ReconcileID), len(resultingState.contents))
 		resultingState.contents.Summarize()
 
 		currExecutionHistory = append(currExecutionHistory, res)
 
 		// breaking off to explore mode
-		if false && e.shouldExplore(reconcile.ReconcileID) {
+		if e.shouldExplore(reconcile.ReconcileID) {
 			triggeredByLastChange := e.getTriggeredReconcilers(changes)
 			sn := StateNode{
 				DivergencePoint: reconcile.ReconcileID,
@@ -114,17 +113,17 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 			}
 			subRes := e.Explore(context.Background(), sn)
 			result.ConvergedStates = append(result.ConvergedStates, subRes.ConvergedStates...)
+			fmt.Println("explored state space, found", len(subRes.ConvergedStates), "converged states")
 		}
 	}
 
 	// the end of the trace trivially converges
 	traceWalkResult := ConvergedState{
-		State: StateNode{objects: rebuiltState.contents},
+		State: StateNode{objects: rebuiltState.contents, DivergencePoint: "topoftrace"},
 		Paths: []ExecutionHistory{currExecutionHistory},
 	}
 	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
 	fmt.Println("len curr execution history", len(currExecutionHistory))
-	currExecutionHistory.Summarize()
 
 	return result
 }
@@ -209,6 +208,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		state := seenConvergedStates[stateKey]
 		paths := executionPathsToState[stateKey]
 
+		state.DivergencePoint = initialState.DivergencePoint
 		convergedState := ConvergedState{
 			ID:    fmt.Sprintf("state-%d", i),
 			State: state,

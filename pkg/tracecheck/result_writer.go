@@ -54,6 +54,7 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 
 	// Write state summary to the file
 	file.WriteString("# Converged State Summary:\n")
+	file.WriteString(fmt.Sprintf("Divergence point: %s\n", state.State.DivergencePoint))
 	file.WriteString("## Converged Objects:\n")
 	objectKeys := lo.Keys(state.State.Objects())
 	sort.Slice(objectKeys, func(i, j int) bool {

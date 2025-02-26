@@ -4,6 +4,9 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"sort"
+
+	"slices"
 
 	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
 	controller "github.com/tgoodwin/sleeve/examples/robinhood/controller"
@@ -64,6 +67,15 @@ func main() {
 	logger := zap.New(zap.UseDevMode(true))
 	tracecheck.SetLogger(logger)
 
+	// sort events by timestamp
+	sortedEvents := slices.Clone(events)
+	sort.Slice(sortedEvents, func(i, j int) bool {
+		return sortedEvents[i].Timestamp < sortedEvents[j].Timestamp
+	})
+	for _, e := range sortedEvents {
+		fmt.Println(e.Timestamp, e.ControllerID, util.Shorter(e.ReconcileID), e.OpType, e.CausalKey().Short())
+	}
+
 	km := tracecheck.NewGlobalKnowledge(store)
 	km.Load(events)
 	rPodKnowledge := km.Kinds["RPod"]
@@ -102,7 +114,7 @@ func main() {
 	tc.AddEmitter(tracecheck.NewDebugEmitter())
 	explorer := tc.NewExplorer(10)
 
-	reconcileEvents := builder.OrderedReconcileIDs()
+	reconcileEvents := builder.OrderedReconcileEvents()
 	result := explorer.Walk(reconcileEvents)
 	fmt.Println("# converged states: ", len(result.ConvergedStates))
 	stateNodes := make([]tracecheck.StateNode, 0)
@@ -110,5 +122,5 @@ func main() {
 		stateNodes = append(stateNodes, convergedState.State)
 	}
 	tc.Unique(stateNodes)
-
+	tc.MaterializeResults(result, "results")
 }
