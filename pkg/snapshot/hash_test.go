@@ -13,7 +13,8 @@ func TestJSONHasher_Hash(t *testing.T) {
 	obj := &unstructured.Unstructured{}
 	obj.SetLabels(map[string]string{"key": "value"})
 
-	hash := hasher.Hash(obj)
+	hash, err := hasher.Hash(obj)
+	assert.NoError(t, err)
 	if hash == "" {
 		t.Errorf("expected non-empty hash, got empty")
 	}
@@ -29,7 +30,8 @@ func TestAnonymizingHasher_Hash(t *testing.T) {
 	labels := map[string]string{"key1": "value1", "key2": "value2", "key3": "value3"}
 	obj.SetLabels(labels)
 
-	hash := hasher.Hash(obj)
+	hash, err := hasher.Hash(obj)
+	assert.NoError(t, err)
 	if hash == "" {
 		t.Errorf("expected non-empty hash, got empty")
 	}

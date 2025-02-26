@@ -7,23 +7,27 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-type Hasher interface {
-	Hash(obj *unstructured.Unstructured) VersionHash
-}
+// type Hasher interface {
+// 	Hash(obj *unstructured.Unstructured) VersionHash
+// }
 
 type VersionHash string
 
 type JSONHasher struct {
 }
 
-func (h *JSONHasher) Hash(obj *unstructured.Unstructured) VersionHash {
+func NewDefaultHasher() *JSONHasher {
+	return &JSONHasher{}
+}
+
+func (h *JSONHasher) Hash(obj *unstructured.Unstructured) (VersionHash, error) {
 	// first, craete a copy of the object
 	objCopy := obj.DeepCopy()
 	str, err := json.Marshal(objCopy)
 	if err != nil {
-		panic("version hashing object")
+		return "", err
 	}
-	return VersionHash(str)
+	return VersionHash(str), nil
 }
 
 type AnonymizingHasher struct {
@@ -34,7 +38,7 @@ func NewAnonymizingHasher(labelReplacements map[string]string) *AnonymizingHashe
 	return &AnonymizingHasher{Replacements: labelReplacements}
 }
 
-func (h *AnonymizingHasher) Hash(obj *unstructured.Unstructured) VersionHash {
+func (h *AnonymizingHasher) Hash(obj *unstructured.Unstructured) (VersionHash, error) {
 	objCopy := obj.DeepCopy()
 	origLabels := objCopy.GetLabels()
 	anonymizedLabels := make(map[string]string, len(origLabels))
@@ -48,9 +52,9 @@ func (h *AnonymizingHasher) Hash(obj *unstructured.Unstructured) VersionHash {
 	objCopy.SetLabels(anonymizedLabels)
 	str, err := json.Marshal(objCopy)
 	if err != nil {
-		panic("version hashing object")
+		return "", err
 	}
-	return VersionHash(str)
+	return VersionHash(str), nil
 }
 
 // DefaultLabelReplacements is a map of label replacements for

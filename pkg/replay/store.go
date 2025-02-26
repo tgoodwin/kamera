@@ -26,8 +26,7 @@ func (f Store) Resolve(key event.CausalKey) (snapshot.VersionHash, error) {
 
 	// USE ANONYMIZING HASHER TO BE CONSISTENT WITH TRACECHECK STORE
 	hasher := snapshot.NewAnonymizingHasher(snapshot.DefaultLabelReplacements)
-	hash := hasher.Hash(elem)
-	return hash, nil
+	return hasher.Hash(elem)
 }
 
 type replayStore struct {

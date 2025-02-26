@@ -15,7 +15,9 @@ type versionStore struct {
 	store              Store
 	keyToObj           map[event.CausalKey]*unstructured.Unstructured
 	causalKeyToVersion map[event.CausalKey]snapshot.VersionHash
-	hasher             snapshot.Hasher
+
+	// TODO perhaps multiple hash strategies?
+	hasher snapshot.Hasher
 
 	mu sync.RWMutex
 }
@@ -49,7 +51,6 @@ func (vs *versionStore) Resolve(anonymizedHash snapshot.VersionHash) *unstructur
 		// logger.Error(nil, "resolving version Hash for key", hash)
 	}
 	return res
-
 }
 
 func (vs *versionStore) Publish(obj *unstructured.Unstructured) snapshot.VersionHash {
@@ -57,7 +58,10 @@ func (vs *versionStore) Publish(obj *unstructured.Unstructured) snapshot.Version
 	defer vs.mu.Unlock()
 
 	objCopy := obj.DeepCopy()
-	hash := vs.hasher.Hash(objCopy)
+	hash, err := vs.hasher.Hash(objCopy)
+	if err != nil {
+		panic("error hashing object")
+	}
 	vs.store[hash] = objCopy
 
 	// TODO ensure that all objects being mutated are still instrumented with Sleeve labels
