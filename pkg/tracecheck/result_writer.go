@@ -67,7 +67,7 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 
 	for _, key := range objectKeys {
 		version := state.State.Objects()[key]
-		prettyVersion, err := prettyPrintJSON(string(version))
+		prettyVersion, err := prettyPrintJSON(string(version.Value))
 		if err != nil {
 			log.Fatalf("failed to pretty print version: %v", err)
 		}

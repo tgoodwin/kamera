@@ -3,6 +3,7 @@ package snapshot
 import (
 	"fmt"
 
+	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -53,7 +54,8 @@ func (s *ObjectStore) RegisterHashGenerator(strategy HashStrategy, generator Has
 
 // Get object identity key (could be namespace/name or another unique identifier)
 func getObjectKey(obj *unstructured.Unstructured) string {
-	return fmt.Sprintf("%s/%s", obj.GetNamespace(), obj.GetName())
+	kind := util.GetKind(obj)
+	return fmt.Sprintf("%s/%s/%s", kind, obj.GetNamespace(), obj.GetName())
 }
 
 // Store an object with all registered hash strategies
@@ -82,6 +84,38 @@ func (s *ObjectStore) StoreObject(obj *unstructured.Unstructured) error {
 	return nil
 }
 
+func (s *ObjectStore) PublishWithStrategy(obj *unstructured.Unstructured, strategy HashStrategy) VersionHash {
+	// Calculate hash
+	hash, err := s.hashGenerators[strategy].Hash(obj)
+	if err != nil {
+		panic(fmt.Sprintf("error hashing object: %v", err))
+	}
+
+	// Store in indices
+	s.indices[strategy][hash] = obj
+
+	// Record hash value for this object and strategy
+	objKey := getObjectKey(obj)
+	// Initialize hash map for this object if it doesn't exist
+	if _, exists := s.objectHashes[objKey]; !exists {
+		s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
+	}
+
+	s.objectHashes[objKey][strategy] = hash
+
+	return hash
+}
+
+func (s *ObjectStore) ResolveWithStrategy(hash VersionHash, strategy HashStrategy) *unstructured.Unstructured {
+	if idx, exists := s.indices[strategy]; exists {
+		obj, found := idx[hash]
+		if found {
+			return obj
+		}
+	}
+	return nil
+}
+
 // Get object by hash value and strategy
 func (s *ObjectStore) GetByHash(hash VersionHash, strategy HashStrategy) (*unstructured.Unstructured, bool) {
 	if idx, exists := s.indices[strategy]; exists {
@@ -96,7 +130,7 @@ func (s *ObjectStore) ConvertHash(hash VersionHash, fromStrategy, toStrategy Has
 	// First find the object using the source hash strategy
 	obj, found := s.GetByHash(hash, fromStrategy)
 	if !found {
-		return "", false
+		return VersionHash{}, false
 	}
 
 	// Find the object's key
@@ -109,5 +143,5 @@ func (s *ObjectStore) ConvertHash(hash VersionHash, fromStrategy, toStrategy Has
 		}
 	}
 
-	return "", false
+	return VersionHash{}, false
 }

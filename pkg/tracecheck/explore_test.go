@@ -24,11 +24,11 @@ func Test_serializeState(t *testing.T) {
 						snapshot.IdentityKey{
 							Kind:     "kind1",
 							ObjectID: "object1",
-						}: "hash1",
+						}: snapshot.NewDefaultHash("hash1"),
 						snapshot.IdentityKey{
 							Kind:     "kind1",
 							ObjectID: "object2",
-						}: "hash2",
+						}: snapshot.NewDefaultHash("hash2"),
 					},
 					PendingReconciles: []string{"controller1", "controller2"},
 					// Initialize with some test data

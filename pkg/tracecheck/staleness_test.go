@@ -15,7 +15,7 @@ type MockVersionResolver struct{}
 func (m *MockVersionResolver) ResolveVersion(key event.CausalKey) (snapshot.VersionHash, error) {
 	// Return some deterministic object state based on the CausalKey
 	str := fmt.Sprintf("state-%s-%s", key.ObjectID, string(key.ChangeID))
-	return snapshot.VersionHash(str), nil
+	return snapshot.NewDefaultHash(str), nil
 }
 
 func TestKindKnowledge_AddEvent(t *testing.T) {

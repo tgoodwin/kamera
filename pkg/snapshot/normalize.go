@@ -3,6 +3,7 @@ package snapshot
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/tgoodwin/sleeve/pkg/diff"
 )
@@ -16,9 +17,10 @@ type NormalizedObject struct {
 	Status     map[string]interface{}
 }
 
-func NormalizeObject(value VersionHash) NormalizedObject {
+func NormalizeObject(hash VersionHash) NormalizedObject {
 	// deserialize the versionHash
 	objMap := make(map[string]interface{})
+	value := hash.Value
 	err := json.Unmarshal([]byte(value), &objMap)
 	if err != nil {
 		panic("could not deserialize object: " + err.Error())
@@ -27,7 +29,7 @@ func NormalizeObject(value VersionHash) NormalizedObject {
 	// extract the kind, namespace, and name
 	defer func() {
 		if r := recover(); r != nil {
-			println("panic occurred while normalizing object: ", value)
+			fmt.Println("panic occurred while normalizing object: ", hash.Value)
 			panic(r) // re-throw the panic after logging
 		}
 	}()

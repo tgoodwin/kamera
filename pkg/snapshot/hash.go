@@ -11,7 +11,18 @@ import (
 // 	Hash(obj *unstructured.Unstructured) VersionHash
 // }
 
-type VersionHash string
+type VersionHash struct {
+	Value    string
+	Strategy HashStrategy
+}
+
+func NewDefaultHash(value string) VersionHash {
+	return VersionHash{Value: value, Strategy: DefaultHash}
+}
+
+func NewAnonHash(value string) VersionHash {
+	return VersionHash{Value: value, Strategy: AnonymizedHash}
+}
 
 type JSONHasher struct {
 }
@@ -25,9 +36,9 @@ func (h *JSONHasher) Hash(obj *unstructured.Unstructured) (VersionHash, error) {
 	objCopy := obj.DeepCopy()
 	str, err := json.Marshal(objCopy)
 	if err != nil {
-		return "", err
+		return VersionHash{}, err
 	}
-	return VersionHash(str), nil
+	return NewDefaultHash(string(str)), nil
 }
 
 type AnonymizingHasher struct {
@@ -52,9 +63,9 @@ func (h *AnonymizingHasher) Hash(obj *unstructured.Unstructured) (VersionHash, e
 	objCopy.SetLabels(anonymizedLabels)
 	str, err := json.Marshal(objCopy)
 	if err != nil {
-		return "", err
+		return VersionHash{}, err
 	}
-	return VersionHash(str), nil
+	return VersionHash{Value: string(str), Strategy: AnonymizedHash}, nil
 }
 
 // DefaultLabelReplacements is a map of label replacements for

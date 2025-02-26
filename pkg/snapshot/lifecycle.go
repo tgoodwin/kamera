@@ -62,7 +62,7 @@ func (l *LifecycleContainer) Latest(key IdentityKey) (VersionHash, bool) {
 	defer l.mu.Unlock()
 
 	if _, ok := l.data[key]; !ok {
-		return "", false
+		return VersionHash{}, false
 	}
 	return l.data[key][len(l.data[key])-1].Version, true
 }
@@ -72,12 +72,12 @@ func (l *LifecycleContainer) Latest(key IdentityKey) (VersionHash, bool) {
 func (l *LifecycleContainer) VersionFromFrame(key IdentityKey, frameID string) (VersionHash, error) {
 	versions, ok := l.data[key]
 	if !ok {
-		return "", errors.New("identity key not found")
+		return VersionHash{}, errors.New("identity key not found")
 	}
 	for _, evt := range versions {
 		if evt.ReconcileID == frameID {
 			return evt.Version, nil
 		}
 	}
-	return "", errors.New("reconcile ID not found in lifecycle for key")
+	return VersionHash{}, errors.New("reconcile ID not found in lifecycle for key")
 }

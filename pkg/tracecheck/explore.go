@@ -12,6 +12,7 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/replay"
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -34,9 +35,11 @@ type Explorer struct {
 	// maps Kinds to a list of reconcilerIDs that depend on them
 	dependencies ResourceDeps
 
-	maxDepth int
-
 	knowledgeManager *GlobalKnowledge
+
+	// config
+	maxDepth     int
+	hashStrategy snapshot.HashStrategy // how to serialize states for equality comparison
 }
 
 type ConvergedState struct {
@@ -117,9 +120,11 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		}
 	}
 
+	currExecutionHistory.Summarize()
+
 	// the end of the trace trivially converges
 	traceWalkResult := ConvergedState{
-		State: StateNode{objects: rebuiltState.contents, DivergencePoint: "topoftrace"},
+		State: StateNode{objects: rebuiltState.contents, DivergencePoint: "TRACE_START"},
 		Paths: []ExecutionHistory{currExecutionHistory},
 	}
 	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
@@ -301,7 +306,7 @@ func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []string {
 func serializeState(state StateNode) string {
 	var objectPairs []string
 	for objKey, version := range state.Objects() {
-		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objKey.ObjectID, version))
+		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objKey.ObjectID, version.Value))
 	}
 	// Sort objectPairs to ensure deterministic order
 	sort.Strings(objectPairs)

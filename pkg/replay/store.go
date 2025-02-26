@@ -20,7 +20,7 @@ type Store map[event.CausalKey]*unstructured.Unstructured
 func (f Store) ResolveVersion(key event.CausalKey) (snapshot.VersionHash, error) {
 	elem, ok := f[key]
 	if !ok {
-		return "", errors.Errorf("could not resolve key in replayStore: %v", key)
+		return snapshot.VersionHash{}, errors.Errorf("could not resolve key in replayStore: %v", key)
 	}
 	// hasher := snapshot.JSONHasher{}
 

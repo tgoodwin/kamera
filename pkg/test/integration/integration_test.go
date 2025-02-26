@@ -170,7 +170,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	}{
 		{
 			objects: tracecheck.ObjectVersions{
-				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.VersionHash(
+				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.NewDefaultHash(
 					`{
 						"apiVersion": "appsv1",
 						"kind": "Foo",
@@ -203,7 +203,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 		},
 		{
 			objects: tracecheck.ObjectVersions{
-				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.VersionHash(
+				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.NewDefaultHash(
 					`{
 						"apiVersion": "appsv1",
 						"kind": "Foo",
@@ -244,11 +244,11 @@ func TestConvergedStateIdentification(t *testing.T) {
 		for _, convergedState := range result.ConvergedStates {
 			match := true
 			for key, vHash := range convergedState.State.Objects() {
-				expectedJSON := string(expectedState.objects[key])
+				expectedJSON := string(expectedState.objects[key].Value)
 				expectedJSON = strings.ReplaceAll(expectedJSON, "\n", "")
 				expectedJSON = strings.ReplaceAll(expectedJSON, "\t", "")
 				expectedJSON = strings.ReplaceAll(expectedJSON, " ", "")
-				if expectedJSON != string(vHash) {
+				if expectedJSON != string(vHash.Value) {
 					match = false
 					break
 				}

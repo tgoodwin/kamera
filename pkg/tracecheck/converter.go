@@ -10,6 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
+// TODO this code can likely be replaced by the staleness eventsourcing package
+
 // joinRecord facilitates conversion from trace event data to tracecheck data
 type joinRecord struct {
 	event       event.Event

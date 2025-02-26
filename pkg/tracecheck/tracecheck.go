@@ -77,6 +77,9 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 	readDeps := make(ResourceDeps)
 	lc := snapshot.NewLifecycleContainer()
 
+	//snapshot store
+	snapshotStore := snapshot.NewObjectStore()
+
 	store := b.Store()
 	// eventsByReconcile := lo.GroupBy(b.Events(), func(e event.Event) string {
 	// 	return e.ReconcileID
@@ -94,6 +97,10 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 			fmt.Println("Could not find object for causal key: ", ckey)
 			continue
 		}
+		if err := snapshotStore.StoreObject(unstructuredObj); err != nil {
+			panic(fmt.Sprintf("storing object: %s", err))
+		}
+
 		vHash := vStore.Publish(unstructuredObj)
 		ikey := snapshot.IdentityKey{Kind: ckey.Kind, ObjectID: ckey.ObjectID}
 		lc.InsertSynthesizedVersion(ikey, vHash, e.ReconcileID)

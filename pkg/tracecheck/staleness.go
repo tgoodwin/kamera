@@ -118,6 +118,29 @@ type VersionResolver interface {
 	ResolveVersion(causalKey event.CausalKey) (snapshot.VersionHash, error)
 }
 
+type KnowledgeManager struct {
+	snapStore *snapshot.ObjectStore
+	*GlobalKnowledge
+	eventKeyToVersion map[event.CausalKey]snapshot.VersionHash
+}
+
+func NewKnowledgeManager() *KnowledgeManager {
+	return &KnowledgeManager{
+		snapStore:         snapshot.NewObjectStore(),
+		GlobalKnowledge:   NewGlobalKnowledge(nil),
+		eventKeyToVersion: make(map[event.CausalKey]snapshot.VersionHash),
+	}
+}
+
+// func (km *KnowledgeManager) AddObject(e event.Event, obj unstructured.Unstructured) error {
+// 	// TODO
+// 	// ckey := event.CausalKey()
+// 	// Store object in snapshot store
+// 	if err := km.snapStore.StoreObject(&obj); err != nil {
+// 		return errors.Wrap(err, "adding object to knowledge manager")
+// 	}
+// }
+
 type GlobalKnowledge struct {
 	Kinds    map[string]*KindKnowledge
 	resolver VersionResolver

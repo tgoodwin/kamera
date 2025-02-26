@@ -15,7 +15,7 @@ func TestJSONHasher_Hash(t *testing.T) {
 
 	hash, err := hasher.Hash(obj)
 	assert.NoError(t, err)
-	if hash == "" {
+	if hash.Value == "" {
 		t.Errorf("expected non-empty hash, got empty")
 	}
 }
@@ -32,14 +32,14 @@ func TestAnonymizingHasher_Hash(t *testing.T) {
 
 	hash, err := hasher.Hash(obj)
 	assert.NoError(t, err)
-	if hash == "" {
+	if hash.Value == "" {
 		t.Errorf("expected non-empty hash, got empty")
 	}
 
 	for key, value := range labels {
 		if _, shouldReplace := labelReplacements[key]; shouldReplace {
-			if strings.Contains(string(hash), value) {
-				t.Error(string(hash))
+			if strings.Contains(string(hash.Value), value) {
+				t.Error(string(hash.Value))
 				t.Errorf("expected value %s to not be present in hash, but it was", value)
 			}
 		}

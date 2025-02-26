@@ -8,7 +8,7 @@ import (
 )
 
 func TestNormalize(t *testing.T) {
-	value := VersionHash(`{"apiVersion":"v1","kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)
+	value := NewDefaultHash(`{"apiVersion":"v1","kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)
 	expected := NormalizedObject{
 		Kind:      "Pod",
 		Namespace: "default",
@@ -57,11 +57,11 @@ func TestNormalizedDiff(t *testing.T) {
 				Kind:     "Pod",
 				ObjectID: "pod-1",
 			},
-			value1: VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`),
-			value2: VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`),
+			value1: NewDefaultHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`),
+			value2: NewDefaultHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`),
 			expected: &NormalizedDiff{
-				Base:       NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)),
-				Other:      NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)),
+				Base:       NormalizeObject(NewDefaultHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)),
+				Other:      NormalizeObject(NewDefaultHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`)),
 				SpecDiff:   []string{},
 				StatusDiff: []string{},
 			},
@@ -72,8 +72,8 @@ func TestNormalizedDiff(t *testing.T) {
 				Kind:     "Pod",
 				ObjectID: "pod-1",
 			},
-			value1:        VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`),
-			value2:        VersionHash(`{"apiVersion": "appsv2", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`),
+			value1:        NewDefaultHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`),
+			value2:        NewDefaultHash(`{"apiVersion": "appsv2", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]}}`),
 			expected:      nil,
 			expectedError: true,
 		},
@@ -83,11 +83,11 @@ func TestNormalizedDiff(t *testing.T) {
 				Kind:     "Pod",
 				ObjectID: "pod-1",
 			},
-			value1: VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]},"status":{"phase":"Running"}}`),
-			value2: VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx:latest"}]},"status":{"phase":"Pending"}}`),
+			value1: NewDefaultHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]},"status":{"phase":"Running"}}`),
+			value2: NewDefaultHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx:latest"}]},"status":{"phase":"Pending"}}`),
 			expected: &NormalizedDiff{
-				Base:       NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]},"status":{"phase":"Running"}}`)),
-				Other:      NormalizeObject(VersionHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx:latest"}]},"status":{"phase":"Pending"}}`)),
+				Base:       NormalizeObject(NewDefaultHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx"}]},"status":{"phase":"Running"}}`)),
+				Other:      NormalizeObject(NewDefaultHash(`{"apiVersion": "appsv1", "kind":"Pod","metadata":{"namespace":"default","name":"pod-1"},"spec":{"containers":[{"name":"nginx","image":"nginx:latest"}]},"status":{"phase":"Pending"}}`)),
 				SpecDiff:   []string{`{"op":"replace","path":"/containers[0]/image","value":"nginx:latest"}`},
 				StatusDiff: []string{`{"op":"replace","path":"/phase","value":"Pending"}`},
 			},

@@ -10,6 +10,11 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 )
 
+type HashInfo struct {
+	DefaultHash    snapshot.VersionHash
+	AnonymizedHash snapshot.VersionHash
+}
+
 // ObjectVersions is a map of object IDs to their version hashes
 type ObjectVersions map[snapshot.IdentityKey]snapshot.VersionHash
 

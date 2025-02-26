@@ -31,3 +31,5 @@ webhook/**
 **/debug.log
 
 examples/chaos/**
+
+results/**
