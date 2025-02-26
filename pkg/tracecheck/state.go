@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/samber/lo"
@@ -26,6 +27,17 @@ func (ov ObjectVersions) Equals(other ObjectVersions) bool {
 
 func (ov ObjectVersions) Objects() ObjectVersions {
 	return ov
+}
+
+func (ov ObjectVersions) Summarize() {
+	// sort by key first
+	keys := lo.Keys(ov)
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i].ObjectID < keys[j].ObjectID
+	})
+	for _, key := range keys {
+		fmt.Printf("\t%s\n", key)
+	}
 }
 
 type Delta string
@@ -116,6 +128,8 @@ type StateNode struct {
 	ExecutionHistory ExecutionHistory
 
 	depth int
+
+	DivergencePoint string // reconcileID of the first divergence
 }
 
 func (sn StateNode) IsConverged() bool {

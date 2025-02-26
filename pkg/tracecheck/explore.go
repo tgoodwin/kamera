@@ -3,13 +3,12 @@ package tracecheck
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/muesli/termenv"
-
-	"slices"
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/replay"
@@ -25,7 +24,7 @@ type reconciler interface {
 type ResourceDeps map[string]util.Set[string]
 
 type ReconcilerContainer struct {
-	reconciler
+	*reconcileImpl
 	harness *replay.Harness
 }
 
@@ -71,33 +70,46 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		}
 
 		rebuiltState = e.knowledgeManager.GetStateAtReconcileID(reconcile.ReconcileID)
-		fmt.Println("rebuilt state - # objects:", len(rebuiltState.contents))
+		fmt.Printf("rebuilt state ahead of %s - # objects: %d\n", util.Shorter(reconcile.ReconcileID), len(rebuiltState.contents))
+		rebuiltState.contents.Summarize()
 
 		harness := e.reconcilers[reconcilerID].harness
+		// this just contains the traced reconcile.Request object
 		frame, err := harness.FrameForReconcile(reconcile.ReconcileID)
 		if err != nil {
 			panic(fmt.Sprintf("frame not found for reconcileID %s", reconcile.ReconcileID))
 		}
 
 		fmt.Println("Replaying ReconcileID", frame.ID, "for reconciler", reconcilerID)
-		reconciler := e.reconcilers[reconcilerID].reconciler
+		reconciler := e.reconcilers[reconcilerID]
 		ctx := replay.WithFrameID(context.Background(), frame.ID)
 		res, err := reconciler.replayReconcile(ctx, frame)
 		if err != nil {
 			logger.Error(err, "replaying reconcile")
 			return nil
 		}
-		fmt.Println("Result", len(res.Changes))
+
+		changes := res.Changes
+		// TODO this is not working due to anonymization
+		res.Deltas = reconciler.computeDeltas(rebuiltState.contents, changes)
+
+		fmt.Println("Reconcile result - # changes:", len(changes))
+		changes.Summarize()
+
+		resultingState := e.knowledgeManager.GetStateAfterReconcileID(reconcile.ReconcileID)
+		fmt.Printf("resulting state after %s - # objects: %d\n", util.Shorter(reconcile.ReconcileID), len(resultingState.contents))
+		resultingState.contents.Summarize()
 
 		currExecutionHistory = append(currExecutionHistory, res)
 
 		// breaking off to explore mode
-		if e.shouldExplore(reconcile.ReconcileID) {
+		if false && e.shouldExplore(reconcile.ReconcileID) {
+			triggeredByLastChange := e.getTriggeredReconcilers(changes)
 			sn := StateNode{
+				DivergencePoint: reconcile.ReconcileID,
 				// top-level state to explore
-				objects: rebuiltState.contents,
-				// TODO populate this if we want something to happen
-				PendingReconciles: []string{},
+				objects:           resultingState.contents,
+				PendingReconciles: triggeredByLastChange,
 				ExecutionHistory:  slices.Clone(currExecutionHistory),
 			}
 			subRes := e.Explore(context.Background(), sn)
@@ -107,12 +119,12 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 	// the end of the trace trivially converges
 	traceWalkResult := ConvergedState{
-		State: StateNode{
-			objects: rebuiltState.contents,
-		},
+		State: StateNode{objects: rebuiltState.contents},
 		Paths: []ExecutionHistory{currExecutionHistory},
 	}
 	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
+	fmt.Println("len curr execution history", len(currExecutionHistory))
+	currExecutionHistory.Summarize()
 
 	return result
 }
@@ -251,7 +263,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 
 // TODO figure out if we need to append to the front if using DFS
 func getNewPendingReconciles(currPending, triggered []string) []string {
-	// Union does not change the order of elements relatively
+	// Union does not change the order of elements relatively, but it does remove duplicates
 	return lo.Union(currPending, triggered)
 }
 
