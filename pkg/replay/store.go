@@ -17,7 +17,7 @@ import (
 type Store map[event.CausalKey]*unstructured.Unstructured
 
 // TODO refactor
-func (f Store) Resolve(key event.CausalKey) (snapshot.VersionHash, error) {
+func (f Store) ResolveVersion(key event.CausalKey) (snapshot.VersionHash, error) {
 	elem, ok := f[key]
 	if !ok {
 		return "", errors.Errorf("could not resolve key in replayStore: %v", key)

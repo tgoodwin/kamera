@@ -115,7 +115,7 @@ func (k *KindKnowledge) AddEvent(e event.Event) StateEvent {
 }
 
 type VersionResolver interface {
-	Resolve(causalKey event.CausalKey) (snapshot.VersionHash, error)
+	ResolveVersion(causalKey event.CausalKey) (snapshot.VersionHash, error)
 }
 
 type GlobalKnowledge struct {
@@ -178,7 +178,7 @@ func (g *GlobalKnowledge) replayEventsToState(events []StateEvent) *StateSnapsho
 			delete(state.contents, iKey)
 		} else {
 			// use resolver to get object version
-			version, err := g.resolver.Resolve(cKey)
+			version, err := g.resolver.ResolveVersion(cKey)
 			if err != nil {
 				panic("error resolving version")
 			}

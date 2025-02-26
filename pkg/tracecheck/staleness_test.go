@@ -12,7 +12,7 @@ import (
 
 type MockVersionResolver struct{}
 
-func (m *MockVersionResolver) Resolve(key event.CausalKey) (snapshot.VersionHash, error) {
+func (m *MockVersionResolver) ResolveVersion(key event.CausalKey) (snapshot.VersionHash, error) {
 	// Return some deterministic object state based on the CausalKey
 	str := fmt.Sprintf("state-%s-%s", key.ObjectID, string(key.ChangeID))
 	return snapshot.VersionHash(str), nil
