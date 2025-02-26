@@ -22,10 +22,12 @@ func (f Store) Resolve(key event.CausalKey) (snapshot.VersionHash, error) {
 	if !ok {
 		return "", errors.Errorf("could not resolve key in replayStore: %v", key)
 	}
-	hasher := snapshot.JSONHasher{}
+	// hasher := snapshot.JSONHasher{}
+
+	// USE ANONYMIZING HASHER TO BE CONSISTENT WITH TRACECHECK STORE
+	hasher := snapshot.NewAnonymizingHasher(snapshot.DefaultLabelReplacements)
 	hash := hasher.Hash(elem)
 	return hash, nil
-
 }
 
 type replayStore struct {
