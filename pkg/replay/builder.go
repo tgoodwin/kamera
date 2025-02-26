@@ -139,7 +139,7 @@ type ReconcileEvent struct {
 	ControllerID string
 }
 
-func (b *Builder) OrderedReconcileIDs() []ReconcileEvent {
+func (b *Builder) OrderedReconcileEvents() []ReconcileEvent {
 	traceEvents := b.Events()
 	// sort by timestamp
 	sort.Slice(traceEvents, func(i, j int) bool {
@@ -149,7 +149,7 @@ func (b *Builder) OrderedReconcileIDs() []ReconcileEvent {
 	reconcileEvents := lo.Map(traceEvents, func(e event.Event, _ int) ReconcileEvent {
 		return ReconcileEvent{ReconcileID: e.ReconcileID, ControllerID: e.ControllerID}
 	})
-	return reconcileEvents
+	return lo.Uniq(reconcileEvents)
 }
 
 func (b *Builder) fromTrace(traceData []byte) error {
