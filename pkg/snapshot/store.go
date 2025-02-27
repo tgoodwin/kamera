@@ -18,7 +18,7 @@ type Hasher interface {
 	Hash(obj *unstructured.Unstructured) (VersionHash, error)
 }
 
-type ObjectStore struct {
+type Store struct {
 	// Maps hash strategy -> object hash -> object
 	indices map[HashStrategy]map[VersionHash]*unstructured.Unstructured
 
@@ -30,8 +30,8 @@ type ObjectStore struct {
 	hashGenerators map[HashStrategy]Hasher
 }
 
-func NewObjectStore() *ObjectStore {
-	store := &ObjectStore{
+func NewStore() *Store {
+	store := &Store{
 		indices:        make(map[HashStrategy]map[VersionHash]*unstructured.Unstructured),
 		objectHashes:   make(map[string]map[HashStrategy]VersionHash),
 		hashGenerators: make(map[HashStrategy]Hasher),
@@ -48,7 +48,7 @@ func NewObjectStore() *ObjectStore {
 	return store
 }
 
-func (s *ObjectStore) RegisterHashGenerator(strategy HashStrategy, generator Hasher) {
+func (s *Store) RegisterHashGenerator(strategy HashStrategy, generator Hasher) {
 	s.hashGenerators[strategy] = generator
 }
 
@@ -59,7 +59,7 @@ func getObjectKey(obj *unstructured.Unstructured) string {
 }
 
 // Store an object with all registered hash strategies
-func (s *ObjectStore) StoreObject(obj *unstructured.Unstructured) error {
+func (s *Store) StoreObject(obj *unstructured.Unstructured) error {
 	objKey := getObjectKey(obj)
 
 	// Initialize hash map for this object if it doesn't exist
@@ -80,12 +80,12 @@ func (s *ObjectStore) StoreObject(obj *unstructured.Unstructured) error {
 		// Record hash value for this object and strategy
 		s.objectHashes[objKey][strategy] = hash
 	}
-
 	return nil
 }
 
-func (s *ObjectStore) PublishWithStrategy(obj *unstructured.Unstructured, strategy HashStrategy) VersionHash {
+func (s *Store) PublishWithStrategy(obj *unstructured.Unstructured, strategy HashStrategy) VersionHash {
 	// Calculate hash
+	fmt.Println("publishing object to snapStore", &s)
 	hash, err := s.hashGenerators[strategy].Hash(obj)
 	if err != nil {
 		panic(fmt.Sprintf("error hashing object: %v", err))
@@ -106,7 +106,7 @@ func (s *ObjectStore) PublishWithStrategy(obj *unstructured.Unstructured, strate
 	return hash
 }
 
-func (s *ObjectStore) ResolveWithStrategy(hash VersionHash, strategy HashStrategy) *unstructured.Unstructured {
+func (s *Store) ResolveWithStrategy(hash VersionHash, strategy HashStrategy) *unstructured.Unstructured {
 	if idx, exists := s.indices[strategy]; exists {
 		obj, found := idx[hash]
 		if found {
@@ -117,16 +117,23 @@ func (s *ObjectStore) ResolveWithStrategy(hash VersionHash, strategy HashStrateg
 }
 
 // Get object by hash value and strategy
-func (s *ObjectStore) GetByHash(hash VersionHash, strategy HashStrategy) (*unstructured.Unstructured, bool) {
+func (s *Store) GetByHash(hash VersionHash, strategy HashStrategy) (*unstructured.Unstructured, bool) {
 	if idx, exists := s.indices[strategy]; exists {
 		obj, found := idx[hash]
+		if !found {
+			// dump all the objects in the store
+			fmt.Println("lookup miss: store contents", &s)
+			for h := range idx {
+				fmt.Printf("hash: %s\n", h.Value)
+			}
+		}
 		return obj, found
 	}
 	return nil, false
 }
 
 // Convert between hash strategies
-func (s *ObjectStore) ConvertHash(hash VersionHash, fromStrategy, toStrategy HashStrategy) (VersionHash, bool) {
+func (s *Store) ConvertHash(hash VersionHash, fromStrategy, toStrategy HashStrategy) (VersionHash, bool) {
 	// First find the object using the source hash strategy
 	obj, found := s.GetByHash(hash, fromStrategy)
 	if !found {
@@ -144,4 +151,34 @@ func (s *ObjectStore) ConvertHash(hash VersionHash, fromStrategy, toStrategy Has
 	}
 
 	return VersionHash{}, false
+}
+
+// used to break ties in inferReconcileRequest
+func (s *Store) Newest(candidates ...VersionHash) VersionHash {
+	var newest VersionHash
+	maxResourceVersion := ""
+	for _, candidate := range candidates {
+		obj := s.ResolveWithStrategy(candidate, candidate.Strategy)
+		rv := obj.GetResourceVersion()
+		if rv > maxResourceVersion {
+			maxResourceVersion = rv
+			newest = candidate
+		}
+	}
+	return newest
+}
+
+// implement oldest
+func (s *Store) Oldest(candidates ...VersionHash) VersionHash {
+	var oldest VersionHash
+	minResourceVersion := candidates[0].Value
+	for _, candidate := range candidates {
+		obj := s.ResolveWithStrategy(candidate, candidate.Strategy)
+		rv := obj.GetResourceVersion()
+		if rv < minResourceVersion {
+			minResourceVersion = rv
+			oldest = candidate
+		}
+	}
+	return oldest
 }

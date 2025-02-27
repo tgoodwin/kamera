@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -123,4 +124,15 @@ func (tm *TriggerManager) MustGetTriggered(changes ObjectVersions) []PendingReco
 		panic(err.Error())
 	}
 	return result
+}
+
+func NewPendingReconciles(nsName types.NamespacedName, dependentControllers ...string) []PendingReconcile {
+	return lo.Map(dependentControllers, func(controllerID string, _ int) PendingReconcile {
+		return PendingReconcile{
+			ReconcilerID: controllerID,
+			Request: reconcile.Request{
+				NamespacedName: nsName,
+			},
+		}
+	})
 }

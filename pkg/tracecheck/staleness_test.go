@@ -518,7 +518,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		if countPods(state) != 1 {
 			t.Errorf("Expected 1 pods in state, got %d", len(state.Objects()))
 		}
-		rewind, err := g.AdjustKnowledgeForKind(state, "Pod", -1)
+		rewind, err := g.AdjustKnowledgeForResourceType(state, "Pod", -1)
 		if err != nil {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}
@@ -526,7 +526,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			t.Errorf("Expected 2 pods in state, got %d", len(rewind.Objects()))
 		}
 
-		ff, err := g.AdjustKnowledgeForKind(state, "Pod", 1)
+		ff, err := g.AdjustKnowledgeForResourceType(state, "Pod", 1)
 		if err != nil {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}

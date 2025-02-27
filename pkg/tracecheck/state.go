@@ -8,6 +8,7 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/util"
 )
 
 type HashInfo struct {
@@ -66,7 +67,7 @@ type ExecutionHistory []*ReconcileResult
 
 func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 	for _, r := range eh {
-		_, err := fmt.Fprintf(file, "\t%s:%s - #changes=%d\n", r.ControllerID, r.FrameID, len(r.Changes))
+		_, err := fmt.Fprintf(file, "\t%s:%s (%s) - #changes=%d\n", r.ControllerID, util.Shorter(r.FrameID), r.FrameType, len(r.Changes))
 		if err != nil {
 			return err
 		}
@@ -124,7 +125,7 @@ type StateNode struct {
 	objects ObservableState
 	// PendingReconciles is a list of controller IDs that are pending reconciliation.
 	// In our "game tree", they represent branches that we can explore.
-	PendingReconciles []string
+	PendingReconciles []PendingReconcile
 
 	parent *StateNode
 	action *ReconcileResult // the action that led to this state
