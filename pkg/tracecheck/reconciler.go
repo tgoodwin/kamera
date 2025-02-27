@@ -39,7 +39,7 @@ type reconcileImpl struct {
 	frameInserter
 }
 
-func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersions) (*ReconcileResult, error) {
+func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
 	// create a new cache frame from the current state of the world of objects.
 	// the Reconciler's readset will be a subset of this frame
 	frameID := util.UUID()

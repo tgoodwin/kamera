@@ -16,7 +16,7 @@ import (
 )
 
 type reconciler interface {
-	doReconcile(ctx context.Context, readset ObjectVersions) (*ReconcileResult, error)
+	doReconcile(ctx context.Context, readset ObjectVersions, req reconcile.Request) (*ReconcileResult, error)
 	replayReconcile(ctx context.Context, frame *replay.Frame) (*ReconcileResult, error)
 }
 
@@ -185,8 +185,8 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state. We explore each pending reconcile in a breadth-first manner.
-		for _, controller := range currentState.PendingReconciles {
-			newState := e.takeReconcileStep(ctx, currentState, controller.ReconcilerID)
+		for _, pendingReconcile := range currentState.PendingReconciles {
+			newState := e.takeReconcileStep(ctx, currentState, pendingReconcile)
 			newState.depth = currentState.depth + 1
 			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
 				logger.Info("\rexplore reached depth", "depth", newState.depth)
@@ -220,16 +220,16 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
-func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, controllerID string) StateNode {
+func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) StateNode {
 	logger = log.FromContext(ctx)
 	// remove the current controller from the pending reconciles list
 	newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
-		return pending.ReconcilerID != controllerID
+		return pending.ReconcilerID != pr.ReconcilerID
 	})
 
 	// get the state diff after executing the controller.
 	// if the state diff is empty, then the controller did not change anything
-	reconcileResult := e.reconcileAtState(ctx, state, controllerID)
+	reconcileResult := e.reconcileAtState(ctx, state, pr)
 
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
@@ -245,7 +245,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 	// include the controller that was just executed.
 	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
 	newPendingReconciles = getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
-	logger.V(2).WithValues("controllerID", controllerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
+	logger.V(2).WithValues("reconcilerID", pr.ReconcilerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
 
 	// make a copy of the current execution history
 	currHistory := append([]*ReconcileResult{}, state.ExecutionHistory...)
@@ -266,18 +266,18 @@ func getNewPendingReconciles(currPending, triggered []PendingReconcile) []Pendin
 	return lo.Union(currPending, triggered)
 }
 
-func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, controllerID string) *ReconcileResult {
-	reconciler, ok := e.reconcilers[controllerID]
+func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, pr PendingReconcile) *ReconcileResult {
+	reconciler, ok := e.reconcilers[pr.ReconcilerID]
 	if !ok {
-		panic(fmt.Sprintf("implementation for reconciler %s not found", controllerID))
+		panic(fmt.Sprintf("implementation for reconciler %s not found", pr.ReconcilerID))
 	}
 	// get the read set
 	readSet := state.Objects()
 	// execute the controller
 	// convert the write set to object versions
-	result, err := reconciler.doReconcile(ctx, readSet)
+	result, err := reconciler.doReconcile(ctx, readSet, pr.Request)
 	if err != nil {
-		panic(fmt.Sprintf("error executing reconcile for %s: %s", controllerID, err))
+		panic(fmt.Sprintf("error executing reconcile for %s: %s", pr.ReconcilerID, err))
 	}
 	return result
 }
