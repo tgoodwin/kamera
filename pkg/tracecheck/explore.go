@@ -32,7 +32,7 @@ type Explorer struct {
 	// maps Kinds to a list of reconcilerIDs that depend on them
 	dependencies ResourceDeps
 
-	knowledgeManager *GlobalKnowledge
+	knowledgeManager *EventKnowledge
 
 	// config
 	maxDepth     int

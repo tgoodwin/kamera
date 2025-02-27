@@ -276,10 +276,10 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 
 	// if constructing an explorer from trace data, load a knowledge manager.
 	// otherwise we need to skip this step. TODO refactor
-	var knowledgeManager *GlobalKnowledge
+	var knowledgeManager *EventKnowledge
 	// TODO should be able to just check if the builder is nil or not
 	if tc.mode == "traced" {
-		knowledgeManager = NewGlobalKnowledge(tc.builder.Store())
+		knowledgeManager = NewEventKnowledge(tc.builder.Store())
 		knowledgeManager.Load(tc.builder.Events())
 	}
 

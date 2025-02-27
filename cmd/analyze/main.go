@@ -76,7 +76,7 @@ func main() {
 		fmt.Println(e.Timestamp, e.ControllerID, util.Shorter(e.ReconcileID), e.OpType, e.CausalKey().Short())
 	}
 
-	km := tracecheck.NewGlobalKnowledge(store)
+	km := tracecheck.NewEventKnowledge(store)
 	km.Load(events)
 	rPodKnowledge := km.Kinds["RPod"]
 	rPodKnowledge.Summarize()
