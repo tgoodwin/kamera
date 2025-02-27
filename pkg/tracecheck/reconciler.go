@@ -20,7 +20,7 @@ type effectReader interface {
 }
 
 type frameInserter interface {
-	InsertFrame(id string, data replay.FrameData)
+	InsertFrame(id string, data replay.CacheFrame)
 }
 
 type reconcileImpl struct {
@@ -125,8 +125,8 @@ func (r *reconcileImpl) inferReconcileRequest(readset ObjectVersions) (reconcile
 	return reconcile.Request{}, errors.New(fmt.Sprintf("no object of kind %s in readset", r.For))
 }
 
-func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.FrameData {
-	out := make(replay.FrameData)
+func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
+	out := make(replay.CacheFrame)
 
 	for key, hash := range ov {
 		kind := key.Kind
