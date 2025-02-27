@@ -50,7 +50,6 @@ func newEffect(kind, uid string, version snapshot.VersionHash, op event.Operatio
 type manager struct {
 	*versionStore // maps hashes to full object values
 	// (Kind+objectID) -> []versionHash
-	*snapshot.LifecycleContainer // for each Object IdentityKey, store all value hashes and the reconciles that produced them
 
 	// need to add frame data to the manager as well for reconciler reads
 	*converterImpl
@@ -95,12 +94,6 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	}
 	// publish the object versionHash
 	versionHash := m.Publish(u)
-	ikey := snapshot.IdentityKey{
-		Kind:     kind,
-		ObjectID: objectID,
-	}
-	// add the version to the object's lifecycle
-	m.InsertSynthesizedVersion(ikey, versionHash, frameID)
 
 	// now manifest an event and record it as an effect
 	reffects, ok := m.effects[frameID]

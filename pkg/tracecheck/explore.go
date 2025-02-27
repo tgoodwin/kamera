@@ -17,7 +17,7 @@ import (
 
 type reconciler interface {
 	doReconcile(ctx context.Context, readset ObjectVersions, req reconcile.Request) (*ReconcileResult, error)
-	replayReconcile(ctx context.Context, frame *replay.Frame) (*ReconcileResult, error)
+	replayReconcile(ctx context.Context, req reconcile.Request) (*ReconcileResult, error)
 }
 
 type ReconcilerContainer struct {
@@ -82,7 +82,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 		reconciler := e.reconcilers[reconcilerID]
 		ctx := replay.WithFrameID(context.Background(), frame.ID)
-		res, err := reconciler.replayReconcile(ctx, frame)
+		res, err := reconciler.replayReconcile(ctx, frame.Req)
 		if err != nil {
 			logger.Error(err, "replaying reconcile")
 			return nil
@@ -232,7 +232,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// get the state diff after executing the controller.
 	// if the state diff is empty, then the controller did not change anything
-	reconcileResult, err := e.reconcileAtState(ctx, state, pr)
+	reconcileResult, err := e.reconcileAtState(ctx, state.Objects(), pr)
 	if err != nil {
 		return StateNode{}, err
 	}
@@ -272,19 +272,21 @@ func getNewPendingReconciles(currPending, triggered []PendingReconcile) []Pendin
 	return lo.Union(currPending, triggered)
 }
 
-func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, pr PendingReconcile) (*ReconcileResult, error) {
+func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions, pr PendingReconcile) (*ReconcileResult, error) {
 	reconciler, ok := e.reconcilers[pr.ReconcilerID]
 	if !ok {
-		panic(fmt.Sprintf("implementation for reconciler %s not found", pr.ReconcilerID))
+		return nil, fmt.Errorf("implementation for reconciler %s not found", pr.ReconcilerID)
 	}
-	// get the read set
-	readSet := state.Objects()
+
+	if pr.Request.NamespacedName.Name == "" || pr.Request.NamespacedName.Namespace == "" {
+		return nil, fmt.Errorf("empty reconcile request: %v", pr.Request)
+	}
+
 	// execute the controller
 	// convert the write set to object versions
-	result, err := reconciler.doReconcile(ctx, readSet, pr.Request)
+	result, err := reconciler.doReconcile(ctx, objState, pr.Request)
 	if err != nil {
 		return nil, err
-		// panic(fmt.Sprintf("error executing reconcile for %s: %s", pr.ReconcilerID, err))
 	}
 	return result, nil
 }
@@ -312,7 +314,7 @@ func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []PendingReco
 		fmt.Println("out", out)
 		fmt.Println("alternative", alternative)
 	}
-	return out
+	return alternative
 }
 
 // serializeState converts a State to a unique string representation for deduplication

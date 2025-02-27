@@ -48,12 +48,10 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	// uses anonymizing hasher
 	vStore := newVersionStore()
 	readDeps := make(ResourceDeps)
-	lc := snapshot.NewLifecycleContainer()
 
 	mgr := &manager{
-		versionStore:       vStore,
-		LifecycleContainer: lc,
-		effects:            make(map[string]reconcileEffects),
+		versionStore: vStore,
+		effects:      make(map[string]reconcileEffects),
 	}
 
 	return &TraceChecker{
@@ -66,8 +64,6 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 
 		mode: "standalone",
 
-		builder: nil,
-
 		// TODO refactor
 		reconcilerToKind: make(map[string]string),
 	}
@@ -76,7 +72,6 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 func FromBuilder(b *replay.Builder) *TraceChecker {
 	vStore := newVersionStore()
 	readDeps := make(ResourceDeps)
-	lc := snapshot.NewLifecycleContainer()
 
 	//snapshot store
 	snapshotStore := snapshot.NewStore()
@@ -104,8 +99,6 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 
 		vHash := vStore.Publish(unstructuredObj)
 		ikey := snapshot.IdentityKey{Kind: ckey.Kind, ObjectID: ckey.ObjectID}
-		lc.InsertSynthesizedVersion(ikey, vHash, e.ReconcileID)
-
 		nsName := types.NamespacedName{Namespace: unstructuredObj.GetNamespace(), Name: unstructuredObj.GetName()}
 
 		// this is logically representing a "join" between the sleeve event model
@@ -136,10 +129,9 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 	converter := newConverter(things)
 
 	mgr := &manager{
-		versionStore:       vStore,
-		LifecycleContainer: lc,
-		effects:            make(map[string]reconcileEffects),
-		converterImpl:      converter,
+		versionStore:  vStore,
+		effects:       make(map[string]reconcileEffects),
+		converterImpl: converter,
 	}
 
 	return &TraceChecker{
@@ -158,17 +150,21 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 	vHash := tc.manager.versionStore.Publish(r)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
-	tc.manager.InsertSynthesizedVersion(ikey, vHash, "start")
 
 	// HACK TODO REFACTOR
-	tc.builder = &replay.Builder{
-		ReconcilerIDs: util.NewSet(dependentControllers...),
+	if tc.builder == nil {
+		tc.builder = &replay.Builder{ReconcilerIDs: util.NewSet(dependentControllers...)}
 	}
 
 	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {
 		return PendingReconcile{
 			ReconcilerID: s,
-			Request:      reconcile.Request{},
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: obj.GetNamespace(),
+					Name:      obj.GetName(),
+				},
+			},
 		}
 	})
 
@@ -297,19 +293,6 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		knowledgeManager: knowledgeManager,
 	}
 }
-
-// func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
-// 	ov := sn.Objects()
-// 	for k, v := range ov {
-// 		// get the full object value
-// 		fullObj := tc.manager.Resolve(v)
-// 		if passed := p(fullObj); passed {
-// 			fmt.Println("Predicate satisfied for object: ", k)
-// 			return true
-// 		}
-// 	}
-// 	return false
-// }
 
 func (tc *TraceChecker) SummarizeResults(result *Result) {
 	for i, sn := range result.ConvergedStates {

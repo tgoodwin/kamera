@@ -43,23 +43,24 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	// create a new cache frame from the current state of the world of objects.
 	// the Reconciler's readset will be a subset of this frame
 	frameID := util.UUID()
+	// insert a "frame" to hold the readset data ahead of the reconcile
+	r.InsertFrame(frameID, r.toFrameData(currState))
+
+	inferredReq, err := r.inferReconcileRequest(currState)
+	if err != nil {
+		return nil, errors.Wrap(err, fmt.Sprintf("inferring reconcile request, frameID: %s", frameID))
+	}
+
+	if inferredReq != req {
+		fmt.Println("MISMATCH")
+		fmt.Printf("inferred: %v, passed: %v\n", inferredReq, req)
+	}
+
 	ctx = replay.WithFrameID(ctx, frameID)
 	logger = log.FromContext(ctx).WithValues("reconciler", r.Name, "frameID", frameID)
 	// add the logger back to the context
 	ctx = log.IntoContext(ctx, logger)
 
-	req, err := r.inferReconcileRequest(currState)
-	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("inferring reconcile request, frameID: %s", frameID))
-	}
-
-	// insert a "frame" to hold the readset data ahead of the reconcile
-	r.InsertFrame(frameID, r.toFrameData(currState))
-
-	// TODO handle explicit requeue requests
-	if frameid := replay.FrameIDFromContext(ctx); frameid != frameID {
-		panic("frameID mismatch")
-	}
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
@@ -79,10 +80,9 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	}, nil
 }
 
-func (r *reconcileImpl) replayReconcile(ctx context.Context, frame *replay.Frame) (*ReconcileResult, error) {
-	frameID := frame.ID
-	ctx = replay.WithFrameID(ctx, frameID)
-	if _, err := r.Reconcile(ctx, frame.Req); err != nil {
+func (r *reconcileImpl) replayReconcile(ctx context.Context, request reconcile.Request) (*ReconcileResult, error) {
+	frameID := replay.FrameIDFromContext(ctx)
+	if _, err := r.Reconcile(ctx, request); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
 	effects, err := r.retrieveEffects(frameID)

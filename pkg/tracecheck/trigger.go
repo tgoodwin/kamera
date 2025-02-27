@@ -70,6 +70,10 @@ func (tm *TriggerManager) getTriggered(changes ObjectVersions) ([]PendingReconci
 			Namespace: objectVal.GetNamespace(),
 			Name:      objectVal.GetName(),
 		}
+		// check to ensure the object has a namespaced name
+		if nsName.Name == "" || nsName.Namespace == "" {
+			return nil, fmt.Errorf("resolved object %s has no namespaced name", objKey)
+		}
 
 		// Add primary reconcilers if available
 		if primaries, exists := tm.owners[objKey.Kind]; exists {
