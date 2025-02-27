@@ -288,6 +288,12 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		dependencies: tc.ResourceDeps,
 		maxDepth:     maxDepth,
 
+		triggerManager: NewTriggerManager(
+			tc.ResourceDeps,
+			tc.reconcilerToKind,
+			tc.manager.snapStore,
+		),
+
 		knowledgeManager: knowledgeManager,
 	}
 }

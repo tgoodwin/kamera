@@ -10,7 +10,6 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/replay"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -34,9 +33,10 @@ type Explorer struct {
 
 	knowledgeManager *EventKnowledge
 
+	triggerManager *TriggerManager
+
 	// config
-	maxDepth     int
-	hashStrategy snapshot.HashStrategy // how to serialize states for equality comparison
+	maxDepth int
 }
 
 type ConvergedState struct {
@@ -299,6 +299,12 @@ func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []PendingReco
 			Request:      reconcile.Request{},
 		}
 	})
+	alternative := e.triggerManager.MustGetTriggered(changes)
+	if len(alternative) != len(out) {
+		fmt.Println("triggered reconcilers mismatch")
+		fmt.Println("out", out)
+		fmt.Println("alternative", alternative)
+	}
 	return out
 }
 

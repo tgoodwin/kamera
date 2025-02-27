@@ -89,7 +89,6 @@ func (s *Store) StoreObject(obj *unstructured.Unstructured) error {
 
 func (s *Store) PublishWithStrategy(obj *unstructured.Unstructured, strategy HashStrategy) VersionHash {
 	// Calculate hash
-	fmt.Println("publishing object to snapStore", &s)
 	hash, err := s.hashGenerators[strategy].Hash(obj)
 	if err != nil {
 		panic(fmt.Sprintf("error hashing object: %v", err))
