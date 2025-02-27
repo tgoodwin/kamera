@@ -11,6 +11,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -59,6 +60,17 @@ type manager struct {
 	effects map[string]reconcileEffects
 
 	mu sync.RWMutex
+
+	lookups map[types.NamespacedName]int
+}
+
+func (m *manager) CountLookup(nsname types.NamespacedName) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.lookups == nil {
+		m.lookups = make(map[types.NamespacedName]int)
+	}
+	m.lookups[nsname]++
 }
 
 func (m *manager) Summary() {
@@ -87,6 +99,10 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	if objectID == "" {
 		panic("object does not have a sleeve object ID")
 	}
+	ikey := snapshot.IdentityKey{
+		Kind:     kind,
+		ObjectID: objectID,
+	}
 
 	frameID := replay.FrameIDFromContext(ctx)
 	u, err := util.ConvertToUnstructured(obj)
@@ -95,10 +111,6 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	}
 	// publish the object versionHash
 	versionHash := m.Publish(u)
-	ikey := snapshot.IdentityKey{
-		Kind:     kind,
-		ObjectID: objectID,
-	}
 	// add the version to the object's lifecycle
 	m.InsertSynthesizedVersion(ikey, versionHash, frameID)
 

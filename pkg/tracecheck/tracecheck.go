@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"fmt"
 
+	"github.com/samber/lo"
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
@@ -36,6 +37,8 @@ type TraceChecker struct {
 	// this just determines which top-level object a reconciler is triggered with
 	reconcilerToKind map[string]string
 
+	snapshotStore *snapshot.Store
+
 	// TODO move this elsewhere
 	builder *replay.Builder
 	mode    string
@@ -45,12 +48,12 @@ type TraceChecker struct {
 
 func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	// uses anonymizing hasher
-	vStore := newVersionStore()
+	snapStore := snapshot.NewStore()
 	readDeps := make(ResourceDeps)
 	lc := snapshot.NewLifecycleContainer()
 
 	mgr := &manager{
-		versionStore:       vStore,
+		versionStore:       newVersionStore(snapStore),
 		LifecycleContainer: lc,
 		effects:            make(map[string]reconcileEffects),
 	}
@@ -63,6 +66,8 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 
 		emitter: event.NewInMemoryEmitter(),
 
+		snapshotStore: snapStore,
+
 		mode: "standalone",
 
 		builder: nil,
@@ -73,26 +78,26 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 }
 
 func FromBuilder(b *replay.Builder) *TraceChecker {
-	vStore := newVersionStore()
 	readDeps := make(ResourceDeps)
 	lc := snapshot.NewLifecycleContainer()
 
 	//snapshot store
-	snapshotStore := snapshot.NewObjectStore()
+	snapshotStore := snapshot.NewStore()
+	vStore := newVersionStore(snapshotStore)
 
-	store := b.Store()
+	replayStore := b.Store()
 	// eventsByReconcile := lo.GroupBy(b.Events(), func(e event.Event) string {
 	// 	return e.ReconcileID
 	// })
 	fmt.Println("---Store Contents---")
-	for k := range store {
+	for k := range replayStore {
 		fmt.Printf("Key: %s\n", k)
 	}
 	fmt.Println("---End Store Contents---")
 	things := make([]joinRecord, 0)
 	for _, e := range b.Events() {
 		ckey := e.CausalKey()
-		unstructuredObj, ok := store[ckey]
+		unstructuredObj, ok := replayStore[ckey]
 		if !ok {
 			fmt.Println("Could not find object for causal key: ", ckey)
 			continue
@@ -102,6 +107,7 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		}
 
 		vHash := vStore.Publish(unstructuredObj)
+		// use sleeve object ID as the object ID
 		ikey := snapshot.IdentityKey{Kind: ckey.Kind, ObjectID: ckey.ObjectID}
 		lc.InsertSynthesizedVersion(ikey, vHash, e.ReconcileID)
 
@@ -147,6 +153,8 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		manager:      mgr,
 		mode:         "traced",
 
+		snapshotStore: snapshotStore,
+
 		builder:          b,
 		reconcilerToKind: make(map[string]string),
 	}
@@ -164,9 +172,19 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 		ReconcilerIDs: util.NewSet(dependentControllers...),
 	}
 
+	nsName := types.NamespacedName{Namespace: r.GetNamespace(), Name: r.GetName()}
+	pending := lo.Map(dependentControllers, func(c string, _ int) PendingReconcile {
+		return PendingReconcile{
+			ReconcilerID: c,
+			Request: reconcile.Request{
+				NamespacedName: nsName,
+			},
+		}
+	})
+
 	return StateNode{
 		objects:           ObjectVersions{ikey: vHash},
-		PendingReconciles: dependentControllers,
+		PendingReconciles: pending,
 	}
 }
 
@@ -275,27 +293,23 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		knowledgeManager.Load(tc.builder.Events())
 	}
 
+	triggerManager := NewTriggerManager(
+		tc.ResourceDeps,
+		tc.reconcilerToKind,
+		tc.snapshotStore,
+	)
+
 	return &Explorer{
 		reconcilers:  reconcilers,
 		dependencies: tc.ResourceDeps,
 		maxDepth:     maxDepth,
 
+		snapshotStore: tc.snapshotStore,
+		tm:            triggerManager,
+
 		knowledgeManager: knowledgeManager,
 	}
 }
-
-// func (tc *TraceChecker) EvalPredicate(sn StateNode, p replay.Predicate) bool {
-// 	ov := sn.Objects()
-// 	for k, v := range ov {
-// 		// get the full object value
-// 		fullObj := tc.manager.Resolve(v)
-// 		if passed := p(fullObj); passed {
-// 			fmt.Println("Predicate satisfied for object: ", k)
-// 			return true
-// 		}
-// 	}
-// 	return false
-// }
 
 func (tc *TraceChecker) SummarizeResults(result *Result) {
 	for i, sn := range result.ConvergedStates {
