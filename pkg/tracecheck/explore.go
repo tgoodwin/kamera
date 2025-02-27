@@ -8,8 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/muesli/termenv"
-
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -21,8 +19,6 @@ type reconciler interface {
 	doReconcile(ctx context.Context, readset ObjectVersions) (*ReconcileResult, error)
 	replayReconcile(ctx context.Context, frame *replay.Frame) (*ReconcileResult, error)
 }
-
-type ResourceDeps map[string]util.Set[string]
 
 type ReconcilerContainer struct {
 	*reconcileImpl
@@ -153,15 +149,12 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		e.maxDepth = 10
 	}
 
-	seenDepths := make(map[int]bool)
-
-	p := termenv.ColorProfile()
-
 	result := &Result{
 		ConvergedStates: make([]ConvergedState, 0),
 	}
 	start := time.Now()
 
+	seenDepths := make(map[int]bool)
 	queue := []StateNode{initialState}
 
 	// executionPathsToState is a map of stateKey -> ExecutionHistory
@@ -195,7 +188,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 			newState := e.takeReconcileStep(ctx, currentState, controller)
 			newState.depth = currentState.depth + 1
 			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
-				fmt.Print(termenv.String(fmt.Sprintf("\rexplore reached depth: %d", newState.depth)).Foreground(p.Color("2")))
+				logger.Info("\rexplore reached depth", "depth", newState.depth)
 				seenDepths[newState.depth] = true
 			}
 			if newState.depth > e.maxDepth {
