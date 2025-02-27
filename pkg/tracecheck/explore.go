@@ -13,6 +13,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 type reconciler interface {
@@ -51,7 +52,7 @@ type Result struct {
 }
 
 func (e *Explorer) shouldExplore(frameID string) bool {
-	return true
+	return strings.HasPrefix(frameID, "")
 }
 
 func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
@@ -185,7 +186,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state. We explore each pending reconcile in a breadth-first manner.
 		for _, controller := range currentState.PendingReconciles {
-			newState := e.takeReconcileStep(ctx, currentState, controller)
+			newState := e.takeReconcileStep(ctx, currentState, controller.ReconcilerID)
 			newState.depth = currentState.depth + 1
 			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
 				logger.Info("\rexplore reached depth", "depth", newState.depth)
@@ -222,8 +223,8 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, controllerID string) StateNode {
 	logger = log.FromContext(ctx)
 	// remove the current controller from the pending reconciles list
-	newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending string, _ int) bool {
-		return pending != controllerID
+	newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
+		return pending.ReconcilerID != controllerID
 	})
 
 	// get the state diff after executing the controller.
@@ -260,7 +261,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, contr
 }
 
 // TODO figure out if we need to append to the front if using DFS
-func getNewPendingReconciles(currPending, triggered []string) []string {
+func getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
 	// Union does not change the order of elements relatively, but it does remove duplicates
 	return lo.Union(currPending, triggered)
 }
@@ -281,7 +282,7 @@ func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, contro
 	return result
 }
 
-func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []string {
+func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []PendingReconcile {
 	triggered := make(util.Set[string])
 	for objKey := range changes {
 		// get the controllers that depend on this object
@@ -292,7 +293,13 @@ func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []string {
 	triggeredList := triggered.List()
 	// sort the list so that we can explore the triggered controllers in a deterministic order
 	sort.Strings(triggeredList)
-	return triggeredList
+	out := lo.Map(triggeredList, func(s string, _ int) PendingReconcile {
+		return PendingReconcile{
+			ReconcilerID: s,
+			Request:      reconcile.Request{},
+		}
+	})
+	return out
 }
 
 // serializeState converts a State to a unique string representation for deduplication
@@ -304,9 +311,14 @@ func serializeState(state StateNode) string {
 	// Sort objectPairs to ensure deterministic order
 	sort.Strings(objectPairs)
 	objectsStr := strings.Join(objectPairs, ",")
-	sortedPendingReconciles := append([]string{}, state.PendingReconciles...)
-	sort.Strings(sortedPendingReconciles)
-	reconcilesStr := strings.Join(sortedPendingReconciles, ",")
+	sortedPendingReconciles := append([]PendingReconcile{}, state.PendingReconciles...)
+	sort.Slice(sortedPendingReconciles, func(i, j int) bool {
+		return sortedPendingReconciles[i].ReconcilerID < sortedPendingReconciles[j].ReconcilerID
+	})
+	reconcileStr := lo.Map(sortedPendingReconciles, func(pr PendingReconcile, _ int) string {
+		return pr.ReconcilerID
+	})
+	reconcilesStr := strings.Join(reconcileStr, ",")
 	// reconcilesStr := strings.Join(state.PendingReconciles, ",")
 
 	// Sort PendingReconciles to ensure deterministic order

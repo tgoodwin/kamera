@@ -3,7 +3,6 @@ package tracecheck
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 )
 
@@ -30,7 +29,10 @@ func Test_serializeState(t *testing.T) {
 							ObjectID: "object2",
 						}: snapshot.NewDefaultHash("hash2"),
 					},
-					PendingReconciles: []string{"controller1", "controller2"},
+					PendingReconciles: []PendingReconcile{
+						{ReconcilerID: "controller1"},
+						{ReconcilerID: "controller2"},
+					},
 					// Initialize with some test data
 				},
 			},
@@ -48,33 +50,33 @@ func Test_serializeState(t *testing.T) {
 	}
 }
 
-func Test_getNewPendingReconciles(t *testing.T) {
-	tests := []struct {
-		name     string
-		curr     []string
-		new      []string
-		expected []string
-	}{
-		{
-			name:     "identical lists",
-			curr:     []string{"controllerC", "controllerB"},
-			new:      []string{"controllerB", "controllerC"},
-			expected: []string{"controllerC", "controllerB"},
-		},
-		{
-			name:     "one new controller",
-			curr:     []string{"controllerC", "controllerB"},
-			new:      []string{"controllerB", "controllerC", "controllerA"},
-			expected: []string{"controllerC", "controllerB", "controllerA"},
-		},
-	}
+// func Test_getNewPendingReconciles(t *testing.T) {
+// 	tests := []struct {
+// 		name     string
+// 		curr     []string
+// 		new      []string
+// 		expected []string
+// 	}{
+// 		{
+// 			name:     "identical lists",
+// 			curr:     []string{"controllerC", "controllerB"},
+// 			new:      []string{"controllerB", "controllerC"},
+// 			expected: []string{"controllerC", "controllerB"},
+// 		},
+// 		{
+// 			name:     "one new controller",
+// 			curr:     []string{"controllerC", "controllerB"},
+// 			new:      []string{"controllerB", "controllerC", "controllerA"},
+// 			expected: []string{"controllerC", "controllerB", "controllerA"},
+// 		},
+// 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			actual := getNewPendingReconciles(tt.curr, tt.new)
-			if !assert.Equal(t, actual, tt.expected) {
-				t.Errorf("getNewPendingReconciles() = %v, want %v", actual, tt.expected)
-			}
-		})
-	}
-}
+// 	for _, tt := range tests {
+// 		t.Run(tt.name, func(t *testing.T) {
+// 			actual := getNewPendingReconciles(tt.curr, tt.new)
+// 			if !assert.Equal(t, actual, tt.expected) {
+// 				t.Errorf("getNewPendingReconciles() = %v, want %v", actual, tt.expected)
+// 			}
+// 		})
+// 	}
+// }

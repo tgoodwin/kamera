@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"fmt"
 
+	"github.com/samber/lo"
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
@@ -78,7 +79,7 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 	lc := snapshot.NewLifecycleContainer()
 
 	//snapshot store
-	snapshotStore := snapshot.NewObjectStore()
+	snapshotStore := snapshot.NewStore()
 
 	store := b.Store()
 	// eventsByReconcile := lo.GroupBy(b.Events(), func(e event.Event) string {
@@ -164,9 +165,16 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 		ReconcilerIDs: util.NewSet(dependentControllers...),
 	}
 
+	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {
+		return PendingReconcile{
+			ReconcilerID: s,
+			Request:      reconcile.Request{},
+		}
+	})
+
 	return StateNode{
 		objects:           ObjectVersions{ikey: vHash},
-		PendingReconciles: dependentControllers,
+		PendingReconciles: dependent,
 	}
 }
 

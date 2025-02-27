@@ -8,6 +8,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // TODO this code can likely be replaced by the staleness eventsourcing package
@@ -110,7 +111,12 @@ func (c *converterImpl) getStart() StateNode {
 	firstRecord := c.orderedJoinRecords[0]
 	firstOV := c.reconcileIDToReads[firstRecord.event.ReconcileID]
 	return StateNode{
-		objects:           firstOV,
-		PendingReconciles: []string{firstRecord.event.ControllerID},
+		objects: firstOV,
+		PendingReconciles: []PendingReconcile{
+			{
+				ReconcilerID: firstRecord.event.ControllerID,
+				Request:      reconcile.Request{},
+			},
+		},
 	}
 }
