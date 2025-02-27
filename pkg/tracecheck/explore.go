@@ -186,7 +186,10 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state. We explore each pending reconcile in a breadth-first manner.
 		for _, pendingReconcile := range currentState.PendingReconciles {
-			newState := e.takeReconcileStep(ctx, currentState, pendingReconcile)
+			newState, err := e.takeReconcileStep(ctx, currentState, pendingReconcile)
+			if err != nil {
+				panic(fmt.Sprintf("error taking reconcile step: %s", err))
+			}
 			newState.depth = currentState.depth + 1
 			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
 				logger.Info("\rexplore reached depth", "depth", newState.depth)
@@ -220,7 +223,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
-func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) StateNode {
+func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (StateNode, error) {
 	logger = log.FromContext(ctx)
 	// remove the current controller from the pending reconciles list
 	newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
@@ -229,7 +232,10 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// get the state diff after executing the controller.
 	// if the state diff is empty, then the controller did not change anything
-	reconcileResult := e.reconcileAtState(ctx, state, pr)
+	reconcileResult, err := e.reconcileAtState(ctx, state, pr)
+	if err != nil {
+		return StateNode{}, err
+	}
 
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
@@ -257,7 +263,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		action:            reconcileResult,
 
 		ExecutionHistory: append(currHistory, reconcileResult),
-	}
+	}, nil
 }
 
 // TODO figure out if we need to append to the front if using DFS
@@ -266,7 +272,7 @@ func getNewPendingReconciles(currPending, triggered []PendingReconcile) []Pendin
 	return lo.Union(currPending, triggered)
 }
 
-func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, pr PendingReconcile) *ReconcileResult {
+func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, pr PendingReconcile) (*ReconcileResult, error) {
 	reconciler, ok := e.reconcilers[pr.ReconcilerID]
 	if !ok {
 		panic(fmt.Sprintf("implementation for reconciler %s not found", pr.ReconcilerID))
@@ -277,9 +283,10 @@ func (e *Explorer) reconcileAtState(ctx context.Context, state StateNode, pr Pen
 	// convert the write set to object versions
 	result, err := reconciler.doReconcile(ctx, readSet, pr.Request)
 	if err != nil {
-		panic(fmt.Sprintf("error executing reconcile for %s: %s", pr.ReconcilerID, err))
+		return nil, err
+		// panic(fmt.Sprintf("error executing reconcile for %s: %s", pr.ReconcilerID, err))
 	}
-	return result
+	return result, nil
 }
 
 func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []PendingReconcile {
