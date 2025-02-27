@@ -62,7 +62,7 @@ type manager struct {
 }
 
 func (m *manager) Summary() {
-	store := m.versionStore.store
+	store := m.versionStore.snapStore.GetVersionMap(snapshot.AnonymizedHash)
 	for k, v := range store {
 		fmt.Printf("Key: %s, Value: %s\n", k, v)
 	}

@@ -3,18 +3,12 @@ package tracecheck
 import (
 	"sync"
 
-	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-type Store map[snapshot.VersionHash]*unstructured.Unstructured
-
 type versionStore struct {
-	snapStore          *snapshot.Store
-	store              Store
-	keyToObj           map[event.CausalKey]*unstructured.Unstructured
-	causalKeyToVersion map[event.CausalKey]snapshot.VersionHash
+	snapStore *snapshot.Store
 
 	// TODO perhaps multiple hash strategies?
 	hasher snapshot.Hasher
@@ -26,10 +20,8 @@ var _ VersionManager = (*versionStore)(nil)
 
 func newVersionStore() *versionStore {
 	return &versionStore{
-		snapStore:          snapshot.NewStore(),
-		store:              make(Store),
-		causalKeyToVersion: make(map[event.CausalKey]snapshot.VersionHash),
-		keyToObj:           make(map[event.CausalKey]*unstructured.Unstructured),
+		snapStore: snapshot.NewStore(),
+		// store:              make(Store),
 		hasher: snapshot.NewAnonymizingHasher(
 			snapshot.DefaultLabelReplacements,
 		),

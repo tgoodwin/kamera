@@ -48,6 +48,10 @@ func NewStore() *Store {
 	return store
 }
 
+func (s *Store) GetVersionMap(strategy HashStrategy) map[VersionHash]*unstructured.Unstructured {
+	return s.indices[strategy]
+}
+
 func (s *Store) RegisterHashGenerator(strategy HashStrategy, generator Hasher) {
 	s.hashGenerators[strategy] = generator
 }
