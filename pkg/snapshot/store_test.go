@@ -42,7 +42,7 @@ func createTestObject(namespace, name string, labels map[string]string) *unstruc
 }
 
 func TestNewObjectStore(t *testing.T) {
-	store := NewObjectStore()
+	store := NewStore()
 
 	assert.NotNil(t, store.indices)
 	assert.NotNil(t, store.objectHashes)
@@ -54,7 +54,7 @@ func TestNewObjectStore(t *testing.T) {
 }
 
 func TestRegisterHashGenerator(t *testing.T) {
-	store := NewObjectStore()
+	store := NewStore()
 
 	customStrategy := HashStrategy("custom")
 	customHasher := &MockDefaultHasher{}
@@ -65,7 +65,7 @@ func TestRegisterHashGenerator(t *testing.T) {
 }
 
 func TestStoreObject(t *testing.T) {
-	store := NewObjectStore()
+	store := NewStore()
 
 	// Register our mock hashers
 	store.RegisterHashGenerator(DefaultHash, &MockDefaultHasher{})
@@ -100,7 +100,7 @@ func TestStoreObject(t *testing.T) {
 }
 
 func TestStoreObjectError(t *testing.T) {
-	store := NewObjectStore()
+	store := NewStore()
 
 	// Register a hasher that returns an error
 	store.RegisterHashGenerator(DefaultHash, &ErrorHasher{})
@@ -115,7 +115,7 @@ func TestStoreObjectError(t *testing.T) {
 }
 
 func TestGetByHash(t *testing.T) {
-	store := NewObjectStore()
+	store := NewStore()
 
 	// Register our mock hashers
 	store.RegisterHashGenerator(DefaultHash, &MockDefaultHasher{})
@@ -152,7 +152,7 @@ func TestGetByHash(t *testing.T) {
 }
 
 func TestGetByHashWithMultipleObjects(t *testing.T) {
-	store := NewObjectStore()
+	store := NewStore()
 
 	// Register mock hashers where the anonymized hasher gives same hash for different objects
 	store.RegisterHashGenerator(DefaultHash, &MockDefaultHasher{})
@@ -188,7 +188,7 @@ func TestGetByHashWithMultipleObjects(t *testing.T) {
 }
 
 func TestConvertHash(t *testing.T) {
-	store := NewObjectStore()
+	store := NewStore()
 
 	// Register our mock hashers
 	store.RegisterHashGenerator(DefaultHash, &MockDefaultHasher{})
@@ -219,7 +219,7 @@ func TestConvertHash(t *testing.T) {
 }
 
 func TestUpdateObject(t *testing.T) {
-	store := NewObjectStore()
+	store := NewStore()
 
 	// Register our mock hashers
 	store.RegisterHashGenerator(DefaultHash, &MockDefaultHasher{})
@@ -253,7 +253,7 @@ func TestConcurrentHashClash(t *testing.T) {
 	// This test simulates the scenario where two different objects get the same hash
 	// in one strategy but different hashes in another strategy
 
-	store := NewObjectStore()
+	store := NewStore()
 
 	// Define a custom hasher that gives the same hash for objects with names that start with "clash-"
 	clashHasher := &MockAnonymizedHasher{}

@@ -119,14 +119,14 @@ type VersionResolver interface {
 }
 
 type KnowledgeManager struct {
-	snapStore *snapshot.ObjectStore
+	snapStore *snapshot.Store
 	*GlobalKnowledge
 	eventKeyToVersion map[event.CausalKey]snapshot.VersionHash
 }
 
 func NewKnowledgeManager() *KnowledgeManager {
 	return &KnowledgeManager{
-		snapStore:         snapshot.NewObjectStore(),
+		snapStore:         snapshot.NewStore(),
 		GlobalKnowledge:   NewGlobalKnowledge(nil),
 		eventKeyToVersion: make(map[event.CausalKey]snapshot.VersionHash),
 	}
@@ -303,7 +303,7 @@ func (e ErrInsufficientEvents) Error() string {
 		e.Kind, e.Steps, e.RequestedSeq, e.CurrentSeq)
 }
 
-func (g *GlobalKnowledge) AdjustKnowledgeForKind(snapshot *StateSnapshot, kind string, steps int64) (*StateSnapshot, error) {
+func (g *GlobalKnowledge) AdjustKnowledgeForResourceType(snapshot *StateSnapshot, kind string, steps int64) (*StateSnapshot, error) {
 	kindKnowledge, exists := g.Kinds[kind]
 	if !exists {
 		return nil, fmt.Errorf("unknown kind: %s", kind)
