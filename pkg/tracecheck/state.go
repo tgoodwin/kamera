@@ -55,11 +55,16 @@ const (
 	FrameTypeExplore FrameType = "explore"
 )
 
+type Changes struct {
+	objectVersions ObjectVersions
+	effects        []effect
+}
+
 type ReconcileResult struct {
 	ControllerID string
 	FrameID      string
 	FrameType    FrameType
-	Changes      ObjectVersions // this is just the writeset, not the resulting full state of the world
+	Changes      Changes // this is just the writeset, not the resulting full state of the world
 	Deltas       map[snapshot.IdentityKey]Delta
 }
 
@@ -67,7 +72,7 @@ type ExecutionHistory []*ReconcileResult
 
 func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 	for _, r := range eh {
-		_, err := fmt.Fprintf(file, "\t%s:%s (%s) - #changes=%d\n", r.ControllerID, util.Shorter(r.FrameID), r.FrameType, len(r.Changes))
+		_, err := fmt.Fprintf(file, "\t%s:%s (%s) - #changes=%d\n", r.ControllerID, util.Shorter(r.FrameID), r.FrameType, len(r.Changes.objectVersions))
 		if err != nil {
 			return err
 		}
@@ -91,7 +96,7 @@ func (eh ExecutionHistory) Summarize() {
 func (eh ExecutionHistory) FilterNoOps() ExecutionHistory {
 	var filtered ExecutionHistory
 	for _, r := range eh {
-		if len(r.Changes) > 0 {
+		if len(r.Changes.objectVersions) > 0 {
 			filtered = append(filtered, r)
 		}
 	}
@@ -156,7 +161,7 @@ func (sn StateNode) Summarize() {
 	// print the controller that created this state
 	if sn.action != nil {
 		fmt.Println("ControllerID: ", sn.action.ControllerID)
-		fmt.Println("Num Changes: ", len(sn.action.Changes))
+		fmt.Println("Num Changes: ", len(sn.action.Changes.objectVersions))
 		fmt.Println("Pending Reconciles: ", sn.PendingReconciles)
 	}
 }

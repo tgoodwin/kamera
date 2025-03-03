@@ -89,7 +89,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 			return nil
 		}
 
-		changes := res.Changes
+		changes := res.Changes.objectVersions
 		// TODO this is not working due to anonymization
 		res.Deltas = reconciler.computeDeltas(rebuiltState.contents, changes)
 
@@ -262,7 +262,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	for iKey, version := range state.Objects() {
 		newObjectVersions[iKey] = version
 	}
-	for iKey, newVersion := range reconcileResult.Changes {
+	for iKey, newVersion := range reconcileResult.Changes.objectVersions {
 		newObjectVersions[iKey] = newVersion
 
 		// increment resourceversion for the kind
@@ -272,7 +272,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// get the controllers that depend on the objects that were changed
 	// and add them to the pending reconciles list. n.b. this may potentially
 	// include the controller that was just executed.
-	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
+	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes.objectVersions)
 	newPendingReconciles = getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
 	logger.V(2).WithValues("reconcilerID", pr.ReconcilerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
 

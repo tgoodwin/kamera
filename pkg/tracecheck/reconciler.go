@@ -16,7 +16,7 @@ import (
 
 type effectReader interface {
 	// TODO how to more idiomatically represent "not found" ?
-	retrieveEffects(frameID string) (ObjectVersions, error)
+	retrieveEffects(frameID string) (Changes, error)
 }
 
 type frameInserter interface {
@@ -71,7 +71,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
-	deltas := r.computeDeltas(currState, effects)
+	deltas := r.computeDeltas(currState, effects.objectVersions)
 	logger.V(2).Info("reconcile complete")
 
 	return &ReconcileResult{
