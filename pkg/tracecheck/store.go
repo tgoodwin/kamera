@@ -11,20 +11,19 @@ type versionStore struct {
 	snapStore *snapshot.Store
 
 	// TODO perhaps multiple hash strategies?
-	hasher snapshot.Hasher
+	// hasher snapshot.Hasher
 
 	mu sync.RWMutex
 }
 
 var _ VersionManager = (*versionStore)(nil)
 
-func newVersionStore() *versionStore {
+func newVersionStore(store *snapshot.Store) *versionStore {
 	return &versionStore{
-		snapStore: snapshot.NewStore(),
-		// store:              make(Store),
-		hasher: snapshot.NewAnonymizingHasher(
-			snapshot.DefaultLabelReplacements,
-		),
+		snapStore: store,
+		// hasher: snapshot.NewAnonymizingHasher(
+		// 	snapshot.DefaultLabelReplacements,
+		// ),
 	}
 }
 

@@ -64,10 +64,14 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 	}
 
 	for i, e := range events {
-		stateEvent := kindKnowledge.AddEvent(e)
+		stateEvent := kindKnowledge.AddEvent(e, ResourceVersion(i))
 		expectedSequence := int64(i + 1)
 		if stateEvent.Sequence != expectedSequence {
 			t.Errorf("Expected sequence %d, got %d", expectedSequence, stateEvent.Sequence)
+		}
+
+		if stateEvent.rv != ResourceVersion(i) {
+			t.Errorf("Expected ResourceVersion %d, got %d", i, stateEvent.rv)
 		}
 	}
 

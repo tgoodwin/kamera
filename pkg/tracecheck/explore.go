@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -51,8 +52,8 @@ type Result struct {
 	AbortedPaths    int
 }
 
-func (e *Explorer) shouldExplore(frameID string) bool {
-	return strings.HasPrefix(frameID, "")
+func (e *Explorer) shouldExploreDownstream(frameID string) bool {
+	return strings.HasPrefix(frameID, "821c")
 }
 
 func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
@@ -101,16 +102,27 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 		currExecutionHistory = append(currExecutionHistory, res)
 
-		// breaking off to explore mode
-		if e.shouldExplore(reconcile.ReconcileID) {
+		// breaking off to explore to find alternative outcomes of the reconcile we just replayed.
+		if e.shouldExploreDownstream(reconcile.ReconcileID) {
+			fmt.Println("exploring downstream from reconcileID", reconcile.ReconcileID)
+			changes.Summarize()
+			// TODO this does not work.
 			triggeredByLastChange := e.getTriggeredReconcilers(changes)
+			adjustedKnowledge, err := e.knowledgeManager.AdjustKnowledgeForResourceType(resultingState, "RPod", -2)
+			fmt.Println("adjusted knowledge")
+			adjustedKnowledge.contents.Summarize()
+			if err != nil {
+				panic(fmt.Sprintf("error adjusting knowledge: %s", err))
+			}
 			sn := StateNode{
 				DivergencePoint: reconcile.ReconcileID,
 				// top-level state to explore
-				objects:           resultingState.contents,
+				objects:           *adjustedKnowledge,
 				PendingReconciles: triggeredByLastChange,
 				ExecutionHistory:  slices.Clone(currExecutionHistory),
 			}
+			fmt.Println("exploring state space at reconcileID", reconcile.ReconcileID)
+			fmt.Printf("pending reconciles for frame %s: %v\n", res.FrameID, triggeredByLastChange)
 			subRes := e.Explore(context.Background(), sn)
 			result.ConvergedStates = append(result.ConvergedStates, subRes.ConvergedStates...)
 			fmt.Println("explored state space, found", len(subRes.ConvergedStates), "converged states")
@@ -121,7 +133,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 	// the end of the trace trivially converges
 	traceWalkResult := ConvergedState{
-		State: StateNode{objects: rebuiltState.contents, DivergencePoint: "TRACE_START"},
+		State: StateNode{objects: *rebuiltState, DivergencePoint: "TRACE_START"},
 		Paths: []ExecutionHistory{currExecutionHistory},
 	}
 	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
@@ -186,6 +198,11 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state. We explore each pending reconcile in a breadth-first manner.
 		for _, pendingReconcile := range currentState.PendingReconciles {
+
+			// possibleViews := getPossibleViews(currentState, pendingReconcile)
+
+			// for each view, create a new branch in exploration
+
 			newState, err := e.takeReconcileStep(ctx, currentState, pendingReconcile)
 			if err != nil {
 				panic(fmt.Sprintf("error taking reconcile step: %s", err))
@@ -237,6 +254,9 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		return StateNode{}, err
 	}
 
+	newSequences := make(map[string]int64)
+	maps.Copy(state.objects.KindSequences, newSequences)
+
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
 	for iKey, version := range state.Objects() {
@@ -244,6 +264,9 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	}
 	for iKey, newVersion := range reconcileResult.Changes {
 		newObjectVersions[iKey] = newVersion
+
+		// increment resourceversion for the kind
+		newSequences[iKey.Kind] += 1
 	}
 
 	// get the controllers that depend on the objects that were changed
@@ -254,10 +277,13 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	logger.V(2).WithValues("reconcilerID", pr.ReconcilerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
 
 	// make a copy of the current execution history
-	currHistory := append([]*ReconcileResult{}, state.ExecutionHistory...)
+	currHistory := slices.Clone(state.ExecutionHistory)
 
 	return StateNode{
-		objects:           newObjectVersions,
+		objects: StateSnapshot{
+			contents:      newObjectVersions,
+			KindSequences: newSequences,
+		},
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,
@@ -302,18 +328,18 @@ func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []PendingReco
 	triggeredList := triggered.List()
 	// sort the list so that we can explore the triggered controllers in a deterministic order
 	sort.Strings(triggeredList)
-	out := lo.Map(triggeredList, func(s string, _ int) PendingReconcile {
-		return PendingReconcile{
-			ReconcilerID: s,
-			Request:      reconcile.Request{},
-		}
-	})
+	// out := lo.Map(triggeredList, func(s string, _ int) PendingReconcile {
+	// 	return PendingReconcile{
+	// 		ReconcilerID: s,
+	// 		Request:      reconcile.Request{},
+	// 	}
+	// })
 	alternative := e.triggerManager.MustGetTriggered(changes)
-	if len(alternative) != len(out) {
-		fmt.Println("triggered reconcilers mismatch")
-		fmt.Println("out", out)
-		fmt.Println("alternative", alternative)
-	}
+	// if len(alternative) != len(out) {
+	// 	fmt.Println("triggered reconcilers mismatch")
+	// 	fmt.Println("out", out)
+	// 	fmt.Println("alternative", alternative)
+	// }
 	return alternative
 }
 
