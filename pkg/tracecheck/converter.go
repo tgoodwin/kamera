@@ -109,15 +109,13 @@ func (c *converterImpl) getNextReconcile(reconcilerID, frameID string) (string, 
 
 func (c *converterImpl) getStart() StateNode {
 	firstRecord := c.orderedJoinRecords[0]
-	firstReadSet := c.reconcileIDToReads[firstRecord.event.ReconcileID]
+	firstOV := c.reconcileIDToReads[firstRecord.event.ReconcileID]
 	return StateNode{
-		objects: firstReadSet,
+		objects: firstOV,
 		PendingReconciles: []PendingReconcile{
 			{
 				ReconcilerID: firstRecord.event.ControllerID,
-				Request: reconcile.Request{
-					NamespacedName: firstRecord.nsName,
-				},
+				Request:      reconcile.Request{},
 			},
 		},
 	}

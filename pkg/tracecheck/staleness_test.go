@@ -148,7 +148,7 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 
 		// Create a mock version resolver for testing
 		mockResolver := &MockVersionResolver{}
-		g := NewGlobalKnowledge(mockResolver)
+		g := NewEventKnowledge(mockResolver)
 		err := g.Load(testEvents)
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)
@@ -251,7 +251,7 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 			},
 		}
 
-		g := NewGlobalKnowledge(&MockVersionResolver{})
+		g := NewEventKnowledge(&MockVersionResolver{})
 		err := g.Load(events)
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)
@@ -442,7 +442,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		},
 	}
 	t.Run("replay all events", func(t *testing.T) {
-		g := NewGlobalKnowledge(&MockVersionResolver{})
+		g := NewEventKnowledge(&MockVersionResolver{})
 		err := g.Load(events)
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)
@@ -477,7 +477,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		}
 	})
 	t.Run("reply half the events", func(t *testing.T) {
-		g := NewGlobalKnowledge(&MockVersionResolver{})
+		g := NewEventKnowledge(&MockVersionResolver{})
 		err := g.Load(events)
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)
@@ -508,7 +508,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			}
 			return count
 		}
-		g := NewGlobalKnowledge(&MockVersionResolver{})
+		g := NewEventKnowledge(&MockVersionResolver{})
 		err := g.Load(events)
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)

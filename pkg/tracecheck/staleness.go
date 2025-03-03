@@ -15,7 +15,7 @@ type StateSnapshot struct {
 	// per-kind sequence info for computing relative states
 	KindSequences map[string]int64
 
-	knowledgeManager *GlobalKnowledge
+	knowledgeManager *EventKnowledge
 }
 
 func (s *StateSnapshot) Objects() ObjectVersions {
@@ -120,14 +120,14 @@ type VersionResolver interface {
 
 type KnowledgeManager struct {
 	snapStore *snapshot.Store
-	*GlobalKnowledge
+	*EventKnowledge
 	eventKeyToVersion map[event.CausalKey]snapshot.VersionHash
 }
 
 func NewKnowledgeManager() *KnowledgeManager {
 	return &KnowledgeManager{
 		snapStore:         snapshot.NewStore(),
-		GlobalKnowledge:   NewGlobalKnowledge(nil),
+		EventKnowledge:    NewEventKnowledge(nil),
 		eventKeyToVersion: make(map[event.CausalKey]snapshot.VersionHash),
 	}
 }
@@ -141,21 +141,21 @@ func NewKnowledgeManager() *KnowledgeManager {
 // 	}
 // }
 
-type GlobalKnowledge struct {
+type EventKnowledge struct {
 	Kinds    map[string]*KindKnowledge
 	resolver VersionResolver
 	// TODO refactor
 	allEvents []event.Event
 }
 
-func NewGlobalKnowledge(resolver VersionResolver) *GlobalKnowledge {
-	return &GlobalKnowledge{
+func NewEventKnowledge(resolver VersionResolver) *EventKnowledge {
+	return &EventKnowledge{
 		Kinds:    make(map[string]*KindKnowledge),
 		resolver: resolver,
 	}
 }
 
-func (g *GlobalKnowledge) Load(events []event.Event) error {
+func (g *EventKnowledge) Load(events []event.Event) error {
 	g.allEvents = events
 	// first pass -- ensure KindKnowledge exists for each kind we encounter
 	for _, e := range events {
@@ -184,7 +184,7 @@ func (g *GlobalKnowledge) Load(events []event.Event) error {
 	return nil
 }
 
-func (g *GlobalKnowledge) replayEventsToState(events []StateEvent) *StateSnapshot {
+func (g *EventKnowledge) replayEventsToState(events []StateEvent) *StateSnapshot {
 	state := &StateSnapshot{
 		contents:         make(ObjectVersions),
 		KindSequences:    make(map[string]int64),
@@ -213,7 +213,7 @@ func (g *GlobalKnowledge) replayEventsToState(events []StateEvent) *StateSnapsho
 	return state
 }
 
-func (g *GlobalKnowledge) eventsBeforeTimestamp(ts string) []StateEvent {
+func (g *EventKnowledge) eventsBeforeTimestamp(ts string) []StateEvent {
 	// First find all events at this timestamp
 	var relevantEvents []StateEvent
 	for _, kindKnowledge := range g.Kinds {
@@ -231,7 +231,7 @@ func (g *GlobalKnowledge) eventsBeforeTimestamp(ts string) []StateEvent {
 	return relevantEvents
 }
 
-func (g *GlobalKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapshot {
+func (g *EventKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapshot {
 	// First find all events in this reconcile
 
 	reconcileEvents := lo.Filter(g.allEvents, func(e event.Event, _ int) bool {
@@ -253,7 +253,7 @@ func (g *GlobalKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapsh
 	return g.replayEventsToState(relevantEvents)
 }
 
-func (g *GlobalKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnapshot {
+func (g *EventKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnapshot {
 	reconcileEvents := lo.Filter(g.allEvents, func(e event.Event, _ int) bool {
 		return e.ReconcileID == reconcileID
 	})
@@ -303,7 +303,7 @@ func (e ErrInsufficientEvents) Error() string {
 		e.Kind, e.Steps, e.RequestedSeq, e.CurrentSeq)
 }
 
-func (g *GlobalKnowledge) AdjustKnowledgeForResourceType(snapshot *StateSnapshot, kind string, steps int64) (*StateSnapshot, error) {
+func (g *EventKnowledge) AdjustKnowledgeForResourceType(snapshot *StateSnapshot, kind string, steps int64) (*StateSnapshot, error) {
 	kindKnowledge, exists := g.Kinds[kind]
 	if !exists {
 		return nil, fmt.Errorf("unknown kind: %s", kind)

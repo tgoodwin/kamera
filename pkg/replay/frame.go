@@ -46,12 +46,12 @@ func FrameIDFromContext(ctx context.Context) string {
 	return id
 }
 
-// FrameData is a map of kind -> namespace/name -> object
+// CacheFrame is a map of kind -> namespace/name -> object
 // and it is keyed by namespace/name cause that is the access pattern that controller code uses.
-type FrameData map[string]map[types.NamespacedName]*unstructured.Unstructured
+type CacheFrame map[string]map[types.NamespacedName]*unstructured.Unstructured
 
-func (c FrameData) Copy() FrameData {
-	newFrame := make(FrameData)
+func (c CacheFrame) Copy() CacheFrame {
+	newFrame := make(CacheFrame)
 	for kind, objs := range c {
 		newFrame[kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
 		for nn, obj := range objs {
@@ -61,7 +61,7 @@ func (c FrameData) Copy() FrameData {
 	return newFrame
 }
 
-func (c FrameData) Dump() {
+func (c CacheFrame) Dump() {
 	for kind, objs := range c {
 		for nn := range objs {
 			fmt.Printf("\t%s/%s/%s\n", kind, nn.Namespace, nn.Name)
@@ -69,7 +69,8 @@ func (c FrameData) Dump() {
 	}
 }
 
-type frameContainer map[string]FrameData
+// frameContainer maps reconcileID -> CacheFrame
+type frameContainer map[string]CacheFrame
 
 type FrameManager struct {
 	Frames frameContainer
@@ -84,9 +85,9 @@ func NewFrameManager(initialFrames frameContainer) *FrameManager {
 	}
 }
 
-func (fm *FrameManager) InsertFrame(id string, data FrameData) {
-	if _, ok := fm.Frames[id]; ok {
-		panic(fmt.Sprintf("frame %s already exists", id))
+func (fm *FrameManager) InsertFrame(reconcileID string, data CacheFrame) {
+	if _, ok := fm.Frames[reconcileID]; ok {
+		panic(fmt.Sprintf("frame %s already exists", reconcileID))
 	}
-	fm.Frames[id] = data
+	fm.Frames[reconcileID] = data
 }

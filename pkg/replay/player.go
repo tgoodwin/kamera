@@ -26,7 +26,7 @@ type Harness struct {
 	predicates []*executionPredicate
 }
 
-func newHarness(reconcilerID string, frames []Frame, frameData map[string]FrameData, effects map[string]DataEffect) *Harness {
+func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheFrame, effects map[string]DataEffect) *Harness {
 	replayEffects := make(map[string]DataEffect)
 	return &Harness{
 		frames:             frames,
@@ -39,7 +39,7 @@ func newHarness(reconcilerID string, frames []Frame, frameData map[string]FrameD
 }
 
 func (p *Harness) FrameData() frameContainer {
-	copy := make(map[string]FrameData)
+	copy := make(map[string]CacheFrame)
 	maps.Copy(copy, p.frameDataByFrameID)
 	return copy
 }

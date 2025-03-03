@@ -30,7 +30,10 @@ func Test_serializeState(t *testing.T) {
 							ObjectID: "object2",
 						}: snapshot.NewDefaultHash("hash2"),
 					},
-					PendingReconciles: []string{"controller1", "controller2"},
+					PendingReconciles: []PendingReconcile{
+						{ReconcilerID: "controller1"},
+						{ReconcilerID: "controller2"},
+					},
 					// Initialize with some test data
 				},
 			},
@@ -51,21 +54,41 @@ func Test_serializeState(t *testing.T) {
 func Test_getNewPendingReconciles(t *testing.T) {
 	tests := []struct {
 		name     string
-		curr     []string
-		new      []string
-		expected []string
+		curr     []PendingReconcile
+		new      []PendingReconcile
+		expected []PendingReconcile
 	}{
 		{
-			name:     "identical lists",
-			curr:     []string{"controllerC", "controllerB"},
-			new:      []string{"controllerB", "controllerC"},
-			expected: []string{"controllerC", "controllerB"},
+			name: "identical lists",
+			curr: []PendingReconcile{
+				{ReconcilerID: "controllerC"},
+				{ReconcilerID: "controllerB"},
+			},
+			new: []PendingReconcile{
+				{ReconcilerID: "controllerB"},
+				{ReconcilerID: "controllerC"},
+			},
+			expected: []PendingReconcile{
+				{ReconcilerID: "controllerC"},
+				{ReconcilerID: "controllerB"},
+			},
 		},
 		{
-			name:     "one new controller",
-			curr:     []string{"controllerC", "controllerB"},
-			new:      []string{"controllerB", "controllerC", "controllerA"},
-			expected: []string{"controllerC", "controllerB", "controllerA"},
+			name: "one new controller",
+			curr: []PendingReconcile{
+				{ReconcilerID: "controllerC"},
+				{ReconcilerID: "controllerB"},
+			},
+			new: []PendingReconcile{
+				{ReconcilerID: "controllerB"},
+				{ReconcilerID: "controllerC"},
+				{ReconcilerID: "controllerA"},
+			},
+			expected: []PendingReconcile{
+				{ReconcilerID: "controllerC"},
+				{ReconcilerID: "controllerB"},
+				{ReconcilerID: "controllerA"},
+			},
 		},
 	}
 

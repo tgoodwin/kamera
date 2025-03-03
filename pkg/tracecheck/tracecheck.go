@@ -37,8 +37,6 @@ type TraceChecker struct {
 	// this just determines which top-level object a reconciler is triggered with
 	reconcilerToKind map[string]string
 
-	snapshotStore *snapshot.Store
-
 	// TODO move this elsewhere
 	builder *replay.Builder
 	mode    string
@@ -48,14 +46,12 @@ type TraceChecker struct {
 
 func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	// uses anonymizing hasher
-	snapStore := snapshot.NewStore()
+	vStore := newVersionStore()
 	readDeps := make(ResourceDeps)
-	lc := snapshot.NewLifecycleContainer()
 
 	mgr := &manager{
-		versionStore:       newVersionStore(snapStore),
-		LifecycleContainer: lc,
-		effects:            make(map[string]reconcileEffects),
+		versionStore: vStore,
+		effects:      make(map[string]reconcileEffects),
 	}
 
 	return &TraceChecker{
@@ -66,11 +62,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 
 		emitter: event.NewInMemoryEmitter(),
 
-		snapshotStore: snapStore,
-
 		mode: "standalone",
-
-		builder: nil,
 
 		// TODO refactor
 		reconcilerToKind: make(map[string]string),
@@ -78,26 +70,25 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 }
 
 func FromBuilder(b *replay.Builder) *TraceChecker {
+	vStore := newVersionStore()
 	readDeps := make(ResourceDeps)
-	lc := snapshot.NewLifecycleContainer()
 
 	//snapshot store
 	snapshotStore := snapshot.NewStore()
-	vStore := newVersionStore(snapshotStore)
 
-	replayStore := b.Store()
+	store := b.Store()
 	// eventsByReconcile := lo.GroupBy(b.Events(), func(e event.Event) string {
 	// 	return e.ReconcileID
 	// })
 	fmt.Println("---Store Contents---")
-	for k := range replayStore {
+	for k := range store {
 		fmt.Printf("Key: %s\n", k)
 	}
 	fmt.Println("---End Store Contents---")
 	things := make([]joinRecord, 0)
 	for _, e := range b.Events() {
 		ckey := e.CausalKey()
-		unstructuredObj, ok := replayStore[ckey]
+		unstructuredObj, ok := store[ckey]
 		if !ok {
 			fmt.Println("Could not find object for causal key: ", ckey)
 			continue
@@ -107,10 +98,7 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		}
 
 		vHash := vStore.Publish(unstructuredObj)
-		// use sleeve object ID as the object ID
 		ikey := snapshot.IdentityKey{Kind: ckey.Kind, ObjectID: ckey.ObjectID}
-		lc.InsertSynthesizedVersion(ikey, vHash, e.ReconcileID)
-
 		nsName := types.NamespacedName{Namespace: unstructuredObj.GetNamespace(), Name: unstructuredObj.GetName()}
 
 		// this is logically representing a "join" between the sleeve event model
@@ -141,10 +129,9 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 	converter := newConverter(things)
 
 	mgr := &manager{
-		versionStore:       vStore,
-		LifecycleContainer: lc,
-		effects:            make(map[string]reconcileEffects),
-		converterImpl:      converter,
+		versionStore:  vStore,
+		effects:       make(map[string]reconcileEffects),
+		converterImpl: converter,
 	}
 
 	return &TraceChecker{
@@ -152,8 +139,6 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		ResourceDeps: readDeps,
 		manager:      mgr,
 		mode:         "traced",
-
-		snapshotStore: snapshotStore,
 
 		builder:          b,
 		reconcilerToKind: make(map[string]string),
@@ -165,26 +150,27 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 	vHash := tc.manager.versionStore.Publish(r)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
-	tc.manager.InsertSynthesizedVersion(ikey, vHash, "start")
 
 	// HACK TODO REFACTOR
-	tc.builder = &replay.Builder{
-		ReconcilerIDs: util.NewSet(dependentControllers...),
+	if tc.builder == nil {
+		tc.builder = &replay.Builder{ReconcilerIDs: util.NewSet(dependentControllers...)}
 	}
 
-	nsName := types.NamespacedName{Namespace: r.GetNamespace(), Name: r.GetName()}
-	pending := lo.Map(dependentControllers, func(c string, _ int) PendingReconcile {
+	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {
 		return PendingReconcile{
-			ReconcilerID: c,
+			ReconcilerID: s,
 			Request: reconcile.Request{
-				NamespacedName: nsName,
+				NamespacedName: types.NamespacedName{
+					Namespace: obj.GetNamespace(),
+					Name:      obj.GetName(),
+				},
 			},
 		}
 	})
 
 	return StateNode{
 		objects:           ObjectVersions{ikey: vHash},
-		PendingReconciles: pending,
+		PendingReconciles: dependent,
 	}
 }
 
@@ -286,26 +272,23 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 
 	// if constructing an explorer from trace data, load a knowledge manager.
 	// otherwise we need to skip this step. TODO refactor
-	var knowledgeManager *GlobalKnowledge
+	var knowledgeManager *EventKnowledge
 	// TODO should be able to just check if the builder is nil or not
 	if tc.mode == "traced" {
-		knowledgeManager = NewGlobalKnowledge(tc.builder.Store())
+		knowledgeManager = NewEventKnowledge(tc.builder.Store())
 		knowledgeManager.Load(tc.builder.Events())
 	}
-
-	triggerManager := NewTriggerManager(
-		tc.ResourceDeps,
-		tc.reconcilerToKind,
-		tc.snapshotStore,
-	)
 
 	return &Explorer{
 		reconcilers:  reconcilers,
 		dependencies: tc.ResourceDeps,
 		maxDepth:     maxDepth,
 
-		snapshotStore: tc.snapshotStore,
-		tm:            triggerManager,
+		triggerManager: NewTriggerManager(
+			tc.ResourceDeps,
+			tc.reconcilerToKind,
+			tc.manager.snapStore,
+		),
 
 		knowledgeManager: knowledgeManager,
 	}

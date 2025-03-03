@@ -42,7 +42,7 @@ type Builder struct {
 	// for bookkeeping and validation
 	ReconcilerIDs util.Set[string]
 
-	// this just determines which top-level object a reconciler is triggered with
+	// this tracks which top-level object a reconciler is triggered with
 	reconcilerToKind map[string]string
 }
 
@@ -149,6 +149,7 @@ func (b *Builder) OrderedReconcileEvents() []ReconcileEvent {
 	reconcileEvents := lo.Map(traceEvents, func(e event.Event, _ int) ReconcileEvent {
 		return ReconcileEvent{ReconcileID: e.ReconcileID, ControllerID: e.ControllerID}
 	})
+
 	return lo.Uniq(reconcileEvents)
 }
 
@@ -213,12 +214,11 @@ func (b *Builder) BuildHarness(controllerID string) (*Harness, error) {
 		return e.ReconcileID
 	})
 
-	FrameData := make(map[string]FrameData)
+	FrameData := make(map[string]CacheFrame)
 	frames := make([]Frame, 0)
 	effects := make(map[string]DataEffect)
 
 	for reconcileID, events := range byReconcileID {
-
 		reads, writes := event.FilterReadsWrites(events)
 		effects[reconcileID] = DataEffect{Reads: reads, Writes: writes}
 		req, err := b.inferReconcileRequestFromReadset(controllerID, reads)
@@ -248,8 +248,8 @@ func (b *Builder) BuildHarness(controllerID string) (*Harness, error) {
 	return harness, nil
 }
 
-func (r *Builder) generateCacheFrame(events []event.Event) (FrameData, error) {
-	cacheFrame := make(FrameData)
+func (r *Builder) generateCacheFrame(events []event.Event) (CacheFrame, error) {
+	cacheFrame := make(CacheFrame)
 	for _, e := range events {
 		key := e.CausalKey()
 		if obj, ok := r.store[key]; ok {
@@ -264,6 +264,8 @@ func (r *Builder) generateCacheFrame(events []event.Event) (FrameData, error) {
 	return cacheFrame, nil
 }
 
+// inferReconcileRequestFromReadset produces the top-level reconcile.Request that a traced reconcile invocation was
+// called with. This data isn't part of our tracing instrumentation so we use a heuristic to infer it.
 func (r *Builder) inferReconcileRequestFromReadset(controllerID string, readset []event.Event) (reconcile.Request, error) {
 	for _, e := range readset {
 		// Assumption: reconcile routines are invoked upon a Resource that shares the same name (Kind)

@@ -15,9 +15,9 @@ import (
 // ResourceDeps is a map of resource kinds to the reconcilers that depend on them
 type ResourceDeps map[string]util.Set[string]
 
-// OwnerByKind tracks the owner of a resource by kind, where owner is the reconciler that
+// PrimariesByKind tracks the owner of a resource by kind, where owner is the reconciler that
 // has ControllerManagedBy.For called with the kind of the resource
-type OwnerByKind map[string]string
+type PrimariesByKind map[string]util.Set[string]
 
 type PendingReconcile struct {
 	ReconcilerID string
@@ -28,17 +28,27 @@ type hashResolver interface {
 	GetByHash(hash snapshot.VersionHash, strategy snapshot.HashStrategy) (*unstructured.Unstructured, bool)
 }
 
+// TriggerManager handles the dependency graph between resources and reconcilers
+// and models the event-driven mechanism that triggers reconcilers upon changes to resources
 type TriggerManager struct {
 	deps     ResourceDeps
-	owners   OwnerByKind
+	owners   PrimariesByKind
 	resolver hashResolver
 }
 
 // NewTriggerManager creates a new instance of TriggerManager
-func NewTriggerManager(deps ResourceDeps, owners OwnerByKind, resolver hashResolver) *TriggerManager {
+func NewTriggerManager(deps ResourceDeps, reconcilerToPrimaryKind map[string]string, resolver hashResolver) *TriggerManager {
+
+	primariesByKind := make(PrimariesByKind)
+	for reconcilerID, kind := range reconcilerToPrimaryKind {
+		if _, exists := primariesByKind[kind]; !exists {
+			primariesByKind[kind] = make(util.Set[string])
+		}
+		primariesByKind[kind].Add(reconcilerID)
+	}
 	return &TriggerManager{
 		deps:     deps,
-		owners:   owners,
+		owners:   primariesByKind,
 		resolver: resolver,
 	}
 }
@@ -60,15 +70,21 @@ func (tm *TriggerManager) getTriggered(changes ObjectVersions) ([]PendingReconci
 			Namespace: objectVal.GetNamespace(),
 			Name:      objectVal.GetName(),
 		}
+		// check to ensure the object has a namespaced name
+		if nsName.Name == "" || nsName.Namespace == "" {
+			return nil, fmt.Errorf("resolved object %s has no namespaced name", objKey)
+		}
 
-		// Add primary reconciler if available
-		if primaryReconcilerID, exists := tm.owners[objKey.Kind]; exists {
-			reconcileKey := fmt.Sprintf("%s:%s:%s", primaryReconcilerID, nsName.Namespace, nsName.Name)
-			uniqueReconciles[reconcileKey] = PendingReconcile{
-				ReconcilerID: primaryReconcilerID,
-				Request: reconcile.Request{
-					NamespacedName: nsName,
-				},
+		// Add primary reconcilers if available
+		if primaries, exists := tm.owners[objKey.Kind]; exists {
+			for primaryReconcilerID := range primaries {
+				reconcileKey := fmt.Sprintf("%s:%s:%s", primaryReconcilerID, nsName.Namespace, nsName.Name)
+				uniqueReconciles[reconcileKey] = PendingReconcile{
+					ReconcilerID: primaryReconcilerID,
+					Request: reconcile.Request{
+						NamespacedName: nsName,
+					},
+				}
 			}
 		}
 
@@ -76,20 +92,22 @@ func (tm *TriggerManager) getTriggered(changes ObjectVersions) ([]PendingReconci
 		if objectVal.GetOwnerReferences() != nil {
 			for _, ownerRef := range objectVal.GetOwnerReferences() {
 				// Only process if we have a registered reconciler for this owner kind
-				if ownerReconcilerID, exists := tm.owners[ownerRef.Kind]; exists {
-					ownerNSName := types.NamespacedName{
-						// TODO this is an assumption that the owner is in the same namespace
-						// as the owned object
-						Namespace: objectVal.GetNamespace(),
-						Name:      ownerRef.Name,
-					}
+				if primaries, exists := tm.owners[ownerRef.Kind]; exists {
+					for ownerReconcilerID := range primaries {
+						ownerNSName := types.NamespacedName{
+							// TODO this is an assumption that the owner is in the same namespace
+							// as the owned object
+							Namespace: objectVal.GetNamespace(),
+							Name:      ownerRef.Name,
+						}
 
-					reconcileKey := fmt.Sprintf("%s:%s:%s", ownerReconcilerID, ownerNSName.Namespace, ownerNSName.Name)
-					uniqueReconciles[reconcileKey] = PendingReconcile{
-						ReconcilerID: ownerReconcilerID,
-						Request: reconcile.Request{
-							NamespacedName: ownerNSName,
-						},
+						reconcileKey := fmt.Sprintf("%s:%s:%s", ownerReconcilerID, ownerNSName.Namespace, ownerNSName.Name)
+						uniqueReconciles[reconcileKey] = PendingReconcile{
+							ReconcilerID: ownerReconcilerID,
+							Request: reconcile.Request{
+								NamespacedName: ownerNSName,
+							},
+						}
 					}
 				}
 			}
@@ -112,6 +130,12 @@ func (tm *TriggerManager) getTriggered(changes ObjectVersions) ([]PendingReconci
 		}
 		return result[i].Request.Name < result[j].Request.Name
 	})
+
+	// Debug print the pending reconciles
+	// for _, reconcile := range result {
+	// 	fmt.Printf("PendingReconcile: ReconcilerID=%s, nsName=%s/%s\n",
+	// 		reconcile.ReconcilerID, reconcile.Request.Namespace, reconcile.Request.Name)
+	// }
 
 	return result, nil
 }

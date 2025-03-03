@@ -57,10 +57,10 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 		"Namespace": util.NewSet("nsController"),
 	}
 
-	owners := OwnerByKind{
-		"Pod":       "podController",
-		"Node":      "nodeController",
-		"Namespace": "nsController",
+	owners := PrimariesByKind{
+		"Pod":       util.NewSet("podController"),
+		"Node":      util.NewSet("nodeController"),
+		"Namespace": util.NewSet("nsController"),
 	}
 
 	// Create test objects
@@ -75,7 +75,11 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 	}
 
 	// Create trigger manager
-	tm := NewTriggerManager(deps, owners, resolver)
+	tm := &TriggerManager{
+		deps:     deps,
+		owners:   owners,
+		resolver: resolver,
+	}
 
 	// Create test change set
 	changes := ObjectVersions{
@@ -108,10 +112,10 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 		"ReplicaSet": util.NewSet("replicaSetController"),
 	}
 
-	owners := OwnerByKind{
-		"Pod":        "podController",
-		"Deployment": "deploymentController",
-		"ReplicaSet": "replicaSetController",
+	owners := PrimariesByKind{
+		"Pod":        util.NewSet("podController"),
+		"Deployment": util.NewSet("deploymentController"),
+		"ReplicaSet": util.NewSet("replicaSetController"),
 	}
 
 	// Create owner references
@@ -144,7 +148,11 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 	}
 
 	// Create trigger manager
-	tm := NewTriggerManager(deps, owners, resolver)
+	tm := &TriggerManager{
+		deps:     deps,
+		owners:   owners,
+		resolver: resolver,
+	}
 
 	// Test Case 1: Pod with ReplicaSet owner
 	changes := ObjectVersions{
@@ -210,9 +218,9 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 		"Service": util.NewSet("serviceController"),
 	}
 
-	owners := OwnerByKind{
-		"Pod":     "podController",
-		"Service": "serviceController",
+	owners := PrimariesByKind{
+		"Pod":     util.NewSet("podController"),
+		"Service": util.NewSet("serviceController"),
 	}
 
 	// Create test objects
@@ -233,7 +241,11 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 	}
 
 	// Create trigger manager
-	tm := NewTriggerManager(deps, owners, resolver)
+	tm := &TriggerManager{
+		deps:     deps,
+		owners:   owners,
+		resolver: resolver,
+	}
 
 	// Create test change set with multiple objects
 	changes := ObjectVersions{
@@ -274,6 +286,57 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 	assert.Equal(t, expected, triggered)
 }
 
+func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
+	deps := ResourceDeps{
+		"Pod":         util.NewSet("podController"),
+		"RouteConfig": util.NewSet("routeConfigController", "podController"),
+	}
+
+	owners := PrimariesByKind{
+		"Pod":         util.NewSet("podController"),
+		"RouteConfig": util.NewSet("routeConfigController"),
+	}
+
+	// Create owner references
+	podOwnerRef := metav1.OwnerReference{
+		APIVersion: "v1",
+		Kind:       "Pod",
+		Name:       "test-pod",
+		UID:        "pod-123",
+	}
+
+	// create route config object with owner reference to pod
+	routeConfigObj := createTestObject("RouteConfig", "default", "route-config-1", []metav1.OwnerReference{podOwnerRef})
+	rcHash := snapshot.NewDefaultHash("rc-hash")
+	resolver := &mockHashResolver{
+		objects: map[snapshot.VersionHash]*unstructured.Unstructured{
+			rcHash: routeConfigObj,
+		},
+	}
+	tm := &TriggerManager{deps, owners, resolver}
+
+	changes := ObjectVersions{
+		snapshot.IdentityKey{Kind: "RouteConfig", ObjectID: "default/route-config-1"}: rcHash,
+	}
+	expected := []PendingReconcile{
+		{
+			ReconcilerID: "podController",
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pod"},
+			},
+		},
+		{
+			ReconcilerID: "routeConfigController",
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: "default", Name: "route-config-1"},
+			},
+		},
+	}
+	actual, err := tm.getTriggered(changes)
+	assert.Nil(t, err)
+	assert.Equal(t, expected, actual)
+}
+
 func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 	// Set up dependencies with missing reconciler for Job
 	deps := ResourceDeps{
@@ -281,9 +344,9 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 		// No entry for "Job"
 	}
 
-	owners := OwnerByKind{
-		"Pod": "podController",
-		"Job": "jobController", // This exists in owners but not in deps
+	owners := PrimariesByKind{
+		"Pod": util.NewSet("podController"),
+		"Job": util.NewSet("jobController"), // This exists in owners but not in deps
 	}
 
 	// Create test objects
@@ -298,7 +361,11 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 	}
 
 	// Create trigger manager
-	tm := NewTriggerManager(deps, owners, resolver)
+	tm := &TriggerManager{
+		deps:     deps,
+		owners:   owners,
+		resolver: resolver,
+	}
 
 	// Create test change set
 	changes := ObjectVersions{
@@ -329,8 +396,8 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 		// No entry for "CustomResource"
 	}
 
-	owners := OwnerByKind{
-		"Pod": "podController",
+	owners := PrimariesByKind{
+		"Pod": util.NewSet("podController"),
 		// No entry for "CustomResource"
 	}
 
@@ -354,7 +421,7 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 	}
 
 	// Create trigger manager
-	tm := NewTriggerManager(deps, owners, resolver)
+	tm := &TriggerManager{deps, owners, resolver}
 
 	// Create test change set
 	changes := ObjectVersions{
@@ -384,8 +451,8 @@ func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 		"Pod": util.NewSet("podController"),
 	}
 
-	owners := OwnerByKind{
-		"Pod": "podController",
+	owners := PrimariesByKind{
+		"Pod": util.NewSet("podController"),
 	}
 
 	// Create mock resolver with empty objects map
@@ -394,7 +461,7 @@ func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 	}
 
 	// Create trigger manager
-	tm := NewTriggerManager(deps, owners, resolver)
+	tm := &TriggerManager{deps, owners, resolver}
 
 	// Create test change set with a hash that doesn't exist
 	changes := ObjectVersions{
