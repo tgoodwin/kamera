@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -62,12 +63,15 @@ func (r *FelixReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// get pods for the RouteConfig
 	pods := &appsv1.RPodList{}
-	matchLabels := client.MatchingLabels{"app.kubernetes.io/name": routeConfig.Spec.PodName}
+	rcLabels := routeConfig.GetLabels()
+	matchLabel := rcLabels["app.kubernetes.io/name"]
+	matchLabels := client.MatchingLabels{"app.kubernetes.io/name": matchLabel}
 	if err := r.List(ctx, pods, client.InNamespace(routeConfig.Namespace), matchLabels); err != nil {
 		logger.Error(err, "unable to list pods")
 		return ctrl.Result{}, err
 	}
 	if len(pods.Items) == 0 {
+		fmt.Printf("No pods found for match label %s, DELETING", matchLabel)
 		logger.Info("No pods found for RouteConfig", "RouteConfig.Namespace", routeConfig.Namespace, "RouteConfig.Name", routeConfig.Name)
 		// delete the RouteConfig if no pods are found
 		if err := r.Delete(ctx, &routeConfig); err != nil {
