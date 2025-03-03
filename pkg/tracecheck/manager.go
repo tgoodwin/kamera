@@ -24,7 +24,7 @@ type VersionManager interface {
 }
 
 type effect struct {
-	Op        event.OperationType
+	OpType    event.OperationType
 	ObjectKey snapshot.IdentityKey
 	version   snapshot.VersionHash
 }
@@ -36,7 +36,7 @@ type reconcileEffects struct {
 
 func newEffect(kind, uid string, version snapshot.VersionHash, op event.OperationType) effect {
 	return effect{
-		Op: op,
+		OpType: op,
 		ObjectKey: snapshot.IdentityKey{
 			Kind:     kind,
 			ObjectID: uid,

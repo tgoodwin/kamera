@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -15,8 +16,10 @@ type StateSnapshot struct {
 	// per-kind sequence info for computing relative states
 	KindSequences map[string]int64
 
-	knowledgeManager *EventKnowledge
+	// knowledgeManager *EventKnowledge
 }
+
+type ResourceVersion int
 
 func (s *StateSnapshot) Objects() ObjectVersions {
 	return s.contents
@@ -24,8 +27,13 @@ func (s *StateSnapshot) Objects() ObjectVersions {
 
 type StateEvent struct {
 	*event.Event
-	ChangeID event.ChangeID
-	Sequence int64
+	ReconcileID string
+	Timestamp   string
+	effect      effect
+	// ChangeID    event.ChangeID
+	Sequence int64 // the sequence within the kind
+
+	rv ResourceVersion // model etcd resource version
 }
 
 // Tracks the complete history of a single object
@@ -44,6 +52,10 @@ type KindKnowledge struct {
 	// track the latest change sequence number for this kind
 	CurrentSequence int64
 
+	resourceVersions []ResourceVersion
+
+	changeEventByResourceVersion map[ResourceVersion]StateEvent
+
 	SequenceIndex map[int64]StateEvent
 
 	ChangeIDIndex map[event.ChangeID]StateEvent
@@ -54,11 +66,13 @@ type KindKnowledge struct {
 
 func NewKindKnowledge() *KindKnowledge {
 	return &KindKnowledge{
-		Objects:        make(map[string]*ObjectHistory),
-		EventLog:       make([]StateEvent, 0),
-		SequenceIndex:  make(map[int64]StateEvent),
-		ChangeIDIndex:  make(map[event.ChangeID]StateEvent),
-		ReconcileIndex: make(map[string][]StateEvent),
+		Objects:                      make(map[string]*ObjectHistory),
+		EventLog:                     make([]StateEvent, 0),
+		SequenceIndex:                make(map[int64]StateEvent),
+		ChangeIDIndex:                make(map[event.ChangeID]StateEvent),
+		ReconcileIndex:               make(map[string][]StateEvent),
+		resourceVersions:             make([]ResourceVersion, 0),
+		changeEventByResourceVersion: make(map[ResourceVersion]StateEvent),
 	}
 }
 
@@ -69,20 +83,29 @@ func (k *KindKnowledge) Summarize() {
 	// }
 }
 
-func (k *KindKnowledge) AddEvent(e event.Event) StateEvent {
+func (k *KindKnowledge) AddEvent(e event.Event, eff effect, rv ResourceVersion) StateEvent {
 	// Increment sequence
 	k.CurrentSequence++
 
 	// Create StateEvent with new sequence number
 	stateEvent := StateEvent{
-		Event:    &e,
-		ChangeID: e.ChangeID(),
+		Event:       &e,
+		ReconcileID: e.ReconcileID,
+		Timestamp:   e.Timestamp,
+		// contains redundant info as E
+		effect: eff,
+		// ChangeID: e.ChangeID(),
 		Sequence: k.CurrentSequence,
+		rv:       rv,
 	}
 
 	// Add to event log and index
 	k.EventLog = append(k.EventLog, stateEvent)
 	k.SequenceIndex[k.CurrentSequence] = stateEvent
+
+	// do the same thing for global resource version
+	k.resourceVersions = append(k.resourceVersions, rv)
+	k.changeEventByResourceVersion[rv] = stateEvent
 
 	if _, ok := k.ChangeIDIndex[e.ChangeID()]; ok && !event.IsTopLevel(e) {
 		logger.WithValues(
@@ -124,9 +147,9 @@ type KnowledgeManager struct {
 	eventKeyToVersion map[event.CausalKey]snapshot.VersionHash
 }
 
-func NewKnowledgeManager() *KnowledgeManager {
+func NewKnowledgeManager(snapStore *snapshot.Store) *KnowledgeManager {
 	return &KnowledgeManager{
-		snapStore:         snapshot.NewStore(),
+		snapStore:         snapStore,
 		EventKnowledge:    NewEventKnowledge(nil),
 		eventKeyToVersion: make(map[event.CausalKey]snapshot.VersionHash),
 	}
@@ -146,17 +169,22 @@ type EventKnowledge struct {
 	resolver VersionResolver
 	// TODO refactor
 	allEvents []event.Event
+
+	// model etcd resource version
+	globalResourceVersion ResourceVersion
 }
 
 func NewEventKnowledge(resolver VersionResolver) *EventKnowledge {
 	return &EventKnowledge{
-		Kinds:    make(map[string]*KindKnowledge),
-		resolver: resolver,
+		Kinds:                 make(map[string]*KindKnowledge),
+		resolver:              resolver,
+		globalResourceVersion: 0,
 	}
 }
 
 func (g *EventKnowledge) Load(events []event.Event) error {
 	g.allEvents = events
+
 	// first pass -- ensure KindKnowledge exists for each kind we encounter
 	for _, e := range events {
 		if _, exists := g.Kinds[e.Kind]; !exists {
@@ -178,7 +206,19 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 
 	// process each event
 	for _, e := range changeEvents {
-		g.Kinds[e.Kind].AddEvent(e)
+		version, err := g.resolver.ResolveVersion(e.CausalKey())
+		if err != nil {
+			return errors.Wrap(err, "resolving version")
+		}
+		effect := newEffect(
+			e.Kind,
+			e.ObjectID,
+			version,
+			event.OperationType(e.OpType),
+		)
+
+		g.globalResourceVersion++
+		g.Kinds[e.Kind].AddEvent(e, effect, g.globalResourceVersion)
 	}
 
 	return nil
@@ -186,9 +226,9 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 
 func (g *EventKnowledge) replayEventsToState(events []StateEvent) *StateSnapshot {
 	state := &StateSnapshot{
-		contents:         make(ObjectVersions),
-		KindSequences:    make(map[string]int64),
-		knowledgeManager: g,
+		contents:      make(ObjectVersions),
+		KindSequences: make(map[string]int64),
+		// knowledgeManager: g,
 	}
 
 	for _, e := range events {
@@ -275,9 +315,9 @@ func (g *EventKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnap
 
 	// TODO refactor indexing strategy
 	for _, kindKnowledge := range g.Kinds {
-		for _, event := range kindKnowledge.EventLog {
-			if event.ReconcileID == reconcileID {
-				reconcileStateEvents = append(reconcileStateEvents, event)
+		for _, e := range kindKnowledge.EventLog {
+			if e.ReconcileID == reconcileID {
+				reconcileStateEvents = append(reconcileStateEvents, e)
 			}
 		}
 	}

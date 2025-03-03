@@ -64,7 +64,13 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 	}
 
 	for i, e := range events {
-		stateEvent := kindKnowledge.AddEvent(e, ResourceVersion(i))
+		effect := newEffect(
+			e.Kind,
+			e.ObjectID,
+			snapshot.NewDefaultHash("blah"),
+			event.OperationType(e.OpType),
+		)
+		stateEvent := kindKnowledge.AddEvent(e, effect, ResourceVersion(i))
 		expectedSequence := int64(i + 1)
 		if stateEvent.Sequence != expectedSequence {
 			t.Errorf("Expected sequence %d, got %d", expectedSequence, stateEvent.Sequence)
