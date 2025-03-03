@@ -46,14 +46,17 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	// insert a "frame" to hold the readset data ahead of the reconcile
 	r.InsertFrame(frameID, r.toFrameData(currState))
 
-	inferredReq, err := r.inferReconcileRequest(currState)
-	if err != nil {
-		return nil, errors.Wrap(err, fmt.Sprintf("inferring reconcile request, frameID: %s", frameID))
-	}
+	compare := false
+	if compare {
+		inferredReq, err := r.inferReconcileRequest(currState)
+		if err != nil {
+			return nil, errors.Wrap(err, fmt.Sprintf("inferring reconcile request, frameID: %s", frameID))
+		}
 
-	if inferredReq != req {
-		fmt.Println("MISMATCH")
-		fmt.Printf("inferred: %v, passed: %v\n", inferredReq, req)
+		if inferredReq != req {
+			fmt.Println("MISMATCH")
+			fmt.Printf("inferred: %v, passed: %v\n", inferredReq, req)
+		}
 	}
 
 	ctx = replay.WithFrameID(ctx, frameID)

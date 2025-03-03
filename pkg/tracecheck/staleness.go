@@ -311,7 +311,7 @@ func (g *EventKnowledge) AdjustKnowledgeForResourceType(snapshot *StateSnapshot,
 
 	currentSeq := snapshot.KindSequences[kind]
 	targetSeq := currentSeq + steps
-	logger.WithValues(
+	logger.V(2).WithValues(
 		"currentSeq", currentSeq,
 		"targetSeq", targetSeq,
 	).Info("Adjusting knowledge for kind")
