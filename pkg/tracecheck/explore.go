@@ -89,12 +89,15 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 			return nil
 		}
 
-		changes := res.Changes.objectVersions
+		changes := res.Changes
 		// TODO this is not working due to anonymization
-		res.Deltas = reconciler.computeDeltas(rebuiltState.contents, changes)
+		res.Deltas = reconciler.computeDeltas(rebuiltState.contents, changes.objectVersions)
 
-		fmt.Println("Reconcile result - # changes:", len(changes))
-		changes.Summarize()
+		fmt.Println("Reconcile result - # changes:", len(changes.objectVersions))
+		changes.objectVersions.Summarize()
+		for _, eff := range changes.effects {
+			fmt.Printf("\top: %s, ikey: %s\n", eff.OpType, eff.ObjectKey)
+		}
 
 		resultingState := e.knowledgeManager.GetStateAfterReconcileID(reconcile.ReconcileID)
 		fmt.Printf("resulting state after reconcile:%s - # objects: %d\n", util.Shorter(reconcile.ReconcileID), len(resultingState.contents))
@@ -105,19 +108,14 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		// breaking off to explore to find alternative outcomes of the reconcile we just replayed.
 		if e.shouldExploreDownstream(reconcile.ReconcileID) {
 			fmt.Println("exploring downstream from reconcileID", reconcile.ReconcileID)
-			changes.Summarize()
-			// TODO this does not work.
-			triggeredByLastChange := e.getTriggeredReconcilers(changes)
-			adjustedKnowledge, err := e.knowledgeManager.AdjustKnowledgeForResourceType(resultingState, "RPod", -2)
-			fmt.Println("adjusted knowledge")
-			adjustedKnowledge.contents.Summarize()
-			if err != nil {
-				panic(fmt.Sprintf("error adjusting knowledge: %s", err))
-			}
+
+			// TODO have the list of effects by the input to getTriggeredReconcilers
+			// to properly handle deletes
+			triggeredByLastChange := e.getTriggeredReconcilers(changes.objectVersions)
 			sn := StateNode{
 				DivergencePoint: reconcile.ReconcileID,
 				// top-level state to explore
-				objects:           *adjustedKnowledge,
+				objects:           *resultingState,
 				PendingReconciles: triggeredByLastChange,
 				ExecutionHistory:  slices.Clone(currExecutionHistory),
 			}
@@ -272,11 +270,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			panic("object not found in state")
 		}
 		kind := effect.ObjectKey.Kind
-		currSeq := newSequences[kind]
+		currSeqForKind := newSequences[kind]
 		stateEvent := StateEvent{
 			// Kind:   effect.ObjectKey.Kind,
 			ReconcileID: reconcileResult.FrameID,
-			Sequence:    currSeq + 1,
+			Sequence:    currSeqForKind + 1,
 			effect:      effect,
 			// TODO handle time info
 			Timestamp: "",

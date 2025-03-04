@@ -457,12 +457,3 @@ func (g *EventKnowledge) AdjustKnowledgeForResourceType(snapshot *StateSnapshot,
 
 	return replayEventsToState(relevantEvents), nil
 }
-
-// func getAllPossibleStaleViews(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps) ([]*StateSnapshot, error) {
-// 	// Get the current sequence for the kind
-// 	controllerDeps, err := deps.ForReconciler(reconcilerID)
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// }
