@@ -46,13 +46,6 @@ func NewClient(reconcilerID string, scheme *runtime.Scheme, frameData frameConta
 	}
 }
 
-func (c *Client) InsertFrame(id string, data CacheFrame) {
-	if _, ok := c.framesByID[id]; ok {
-		panic(fmt.Sprintf("frame %s already exists", id))
-	}
-	c.framesByID[id] = data
-}
-
 var _ client.Client = (*Client)(nil)
 
 func inferListKind(list client.ObjectList) string {
