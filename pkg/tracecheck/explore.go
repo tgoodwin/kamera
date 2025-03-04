@@ -37,7 +37,8 @@ type Explorer struct {
 	triggerManager *TriggerManager
 
 	// config
-	maxDepth int
+	maxDepth       int
+	stalenessDepth int
 }
 
 type ConvergedState struct {
@@ -397,7 +398,7 @@ func serializeState(state StateNode) string {
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, pending PendingReconcile) ([]StateNode, error) {
 	// TODO update to use some staleness depth configuration
-	if true {
+	if e.stalenessDepth == 0 {
 		return []StateNode{currState}, nil
 	}
 
