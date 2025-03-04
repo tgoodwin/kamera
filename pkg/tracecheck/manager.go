@@ -24,7 +24,7 @@ type VersionManager interface {
 }
 
 type effect struct {
-	Op        event.OperationType
+	OpType    event.OperationType
 	ObjectKey snapshot.IdentityKey
 	version   snapshot.VersionHash
 }
@@ -36,7 +36,7 @@ type reconcileEffects struct {
 
 func newEffect(kind, uid string, version snapshot.VersionHash, op event.OperationType) effect {
 	return effect{
-		Op: op,
+		OpType: op,
 		ObjectKey: snapshot.IdentityKey{
 			Kind:     kind,
 			ObjectID: uid,
@@ -116,7 +116,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	return nil
 }
 
-func (m *manager) retrieveEffects(frameID string) (ObjectVersions, error) {
+func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -127,5 +127,10 @@ func (m *manager) retrieveEffects(frameID string) (ObjectVersions, error) {
 		// in the same frame
 		out[eff.ObjectKey] = eff.version
 	}
-	return out, nil
+
+	changes := Changes{
+		objectVersions: out,
+		effects:        effects.writes,
+	}
+	return changes, nil
 }

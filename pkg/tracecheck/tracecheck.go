@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/samber/lo"
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
@@ -37,6 +38,8 @@ type TraceChecker struct {
 	// this just determines which top-level object a reconciler is triggered with
 	reconcilerToKind map[string]string
 
+	knowledgeManager *KnowledgeManager
+
 	// TODO move this elsewhere
 	builder *replay.Builder
 	mode    string
@@ -45,9 +48,11 @@ type TraceChecker struct {
 }
 
 func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
-	// uses anonymizing hasher
-	vStore := newVersionStore()
 	readDeps := make(ResourceDeps)
+	snapStore := snapshot.NewStore()
+
+	vStore := newVersionStore(snapStore)
+	KnowledgeManager := NewKnowledgeManager(snapStore)
 
 	mgr := &manager{
 		versionStore: vStore,
@@ -60,6 +65,8 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 		manager:      mgr,
 		scheme:       scheme,
 
+		knowledgeManager: KnowledgeManager,
+
 		emitter: event.NewInMemoryEmitter(),
 
 		mode: "standalone",
@@ -70,11 +77,11 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 }
 
 func FromBuilder(b *replay.Builder) *TraceChecker {
-	vStore := newVersionStore()
 	readDeps := make(ResourceDeps)
 
 	//snapshot store
 	snapshotStore := snapshot.NewStore()
+	vStore := newVersionStore(snapshotStore)
 
 	store := b.Store()
 	// eventsByReconcile := lo.GroupBy(b.Events(), func(e event.Event) string {
@@ -128,6 +135,8 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 
 	converter := newConverter(things)
 
+	knowledgeManager := NewKnowledgeManager(snapshotStore)
+
 	mgr := &manager{
 		versionStore:  vStore,
 		effects:       make(map[string]reconcileEffects),
@@ -139,6 +148,8 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		ResourceDeps: readDeps,
 		manager:      mgr,
 		mode:         "traced",
+
+		knowledgeManager: knowledgeManager,
 
 		builder:          b,
 		reconcilerToKind: make(map[string]string),
@@ -169,7 +180,25 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 	})
 
 	return StateNode{
-		objects:           ObjectVersions{ikey: vHash},
+		objects: StateSnapshot{
+			contents: ObjectVersions{ikey: vHash},
+			KindSequences: map[string]int64{
+				ikey.Kind: 1,
+			},
+			stateEvents: []StateEvent{
+				{
+					ReconcileID: "TOP",
+					Timestamp:   event.FormatTimeStr(time.Now()),
+					Sequence:    1,
+					effect: newEffect(
+						ikey.Kind,
+						sleeveObjectID,
+						vHash,
+						event.CREATE,
+					),
+				},
+			},
+		},
 		PendingReconciles: dependent,
 	}
 }
@@ -203,7 +232,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 			reconcilerID,
 			tc.scheme,
 			frameManager.Frames,
-			tc.manager,
+			tc.manager, // this is what calls RecordEffect
 		)
 
 		wrappedClient := sleeveclient.New(

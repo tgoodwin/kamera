@@ -20,15 +20,21 @@ func Test_serializeState(t *testing.T) {
 			name: "deterministic test",
 			args: args{
 				state: StateNode{
-					objects: ObjectVersions{
-						snapshot.IdentityKey{
-							Kind:     "kind1",
-							ObjectID: "object1",
-						}: snapshot.NewDefaultHash("hash1"),
-						snapshot.IdentityKey{
-							Kind:     "kind1",
-							ObjectID: "object2",
-						}: snapshot.NewDefaultHash("hash2"),
+					objects: StateSnapshot{
+						contents: ObjectVersions{
+							snapshot.IdentityKey{
+								Kind:     "kind1",
+								ObjectID: "object1",
+							}: snapshot.NewDefaultHash("hash1"),
+							snapshot.IdentityKey{
+								Kind:     "kind1",
+								ObjectID: "object2",
+							}: snapshot.NewDefaultHash("hash2"),
+						},
+						KindSequences: map[string]int64{
+							"kind1": 1,
+							"kind2": 2,
+						},
 					},
 					PendingReconciles: []PendingReconcile{
 						{ReconcilerID: "controller1"},

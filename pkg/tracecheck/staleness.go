@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -15,8 +16,10 @@ type StateSnapshot struct {
 	// per-kind sequence info for computing relative states
 	KindSequences map[string]int64
 
-	knowledgeManager *EventKnowledge
+	stateEvents []StateEvent // the changes that led to the current objectVersions
 }
+
+type ResourceVersion int
 
 func (s *StateSnapshot) Objects() ObjectVersions {
 	return s.contents
@@ -24,8 +27,12 @@ func (s *StateSnapshot) Objects() ObjectVersions {
 
 type StateEvent struct {
 	*event.Event
-	ChangeID event.ChangeID
-	Sequence int64
+	ReconcileID string
+	Timestamp   string
+	effect      effect
+	Sequence    int64 // the sequence within the kind
+
+	rv ResourceVersion // model etcd resource version
 }
 
 // Tracks the complete history of a single object
@@ -44,6 +51,10 @@ type KindKnowledge struct {
 	// track the latest change sequence number for this kind
 	CurrentSequence int64
 
+	resourceVersions []ResourceVersion
+
+	changeEventByResourceVersion map[ResourceVersion]StateEvent
+
 	SequenceIndex map[int64]StateEvent
 
 	ChangeIDIndex map[event.ChangeID]StateEvent
@@ -54,11 +65,13 @@ type KindKnowledge struct {
 
 func NewKindKnowledge() *KindKnowledge {
 	return &KindKnowledge{
-		Objects:        make(map[string]*ObjectHistory),
-		EventLog:       make([]StateEvent, 0),
-		SequenceIndex:  make(map[int64]StateEvent),
-		ChangeIDIndex:  make(map[event.ChangeID]StateEvent),
-		ReconcileIndex: make(map[string][]StateEvent),
+		Objects:                      make(map[string]*ObjectHistory),
+		EventLog:                     make([]StateEvent, 0),
+		SequenceIndex:                make(map[int64]StateEvent),
+		ChangeIDIndex:                make(map[event.ChangeID]StateEvent),
+		ReconcileIndex:               make(map[string][]StateEvent),
+		resourceVersions:             make([]ResourceVersion, 0),
+		changeEventByResourceVersion: make(map[ResourceVersion]StateEvent),
 	}
 }
 
@@ -69,20 +82,29 @@ func (k *KindKnowledge) Summarize() {
 	// }
 }
 
-func (k *KindKnowledge) AddEvent(e event.Event) StateEvent {
+func (k *KindKnowledge) AddEvent(e event.Event, eff effect, rv ResourceVersion) StateEvent {
 	// Increment sequence
 	k.CurrentSequence++
 
 	// Create StateEvent with new sequence number
 	stateEvent := StateEvent{
-		Event:    &e,
-		ChangeID: e.ChangeID(),
+		Event:       &e,
+		ReconcileID: e.ReconcileID,
+		Timestamp:   e.Timestamp,
+		// contains redundant info as E
+		effect: eff,
+		// ChangeID: e.ChangeID(),
 		Sequence: k.CurrentSequence,
+		rv:       rv,
 	}
 
 	// Add to event log and index
 	k.EventLog = append(k.EventLog, stateEvent)
 	k.SequenceIndex[k.CurrentSequence] = stateEvent
+
+	// do the same thing for global resource version
+	k.resourceVersions = append(k.resourceVersions, rv)
+	k.changeEventByResourceVersion[rv] = stateEvent
 
 	if _, ok := k.ChangeIDIndex[e.ChangeID()]; ok && !event.IsTopLevel(e) {
 		logger.WithValues(
@@ -124,9 +146,9 @@ type KnowledgeManager struct {
 	eventKeyToVersion map[event.CausalKey]snapshot.VersionHash
 }
 
-func NewKnowledgeManager() *KnowledgeManager {
+func NewKnowledgeManager(snapStore *snapshot.Store) *KnowledgeManager {
 	return &KnowledgeManager{
-		snapStore:         snapshot.NewStore(),
+		snapStore:         snapStore,
 		EventKnowledge:    NewEventKnowledge(nil),
 		eventKeyToVersion: make(map[event.CausalKey]snapshot.VersionHash),
 	}
@@ -146,17 +168,22 @@ type EventKnowledge struct {
 	resolver VersionResolver
 	// TODO refactor
 	allEvents []event.Event
+
+	// model etcd resource version
+	globalResourceVersion ResourceVersion
 }
 
 func NewEventKnowledge(resolver VersionResolver) *EventKnowledge {
 	return &EventKnowledge{
-		Kinds:    make(map[string]*KindKnowledge),
-		resolver: resolver,
+		Kinds:                 make(map[string]*KindKnowledge),
+		resolver:              resolver,
+		globalResourceVersion: 0,
 	}
 }
 
 func (g *EventKnowledge) Load(events []event.Event) error {
 	g.allEvents = events
+
 	// first pass -- ensure KindKnowledge exists for each kind we encounter
 	for _, e := range events {
 		if _, exists := g.Kinds[e.Kind]; !exists {
@@ -178,39 +205,110 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 
 	// process each event
 	for _, e := range changeEvents {
-		g.Kinds[e.Kind].AddEvent(e)
+		version, err := g.resolver.ResolveVersion(e.CausalKey())
+		if err != nil {
+			return errors.Wrap(err, "resolving version")
+		}
+		effect := newEffect(
+			e.Kind,
+			e.ObjectID,
+			version,
+			event.OperationType(e.OpType),
+		)
+
+		g.globalResourceVersion++
+		g.Kinds[e.Kind].AddEvent(e, effect, g.globalResourceVersion)
 	}
 
 	return nil
 }
 
-func (g *EventKnowledge) replayEventsToState(events []StateEvent) *StateSnapshot {
+func replayEventsToState(events []StateEvent) *StateSnapshot {
 	state := &StateSnapshot{
-		contents:         make(ObjectVersions),
-		KindSequences:    make(map[string]int64),
-		knowledgeManager: g,
+		contents:      make(ObjectVersions),
+		KindSequences: make(map[string]int64),
+		stateEvents:   make([]StateEvent, 0),
+		// knowledgeManager: g,
 	}
 
 	for _, e := range events {
-		cKey := e.CausalKey()
-		iKey := snapshot.IdentityKey{
-			Kind:     cKey.Kind,
-			ObjectID: cKey.ObjectID,
-		}
-		if e.OpType == "DELETE" {
+		iKey := e.effect.ObjectKey
+		if e.effect.OpType == event.DELETE {
 			delete(state.contents, iKey)
 		} else {
-			// use resolver to get object version
-			version, err := g.resolver.ResolveVersion(cKey)
-			if err != nil {
-				panic("error resolving version")
-			}
+			version := e.effect.version
 			state.contents[iKey] = version
 		}
-		state.KindSequences[cKey.Kind] = e.Sequence
+		state.KindSequences[iKey.Kind] = e.Sequence
+
+		state.stateEvents = append(state.stateEvents, e)
 	}
 
 	return state
+}
+
+func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int64) *StateSnapshot {
+	eventsByKind := lo.GroupBy(events, func(e StateEvent) string {
+		return e.effect.ObjectKey.Kind
+	})
+	toReplay := make([]StateEvent, 0)
+	for kind, kindEvents := range eventsByKind {
+		// sort by sequence. TODO verify if this is necessary
+		sort.Slice(kindEvents, func(i, j int) bool {
+			return kindEvents[i].Sequence < kindEvents[j].Sequence
+		})
+
+		kindSeq, exists := sequencesByKind[kind]
+		if !exists {
+			panic(fmt.Sprintf("no sequence found for kind: %s", kind))
+		}
+		// filter out events that are beyond the target sequence
+		kindEventsAtSequence := lo.Filter(kindEvents, func(e StateEvent, _ int) bool {
+			return e.Sequence <= kindSeq
+		})
+		toReplay = append(toReplay, kindEventsAtSequence...)
+	}
+
+	return replayEventsToState(toReplay)
+}
+
+func getAllPossibleStaleViews(snapshot *StateSnapshot, relevantKinds []string) []*StateSnapshot {
+	var staleViews []*StateSnapshot
+
+	// Iterate over each kind in the snapshot
+	for kind, currentSeq := range snapshot.KindSequences {
+		// Skip kinds that are not relevant
+		if !lo.Contains(relevantKinds, kind) {
+			continue
+		}
+		// Generate all possible sequences for this kind from 0 to currentSeq-1
+		for seq := int64(0); seq < currentSeq; seq++ {
+			// Create a copy of the current sequencesByKind map
+			staleSequencesByKind := make(map[string]int64)
+			for k, v := range snapshot.KindSequences {
+				staleSequencesByKind[k] = v
+			}
+			// Set the sequence for the current kind to the new sequence
+			staleSequencesByKind[kind] = seq
+
+			// Generate the stale view by replaying events at the new sequence
+			staleView := replayEventsAtSequence(snapshot.stateEvents, staleSequencesByKind)
+			staleViews = append(staleViews, staleView)
+		}
+	}
+
+	return staleViews
+}
+
+func getAllStaleViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps) ([]*StateSnapshot, error) {
+	controllerDeps, err := deps.ForReconciler(reconcilerID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the current sequence for the kind
+	staleViews := getAllPossibleStaleViews(snapshot, controllerDeps)
+	return staleViews, nil
 }
 
 func (g *EventKnowledge) eventsBeforeTimestamp(ts string) []StateEvent {
@@ -250,7 +348,7 @@ func (g *EventKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapsho
 		}
 	}
 	relevantEvents := g.eventsBeforeTimestamp(earliestTimestamp)
-	return g.replayEventsToState(relevantEvents)
+	return replayEventsToState(relevantEvents)
 }
 
 func (g *EventKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnapshot {
@@ -275,9 +373,9 @@ func (g *EventKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnap
 
 	// TODO refactor indexing strategy
 	for _, kindKnowledge := range g.Kinds {
-		for _, event := range kindKnowledge.EventLog {
-			if event.ReconcileID == reconcileID {
-				reconcileStateEvents = append(reconcileStateEvents, event)
+		for _, e := range kindKnowledge.EventLog {
+			if e.ReconcileID == reconcileID {
+				reconcileStateEvents = append(reconcileStateEvents, e)
 			}
 		}
 	}
@@ -287,7 +385,7 @@ func (g *EventKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnap
 		return events[i].Timestamp < events[j].Timestamp
 	})
 
-	return g.replayEventsToState(events)
+	return replayEventsToState(events)
 }
 
 // ErrInsufficientEvents indicates we can't adjust knowledge by requested steps
@@ -357,5 +455,5 @@ func (g *EventKnowledge) AdjustKnowledgeForResourceType(snapshot *StateSnapshot,
 		return relevantEvents[i].Sequence < relevantEvents[j].Sequence
 	})
 
-	return g.replayEventsToState(relevantEvents), nil
+	return replayEventsToState(relevantEvents), nil
 }

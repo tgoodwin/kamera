@@ -14,6 +14,11 @@ func (s Set[T]) Add(item T) {
 	s[item] = struct{}{}
 }
 
+func (s Set[T]) Contains(item T) bool {
+	_, found := s[item]
+	return found
+}
+
 func (s Set[T]) Diff(other Set[T]) Set[T] {
 	result := NewSet[T]()
 	for item := range s {

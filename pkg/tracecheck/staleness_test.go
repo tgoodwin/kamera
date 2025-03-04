@@ -64,10 +64,20 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 	}
 
 	for i, e := range events {
-		stateEvent := kindKnowledge.AddEvent(e)
+		effect := newEffect(
+			e.Kind,
+			e.ObjectID,
+			snapshot.NewDefaultHash("blah"),
+			event.OperationType(e.OpType),
+		)
+		stateEvent := kindKnowledge.AddEvent(e, effect, ResourceVersion(i))
 		expectedSequence := int64(i + 1)
 		if stateEvent.Sequence != expectedSequence {
 			t.Errorf("Expected sequence %d, got %d", expectedSequence, stateEvent.Sequence)
+		}
+
+		if stateEvent.rv != ResourceVersion(i) {
+			t.Errorf("Expected ResourceVersion %d, got %d", i, stateEvent.rv)
 		}
 	}
 
@@ -534,4 +544,538 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			t.Errorf("Expected 0 pods in state, got %d", len(ff.Objects()))
 		}
 	})
+}
+func TestReplayEventsToState(t *testing.T) {
+	tests := []struct {
+		name          string
+		events        []StateEvent
+		expectedState ObjectVersions
+		expectedSeq   map[string]int64
+	}{
+		{
+			name: "single create event",
+			events: []StateEvent{
+				{
+					ReconcileID: "r1",
+					Timestamp:   "2024-02-21T10:00:01Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v1"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+			},
+			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{
+				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v1"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod": 1,
+			},
+		},
+		{
+			name: "create and delete event",
+			events: []StateEvent{
+				{
+					ReconcileID: "r1",
+					Timestamp:   "2024-02-21T10:00:01Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v1"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+				{
+					ReconcileID: "r2",
+					Timestamp:   "2024-02-21T10:00:02Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						OpType:    event.DELETE,
+					},
+					Sequence: 2,
+				},
+			},
+			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{},
+			expectedSeq: map[string]int64{
+				"Pod": 2,
+			},
+		},
+		{
+			name: "multiple kinds",
+			events: []StateEvent{
+				{
+					ReconcileID: "r1",
+					Timestamp:   "2024-02-21T10:00:01Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v1"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+				{
+					ReconcileID: "r2",
+					Timestamp:   "2024-02-21T10:00:02Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
+						version:   snapshot.NewDefaultHash("v2"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+			},
+			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v1"),
+				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod":     1,
+				"Service": 1,
+			},
+		},
+		{
+			name: "update event",
+			events: []StateEvent{
+				{
+					ReconcileID: "r1",
+					Timestamp:   "2024-02-21T10:00:01Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v1"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+				{
+					ReconcileID: "r2",
+					Timestamp:   "2024-02-21T10:00:02Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v2"),
+						OpType:    event.UPDATE,
+					},
+					Sequence: 2,
+				},
+			},
+			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{
+				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod": 2,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := replayEventsToState(tt.events)
+
+			assert.Equal(t, tt.expectedState, state.Objects())
+			assert.Equal(t, tt.expectedSeq, state.KindSequences)
+			assert.Equal(t, tt.events, state.stateEvents)
+		})
+	}
+}
+func TestReplayEventsAtSequence(t *testing.T) {
+	events := []StateEvent{
+		{
+			ReconcileID: "r1",
+			Timestamp:   "2024-02-21T10:00:01Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+				version:   snapshot.NewDefaultHash("v1"),
+				OpType:    event.CREATE,
+			},
+			Sequence: 1,
+		},
+		{
+			ReconcileID: "r2",
+			Timestamp:   "2024-02-21T10:00:02Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+				version:   snapshot.NewDefaultHash("v2"),
+				OpType:    event.UPDATE,
+			},
+			Sequence: 2,
+		},
+		{
+			ReconcileID: "r3",
+			Timestamp:   "2024-02-21T10:00:03Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+				OpType:    event.DELETE,
+			},
+			Sequence: 3,
+		},
+		{
+			ReconcileID: "r4",
+			Timestamp:   "2024-02-21T10:00:04Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"},
+				version:   snapshot.NewDefaultHash("v1"),
+				OpType:    event.CREATE,
+			},
+			Sequence: 4,
+		},
+		{
+			ReconcileID: "r5",
+			Timestamp:   "2024-02-21T10:00:05Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"},
+				version:   snapshot.NewDefaultHash("v2"),
+				OpType:    event.UPDATE,
+			},
+			Sequence: 5,
+		},
+		{
+			ReconcileID: "r6",
+			Timestamp:   "2024-02-21T10:00:06Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"},
+				OpType:    event.DELETE,
+			},
+			Sequence: 6,
+		},
+		{
+			ReconcileID: "r7",
+			Timestamp:   "2024-02-21T10:00:07Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
+				version:   snapshot.NewDefaultHash("v1"),
+				OpType:    event.CREATE,
+			},
+			Sequence: 1,
+		},
+		{
+			ReconcileID: "r8",
+			Timestamp:   "2024-02-21T10:00:08Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
+				version:   snapshot.NewDefaultHash("v2"),
+				OpType:    event.UPDATE,
+			},
+			Sequence: 2,
+		},
+		{
+			ReconcileID: "r9",
+			Timestamp:   "2024-02-21T10:00:09Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
+				OpType:    event.DELETE,
+			},
+			Sequence: 3,
+		},
+		{
+			ReconcileID: "r10",
+			Timestamp:   "2024-02-21T10:00:10Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-2"},
+				version:   snapshot.NewDefaultHash("v1"),
+				OpType:    event.CREATE,
+			},
+			Sequence: 4,
+		},
+		{
+			ReconcileID: "r11",
+			Timestamp:   "2024-02-21T10:00:11Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-2"},
+				version:   snapshot.NewDefaultHash("v2"),
+				OpType:    event.UPDATE,
+			},
+			Sequence: 5,
+		},
+		{
+			ReconcileID: "r12",
+			Timestamp:   "2024-02-21T10:00:12Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-2"},
+				OpType:    event.DELETE,
+			},
+			Sequence: 6,
+		},
+	}
+
+	tests := []struct {
+		name            string
+		sequencesByKind map[string]int64
+		expectedState   ObjectVersions
+		expectedSeq     map[string]int64
+	}{
+		{
+			name: "initial state",
+			sequencesByKind: map[string]int64{
+				"Pod":     0,
+				"Service": 0,
+			},
+			expectedState: ObjectVersions{},
+			expectedSeq:   map[string]int64{},
+		},
+		{
+			name: "after first pod create",
+			sequencesByKind: map[string]int64{
+				"Pod":     1,
+				"Service": 0,
+			},
+			expectedState: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v1"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod": 1,
+			},
+		},
+		{
+			name: "after first pod update",
+			sequencesByKind: map[string]int64{
+				"Pod":     2,
+				"Service": 0,
+			},
+			expectedState: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod": 2,
+			},
+		},
+		{
+			name: "after first pod delete",
+			sequencesByKind: map[string]int64{
+				"Pod":     3,
+				"Service": 0,
+			},
+			expectedState: ObjectVersions{},
+			expectedSeq: map[string]int64{
+				"Pod": 3,
+			},
+		},
+		{
+			name: "after second pod create",
+			sequencesByKind: map[string]int64{
+				"Pod":     4,
+				"Service": 0,
+			},
+			expectedState: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-2"}: snapshot.NewDefaultHash("v1"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod": 4,
+			},
+		},
+		{
+			name: "after second pod update",
+			sequencesByKind: map[string]int64{
+				"Pod":     5,
+				"Service": 0,
+			},
+			expectedState: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-2"}: snapshot.NewDefaultHash("v2"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod": 5,
+			},
+		},
+		{
+			name: "after second pod delete",
+			sequencesByKind: map[string]int64{
+				"Pod":     6,
+				"Service": 0,
+			},
+			expectedState: ObjectVersions{},
+			expectedSeq: map[string]int64{
+				"Pod": 6,
+			},
+		},
+		{
+			name: "after first service create",
+			sequencesByKind: map[string]int64{
+				"Pod":     1,
+				"Service": 1,
+			},
+			expectedState: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v1"),
+				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v1"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod":     1,
+				"Service": 1,
+			},
+		},
+		{
+			name: "multi object update",
+			sequencesByKind: map[string]int64{
+				"Pod":     2,
+				"Service": 2,
+			},
+			expectedState: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
+				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod":     2,
+				"Service": 2,
+			},
+		},
+		{
+			name: "after second service create",
+			sequencesByKind: map[string]int64{
+				"Pod":     2,
+				"Service": 4,
+			},
+			expectedState: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
+				{Kind: "Service", ObjectID: "svc-2"}: snapshot.NewDefaultHash("v1"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod":     2,
+				"Service": 4,
+			},
+		},
+		{
+			name: "after second service update",
+			sequencesByKind: map[string]int64{
+				"Pod":     2,
+				"Service": 5,
+			},
+			expectedState: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
+				{Kind: "Service", ObjectID: "svc-2"}: snapshot.NewDefaultHash("v2"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod":     2,
+				"Service": 5,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := replayEventsAtSequence(events, tt.sequencesByKind)
+
+			assert.Equal(t, tt.expectedState, state.Objects())
+			assert.Equal(t, tt.expectedSeq, state.KindSequences)
+		})
+	}
+}
+func TestGetAllPossibleStaleViews(t *testing.T) {
+	events := []StateEvent{
+		{
+			ReconcileID: "r1",
+			Timestamp:   "2024-02-21T10:00:01Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+				version:   snapshot.NewDefaultHash("v1"),
+				OpType:    event.CREATE,
+			},
+			Sequence: 1,
+		},
+		{
+			ReconcileID: "r2",
+			Timestamp:   "2024-02-21T10:00:02Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+				version:   snapshot.NewDefaultHash("v2"),
+				OpType:    event.UPDATE,
+			},
+			Sequence: 2,
+		},
+		{
+			ReconcileID: "r3",
+			Timestamp:   "2024-02-21T10:00:03Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
+				version:   snapshot.NewDefaultHash("v1"),
+				OpType:    event.CREATE,
+			},
+			Sequence: 1,
+		},
+		{
+			ReconcileID: "r4",
+			Timestamp:   "2024-02-21T10:00:04Z",
+			effect: effect{
+				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
+				version:   snapshot.NewDefaultHash("v2"),
+				OpType:    event.UPDATE,
+			},
+			Sequence: 2,
+		},
+	}
+
+	state := &StateSnapshot{
+		contents: ObjectVersions{
+			{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
+			{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+		},
+		KindSequences: map[string]int64{
+			"Pod":     2,
+			"Service": 2,
+		},
+		stateEvents: events,
+	}
+
+	expectedStaleViews := []*StateSnapshot{
+		{
+			contents: ObjectVersions{
+				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			KindSequences: map[string]int64{
+				// "Pod":     0,
+				"Service": 2,
+			},
+			stateEvents: events[:2],
+		},
+		{
+			contents: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v1"),
+				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			KindSequences: map[string]int64{
+				"Pod":     1,
+				"Service": 2,
+			},
+			stateEvents: events[:3],
+		},
+		{
+			contents: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			KindSequences: map[string]int64{
+				"Pod": 2,
+				// "Service": 0,
+			},
+			stateEvents: events[:2],
+		},
+		{
+			contents: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
+				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v1"),
+			},
+			KindSequences: map[string]int64{
+				"Pod":     2,
+				"Service": 1,
+			},
+			stateEvents: events[:3],
+		},
+	}
+
+	staleViews := getAllPossibleStaleViews(state, []string{"Pod", "Service"})
+
+	assert.Equal(t, len(expectedStaleViews), len(staleViews))
+
+	for i, expected := range expectedStaleViews {
+		expectedObjects := expected.Objects()
+		staleViewObjects := staleViews[i].Objects()
+		assert.Equal(t, len(expectedObjects), len(staleViewObjects))
+		for key, expectedVersion := range expectedObjects {
+			staleVersion, exists := staleViewObjects[key]
+			if !exists {
+				t.Errorf("Expected %s in stale view", key)
+			}
+			assert.Equal(t, expectedVersion, staleVersion)
+		}
+		assert.Equal(t, len(expected.KindSequences), len(staleViews[i].KindSequences))
+		for kind, seq := range expected.KindSequences {
+			assert.Equal(t, seq, staleViews[i].KindSequences[kind])
+		}
+	}
 }
