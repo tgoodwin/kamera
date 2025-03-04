@@ -197,26 +197,30 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		// from the current state. We explore each pending reconcile in a breadth-first manner.
 		for _, pendingReconcile := range currentState.PendingReconciles {
 
-			// possibleViews := getPossibleViews(currentState, pendingReconcile)
-
-			// for each view, create a new branch in exploration
-
-			newState, err := e.takeReconcileStep(ctx, currentState, pendingReconcile)
+			possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile)
 			if err != nil {
-				panic(fmt.Sprintf("error taking reconcile step: %s", err))
+				panic(fmt.Sprintf("error getting possible views: %s", err))
 			}
-			newState.depth = currentState.depth + 1
-			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
-				logger.Info("\rexplore reached depth", "depth", newState.depth)
-				seenDepths[newState.depth] = true
-			}
-			if newState.depth > e.maxDepth {
-				// fmt.Println("Reached max depth", e.maxDepth)
-				result.AbortedPaths += 1
-			} else {
-				queue = append(queue, newState)
+			for _, possibleStateView := range possibleViews {
+				// for each view, create a new branch in exploration
+				newState, err := e.takeReconcileStep(ctx, possibleStateView, pendingReconcile)
+				if err != nil {
+					panic(fmt.Sprintf("error taking reconcile step: %s", err))
+				}
+				newState.depth = currentState.depth + 1
+				if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
+					logger.Info("\rexplore reached depth", "depth", newState.depth)
+					seenDepths[newState.depth] = true
+				}
+				if newState.depth > e.maxDepth {
+					fmt.Println("Reached max depth", e.maxDepth)
+					result.AbortedPaths += 1
+				} else {
+					queue = append(queue, newState)
+				}
 			}
 		}
+
 	}
 
 	// Graph search has ended, summarize the results
@@ -389,4 +393,29 @@ func serializeState(state StateNode) string {
 	// reconcilesStr := strings.Join(sortedPendingReconciles, ",")
 
 	return fmt.Sprintf("Objects:{%s}|PendingReconciles:{%s}", objectsStr, reconcilesStr)
+}
+
+func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, pending PendingReconcile) ([]StateNode, error) {
+	// TODO update to use some staleness depth configuration
+	if true {
+		return []StateNode{currState}, nil
+	}
+
+	currSnapshot := currState.objects
+	all, err := getAllStaleViewsForController(&currSnapshot, pending.ReconcilerID, e.dependencies)
+	if err != nil {
+		return nil, err
+	}
+
+	asStateNodes := lo.Map(all, func(snapshot *StateSnapshot, _ int) StateNode {
+		return StateNode{
+			objects:           *snapshot,
+			PendingReconciles: slices.Clone(currState.PendingReconciles),
+			parent:            currState.parent,
+			action:            currState.action,
+			ExecutionHistory:  slices.Clone(currState.ExecutionHistory),
+		}
+	})
+
+	return asStateNodes, nil
 }

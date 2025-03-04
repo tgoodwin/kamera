@@ -1063,7 +1063,19 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 	assert.Equal(t, len(expectedStaleViews), len(staleViews))
 
 	for i, expected := range expectedStaleViews {
-		assert.Equal(t, expected.Objects(), staleViews[i].Objects())
-		assert.Equal(t, expected.KindSequences, staleViews[i].KindSequences)
+		expectedObjects := expected.Objects()
+		staleViewObjects := staleViews[i].Objects()
+		assert.Equal(t, len(expectedObjects), len(staleViewObjects))
+		for key, expectedVersion := range expectedObjects {
+			staleVersion, exists := staleViewObjects[key]
+			if !exists {
+				t.Errorf("Expected %s in stale view", key)
+			}
+			assert.Equal(t, expectedVersion, staleVersion)
+		}
+		assert.Equal(t, len(expected.KindSequences), len(staleViews[i].KindSequences))
+		for kind, seq := range expected.KindSequences {
+			assert.Equal(t, seq, staleViews[i].KindSequences[kind])
+		}
 	}
 }
