@@ -17,8 +17,6 @@ type StateSnapshot struct {
 	KindSequences map[string]int64
 
 	stateEvents []StateEvent // the changes that led to the current objectVersions
-
-	// knowledgeManager *EventKnowledge
 }
 
 type ResourceVersion int
@@ -32,8 +30,7 @@ type StateEvent struct {
 	ReconcileID string
 	Timestamp   string
 	effect      effect
-	// ChangeID    event.ChangeID
-	Sequence int64 // the sequence within the kind
+	Sequence    int64 // the sequence within the kind
 
 	rv ResourceVersion // model etcd resource version
 }
@@ -226,7 +223,7 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 	return nil
 }
 
-func (g *EventKnowledge) replayEventsToState(events []StateEvent) *StateSnapshot {
+func replayEventsToState(events []StateEvent) *StateSnapshot {
 	state := &StateSnapshot{
 		contents:      make(ObjectVersions),
 		KindSequences: make(map[string]int64),
@@ -248,6 +245,31 @@ func (g *EventKnowledge) replayEventsToState(events []StateEvent) *StateSnapshot
 	}
 
 	return state
+}
+
+func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int64) *StateSnapshot {
+	eventsByKind := lo.GroupBy(events, func(e StateEvent) string {
+		return e.effect.ObjectKey.Kind
+	})
+	toReplay := make([]StateEvent, 0)
+	for kind, kindEvents := range eventsByKind {
+		// sort by sequence. TODO verify if this is necessary
+		sort.Slice(kindEvents, func(i, j int) bool {
+			return kindEvents[i].Sequence < kindEvents[j].Sequence
+		})
+
+		kindSeq, exists := sequencesByKind[kind]
+		if !exists {
+			panic(fmt.Sprintf("no sequence found for kind: %s", kind))
+		}
+		// filter out events that are beyond the target sequence
+		kindEventsAtSequence := lo.Filter(kindEvents, func(e StateEvent, _ int) bool {
+			return e.Sequence <= kindSeq
+		})
+		toReplay = append(toReplay, kindEventsAtSequence...)
+	}
+
+	return replayEventsToState(toReplay)
 }
 
 func (g *EventKnowledge) eventsBeforeTimestamp(ts string) []StateEvent {
@@ -287,7 +309,7 @@ func (g *EventKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapsho
 		}
 	}
 	relevantEvents := g.eventsBeforeTimestamp(earliestTimestamp)
-	return g.replayEventsToState(relevantEvents)
+	return replayEventsToState(relevantEvents)
 }
 
 func (g *EventKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnapshot {
@@ -324,7 +346,7 @@ func (g *EventKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnap
 		return events[i].Timestamp < events[j].Timestamp
 	})
 
-	return g.replayEventsToState(events)
+	return replayEventsToState(events)
 }
 
 // ErrInsufficientEvents indicates we can't adjust knowledge by requested steps
@@ -394,5 +416,14 @@ func (g *EventKnowledge) AdjustKnowledgeForResourceType(snapshot *StateSnapshot,
 		return relevantEvents[i].Sequence < relevantEvents[j].Sequence
 	})
 
-	return g.replayEventsToState(relevantEvents), nil
+	return replayEventsToState(relevantEvents), nil
 }
+
+// func getAllPossibleStaleViews(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps) ([]*StateSnapshot, error) {
+// 	// Get the current sequence for the kind
+// 	controllerDeps, err := deps.ForReconciler(reconcilerID)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// }
