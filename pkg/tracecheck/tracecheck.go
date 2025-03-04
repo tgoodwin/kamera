@@ -231,7 +231,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 		replayClient := replay.NewClient(
 			reconcilerID,
 			tc.scheme,
-			frameManager.Frames,
+			frameManager,
 			tc.manager, // this is what calls RecordEffect
 		)
 

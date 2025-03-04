@@ -144,7 +144,8 @@ func (p *Harness) ReplayClient(scheme *runtime.Scheme) *Client {
 		effectContainer: p.replayEffects,
 		predicates:      p.predicates,
 	}
-	return NewClient(p.ReconcilerID, scheme, p.frameDataByFrameID, recorder)
+	fm := NewFrameManager(p.FrameData())
+	return NewClient(p.ReconcilerID, scheme, fm, recorder)
 }
 
 func (p *Harness) Load(r reconcile.Reconciler) *Player {

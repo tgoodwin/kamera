@@ -18,6 +18,10 @@ import (
 
 var logger logr.Logger
 
+type frameReader interface {
+	GetCacheFrame(frameID string) (CacheFrame, error)
+}
+
 type Client struct {
 	// dummyClient is a useless type that implements the remainder of the client.Client interface
 	reconcilerID string
@@ -25,7 +29,7 @@ type Client struct {
 	// TODO address this
 	*dummyClient
 
-	framesByID frameContainer
+	frameReader
 
 	recorder EffectRecorder
 	// emitter  event.Emitter
@@ -35,14 +39,13 @@ type Client struct {
 
 var _ client.Client = (*Client)(nil)
 
-func NewClient(reconcilerID string, scheme *runtime.Scheme, frameData frameContainer, recorder EffectRecorder) *Client {
+func NewClient(reconcilerID string, scheme *runtime.Scheme, frameReader frameReader, recorder EffectRecorder) *Client {
 	return &Client{
 		reconcilerID: reconcilerID,
 		scheme:       scheme,
 		dummyClient:  &dummyClient{},
-		framesByID:   frameData,
+		frameReader:  frameReader,
 		recorder:     recorder,
-		// emitter:      event.NewLogEmitter(logger),
 	}
 }
 
@@ -72,7 +75,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	frameID := FrameIDFromContext(ctx)
 	kind := util.GetKind(obj)
 	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
-	if frame, ok := c.framesByID[frameID]; ok {
+	if frame, err := c.GetCacheFrame(frameID); err == nil {
 		if frozenObj, ok := frame[kind][key]; ok {
 			if err := c.recorder.RecordEffect(ctx, frozenObj, event.GET); err != nil {
 				return err
@@ -100,7 +103,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 	frameID := FrameIDFromContext(ctx)
 	kind := inferListKind(list)
 
-	if frame, ok := c.framesByID[frameID]; ok {
+	if frame, err := c.GetCacheFrame(frameID); err == nil {
 		if objsForKind, ok := frame[kind]; ok {
 			// get the Items field of the list object
 			itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")

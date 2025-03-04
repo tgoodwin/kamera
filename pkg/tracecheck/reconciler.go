@@ -20,7 +20,7 @@ type effectReader interface {
 }
 
 type frameInserter interface {
-	InsertFrame(id string, data replay.CacheFrame)
+	InsertCacheFrame(id string, data replay.CacheFrame)
 }
 
 type reconcileImpl struct {
@@ -44,7 +44,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	// the Reconciler's readset will be a subset of this frame
 	frameID := util.UUID()
 	// insert a "frame" to hold the readset data ahead of the reconcile
-	r.InsertFrame(frameID, r.toFrameData(currState))
+	r.InsertCacheFrame(frameID, r.toFrameData(currState))
 
 	compare := false
 	if compare {

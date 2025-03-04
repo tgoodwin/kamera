@@ -85,9 +85,16 @@ func NewFrameManager(initialFrames frameContainer) *FrameManager {
 	}
 }
 
-func (fm *FrameManager) InsertFrame(reconcileID string, data CacheFrame) {
+func (fm *FrameManager) InsertCacheFrame(reconcileID string, data CacheFrame) {
 	if _, ok := fm.Frames[reconcileID]; ok {
 		panic(fmt.Sprintf("frame %s already exists", reconcileID))
 	}
 	fm.Frames[reconcileID] = data
+}
+
+func (fm *FrameManager) GetCacheFrame(reconcileID string) (CacheFrame, error) {
+	if frame, ok := fm.Frames[reconcileID]; ok {
+		return frame, nil
+	}
+	return nil, fmt.Errorf("frame %s not found", reconcileID)
 }
