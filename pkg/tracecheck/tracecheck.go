@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/samber/lo"
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
@@ -183,6 +184,19 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 			contents: ObjectVersions{ikey: vHash},
 			KindSequences: map[string]int64{
 				ikey.Kind: 1,
+			},
+			stateEvents: []StateEvent{
+				{
+					ReconcileID: "TOP",
+					Timestamp:   event.FormatTimeStr(time.Now()),
+					Sequence:    1,
+					effect: newEffect(
+						ikey.Kind,
+						sleeveObjectID,
+						vHash,
+						event.CREATE,
+					),
+				},
 			},
 		},
 		PendingReconciles: dependent,

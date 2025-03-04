@@ -545,3 +545,136 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		}
 	})
 }
+func TestReplayEventsToState(t *testing.T) {
+	tests := []struct {
+		name          string
+		events        []StateEvent
+		expectedState ObjectVersions
+		expectedSeq   map[string]int64
+	}{
+		{
+			name: "single create event",
+			events: []StateEvent{
+				{
+					ReconcileID: "r1",
+					Timestamp:   "2024-02-21T10:00:01Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v1"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+			},
+			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{
+				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v1"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod": 1,
+			},
+		},
+		{
+			name: "create and delete event",
+			events: []StateEvent{
+				{
+					ReconcileID: "r1",
+					Timestamp:   "2024-02-21T10:00:01Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v1"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+				{
+					ReconcileID: "r2",
+					Timestamp:   "2024-02-21T10:00:02Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						OpType:    event.DELETE,
+					},
+					Sequence: 2,
+				},
+			},
+			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{},
+			expectedSeq: map[string]int64{
+				"Pod": 2,
+			},
+		},
+		{
+			name: "multiple kinds",
+			events: []StateEvent{
+				{
+					ReconcileID: "r1",
+					Timestamp:   "2024-02-21T10:00:01Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v1"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+				{
+					ReconcileID: "r2",
+					Timestamp:   "2024-02-21T10:00:02Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
+						version:   snapshot.NewDefaultHash("v2"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+			},
+			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v1"),
+				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod":     1,
+				"Service": 1,
+			},
+		},
+		{
+			name: "update event",
+			events: []StateEvent{
+				{
+					ReconcileID: "r1",
+					Timestamp:   "2024-02-21T10:00:01Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v1"),
+						OpType:    event.CREATE,
+					},
+					Sequence: 1,
+				},
+				{
+					ReconcileID: "r2",
+					Timestamp:   "2024-02-21T10:00:02Z",
+					effect: effect{
+						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
+						version:   snapshot.NewDefaultHash("v2"),
+						OpType:    event.UPDATE,
+					},
+					Sequence: 2,
+				},
+			},
+			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{
+				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			expectedSeq: map[string]int64{
+				"Pod": 2,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewEventKnowledge(&MockVersionResolver{})
+			state := g.replayEventsToState(tt.events)
+
+			assert.Equal(t, tt.expectedState, state.Objects())
+			assert.Equal(t, tt.expectedSeq, state.KindSequences)
+			assert.Equal(t, tt.events, state.stateEvents)
+		})
+	}
+}

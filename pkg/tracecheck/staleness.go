@@ -16,6 +16,8 @@ type StateSnapshot struct {
 	// per-kind sequence info for computing relative states
 	KindSequences map[string]int64
 
+	stateEvents []StateEvent // the changes that led to the current objectVersions
+
 	// knowledgeManager *EventKnowledge
 }
 
@@ -228,26 +230,21 @@ func (g *EventKnowledge) replayEventsToState(events []StateEvent) *StateSnapshot
 	state := &StateSnapshot{
 		contents:      make(ObjectVersions),
 		KindSequences: make(map[string]int64),
+		stateEvents:   make([]StateEvent, 0),
 		// knowledgeManager: g,
 	}
 
 	for _, e := range events {
-		cKey := e.CausalKey()
-		iKey := snapshot.IdentityKey{
-			Kind:     cKey.Kind,
-			ObjectID: cKey.ObjectID,
-		}
-		if e.OpType == "DELETE" {
+		iKey := e.effect.ObjectKey
+		if e.effect.OpType == event.DELETE {
 			delete(state.contents, iKey)
 		} else {
-			// use resolver to get object version
-			version, err := g.resolver.ResolveVersion(cKey)
-			if err != nil {
-				panic("error resolving version")
-			}
+			version := e.effect.version
 			state.contents[iKey] = version
 		}
-		state.KindSequences[cKey.Kind] = e.Sequence
+		state.KindSequences[iKey.Kind] = e.Sequence
+
+		state.stateEvents = append(state.stateEvents, e)
 	}
 
 	return state

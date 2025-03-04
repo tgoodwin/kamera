@@ -257,11 +257,33 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	newSequences := make(map[string]int64)
 	maps.Copy(state.objects.KindSequences, newSequences)
 
+	effects := reconcileResult.Changes.effects
+
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
 	for iKey, version := range state.Objects() {
 		newObjectVersions[iKey] = version
 	}
+
+	newStateEvents := slices.Clone(state.objects.stateEvents)
+
+	for _, effect := range effects {
+		if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
+			panic("object not found in state")
+		}
+		kind := effect.ObjectKey.Kind
+		currSeq := newSequences[kind]
+		stateEvent := StateEvent{
+			// Kind:   effect.ObjectKey.Kind,
+			ReconcileID: reconcileResult.FrameID,
+			Sequence:    currSeq + 1,
+			effect:      effect,
+			// TODO handle time info
+			Timestamp: "",
+		}
+		newStateEvents = append(newStateEvents, stateEvent)
+	}
+
 	for iKey, newVersion := range reconcileResult.Changes.objectVersions {
 		newObjectVersions[iKey] = newVersion
 
@@ -283,6 +305,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		objects: StateSnapshot{
 			contents:      newObjectVersions,
 			KindSequences: newSequences,
+			stateEvents:   newStateEvents,
 		},
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
@@ -352,7 +375,7 @@ func serializeState(state StateNode) string {
 	// Sort objectPairs to ensure deterministic order
 	sort.Strings(objectPairs)
 	objectsStr := strings.Join(objectPairs, ",")
-	sortedPendingReconciles := append([]PendingReconcile{}, state.PendingReconciles...)
+	sortedPendingReconciles := slices.Clone(state.PendingReconciles)
 	sort.Slice(sortedPendingReconciles, func(i, j int) bool {
 		return sortedPendingReconciles[i].ReconcilerID < sortedPendingReconciles[j].ReconcilerID
 	})
