@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
@@ -14,6 +15,21 @@ import (
 
 // ResourceDeps is a map of resource kinds to the reconcilers that depend on them
 type ResourceDeps map[string]util.Set[string]
+
+func (rd ResourceDeps) ForReconciler(reconcilerID string) ([]string, error) {
+	out := make([]string, 0)
+	found := false
+	for kind, reconcilers := range rd {
+		if reconcilers.Contains(reconcilerID) {
+			found = true
+			out = append(out, kind)
+		}
+	}
+	if !found {
+		return nil, errors.New(fmt.Sprintf("reconciler %s not found in ResourceDeps", reconcilerID))
+	}
+	return out, nil
+}
 
 // PrimariesByKind tracks the owner of a resource by kind, where owner is the reconciler that
 // has ControllerManagedBy.For called with the kind of the resource

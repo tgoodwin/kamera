@@ -272,6 +272,45 @@ func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int6
 	return replayEventsToState(toReplay)
 }
 
+func getAllPossibleStaleViews(snapshot *StateSnapshot, relevantKinds []string) []*StateSnapshot {
+	var staleViews []*StateSnapshot
+
+	// Iterate over each kind in the snapshot
+	for kind, currentSeq := range snapshot.KindSequences {
+		// Skip kinds that are not relevant
+		if !lo.Contains(relevantKinds, kind) {
+			continue
+		}
+		// Generate all possible sequences for this kind from 0 to currentSeq-1
+		for seq := int64(0); seq < currentSeq; seq++ {
+			// Create a copy of the current sequencesByKind map
+			staleSequencesByKind := make(map[string]int64)
+			for k, v := range snapshot.KindSequences {
+				staleSequencesByKind[k] = v
+			}
+			// Set the sequence for the current kind to the new sequence
+			staleSequencesByKind[kind] = seq
+
+			// Generate the stale view by replaying events at the new sequence
+			staleView := replayEventsAtSequence(snapshot.stateEvents, staleSequencesByKind)
+			staleViews = append(staleViews, staleView)
+		}
+	}
+
+	return staleViews
+}
+
+func getAllStaleViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps) ([]*StateSnapshot, error) {
+	controllerDeps, err := deps.ForReconciler(reconcilerID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the current sequence for the kind
+	staleViews := getAllPossibleStaleViews(snapshot, controllerDeps)
+	return staleViews, nil
+}
+
 func (g *EventKnowledge) eventsBeforeTimestamp(ts string) []StateEvent {
 	// First find all events at this timestamp
 	var relevantEvents []StateEvent
