@@ -1079,3 +1079,21 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		}
 	}
 }
+
+func Test_getAllCombos(t *testing.T) {
+	values := map[string][]int64{
+		"a": {1, 2, 3},
+		"b": {10, 20},
+	}
+
+	combos := getAllCombos(values)
+	expected := []map[string]int64{
+		{"a": 1, "b": 10},
+		{"a": 1, "b": 20},
+		{"a": 2, "b": 10},
+		{"a": 2, "b": 20},
+		{"a": 3, "b": 10},
+		{"a": 3, "b": 20},
+	}
+	assert.ElementsMatch(t, expected, combos)
+}

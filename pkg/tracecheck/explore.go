@@ -366,11 +366,6 @@ func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []PendingReco
 	// 	}
 	// })
 	alternative := e.triggerManager.MustGetTriggered(changes)
-	// if len(alternative) != len(out) {
-	// 	fmt.Println("triggered reconcilers mismatch")
-	// 	fmt.Println("out", out)
-	// 	fmt.Println("alternative", alternative)
-	// }
 	return alternative
 }
 

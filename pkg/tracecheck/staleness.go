@@ -43,6 +43,37 @@ func (s *StateSnapshot) Debug() {
 	}
 }
 
+// generateCombos recursively generates all possible combinations
+func generateCombos(values map[string][]int64, keys []string, index int, current map[string]int64, result *[]map[string]int64) {
+	if index == len(keys) {
+		// Create a copy of the current combination and store it
+		comboCopy := make(map[string]int64)
+		for k, v := range current {
+			comboCopy[k] = v
+		}
+		*result = append(*result, comboCopy)
+		return
+	}
+
+	key := keys[index]
+	for _, value := range values[key] {
+		current[key] = value
+		generateCombos(values, keys, index+1, current, result)
+	}
+}
+
+// getAllCombos returns a slice of all possible maps
+func getAllCombos(values map[string][]int64) []map[string]int64 {
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+
+	var result []map[string]int64
+	generateCombos(values, keys, 0, make(map[string]int64), &result)
+	return result
+}
+
 func (s *StateSnapshot) Adjust(kind string, steps int64) (*StateSnapshot, error) {
 	currSequences := make(map[string]int64)
 	maps.Copy(currSequences, s.KindSequences)
@@ -334,36 +365,34 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 
 	staleViews = append(staleViews, snapshot)
 
-	// Iterate over each kind in the snapshot
-	for kind, currentSeq := range snapshot.KindSequences {
-		// Skip kinds that are not relevant
-		if !lo.Contains(relevantKinds, kind) {
+	eventsByKind := lo.GroupBy(snapshot.stateEvents, func(e StateEvent) string {
+		return e.effect.ObjectKey.Kind
+	})
+	seqByKind := lo.MapValues(eventsByKind, func(events []StateEvent, key string) []int64 {
+		return lo.Map(events, func(e StateEvent, _ int) int64 {
+			return e.Sequence
+		})
+	})
+
+	filtered := make(map[string][]int64)
+	for k, v := range seqByKind {
+		if lo.Contains(relevantKinds, k) {
+			filtered[k] = v
+		}
+	}
+
+	combos := getAllCombos(filtered)
+	fmt.Println("combos", len(combos))
+
+	// // Iterate over each kind in the snapshot
+	for _, combo := range combos {
+		if maps.Equal(combo, snapshot.KindSequences) {
 			continue
 		}
-
-		// We use <= so that we include
-		// 1) the current state
-		// 2) states where one Kind is perfectly up-to-date and the others are not
-		for seq := int64(0); seq <= currentSeq; seq++ {
-			// Create a copy of the current sequencesByKind map
-			staleSequencesByKind := make(map[string]int64)
-			for k, v := range snapshot.KindSequences {
-				staleSequencesByKind[k] = v
-			}
-			// Set the sequence for the current kind to the new sequence
-			staleSequencesByKind[kind] = seq
-
-			// Generate the stale view by replaying events at the new sequence
-			staleView := replayEventsAtSequence(snapshot.stateEvents, staleSequencesByKind)
-			staleView.mode = "adjusted"
-
-			// check that we dont append a staleView with the same KindSequences as the input
-			if maps.Equal(staleView.KindSequences, snapshot.KindSequences) {
-				continue
-			}
-
-			staleViews = append(staleViews, staleView)
-		}
+		staleView := replayEventsAtSequence(snapshot.stateEvents, combo)
+		staleView.mode = "adjusted"
+		fmt.Println("added view with sequences", combo)
+		staleViews = append(staleViews, staleView)
 	}
 
 	return staleViews

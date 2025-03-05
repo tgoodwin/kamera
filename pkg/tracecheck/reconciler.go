@@ -47,13 +47,18 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	// create a new cache frame from the current state of the world of objects.
 	// the Reconciler's readset will be a subset of this frame
 	frameID := util.UUID()
+	logger = log.FromContext(ctx).WithValues("reconciler", r.Name, "frameID", frameID)
+	ctx = replay.WithFrameID(ctx, frameID)
 	// insert a "frame" to hold the readset data ahead of the reconcile
 	r.InsertCacheFrame(frameID, r.toFrameData(currState))
 	frameData := r.toFrameData(currState)
-	fmt.Printf("frame data for frameID: %s\n", frameID)
-	for kind, objs := range frameData {
-		for nn, obj := range objs {
-			fmt.Printf("kind: %s, nn: %s, obj: %v\n", kind, nn, obj)
+
+	if logger.V(2).Enabled() {
+		logger.V(2).Info("frame data for frameID: %s\n", frameID)
+		for kind, objs := range frameData {
+			for nn, obj := range objs {
+				logger.V(2).Info("kind: %s, nn: %s, obj: %v\n", kind, nn, obj)
+			}
 		}
 	}
 
@@ -65,13 +70,11 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 		}
 
 		if inferredReq != req {
-			fmt.Println("MISMATCH")
-			fmt.Printf("inferred: %v, passed: %v\n", inferredReq, req)
+			logger.V(2).Info("MISMATCH")
+			logger.V(2).Info("inferred: %v, passed: %v\n", inferredReq, req)
 		}
 	}
 
-	ctx = replay.WithFrameID(ctx, frameID)
-	logger = log.FromContext(ctx).WithValues("reconciler", r.Name, "frameID", frameID)
 	// add the logger back to the context
 	ctx = log.IntoContext(ctx, logger)
 

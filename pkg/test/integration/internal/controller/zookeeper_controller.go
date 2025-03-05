@@ -107,11 +107,8 @@ func (r *ZookeeperReconciler) handleDeletion(ctx context.Context, zk *unstructur
 		return reconcile.Result{}, err
 	}
 
-	fmt.Println("GOT PVCS", pvcList.Items)
-
 	// Delete all PVCs found
 	for _, pvc := range pvcList.Items {
-		fmt.Println("Deleting PVC", pvc.GetName())
 		logger.Info("Deleting PVC", "pvc", pvc.GetName())
 		if err := r.Delete(ctx, &pvc); err != nil {
 			logger.Error(err, "Failed to delete PVC", "pvc", pvc.GetName())
