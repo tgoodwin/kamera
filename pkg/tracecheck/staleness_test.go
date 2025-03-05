@@ -1058,7 +1058,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		},
 	}
 
-	staleViews := getAllPossibleStaleViews(state, []string{"Pod", "Service"})
+	staleViews := getAllPossibleViews(state, []string{"Pod", "Service"})
 
 	assert.Equal(t, len(expectedStaleViews), len(staleViews))
 

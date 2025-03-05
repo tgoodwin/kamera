@@ -408,7 +408,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, pending Pen
 	}
 
 	currSnapshot := currState.Contents
-	all, err := getAllStaleViewsForController(&currSnapshot, pending.ReconcilerID, e.dependencies)
+	all, err := getAllViewsForController(&currSnapshot, pending.ReconcilerID, e.dependencies)
 	fmt.Println("produced", len(all), "stale views for", pending.ReconcilerID)
 	if err != nil {
 		return nil, err

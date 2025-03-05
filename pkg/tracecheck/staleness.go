@@ -14,6 +14,8 @@ import (
 type StateSnapshot struct {
 	contents ObjectVersions
 
+	mode string // original or adjusted
+
 	// per-kind sequence info for computing relative states
 	KindSequences map[string]int64
 
@@ -73,6 +75,7 @@ func (s *StateSnapshot) Adjust(kind string, steps int64) (*StateSnapshot, error)
 
 	adjusted := replayEventsAtSequence(s.stateEvents, currSequences)
 	return &StateSnapshot{
+		mode:          "adjusted",
 		contents:      adjusted.contents,
 		KindSequences: currSequences,
 		stateEvents:   s.stateEvents,
@@ -326,8 +329,10 @@ func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int6
 	return replayEventsToState(toReplay)
 }
 
-func getAllPossibleStaleViews(snapshot *StateSnapshot, relevantKinds []string) []*StateSnapshot {
+func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*StateSnapshot {
 	var staleViews []*StateSnapshot
+
+	staleViews = append(staleViews, snapshot)
 
 	// Iterate over each kind in the snapshot
 	for kind, currentSeq := range snapshot.KindSequences {
@@ -335,9 +340,11 @@ func getAllPossibleStaleViews(snapshot *StateSnapshot, relevantKinds []string) [
 		if !lo.Contains(relevantKinds, kind) {
 			continue
 		}
-		// Generate all possible sequences for this kind from 0 to currentSeq-1
-		// TODO should this be <= ?
-		for seq := int64(0); seq < currentSeq; seq++ {
+
+		// We use <= so that we include
+		// 1) the current state
+		// 2) states where one Kind is perfectly up-to-date and the others are not
+		for seq := int64(0); seq <= currentSeq; seq++ {
 			// Create a copy of the current sequencesByKind map
 			staleSequencesByKind := make(map[string]int64)
 			for k, v := range snapshot.KindSequences {
@@ -348,6 +355,13 @@ func getAllPossibleStaleViews(snapshot *StateSnapshot, relevantKinds []string) [
 
 			// Generate the stale view by replaying events at the new sequence
 			staleView := replayEventsAtSequence(snapshot.stateEvents, staleSequencesByKind)
+			staleView.mode = "adjusted"
+
+			// check that we dont append a staleView with the same KindSequences as the input
+			if maps.Equal(staleView.KindSequences, snapshot.KindSequences) {
+				continue
+			}
+
 			staleViews = append(staleViews, staleView)
 		}
 	}
@@ -355,14 +369,14 @@ func getAllPossibleStaleViews(snapshot *StateSnapshot, relevantKinds []string) [
 	return staleViews
 }
 
-func getAllStaleViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps) ([]*StateSnapshot, error) {
+func getAllViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps) ([]*StateSnapshot, error) {
 	controllerDeps, err := deps.ForReconciler(reconcilerID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get the current sequence for the kind
-	staleViews := getAllPossibleStaleViews(snapshot, controllerDeps)
+	staleViews := getAllPossibleViews(snapshot, controllerDeps)
 	return staleViews, nil
 }
 

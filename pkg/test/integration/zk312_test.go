@@ -2,7 +2,6 @@ package test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -128,7 +127,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster")
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
 
-	eb.WithStalenessDepth(0) // Enable staleness exploration
+	eb.WithStalenessDepth(1) // Enable staleness exploration
 
 	explorer, err := eb.Build("standalone")
 	if err != nil {
@@ -150,43 +149,6 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	}
 
 	initialState.Contents.Debug()
-	newState, _ := initialState.Contents.Adjust("ZookeeperCluster", -1)
-	newState, _ = newState.Adjust("ZookeeperCluster", -1)
-	fmt.Println("new state")
-	newState.Debug()
-
-	initialState.Contents = *newState
-
-	// // Create a custom StateSnapshot with our state events
-	// stateSnapshot := &tracecheck.StateSnapshot{
-	// 	Contents: tracecheck.ObjectVersions{},
-	// 	KindSequences: map[string]int64{
-	// 		"ZookeeperCluster":      4, // The sequence numbers reflect the event history above
-	// 		"PersistentVolumeClaim": 7,
-	// 	},
-	// 	StateEvents: stateEvents,
-	// }
-
-	// // Create the initial state node using our state snapshot
-	// initialState := tracecheck.StateNode{
-	// 	Objects: *stateSnapshot,
-	// 	PendingReconciles: []tracecheck.PendingReconcile{
-	// 		{
-	// 			ReconcilerID: "ZookeeperReconciler",
-	// 			Request: reconcile.Request{
-	// 				NamespacedName: types.NamespacedName{
-	// 					Namespace: "default",
-	// 					Name:      "zk-cluster",
-	// 				},
-	// 			},
-	// 		},
-	// 	},
-	// 	ExecutionHistory: tracecheck.ExecutionHistory{},
-	// }
-
-	// Configure our explorer to use the snapshot store
-	// explorer.UseSnapshotStore(store)
-	// explorer.EnableStaleness(true) // Enable staleness exploration
 
 	// Explore all possible execution paths
 	result := explorer.Explore(context.Background(), initialState)
