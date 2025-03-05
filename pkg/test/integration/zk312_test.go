@@ -40,7 +40,7 @@ func CreateZookeeperObject(name, namespace, uid string, size int64, deletionTime
 }
 
 // CreatePVCObject creates a PVC unstructured object
-func CreatePVCObject(name, namespace, uid string, zkName string) *unstructured.Unstructured {
+func CreatePVCObject(name, namespace, uid string, zkName string, ownerRef []metav1.OwnerReference) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "",
@@ -55,6 +55,10 @@ func CreatePVCObject(name, namespace, uid string, zkName string) *unstructured.U
 		"tracey-uid":                       uid,
 		"discrete.events/sleeve-object-id": uid,
 	})
+
+	if ownerRef != nil {
+		obj.SetOwnerReferences(ownerRef)
+	}
 
 	_ = unstructured.SetNestedField(obj.Object, "10Gi", "spec", "resources", "requests", "storage")
 	_ = unstructured.SetNestedField(obj.Object, "standard", "spec", "storageClassName")
@@ -88,16 +92,22 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 
 	// 1. First ZookeeperCluster is created
 	zk1 := CreateZookeeperObject("zk-cluster", "default", "zk-old-uid", 3, nil)
+	zk1OwnerRef := metav1.OwnerReference{
+		APIVersion: "zookeeper.pravega.io/v1beta1",
+		Kind:       "ZookeeperCluster",
+		Name:       "zk-cluster",
+		UID:        zk1.GetUID(),
+	}
 	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.CREATE, "ZookeeperReconciler")
 
 	// 2. PVCs are created for the first ZK
-	pvc1 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-1", "zk-cluster")
+	pvc1 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-1", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef})
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1, event.CREATE, "ZookeeperReconciler")
 
-	pvc2 := CreatePVCObject("zk-cluster-pvc-1", "default", "pvc-uid-2", "zk-cluster")
+	pvc2 := CreatePVCObject("zk-cluster-pvc-1", "default", "pvc-uid-2", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef})
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-2", pvc2, event.CREATE, "ZookeeperReconciler")
 
-	pvc3 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-3", "zk-cluster")
+	pvc3 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-3", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef})
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", pvc3, event.CREATE, "ZookeeperReconciler")
 
 	// 3. First ZK is marked for deletion
@@ -115,18 +125,25 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 
 	// 6. New ZK with same name but different UID is created
 	zk2 := CreateZookeeperObject("zk-cluster", "default", "zk-new-uid", 3, nil)
+	zk2OwnerRef := metav1.OwnerReference{
+		APIVersion: "zookeeper.pravega.io/v1beta1",
+		Kind:       "ZookeeperCluster",
+		Name:       "zk-cluster",
+		UID:        zk2.GetUID(),
+	}
 	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-new-uid", zk2, event.CREATE, "ZookeeperReconciler")
 
 	// 7. New PVCs are created for the new ZK
-	pvc4 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-4", "zk-cluster")
+	pvc4 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-4", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef})
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-4", pvc4, event.CREATE, "ZookeeperReconciler")
 
-	pvc5 := CreatePVCObject("zk-cluster-pvc-1", "default", "pvc-uid-5", "zk-cluster")
+	pvc5 := CreatePVCObject("zk-cluster-pvc-1", "default", "pvc-uid-5", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef})
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-5", pvc5, event.CREATE, "ZookeeperReconciler")
 
-	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster")
+	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef})
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
 
+	// TODO configure staleness depth
 	eb.WithStalenessDepth(1) // Enable staleness exploration
 
 	explorer, err := eb.Build("standalone")
@@ -149,6 +166,11 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	}
 
 	initialState.Contents.Debug()
+
+	// Set up a test logger
+	// logger := zap.New(zap.UseDevMode(true))
+	// tracecheck.SetLogger(logger)
+	// log.SetLogger(logger)
 
 	// Explore all possible execution paths
 	result := explorer.Explore(context.Background(), initialState)

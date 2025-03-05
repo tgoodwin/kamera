@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,9 +82,14 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 		resolver: resolver,
 	}
 
-	// Create test change set
-	changes := ObjectVersions{
-		snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"}: podHash,
+	changes := Changes{
+		Effects: []effect{
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"},
+				Version:   podHash,
+			},
+		},
 	}
 
 	// Get triggered reconciles
@@ -155,8 +161,14 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 	}
 
 	// Test Case 1: Pod with ReplicaSet owner
-	changes := ObjectVersions{
-		snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"}: podHash,
+	changes := Changes{
+		Effects: []effect{
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"},
+				Version:   podHash,
+			},
+		},
 	}
 
 	triggered, err := tm.getTriggered(changes)
@@ -183,8 +195,14 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 	assert.Equal(t, expected, triggered)
 
 	// Test Case 2: ReplicaSet with Deployment owner
-	changes = ObjectVersions{
-		snapshot.IdentityKey{Kind: "ReplicaSet", ObjectID: "default/test-rs"}: rsHash,
+	changes = Changes{
+		Effects: []effect{
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "ReplicaSet", ObjectID: "default/test-rs"},
+				Version:   rsHash,
+			},
+		},
 	}
 
 	triggered, err = tm.getTriggered(changes)
@@ -247,11 +265,24 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 		resolver: resolver,
 	}
 
-	// Create test change set with multiple objects
-	changes := ObjectVersions{
-		snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/pod-1"}:     pod1Hash,
-		snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/pod-2"}:     pod2Hash,
-		snapshot.IdentityKey{Kind: "Service", ObjectID: "default/svc-1"}: svcHash,
+	changes := Changes{
+		Effects: []effect{
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/pod-1"},
+				Version:   pod1Hash,
+			},
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/pod-2"},
+				Version:   pod2Hash,
+			},
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "default/svc-1"},
+				Version:   svcHash,
+			},
+		},
 	}
 
 	// Get triggered reconciles
@@ -315,8 +346,14 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 	}
 	tm := &TriggerManager{deps, owners, resolver}
 
-	changes := ObjectVersions{
-		snapshot.IdentityKey{Kind: "RouteConfig", ObjectID: "default/route-config-1"}: rcHash,
+	changes := Changes{
+		Effects: []effect{
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "RouteConfig", ObjectID: "default/route-config-1"},
+				Version:   rcHash,
+			},
+		},
 	}
 	expected := []PendingReconcile{
 		{
@@ -368,8 +405,14 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 	}
 
 	// Create test change set
-	changes := ObjectVersions{
-		snapshot.IdentityKey{Kind: "Job", ObjectID: "default/test-job"}: jobHash,
+	changes := Changes{
+		Effects: []effect{
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "Job", ObjectID: "default/test-job"},
+				Version:   jobHash,
+			},
+		},
 	}
 
 	// Get triggered reconciles
@@ -424,8 +467,14 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 	tm := &TriggerManager{deps, owners, resolver}
 
 	// Create test change set
-	changes := ObjectVersions{
-		snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"}: podHash,
+	changes := Changes{
+		Effects: []effect{
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"},
+				Version:   podHash,
+			},
+		},
 	}
 
 	// Get triggered reconciles
@@ -464,8 +513,14 @@ func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 	tm := &TriggerManager{deps, owners, resolver}
 
 	// Create test change set with a hash that doesn't exist
-	changes := ObjectVersions{
-		snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"}: snapshot.NewDefaultHash("non-existent-hash"),
+	changes := Changes{
+		Effects: []effect{
+			{
+				OpType:    event.CREATE,
+				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"},
+				Version:   snapshot.NewDefaultHash("non-existent-hash"),
+			},
+		},
 	}
 
 	_, err := tm.getTriggered(changes)

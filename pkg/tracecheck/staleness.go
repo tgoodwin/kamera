@@ -311,12 +311,11 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 	return nil
 }
 
-func replayEventsToState(events []StateEvent) *StateSnapshot {
+func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	state := &StateSnapshot{
 		contents:      make(ObjectVersions),
 		KindSequences: make(map[string]int64),
 		stateEvents:   make([]StateEvent, 0),
-		// knowledgeManager: g,
 	}
 
 	for _, e := range events {
@@ -357,7 +356,7 @@ func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int6
 		toReplay = append(toReplay, kindEventsAtSequence...)
 	}
 
-	return replayEventsToState(toReplay)
+	return replayEventSequenceToState(toReplay)
 }
 
 func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*StateSnapshot {
@@ -382,7 +381,6 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 	}
 
 	combos := getAllCombos(filtered)
-	fmt.Println("combos", len(combos))
 
 	// // Iterate over each kind in the snapshot
 	for _, combo := range combos {
@@ -391,7 +389,6 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 		}
 		staleView := replayEventsAtSequence(snapshot.stateEvents, combo)
 		staleView.mode = "adjusted"
-		fmt.Println("added view with sequences", combo)
 		staleViews = append(staleViews, staleView)
 	}
 
@@ -446,7 +443,7 @@ func (g *EventKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapsho
 		}
 	}
 	relevantEvents := g.eventsBeforeTimestamp(earliestTimestamp)
-	return replayEventsToState(relevantEvents)
+	return replayEventSequenceToState(relevantEvents)
 }
 
 func (g *EventKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnapshot {
@@ -483,7 +480,7 @@ func (g *EventKnowledge) GetStateAfterReconcileID(reconcileID string) *StateSnap
 		return events[i].Timestamp < events[j].Timestamp
 	})
 
-	return replayEventsToState(events)
+	return replayEventSequenceToState(events)
 }
 
 // ErrInsufficientEvents indicates we can't adjust knowledge by requested steps
@@ -553,5 +550,5 @@ func (g *EventKnowledge) AdjustKnowledgeForResourceType(snapshot *StateSnapshot,
 		return relevantEvents[i].Sequence < relevantEvents[j].Sequence
 	})
 
-	return replayEventsToState(relevantEvents), nil
+	return replayEventSequenceToState(relevantEvents), nil
 }

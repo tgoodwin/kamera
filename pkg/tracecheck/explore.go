@@ -108,7 +108,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 			// TODO have the list of effects by the input to getTriggeredReconcilers
 			// to properly handle deletes
-			triggeredByLastChange := e.getTriggeredReconcilers(changes.ObjectVersions)
+			triggeredByLastChange := e.getTriggeredReconcilers(changes)
 			sn := StateNode{
 				DivergencePoint: reconcile.ReconcileID,
 				// top-level state to explore
@@ -161,6 +161,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		ConvergedStates: make([]ConvergedState, 0),
 	}
 	start := time.Now()
+	depthStart := start
 
 	seenDepths := make(map[int]bool)
 	queue := []StateNode{initialState}
@@ -194,7 +195,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		// from the current state. We explore each pending reconcile in a breadth-first manner.
 		for _, pendingReconcile := range currentState.PendingReconciles {
 
-			possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile)
+			possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID)
 			if err != nil {
 				panic(fmt.Sprintf("error getting possible views: %s", err))
 			}
@@ -206,7 +207,10 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 				}
 				newState.depth = currentState.depth + 1
 				if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
-					logger.Info("\rexplore reached depth", "depth", newState.depth)
+					// logger.Info("\rexplore reached depth", "depth", newState.depth)
+					elapsed := time.Since(depthStart)
+					fmt.Printf("Explore reached depth %d, elapsed time: %s\n", newState.depth, elapsed)
+					depthStart = time.Now()
 					seenDepths[newState.depth] = true
 				}
 				if newState.depth > e.maxDepth {
@@ -217,7 +221,6 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 				}
 			}
 		}
-
 	}
 
 	// Graph search has ended, summarize the results
@@ -302,9 +305,10 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// get the controllers that depend on the objects that were changed
 	// and add them to the pending reconciles list. n.b. this may potentially
 	// include the controller that was just executed.
-	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes.ObjectVersions)
+	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
 	newPendingReconciles = getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
 	logger.V(2).WithValues("reconcilerID", pr.ReconcilerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
+	// fmt.Printf("len change effects: %d, new pending reconciles: %s\n", len(effects), newPendingReconciles)
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
@@ -348,25 +352,18 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 	return result, nil
 }
 
-func (e *Explorer) getTriggeredReconcilers(changes ObjectVersions) []PendingReconcile {
-	triggered := make(util.Set[string])
-	for objKey := range changes {
-		// get the controllers that depend on this object
-		triggeredForKind := e.dependencies[objKey.Kind]
-		triggered = triggered.Union(triggeredForKind)
-	}
-	// convert the set to a list that is sorted
-	triggeredList := triggered.List()
-	// sort the list so that we can explore the triggered controllers in a deterministic order
-	sort.Strings(triggeredList)
-	// out := lo.Map(triggeredList, func(s string, _ int) PendingReconcile {
-	// 	return PendingReconcile{
-	// 		ReconcilerID: s,
-	// 		Request:      reconcile.Request{},
-	// 	}
-	// })
-	alternative := e.triggerManager.MustGetTriggered(changes)
-	return alternative
+func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
+	// triggered := make(util.Set[string])
+	// for objKey := range changes {
+	// 	// get the controllers that depend on this object
+	// 	triggeredForKind := e.dependencies[objKey.Kind]
+	// 	triggered = triggered.Union(triggeredForKind)
+	// }
+	// // convert the set to a list that is sorted
+	// triggeredList := triggered.List()
+	// // sort the list so that we can explore the triggered controllers in a deterministic order
+	// sort.Strings(triggeredList)
+	return e.triggerManager.MustGetTriggered(changes)
 }
 
 // serializeState converts a State to a unique string representation for deduplication
@@ -396,15 +393,15 @@ func serializeState(state StateNode) string {
 	return fmt.Sprintf("Objects:{%s}|PendingReconciles:{%s}", objectsStr, reconcilesStr)
 }
 
-func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, pending PendingReconcile) ([]StateNode, error) {
+func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string) ([]StateNode, error) {
 	// TODO update to use some staleness depth configuration
 	if e.stalenessDepth == 0 {
 		return []StateNode{currState}, nil
 	}
 
 	currSnapshot := currState.Contents
-	all, err := getAllViewsForController(&currSnapshot, pending.ReconcilerID, e.dependencies)
-	fmt.Println("produced", len(all), "stale views for", pending.ReconcilerID)
+	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies)
+	// fmt.Println("produced", len(all), "stale views for", pending.ReconcilerID)
 	if err != nil {
 		return nil, err
 	}

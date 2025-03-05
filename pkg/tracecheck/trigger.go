@@ -71,12 +71,12 @@ func NewTriggerManager(deps ResourceDeps, reconcilerToPrimaryKind map[string]str
 
 // getTriggered returns a list of PendingReconcile items based on the provided changes
 // Returns an error if any object hash cannot be resolved
-func (tm *TriggerManager) getTriggered(changes ObjectVersions) ([]PendingReconcile, error) {
+func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, error) {
 	// Use a map for deduplication
 	uniqueReconciles := make(map[string]PendingReconcile)
 
-	for objKey, vHash := range changes {
-		// Get the full object from the hash
+	for _, effect := range changes.Effects {
+		objKey, vHash := effect.ObjectKey, effect.Version
 		objectVal, ok := tm.resolver.GetByHash(vHash, vHash.Strategy)
 		if !ok {
 			return nil, fmt.Errorf("object not found for hash %s", vHash)
@@ -111,8 +111,8 @@ func (tm *TriggerManager) getTriggered(changes ObjectVersions) ([]PendingReconci
 				if primaries, exists := tm.owners[ownerRef.Kind]; exists {
 					for ownerReconcilerID := range primaries {
 						ownerNSName := types.NamespacedName{
-							// TODO this is an assumption that the owner is in the same namespace
-							// as the owned object
+							// Making a reasonable assumption here that the owner
+							// is in the same namespace as the owned object
 							Namespace: objectVal.GetNamespace(),
 							Name:      ownerRef.Name,
 						}
@@ -147,18 +147,12 @@ func (tm *TriggerManager) getTriggered(changes ObjectVersions) ([]PendingReconci
 		return result[i].Request.Name < result[j].Request.Name
 	})
 
-	// Debug print the pending reconciles
-	// for _, reconcile := range result {
-	// 	fmt.Printf("PendingReconcile: ReconcilerID=%s, nsName=%s/%s\n",
-	// 		reconcile.ReconcilerID, reconcile.Request.Namespace, reconcile.Request.Name)
-	// }
-
 	return result, nil
 }
 
 // Convenience method that delegates to getTriggered but panics on errors
 // This maintains backwards compatibility with existing code
-func (tm *TriggerManager) MustGetTriggered(changes ObjectVersions) []PendingReconcile {
+func (tm *TriggerManager) MustGetTriggered(changes Changes) []PendingReconcile {
 	result, err := tm.getTriggered(changes)
 	if err != nil {
 		panic(err.Error())

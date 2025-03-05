@@ -90,7 +90,7 @@ func (b *StateEventBuilder) AddStateEvent(kind, objectID string, obj *unstructur
 }
 
 func (b *StateEventBuilder) Build() StateNode {
-	snapshot := replayEventsToState(b.events)
+	snapshot := replayEventSequenceToState(b.events)
 	pending := []PendingReconcile{}
 	return StateNode{
 		Contents:          *snapshot,
