@@ -12,6 +12,16 @@ import (
 	"github.com/samber/lo"
 )
 
+type ResultWriter struct {
+	emitter testEmitter
+}
+
+func NewResultWriter(emitter testEmitter) *ResultWriter {
+	return &ResultWriter{
+		emitter: emitter,
+	}
+}
+
 func prettyPrintJSON(jsonStr string) (string, error) {
 	var prettyJSON bytes.Buffer
 	err := json.Indent(&prettyJSON, []byte(jsonStr), "", "  ")
@@ -32,7 +42,7 @@ func sanitizePath(outDir string) string {
 	return path.Join(cwd, outDir)
 }
 
-func (tc *TraceChecker) MaterializeResults(result *Result, outDir string) {
+func (tc *ResultWriter) MaterializeResults(result *Result, outDir string) {
 	sanitizedOutDir := sanitizePath(outDir)
 	if err := os.MkdirAll(outDir, os.ModePerm); err != nil {
 		log.Fatalf("failed to create output directory: %v", err)
@@ -45,7 +55,7 @@ func (tc *TraceChecker) MaterializeResults(result *Result, outDir string) {
 	}
 }
 
-func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) {
+func (tc *ResultWriter) writeStateSummary(state ConvergedState, outPath string) {
 	file, err := os.Create(outPath)
 	if err != nil {
 		log.Fatalf("failed to create state summary file: %v", err)
@@ -99,7 +109,7 @@ func (tc *TraceChecker) writeStateSummary(state ConvergedState, outPath string) 
 	}
 }
 
-func (tc *TraceChecker) materializeTraces(state ConvergedState, outPrefix string) {
+func (tc *ResultWriter) materializeTraces(state ConvergedState, outPrefix string) {
 	// filter out no-ops
 	uniquePaths := GetUniquePaths(state.Paths)
 	for i, path := range uniquePaths {

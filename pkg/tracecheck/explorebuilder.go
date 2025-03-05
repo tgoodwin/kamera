@@ -26,7 +26,9 @@ type ExplorerBuilder struct {
 	emitter          testEmitter
 	snapStore        *snapshot.Store
 	reconcilerToKind map[string]string
-	builder          *replay.Builder
+
+	// for replay mode
+	builder *replay.Builder
 }
 
 func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
@@ -151,6 +153,10 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 	}
 
 	return containers
+}
+
+func (b *ExplorerBuilder) NewStateEventBuilder() *StateEventBuilder {
+	return NewStateEventBuilder(b.snapStore)
 }
 
 func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...string) StateNode {

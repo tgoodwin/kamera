@@ -282,6 +282,7 @@ func getAllPossibleStaleViews(snapshot *StateSnapshot, relevantKinds []string) [
 			continue
 		}
 		// Generate all possible sequences for this kind from 0 to currentSeq-1
+		// TODO should this be <= ?
 		for seq := int64(0); seq < currentSeq; seq++ {
 			// Create a copy of the current sequencesByKind map
 			staleSequencesByKind := make(map[string]int64)

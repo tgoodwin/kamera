@@ -146,7 +146,8 @@ func TestConvergedStateIdentification(t *testing.T) {
 		},
 	}
 
-	initialState := eb.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
+	sb := eb.NewStateEventBuilder()
+	initialState := sb.AddTopLevelObject(topLevelObj, "FooController", "BarController")
 	explorer, err := eb.Build("standalone")
 	if err != nil {
 		t.Fatal(err)

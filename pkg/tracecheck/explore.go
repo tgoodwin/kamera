@@ -259,15 +259,19 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
-	for iKey, version := range state.Objects() {
-		newObjectVersions[iKey] = version
-	}
+	maps.Copy(newObjectVersions, state.Objects())
 
 	newStateEvents := slices.Clone(state.objects.stateEvents)
+	for iKey, newVersion := range reconcileResult.Changes.ObjectVersions {
+		newObjectVersions[iKey] = newVersion
+
+		// increment resourceversion for the kind
+		newSequences[iKey.Kind] += 1
+	}
 
 	for _, effect := range effects {
 		if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
-			panic("object not found in state")
+			panic("effect object not found in new state: " + fmt.Sprintf("%s", effect.ObjectKey))
 		}
 		kind := effect.ObjectKey.Kind
 		currSeqForKind := newSequences[kind]
@@ -280,13 +284,6 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			Timestamp: "",
 		}
 		newStateEvents = append(newStateEvents, stateEvent)
-	}
-
-	for iKey, newVersion := range reconcileResult.Changes.ObjectVersions {
-		newObjectVersions[iKey] = newVersion
-
-		// increment resourceversion for the kind
-		newSequences[iKey.Kind] += 1
 	}
 
 	// get the controllers that depend on the objects that were changed
@@ -399,6 +396,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, pending Pen
 
 	currSnapshot := currState.objects
 	all, err := getAllStaleViewsForController(&currSnapshot, pending.ReconcilerID, e.dependencies)
+	fmt.Println("produced", len(all), "stale views for", pending.ReconcilerID)
 	if err != nil {
 		return nil, err
 	}
