@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 
 	"github.com/pkg/errors"
@@ -23,6 +24,59 @@ type ResourceVersion int
 
 func (s *StateSnapshot) Objects() ObjectVersions {
 	return s.contents
+}
+
+func (s *StateSnapshot) Debug() {
+	fmt.Println("State events:")
+	for _, e := range s.stateEvents {
+		fmt.Printf("%s %s %d\n", e.effect.ObjectKey, e.effect.OpType, e.Sequence)
+	}
+	fmt.Println("contents:")
+	for key, value := range s.contents {
+		fmt.Println(key, value)
+	}
+	fmt.Println("KindSequences:")
+	for key, value := range s.KindSequences {
+		fmt.Println(key, value)
+	}
+}
+
+func (s *StateSnapshot) Adjust(kind string, steps int64) (*StateSnapshot, error) {
+	currSequences := make(map[string]int64)
+	maps.Copy(currSequences, s.KindSequences)
+
+	if _, exists := currSequences[kind]; !exists {
+		return nil, fmt.Errorf("unknown kind: %s", kind)
+	}
+	currSeqForKind := currSequences[kind]
+
+	eventsForKind := lo.Filter(s.stateEvents, func(e StateEvent, _ int) bool {
+		return e.effect.ObjectKey.Kind == kind
+	})
+	earlierEventsForKind := lo.Filter(eventsForKind, func(e StateEvent, _ int) bool {
+		return e.Sequence < currSeqForKind
+	})
+	previousEventForKind, ok := lo.Last(earlierEventsForKind)
+	if !ok {
+		return nil, &ErrInsufficientEvents{
+			Kind:         kind,
+			CurrentSeq:   currSeqForKind,
+			RequestedSeq: currSeqForKind - steps,
+			Steps:        steps,
+		}
+	}
+	fmt.Println("adjusting sequence from", currSeqForKind, "by", steps, "steps to", previousEventForKind.Sequence)
+	currSequences[kind] = previousEventForKind.Sequence
+
+	// adjust the sequence relatively using steps.
+	// -1 would select the previous state for this kind
+
+	adjusted := replayEventsAtSequence(s.stateEvents, currSequences)
+	return &StateSnapshot{
+		contents:      adjusted.contents,
+		KindSequences: currSequences,
+		stateEvents:   s.stateEvents,
+	}, nil
 }
 
 type StateEvent struct {

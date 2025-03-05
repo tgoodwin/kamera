@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/samber/lo"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -111,7 +112,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 			sn := StateNode{
 				DivergencePoint: reconcile.ReconcileID,
 				// top-level state to explore
-				objects:           *resultingState,
+				Contents:          *resultingState,
 				PendingReconciles: triggeredByLastChange,
 				ExecutionHistory:  slices.Clone(currExecutionHistory),
 			}
@@ -127,7 +128,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 	// the end of the trace trivially converges
 	traceWalkResult := ConvergedState{
-		State: StateNode{objects: *rebuiltState, DivergencePoint: "TRACE_START"},
+		State: StateNode{Contents: *rebuiltState, DivergencePoint: "TRACE_START"},
 		Paths: []ExecutionHistory{currExecutionHistory},
 	}
 	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
@@ -253,7 +254,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	}
 
 	newSequences := make(map[string]int64)
-	maps.Copy(state.objects.KindSequences, newSequences)
+	maps.Copy(state.Contents.KindSequences, newSequences)
 
 	effects := reconcileResult.Changes.Effects
 
@@ -261,18 +262,30 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	newObjectVersions := make(ObjectVersions)
 	maps.Copy(newObjectVersions, state.Objects())
 
-	newStateEvents := slices.Clone(state.objects.stateEvents)
-	for iKey, newVersion := range reconcileResult.Changes.ObjectVersions {
-		newObjectVersions[iKey] = newVersion
+	changeOV := reconcileResult.Changes.ObjectVersions
+	for _, effect := range effects {
+		if effect.OpType == event.CREATE {
+			newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
+		}
+		if effect.OpType == event.UPDATE || effect.OpType == event.PATCH {
+			if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
+				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.ObjectKey))
+			}
+			newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
+		}
+		if effect.OpType == event.DELETE {
+			if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
+				panic("delete effect object not found in prev state: " + fmt.Sprintf("%s", effect.ObjectKey))
+			}
+			delete(newObjectVersions, effect.ObjectKey)
+		}
 
 		// increment resourceversion for the kind
-		newSequences[iKey.Kind] += 1
+		newSequences[effect.ObjectKey.Kind] += 1
 	}
 
+	newStateEvents := slices.Clone(state.Contents.stateEvents)
 	for _, effect := range effects {
-		if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
-			panic("effect object not found in new state: " + fmt.Sprintf("%s", effect.ObjectKey))
-		}
 		kind := effect.ObjectKey.Kind
 		currSeqForKind := newSequences[kind]
 		stateEvent := StateEvent{
@@ -297,7 +310,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	currHistory := slices.Clone(state.ExecutionHistory)
 
 	return StateNode{
-		objects: StateSnapshot{
+		Contents: StateSnapshot{
 			contents:      newObjectVersions,
 			KindSequences: newSequences,
 			stateEvents:   newStateEvents,
@@ -394,7 +407,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, pending Pen
 		return []StateNode{currState}, nil
 	}
 
-	currSnapshot := currState.objects
+	currSnapshot := currState.Contents
 	all, err := getAllStaleViewsForController(&currSnapshot, pending.ReconcilerID, e.dependencies)
 	fmt.Println("produced", len(all), "stale views for", pending.ReconcilerID)
 	if err != nil {
@@ -403,7 +416,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, pending Pen
 
 	asStateNodes := lo.Map(all, func(snapshot *StateSnapshot, _ int) StateNode {
 		return StateNode{
-			objects:           *snapshot,
+			Contents:          *snapshot,
 			PendingReconciles: slices.Clone(currState.PendingReconciles),
 			parent:            currState.parent,
 			action:            currState.action,

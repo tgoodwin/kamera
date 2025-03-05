@@ -111,7 +111,7 @@ func (c *converterImpl) getStart() StateNode {
 	firstRecord := c.orderedJoinRecords[0]
 	firstOV := c.reconcileIDToReads[firstRecord.event.ReconcileID]
 	return StateNode{
-		objects: StateSnapshot{
+		Contents: StateSnapshot{
 			contents: firstOV,
 			KindSequences: map[string]int64{
 				firstRecord.ikey.Kind: 1,

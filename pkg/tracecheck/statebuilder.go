@@ -93,7 +93,7 @@ func (b *StateEventBuilder) Build() StateNode {
 	snapshot := replayEventsToState(b.events)
 	pending := []PendingReconcile{}
 	return StateNode{
-		objects:           *snapshot,
+		Contents:          *snapshot,
 		PendingReconciles: pending,
 	}
 }
@@ -117,7 +117,7 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 	})
 
 	return StateNode{
-		objects: StateSnapshot{
+		Contents: StateSnapshot{
 			contents: ObjectVersions{ikey: vHash},
 			KindSequences: map[string]int64{
 				ikey.Kind: 1,

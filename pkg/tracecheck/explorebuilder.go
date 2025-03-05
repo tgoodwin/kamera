@@ -178,7 +178,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	})
 
 	return StateNode{
-		objects: StateSnapshot{
+		Contents: StateSnapshot{
 			contents: ObjectVersions{ikey: vHash},
 			KindSequences: map[string]int64{
 				ikey.Kind: 1,

@@ -127,7 +127,7 @@ type ObservableState interface {
 }
 
 type StateNode struct {
-	objects StateSnapshot
+	Contents StateSnapshot
 	// PendingReconciles is a list of controller IDs that are pending reconciliation.
 	// In our "game tree", they represent branches that we can explore.
 	PendingReconciles []PendingReconcile
@@ -148,7 +148,7 @@ func (sn StateNode) IsConverged() bool {
 }
 
 func (sn StateNode) Objects() ObjectVersions {
-	return sn.objects.Objects()
+	return sn.Contents.Objects()
 }
 
 func (sn StateNode) Summarize() {

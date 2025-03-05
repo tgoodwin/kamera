@@ -2,6 +2,7 @@ package test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -127,16 +128,15 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster")
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
 
-	// Build the state events
-	initialState := stateBuilder.Build()
-
-	eb.WithStalenessDepth(1) // Enable staleness exploration
+	eb.WithStalenessDepth(0) // Enable staleness exploration
 
 	explorer, err := eb.Build("standalone")
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	// Build the state events
+	initialState := stateBuilder.Build()
 	initialState.PendingReconciles = []tracecheck.PendingReconcile{
 		{
 			ReconcilerID: "ZookeeperReconciler",
@@ -148,6 +148,14 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 			},
 		},
 	}
+
+	initialState.Contents.Debug()
+	newState, _ := initialState.Contents.Adjust("ZookeeperCluster", -1)
+	newState, _ = newState.Adjust("ZookeeperCluster", -1)
+	fmt.Println("new state")
+	newState.Debug()
+
+	initialState.Contents = *newState
 
 	// // Create a custom StateSnapshot with our state events
 	// stateSnapshot := &tracecheck.StateSnapshot{

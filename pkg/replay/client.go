@@ -10,6 +10,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -51,7 +52,18 @@ func NewClient(reconcilerID string, scheme *runtime.Scheme, frameReader frameRea
 
 var _ client.Client = (*Client)(nil)
 
+// TODO FIX THIS
+// inferListKind returns the Kind of the objects contained in the list
 func inferListKind(list client.ObjectList) string {
+	if unstructuredList, ok := list.(*unstructured.UnstructuredList); ok {
+		kind := unstructuredList.GetKind()
+		// if suffixed with "List", remove it
+		if len(kind) > 4 && kind[len(kind)-4:] == "List" {
+			return kind[:len(kind)-4]
+		}
+		return kind
+	}
+
 	itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
 	if !itemsValue.IsValid() {
 		panic("List object does not have Items field")

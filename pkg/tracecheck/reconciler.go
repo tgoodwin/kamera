@@ -49,6 +49,13 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	frameID := util.UUID()
 	// insert a "frame" to hold the readset data ahead of the reconcile
 	r.InsertCacheFrame(frameID, r.toFrameData(currState))
+	frameData := r.toFrameData(currState)
+	fmt.Printf("frame data for frameID: %s\n", frameID)
+	for kind, objs := range frameData {
+		for nn, obj := range objs {
+			fmt.Printf("kind: %s, nn: %s, obj: %v\n", kind, nn, obj)
+		}
+	}
 
 	compare := false
 	if compare {
