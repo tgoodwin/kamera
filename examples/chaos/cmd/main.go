@@ -13,7 +13,6 @@ import (
 	appsv1 "github.com/tgoodwin/sleeve/examples/chaos/api/v1"
 	controller "github.com/tgoodwin/sleeve/examples/chaos/internal/controller"
 	tracecheck "github.com/tgoodwin/sleeve/pkg/tracecheck"
-	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
@@ -28,34 +27,29 @@ func init() {
 }
 
 func main() {
-	tc := tracecheck.NewTraceChecker(scheme)
-	deps := make(tracecheck.ResourceDeps)
+	eb := tracecheck.NewExplorerBuilder(scheme)
 
-	tc.AddReconciler("OrchestrationReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("OrchestrationReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
 		return &controller.OrchestrationReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
-	tc.AddReconciler("HealthReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("HealthReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
 		return &controller.HealthReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
 
-	tc.AssignReconcilerToKind("OrchestrationReconciler", "Orchestration")
-	tc.AssignReconcilerToKind("HealthReconciler", "Orchestration")
-
-	deps["Orchestration"] = make(util.Set[string])
-	deps["Orchestration"].Add("OrchestrationReconciler")
-	deps["Orchestration"].Add("HealthReconciler")
-	tc.ResourceDeps = deps
+	eb.AssignReconcilerToKind("OrchestrationReconciler", "Orchestration")
+	eb.AssignReconcilerToKind("HealthReconciler", "Orchestration")
+	eb.WithResourceDep("Orchestration", "OrchestrationReconciler", "HealthReconciler")
 
 	logger := zap.New(zap.UseDevMode(true))
 	log.SetLogger(logger)
 
-	tc.AddEmitter(tracecheck.NewDebugEmitter())
+	eb.WithEmitter(tracecheck.NewDebugEmitter())
 
 	topLevelObj := &appsv1.Orchestration{
 		ObjectMeta: metav1.ObjectMeta{
@@ -75,8 +69,11 @@ func main() {
 		},
 	}
 
-	initialState := tc.GetStartStateFromObject(topLevelObj, "OrchestrationReconciler", "HealthReconciler")
-	explorer := tc.NewExplorer(20)
+	initialState := eb.GetStartStateFromObject(topLevelObj, "OrchestrationReconciler", "HealthReconciler")
+	explorer, err := eb.Build("standalone")
+	if err != nil {
+		panic(err)
+	}
 
 	ctx := log.IntoContext(context.Background(), logger)
 	result := explorer.Explore(ctx, initialState)

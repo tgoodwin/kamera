@@ -261,9 +261,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 			frameInserter:  frameManager,
 		}
 		container := ReconcilerContainer{
-			// TODO refactor
 			reconcileImpl: &rImpl,
-			harness:       h,
 		}
 		out[reconcilerID] = container
 

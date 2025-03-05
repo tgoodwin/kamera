@@ -12,7 +12,6 @@ import (
 	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/sleeve/pkg/test/integration/internal/controller"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
-	"github.com/tgoodwin/sleeve/pkg/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
@@ -32,34 +31,27 @@ func formatResults(paths []tracecheck.ExecutionHistory) [][]string {
 }
 
 func TestExhaustiveInterleavings(t *testing.T) {
-	tc := tracecheck.NewTraceChecker(scheme)
-	deps := make(tracecheck.ResourceDeps)
-	deps["Foo"] = make(util.Set[string])
-	deps["Foo"].Add("FooController")
-	deps["Foo"].Add("BarController")
-
-	tc.ResourceDeps = deps
+	eb := tracecheck.NewExplorerBuilder(scheme)
+	eb.WithMaxDepth(10)
+	eb.WithEmitter(event.NewInMemoryEmitter())
+	eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
+		return &controller.TestReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	})
+	eb.WithReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
+		return &controller.TestReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	})
+	eb.WithResourceDep("Foo", "FooController", "BarController")
+	eb.AssignReconcilerToKind("FooController", "Foo")
+	eb.AssignReconcilerToKind("BarController", "Foo")
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
-	tc.AddReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
-		return &controller.TestReconciler{
-			Client: c,
-			Scheme: scheme,
-		}
-	})
-	tc.AddReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
-		return &controller.TestReconciler{
-			Client: c,
-			Scheme: scheme,
-		}
-	})
-
-	// tell the model checker which reconcilers subscribe to which kinds
-	tc.AssignReconcilerToKind("FooController", "Foo")
-	tc.AssignReconcilerToKind("BarController", "Foo")
-
-	tc.AddEmitter(event.NewInMemoryEmitter())
 
 	topLevelObj := &appsv1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
@@ -79,8 +71,11 @@ func TestExhaustiveInterleavings(t *testing.T) {
 		},
 	}
 
-	initialState := tc.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
-	explorer := tc.NewExplorer(10)
+	initialState := eb.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
+	explorer, err := eb.Build("standalone")
+	if err != nil {
+		t.Fail()
+	}
 
 	result := explorer.Explore(context.Background(), initialState)
 
@@ -111,33 +106,27 @@ func TestExhaustiveInterleavings(t *testing.T) {
 }
 
 func TestConvergedStateIdentification(t *testing.T) {
-	tc := tracecheck.NewTraceChecker(scheme)
-	deps := make(tracecheck.ResourceDeps)
-	deps["Foo"] = make(util.Set[string])
-	deps["Foo"].Add("FooController")
-	deps["Foo"].Add("BarController")
-
-	tc.ResourceDeps = deps
+	eb := tracecheck.NewExplorerBuilder(scheme)
+	eb.WithMaxDepth(10)
+	eb.WithEmitter(event.NewInMemoryEmitter())
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
-	tc.AddReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
 		return &controller.FooReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
-	tc.AddReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
 		return &controller.BarReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
-
-	tc.AssignReconcilerToKind("FooController", "Foo")
-	tc.AssignReconcilerToKind("BarController", "Foo")
-
-	tc.AddEmitter(event.NewInMemoryEmitter())
+	eb.WithResourceDep("Foo", "FooController", "BarController")
+	eb.AssignReconcilerToKind("FooController", "Foo")
+	eb.AssignReconcilerToKind("BarController", "Foo")
 
 	topLevelObj := &appsv1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
@@ -157,8 +146,11 @@ func TestConvergedStateIdentification(t *testing.T) {
 		},
 	}
 
-	initialState := tc.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
-	explorer := tc.NewExplorer(10)
+	initialState := eb.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
+	explorer, err := eb.Build("standalone")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	result := explorer.Explore(context.Background(), initialState)
 	assert.Equal(t, 2, len(result.ConvergedStates))

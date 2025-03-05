@@ -69,31 +69,32 @@ func (c CacheFrame) Dump() {
 	}
 }
 
-// frameContainer maps reconcileID -> CacheFrame
-type frameContainer map[string]CacheFrame
+// CacheFrameContainer maps reconcileID -> CacheFrame
+type CacheFrameContainer map[string]CacheFrame
 
 type FrameManager struct {
-	Frames frameContainer
+	cacheFrames             CacheFrameContainer
+	replayFramesByReconcile map[string]*Frame
 }
 
-func NewFrameManager(initialFrames frameContainer) *FrameManager {
+func NewFrameManager(initialFrames CacheFrameContainer) *FrameManager {
 	if initialFrames == nil {
-		initialFrames = make(frameContainer)
+		initialFrames = make(CacheFrameContainer)
 	}
 	return &FrameManager{
-		Frames: initialFrames,
+		cacheFrames: initialFrames,
 	}
 }
 
 func (fm *FrameManager) InsertCacheFrame(reconcileID string, data CacheFrame) {
-	if _, ok := fm.Frames[reconcileID]; ok {
+	if _, ok := fm.cacheFrames[reconcileID]; ok {
 		panic(fmt.Sprintf("frame %s already exists", reconcileID))
 	}
-	fm.Frames[reconcileID] = data
+	fm.cacheFrames[reconcileID] = data
 }
 
 func (fm *FrameManager) GetCacheFrame(reconcileID string) (CacheFrame, error) {
-	if frame, ok := fm.Frames[reconcileID]; ok {
+	if frame, ok := fm.cacheFrames[reconcileID]; ok {
 		return frame, nil
 	}
 	return nil, fmt.Errorf("frame %s not found", reconcileID)

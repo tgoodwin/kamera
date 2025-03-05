@@ -23,7 +23,6 @@ type reconciler interface {
 
 type ReconcilerContainer struct {
 	*reconcileImpl
-	harness *replay.Harness
 }
 
 type Explorer struct {
@@ -70,12 +69,8 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		if _, ok := e.reconcilers[reconcilerID]; !ok {
 			panic(fmt.Sprintf("reconciler %s not found", reconcilerID))
 		}
-		harness := e.reconcilers[reconcilerID].harness
 		// this just contains the traced reconcile.Request object
-		frame, err := harness.FrameForReconcile(reconcile.ReconcileID)
-		if err != nil {
-			panic(fmt.Sprintf("frame not found for reconcileID %s", reconcile.ReconcileID))
-		}
+		frame := reconcile.Frame
 		fmt.Println("\nReplaying ReconcileID", frame.ID, "for reconciler", reconcilerID)
 
 		rebuiltState = e.knowledgeManager.GetStateAtReconcileID(reconcile.ReconcileID)
@@ -92,11 +87,11 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 		changes := res.Changes
 		// TODO this is not working due to anonymization
-		res.Deltas = reconciler.computeDeltas(rebuiltState.contents, changes.objectVersions)
+		res.Deltas = reconciler.computeDeltas(rebuiltState.contents, changes.ObjectVersions)
 
-		fmt.Println("Reconcile result - # changes:", len(changes.objectVersions))
-		changes.objectVersions.Summarize()
-		for _, eff := range changes.effects {
+		fmt.Println("Reconcile result - # changes:", len(changes.ObjectVersions))
+		changes.ObjectVersions.Summarize()
+		for _, eff := range changes.Effects {
 			fmt.Printf("\top: %s, ikey: %s\n", eff.OpType, eff.ObjectKey)
 		}
 
@@ -112,7 +107,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 			// TODO have the list of effects by the input to getTriggeredReconcilers
 			// to properly handle deletes
-			triggeredByLastChange := e.getTriggeredReconcilers(changes.objectVersions)
+			triggeredByLastChange := e.getTriggeredReconcilers(changes.ObjectVersions)
 			sn := StateNode{
 				DivergencePoint: reconcile.ReconcileID,
 				// top-level state to explore
@@ -260,7 +255,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	newSequences := make(map[string]int64)
 	maps.Copy(state.objects.KindSequences, newSequences)
 
-	effects := reconcileResult.Changes.effects
+	effects := reconcileResult.Changes.Effects
 
 	// update the state with the new object versions
 	newObjectVersions := make(ObjectVersions)
@@ -287,7 +282,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		newStateEvents = append(newStateEvents, stateEvent)
 	}
 
-	for iKey, newVersion := range reconcileResult.Changes.objectVersions {
+	for iKey, newVersion := range reconcileResult.Changes.ObjectVersions {
 		newObjectVersions[iKey] = newVersion
 
 		// increment resourceversion for the kind
@@ -297,7 +292,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// get the controllers that depend on the objects that were changed
 	// and add them to the pending reconciles list. n.b. this may potentially
 	// include the controller that was just executed.
-	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes.objectVersions)
+	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes.ObjectVersions)
 	newPendingReconciles = getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
 	logger.V(2).WithValues("reconcilerID", pr.ReconcilerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
 

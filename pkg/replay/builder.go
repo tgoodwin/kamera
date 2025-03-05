@@ -137,20 +137,60 @@ func (b *Builder) AnalyzeObject(objectID string) {
 type ReconcileEvent struct {
 	ReconcileID  string
 	ControllerID string
+	Frame        Frame
 }
 
 func (b *Builder) OrderedReconcileEvents() []ReconcileEvent {
 	traceEvents := b.Events()
-	// sort by timestamp
-	sort.Slice(traceEvents, func(i, j int) bool {
-		return traceEvents[i].Timestamp < traceEvents[j].Timestamp
-	})
-	// map to ReconcileEvent
-	reconcileEvents := lo.Map(traceEvents, func(e event.Event, _ int) ReconcileEvent {
-		return ReconcileEvent{ReconcileID: e.ReconcileID, ControllerID: e.ControllerID}
-	})
 
-	return lo.Uniq(reconcileEvents)
+	byReconcile := lo.GroupBy(traceEvents, func(e event.Event) string {
+		return e.ReconcileID
+	})
+	out := make([]ReconcileEvent, 0)
+	for reconcileID, events := range byReconcile {
+		// assert that all events in a reconcileID group have the same controllerID
+		controllerID := events[0].ControllerID
+		for _, e := range events {
+			if e.ControllerID != controllerID {
+				fmt.Printf("WARNING: reconcileID %s has multiple controllerIDs: %s, %s\n", reconcileID, controllerID, e.ControllerID)
+			}
+		}
+		// sort events by timestamp
+		sort.Slice(events, func(i, j int) bool {
+			return events[i].Timestamp < events[j].Timestamp
+		})
+
+		reads, _ := event.FilterReadsWrites(events)
+		req, err := b.inferReconcileRequestFromReadset(controllerID, reads)
+		if err != nil {
+			fmt.Println("Error inferring reconcile request:", err)
+		}
+		fmt.Printf("ReconcileID: %s, ControllerID: %s, Req: %v\n", reconcileID, controllerID, req)
+		// cacheFrame, err := b.generateCacheFrame(reads)
+		// if err != nil {
+		// 	fmt.Println("Error generating cache frame:", err)
+		// }
+		rootEventID := getRootIDFromEvents(events)
+		earliestTs := events[0].Timestamp
+
+		frame := Frame{Type: FrameTypeTraced, ID: reconcileID, Req: req, sequenceID: earliestTs, TraceyRootID: rootEventID}
+		out = append(out, ReconcileEvent{ReconcileID: reconcileID, ControllerID: controllerID, Frame: frame})
+
+	}
+	// // sort by timestamp
+	// sort.Slice(traceEvents, func(i, j int) bool {
+	// 	return traceEvents[i].Timestamp < traceEvents[j].Timestamp
+	// })
+	// // map to ReconcileEvent
+	// reconcileEvents := lo.Map(traceEvents, func(e event.Event, _ int) ReconcileEvent {
+	// 	return ReconcileEvent{ReconcileID: e.ReconcileID, ControllerID: e.ControllerID}
+	// })
+
+	uniq := lo.Uniq(out)
+	if len(uniq) != len(out) {
+		fmt.Println("WARNING: duplicate reconcile events found")
+	}
+	return uniq
 }
 
 func (b *Builder) fromTrace(traceData []byte) error {

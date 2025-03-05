@@ -26,7 +26,7 @@ type VersionManager interface {
 type effect struct {
 	OpType    event.OperationType
 	ObjectKey snapshot.IdentityKey
-	version   snapshot.VersionHash
+	Version   snapshot.VersionHash
 }
 
 type reconcileEffects struct {
@@ -41,7 +41,7 @@ func newEffect(kind, uid string, version snapshot.VersionHash, op event.Operatio
 			Kind:     kind,
 			ObjectID: uid,
 		},
-		version: version,
+		Version: version,
 	}
 }
 
@@ -125,12 +125,12 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	for _, eff := range effects.writes {
 		// TODO handle the case where there are multiple writes to the same object
 		// in the same frame
-		out[eff.ObjectKey] = eff.version
+		out[eff.ObjectKey] = eff.Version
 	}
 
 	changes := Changes{
-		objectVersions: out,
-		effects:        effects.writes,
+		ObjectVersions: out,
+		Effects:        effects.writes,
 	}
 	return changes, nil
 }

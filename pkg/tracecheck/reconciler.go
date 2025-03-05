@@ -32,10 +32,14 @@ type reconcileImpl struct {
 
 	reconcile.Reconciler
 
-	// both implemented by teh manager type
+	// both implemented by the manager type
 	versionManager VersionManager
+
 	// effectReader lets us observe what the reconciler did
+	// TODO this could live elsewhere
 	effectReader
+
+	// frameInserter lets us insert the frame data for the wrapped Reconciler's client to read
 	frameInserter
 }
 
@@ -71,7 +75,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
-	deltas := r.computeDeltas(currState, effects.objectVersions)
+	deltas := r.computeDeltas(currState, effects.ObjectVersions)
 	logger.V(2).Info("reconcile complete")
 
 	return &ReconcileResult{

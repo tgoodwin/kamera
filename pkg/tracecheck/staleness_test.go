@@ -560,7 +560,7 @@ func TestReplayEventsToState(t *testing.T) {
 					Timestamp:   "2024-02-21T10:00:01Z",
 					effect: effect{
 						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						version:   snapshot.NewDefaultHash("v1"),
+						Version:   snapshot.NewDefaultHash("v1"),
 						OpType:    event.CREATE,
 					},
 					Sequence: 1,
@@ -581,7 +581,7 @@ func TestReplayEventsToState(t *testing.T) {
 					Timestamp:   "2024-02-21T10:00:01Z",
 					effect: effect{
 						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						version:   snapshot.NewDefaultHash("v1"),
+						Version:   snapshot.NewDefaultHash("v1"),
 						OpType:    event.CREATE,
 					},
 					Sequence: 1,
@@ -609,7 +609,7 @@ func TestReplayEventsToState(t *testing.T) {
 					Timestamp:   "2024-02-21T10:00:01Z",
 					effect: effect{
 						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						version:   snapshot.NewDefaultHash("v1"),
+						Version:   snapshot.NewDefaultHash("v1"),
 						OpType:    event.CREATE,
 					},
 					Sequence: 1,
@@ -619,7 +619,7 @@ func TestReplayEventsToState(t *testing.T) {
 					Timestamp:   "2024-02-21T10:00:02Z",
 					effect: effect{
 						ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-						version:   snapshot.NewDefaultHash("v2"),
+						Version:   snapshot.NewDefaultHash("v2"),
 						OpType:    event.CREATE,
 					},
 					Sequence: 1,
@@ -642,7 +642,7 @@ func TestReplayEventsToState(t *testing.T) {
 					Timestamp:   "2024-02-21T10:00:01Z",
 					effect: effect{
 						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						version:   snapshot.NewDefaultHash("v1"),
+						Version:   snapshot.NewDefaultHash("v1"),
 						OpType:    event.CREATE,
 					},
 					Sequence: 1,
@@ -652,7 +652,7 @@ func TestReplayEventsToState(t *testing.T) {
 					Timestamp:   "2024-02-21T10:00:02Z",
 					effect: effect{
 						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						version:   snapshot.NewDefaultHash("v2"),
+						Version:   snapshot.NewDefaultHash("v2"),
 						OpType:    event.UPDATE,
 					},
 					Sequence: 2,
@@ -684,7 +684,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:01Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-				version:   snapshot.NewDefaultHash("v1"),
+				Version:   snapshot.NewDefaultHash("v1"),
 				OpType:    event.CREATE,
 			},
 			Sequence: 1,
@@ -694,7 +694,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:02Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-				version:   snapshot.NewDefaultHash("v2"),
+				Version:   snapshot.NewDefaultHash("v2"),
 				OpType:    event.UPDATE,
 			},
 			Sequence: 2,
@@ -713,7 +713,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:04Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"},
-				version:   snapshot.NewDefaultHash("v1"),
+				Version:   snapshot.NewDefaultHash("v1"),
 				OpType:    event.CREATE,
 			},
 			Sequence: 4,
@@ -723,7 +723,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:05Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"},
-				version:   snapshot.NewDefaultHash("v2"),
+				Version:   snapshot.NewDefaultHash("v2"),
 				OpType:    event.UPDATE,
 			},
 			Sequence: 5,
@@ -742,7 +742,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:07Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-				version:   snapshot.NewDefaultHash("v1"),
+				Version:   snapshot.NewDefaultHash("v1"),
 				OpType:    event.CREATE,
 			},
 			Sequence: 1,
@@ -752,7 +752,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:08Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-				version:   snapshot.NewDefaultHash("v2"),
+				Version:   snapshot.NewDefaultHash("v2"),
 				OpType:    event.UPDATE,
 			},
 			Sequence: 2,
@@ -771,7 +771,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:10Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-2"},
-				version:   snapshot.NewDefaultHash("v1"),
+				Version:   snapshot.NewDefaultHash("v1"),
 				OpType:    event.CREATE,
 			},
 			Sequence: 4,
@@ -781,7 +781,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:11Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-2"},
-				version:   snapshot.NewDefaultHash("v2"),
+				Version:   snapshot.NewDefaultHash("v2"),
 				OpType:    event.UPDATE,
 			},
 			Sequence: 5,
@@ -964,7 +964,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:01Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-				version:   snapshot.NewDefaultHash("v1"),
+				Version:   snapshot.NewDefaultHash("v1"),
 				OpType:    event.CREATE,
 			},
 			Sequence: 1,
@@ -974,7 +974,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:02Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-				version:   snapshot.NewDefaultHash("v2"),
+				Version:   snapshot.NewDefaultHash("v2"),
 				OpType:    event.UPDATE,
 			},
 			Sequence: 2,
@@ -984,7 +984,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:03Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-				version:   snapshot.NewDefaultHash("v1"),
+				Version:   snapshot.NewDefaultHash("v1"),
 				OpType:    event.CREATE,
 			},
 			Sequence: 1,
@@ -994,7 +994,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			Timestamp:   "2024-02-21T10:00:04Z",
 			effect: effect{
 				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-				version:   snapshot.NewDefaultHash("v2"),
+				Version:   snapshot.NewDefaultHash("v2"),
 				OpType:    event.UPDATE,
 			},
 			Sequence: 2,

@@ -236,7 +236,7 @@ func replayEventsToState(events []StateEvent) *StateSnapshot {
 		if e.effect.OpType == event.DELETE {
 			delete(state.contents, iKey)
 		} else {
-			version := e.effect.version
+			version := e.effect.Version
 			state.contents[iKey] = version
 		}
 		state.KindSequences[iKey.Kind] = e.Sequence

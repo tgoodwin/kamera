@@ -15,7 +15,7 @@ import (
 type Harness struct {
 	ReconcilerID       string
 	frames             []Frame
-	frameDataByFrameID frameContainer
+	frameDataByFrameID CacheFrameContainer
 
 	// trace data effect by frameID (reconcileID)
 	tracedEffects map[string]DataEffect
@@ -38,7 +38,7 @@ func newHarness(reconcilerID string, frames []Frame, frameData map[string]CacheF
 	}
 }
 
-func (p *Harness) FrameData() frameContainer {
+func (p *Harness) FrameData() CacheFrameContainer {
 	copy := make(map[string]CacheFrame)
 	maps.Copy(copy, p.frameDataByFrameID)
 	return copy

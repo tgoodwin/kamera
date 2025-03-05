@@ -11,25 +11,25 @@ func Test_ExecutionHistoryFilterNoOps(t *testing.T) {
 		{
 			ControllerID: "1",
 			FrameID:      "1",
-			Changes:      Changes{objectVersions: ObjectVersions{}},
+			Changes:      Changes{ObjectVersions: ObjectVersions{}},
 			Deltas:       map[snapshot.IdentityKey]Delta{},
 		},
 		{
 			ControllerID: "2",
 			FrameID:      "2",
-			Changes:      Changes{objectVersions: ObjectVersions{}},
+			Changes:      Changes{ObjectVersions: ObjectVersions{}},
 			Deltas:       map[snapshot.IdentityKey]Delta{},
 		},
 		{
 			ControllerID: "3",
 			FrameID:      "3",
-			Changes:      Changes{objectVersions: ObjectVersions{}},
+			Changes:      Changes{ObjectVersions: ObjectVersions{}},
 			Deltas:       map[snapshot.IdentityKey]Delta{},
 		},
 		{
 			ControllerID: "4",
 			FrameID:      "4",
-			Changes: Changes{objectVersions: ObjectVersions{
+			Changes: Changes{ObjectVersions: ObjectVersions{
 				{
 					Kind:     "Pod",
 					ObjectID: "1",
@@ -55,7 +55,7 @@ func Test_GetUniquePaths(t *testing.T) {
 			{
 				ControllerID: "1",
 				FrameID:      "1",
-				Changes: Changes{objectVersions: ObjectVersions{
+				Changes: Changes{ObjectVersions: ObjectVersions{
 					{
 						Kind:     "Pod",
 						ObjectID: "1",
@@ -71,7 +71,7 @@ func Test_GetUniquePaths(t *testing.T) {
 			{
 				ControllerID: "2",
 				FrameID:      "2",
-				Changes:      Changes{objectVersions: ObjectVersions{}},
+				Changes:      Changes{ObjectVersions: ObjectVersions{}},
 				Deltas:       map[snapshot.IdentityKey]Delta{},
 			},
 		},
@@ -79,13 +79,13 @@ func Test_GetUniquePaths(t *testing.T) {
 			{
 				ControllerID: "1",
 				FrameID:      "1",
-				Changes:      Changes{objectVersions: ObjectVersions{}},
+				Changes:      Changes{ObjectVersions: ObjectVersions{}},
 				Deltas:       map[snapshot.IdentityKey]Delta{},
 			},
 			{
 				ControllerID: "2",
 				FrameID:      "2",
-				Changes:      Changes{objectVersions: ObjectVersions{}},
+				Changes:      Changes{ObjectVersions: ObjectVersions{}},
 				Deltas:       map[snapshot.IdentityKey]Delta{},
 			},
 		},
@@ -93,13 +93,13 @@ func Test_GetUniquePaths(t *testing.T) {
 			{
 				ControllerID: "1",
 				FrameID:      "1",
-				Changes:      Changes{objectVersions: ObjectVersions{}},
+				Changes:      Changes{ObjectVersions: ObjectVersions{}},
 				Deltas:       map[snapshot.IdentityKey]Delta{},
 			},
 			{
 				ControllerID: "2",
 				FrameID:      "2",
-				Changes: Changes{objectVersions: ObjectVersions{
+				Changes: Changes{ObjectVersions: ObjectVersions{
 					{
 						Kind:     "Pod",
 						ObjectID: "1",
@@ -115,7 +115,7 @@ func Test_GetUniquePaths(t *testing.T) {
 			{
 				ControllerID: "1",
 				FrameID:      "3",
-				Changes:      Changes{objectVersions: ObjectVersions{}},
+				Changes:      Changes{ObjectVersions: ObjectVersions{}},
 				Deltas:       map[snapshot.IdentityKey]Delta{},
 			},
 		},
@@ -126,7 +126,7 @@ func Test_GetUniquePaths(t *testing.T) {
 			{
 				ControllerID: "1",
 				FrameID:      "1",
-				Changes:      Changes{objectVersions: ObjectVersions{}},
+				Changes:      Changes{ObjectVersions: ObjectVersions{}},
 				Deltas: map[snapshot.IdentityKey]Delta{
 					{
 						Kind:     "Pod",
@@ -139,7 +139,7 @@ func Test_GetUniquePaths(t *testing.T) {
 			{
 				ControllerID: "2",
 				FrameID:      "2",
-				Changes:      Changes{objectVersions: ObjectVersions{}},
+				Changes:      Changes{ObjectVersions: ObjectVersions{}},
 				Deltas: map[snapshot.IdentityKey]Delta{
 					{
 						Kind:     "Pod",
