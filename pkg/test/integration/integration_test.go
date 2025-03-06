@@ -10,7 +10,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
-	"github.com/tgoodwin/sleeve/pkg/test/integration/internal/controller"
+	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"

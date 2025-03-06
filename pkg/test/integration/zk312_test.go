@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/test/integration/internal/controller"
+	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -145,6 +145,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 
 	// TODO configure staleness depth
 	eb.WithStalenessDepth(1) // Enable staleness exploration
+	eb.WithMaxDepth(8)       // tuned this experimentally
 
 	explorer, err := eb.Build("standalone")
 	if err != nil {
