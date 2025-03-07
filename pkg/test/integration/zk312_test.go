@@ -145,7 +145,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 
 	// TODO configure staleness depth
 	eb.WithStalenessDepth(1) // Enable staleness exploration
-	eb.WithMaxDepth(8)       // tuned this experimentally
+	eb.WithMaxDepth(2)       // tuned this experimentally
 
 	explorer, err := eb.Build("standalone")
 	if err != nil {

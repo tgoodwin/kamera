@@ -1016,11 +1016,12 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 	expectedStaleViews := []*StateSnapshot{
 		{
 			contents: ObjectVersions{
-				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v1"),
+				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v1"),
 			},
 			KindSequences: map[string]int64{
-				// "Pod":     0,
-				"Service": 2,
+				"Pod":     1,
+				"Service": 1,
 			},
 			stateEvents: events[:2],
 		},
@@ -1037,16 +1038,6 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		},
 		{
 			contents: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v2"),
-			},
-			KindSequences: map[string]int64{
-				"Pod": 2,
-				// "Service": 0,
-			},
-			stateEvents: events[:2],
-		},
-		{
-			contents: ObjectVersions{
 				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
 				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v1"),
 			},
@@ -1056,15 +1047,39 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			},
 			stateEvents: events[:3],
 		},
+		{
+			contents: ObjectVersions{
+				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
+				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+			},
+			KindSequences: map[string]int64{
+				"Pod":     2,
+				"Service": 2,
+			},
+			stateEvents: events,
+		},
 	}
 
 	staleViews := getAllPossibleViews(state, []string{"Pod", "Service"})
 
 	assert.Equal(t, len(expectedStaleViews), len(staleViews))
 
-	for i, expected := range expectedStaleViews {
+	expectedMap := make(map[string]*StateSnapshot)
+	for _, expected := range expectedStaleViews {
+		key := fmt.Sprintf("%v", expected.KindSequences)
+		expectedMap[key] = expected
+	}
+
+	for _, staleView := range staleViews {
+		key := fmt.Sprintf("%v", staleView.KindSequences)
+		expected, exists := expectedMap[key]
+		if !exists {
+			t.Errorf("Unexpected stale view with KindSequences %v", staleView.KindSequences)
+			continue
+		}
+
 		expectedObjects := expected.Objects()
-		staleViewObjects := staleViews[i].Objects()
+		staleViewObjects := staleView.Objects()
 		assert.Equal(t, len(expectedObjects), len(staleViewObjects))
 		for key, expectedVersion := range expectedObjects {
 			staleVersion, exists := staleViewObjects[key]
@@ -1073,9 +1088,9 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			}
 			assert.Equal(t, expectedVersion, staleVersion)
 		}
-		assert.Equal(t, len(expected.KindSequences), len(staleViews[i].KindSequences))
+		assert.Equal(t, len(expected.KindSequences), len(staleView.KindSequences))
 		for kind, seq := range expected.KindSequences {
-			assert.Equal(t, seq, staleViews[i].KindSequences[kind])
+			assert.Equal(t, seq, staleView.KindSequences[kind])
 		}
 	}
 }
