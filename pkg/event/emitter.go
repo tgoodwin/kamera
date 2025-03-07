@@ -154,3 +154,25 @@ func (i *InMemoryEmitter) Dump(frameID string) []string {
 
 	return logs
 }
+
+type DebugEmitter struct {
+	fileEmitter *FileEmitter
+	*InMemoryEmitter
+}
+
+func NewDebugEmitter() *DebugEmitter {
+	return &DebugEmitter{
+		fileEmitter:     NewFileEmitter("debug.log"),
+		InMemoryEmitter: NewInMemoryEmitter(),
+	}
+}
+
+func (d *DebugEmitter) LogOperation(e *Event) {
+	d.fileEmitter.LogOperation(e)
+	d.InMemoryEmitter.LogOperation(e)
+}
+
+func (d *DebugEmitter) LogObjectVersion(r snapshot.Record) {
+	d.fileEmitter.LogObjectVersion(r)
+	d.InMemoryEmitter.LogObjectVersion(r)
+}
