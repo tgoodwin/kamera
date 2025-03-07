@@ -76,10 +76,15 @@ func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 		if err != nil {
 			return err
 		}
-		for key, d := range r.Deltas {
-			_, err := fmt.Fprintf(file, "\t%s: %s\n", key, d)
-			if err != nil {
+		for _, effect := range r.Changes.Effects {
+			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.ObjectKey); err != nil {
 				return err
+			}
+			if _, hasDelta := r.Deltas[effect.ObjectKey]; hasDelta {
+				_, err := fmt.Fprintf(file, "\t%s: %s\n", effect.ObjectKey, r.Deltas[effect.ObjectKey])
+				if err != nil {
+					return err
+				}
 			}
 		}
 	}
