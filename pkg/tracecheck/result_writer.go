@@ -42,20 +42,68 @@ func sanitizePath(outDir string) string {
 	return path.Join(cwd, outDir)
 }
 
-func (tc *ResultWriter) MaterializeResults(result *Result, outDir string) {
+func (rw *ResultWriter) MaterializeClassified(results []ClassifiedState, outDir string) {
 	sanitizedOutDir := sanitizePath(outDir)
-	if err := os.MkdirAll(outDir, os.ModePerm); err != nil {
+	if err := os.MkdirAll(sanitizedOutDir, os.ModePerm); err != nil {
 		log.Fatalf("failed to create output directory: %v", err)
 	}
-	for i, convergedState := range result.ConvergedStates {
-		outFile := fmt.Sprintf("%s/state-%d-summary.md", sanitizedOutDir, i)
-		tracePrefix := fmt.Sprintf("%s/state-%d", sanitizedOutDir, i)
-		tc.writeStateSummary(convergedState, outFile)
-		tc.materializeTraces(convergedState, tracePrefix)
+
+	happyDir := path.Join(sanitizedOutDir, "happy")
+	badDir := path.Join(sanitizedOutDir, "bad")
+
+	if err := os.MkdirAll(happyDir, os.ModePerm); err != nil {
+		log.Fatalf("failed to create happy directory: %v", err)
+	}
+	if err := os.MkdirAll(badDir, os.ModePerm); err != nil {
+		log.Fatalf("failed to create bad directory: %v", err)
+	}
+
+	happyTracesDir := path.Join(happyDir, "traces")
+	badTracesDir := path.Join(badDir, "traces")
+
+	if err := os.MkdirAll(happyTracesDir, os.ModePerm); err != nil {
+		log.Fatalf("failed to create happy traces directory: %v", err)
+	}
+	if err := os.MkdirAll(badTracesDir, os.ModePerm); err != nil {
+		log.Fatalf("failed to create bad traces directory: %v", err)
+	}
+
+	for _, result := range results {
+		var outFile, tracePrefix string
+		if result.Classification == "happy" {
+			outFile = fmt.Sprintf("%s/%s-summary.md", happyDir, result.ID)
+			tracePrefix = fmt.Sprintf("%s/%s", happyTracesDir, result.ID)
+		} else if result.Classification == "bad" {
+			outFile = fmt.Sprintf("%s/%s-summary.md", badDir, result.ID)
+			tracePrefix = fmt.Sprintf("%s/%s", badTracesDir, result.ID)
+		} else {
+			log.Fatalf("unknown classification: %s", result.Classification)
+		}
+		rw.writeStateSummary(result.State, outFile)
+		rw.materializeTraces(result.State, tracePrefix)
 	}
 }
 
-func (tc *ResultWriter) writeStateSummary(state ConvergedState, outPath string) {
+func (rw *ResultWriter) MaterializeResults(result *Result, outDir string) {
+	sanitizedOutDir := sanitizePath(outDir)
+	if err := os.MkdirAll(sanitizedOutDir, os.ModePerm); err != nil {
+		log.Fatalf("failed to create output directory: %v", err)
+	}
+
+	tracesDir := path.Join(sanitizedOutDir, "traces")
+	if err := os.MkdirAll(tracesDir, os.ModePerm); err != nil {
+		log.Fatalf("failed to create traces directory: %v", err)
+	}
+
+	for i, convergedState := range result.ConvergedStates {
+		outFile := fmt.Sprintf("%s/state-%d-summary.md", sanitizedOutDir, i)
+		tracePrefix := fmt.Sprintf("%s/state-%d", tracesDir, i)
+		rw.writeStateSummary(convergedState, outFile)
+		rw.materializeTraces(convergedState, tracePrefix)
+	}
+}
+
+func (rw *ResultWriter) writeStateSummary(state ConvergedState, outPath string) {
 	file, err := os.Create(outPath)
 	if err != nil {
 		log.Fatalf("failed to create state summary file: %v", err)
@@ -109,7 +157,7 @@ func (tc *ResultWriter) writeStateSummary(state ConvergedState, outPath string) 
 	}
 }
 
-func (tc *ResultWriter) materializeTraces(state ConvergedState, outPrefix string) {
+func (rw *ResultWriter) materializeTraces(state ConvergedState, outPrefix string) {
 	// filter out no-ops
 	uniquePaths := GetUniquePaths(state.Paths)
 	for i, path := range uniquePaths {
@@ -122,7 +170,7 @@ func (tc *ResultWriter) materializeTraces(state ConvergedState, outPrefix string
 		defer file.Close()
 
 		for _, reconcileResult := range path {
-			logs := tc.emitter.Dump(reconcileResult.FrameID)
+			logs := rw.emitter.Dump(reconcileResult.FrameID)
 			for _, line := range logs {
 				if _, err := file.WriteString(line + "\n"); err != nil {
 					log.Fatalf("failed to write trace: %v", err)

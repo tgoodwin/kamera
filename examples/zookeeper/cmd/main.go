@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/samber/lo"
 	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
@@ -190,12 +191,26 @@ func main() {
 	// Explore all possible execution paths
 	result := explorer.Explore(context.Background(), initialState)
 
-	resultWriter := tracecheck.NewResultWriter(emitter)
-	resultWriter.MaterializeResults(result, "testresults")
+	// resultWriter := tracecheck.NewResultWriter(emitter)
+	// resultWriter.MaterializeResults(result, "testresults")
 	fmt.Println("number of converged states: ", len(result.ConvergedStates))
 
-	// flag.Parse()
+	classifier := eb.NewStateClassifier()
+	predicateBuilder := classifier.NewPredicateBuilder()
+	pred := predicateBuilder.And(
+		predicateBuilder.ObjectsCountOfKind("ZookeeperCluster", 1),
+		predicateBuilder.ObjectsCountOfKind("PersistentVolumeClaim", 3),
+	)
+	classified := classifier.ClassifyResults(result.ConvergedStates, pred)
+	happy := lo.Filter(classified, func(s tracecheck.ClassifiedState, _ int) bool {
+		return s.Classification == "happy"
+	})
+	sad := lo.Filter(classified, func(s tracecheck.ClassifiedState, _ int) bool {
+		return s.Classification == "bad"
+	})
+	fmt.Println("number of happy states: ", len(happy))
+	fmt.Println("number of sad states: ", len(sad))
 
-	// tc.Unique(stateNodes)
-	// tc.MaterializeResults(result, "results")
+	resultWriter := tracecheck.NewResultWriter(emitter)
+	resultWriter.MaterializeClassified(classified, "testresults")
 }

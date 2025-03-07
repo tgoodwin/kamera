@@ -9,6 +9,60 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+type StateClassifier struct {
+	// The resolver is needed to get the actual object from a version hash
+	resolver VersionManager
+}
+
+func NewStateClassifier(resolver VersionManager) *StateClassifier {
+	return &StateClassifier{
+		resolver: resolver,
+	}
+}
+
+func (s *StateClassifier) ClassifyResults(states []ConvergedState, predicate StatePredicate) []ClassifiedState {
+	classified := []ClassifiedState{}
+	for i, state := range states {
+		classifiedState := ClassifiedState{
+			ID:             fmt.Sprintf("state-%02d", i),
+			State:          state,
+			PassedChecks:   []string{},
+			FailureReasons: []string{},
+		}
+
+		// Evaluate each predicate
+		// for name, predicate := range predicates {
+		passed, reason := predicate(state.State)
+		if passed {
+			classifiedState.Classification = "happy"
+		} else {
+			classifiedState.Classification = "bad"
+			classifiedState.FailureReasons = append(classifiedState.FailureReasons, reason)
+		}
+		// if passed {
+		// 	classifiedState.PassedChecks = append(classifiedState.PassedChecks)
+		// } else {
+		// 	classifiedState.FailureReasons = append(classifiedState.FailureReasons,
+		// 		fmt.Sprintf("%s: %s", name, reason))
+		// }
+		// }
+
+		// Classify the state
+		// if len(classifiedState.FailureReasons) == 0 {
+		// 	classifiedState.Classification = "happy"
+		// } else {
+		// 	classifiedState.Classification = "bad"
+		// }
+		classified = append(classified, classifiedState)
+	}
+
+	return classified
+}
+
+func (s *StateClassifier) NewPredicateBuilder() *PredicateBuilder {
+	return NewPredicateBuilder(s.resolver)
+}
+
 // StatePredicate represents a function that evaluates whether a state meets a specific criterion
 type StatePredicate func(state StateNode) (bool, string)
 
@@ -27,6 +81,7 @@ type ClassifiedResult struct {
 // ClassifiedState holds a state with its classification information
 type ClassifiedState struct {
 	State          ConvergedState
+	ID             string   // something we produce to facilitate bookkeeping during analysis
 	Classification string   // "happy" or "bad"
 	FailureReasons []string // Empty for happy paths
 	PassedChecks   []string // Descriptions of passed checks

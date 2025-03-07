@@ -159,6 +159,12 @@ func (b *ExplorerBuilder) NewStateEventBuilder() *StateEventBuilder {
 	return NewStateEventBuilder(b.snapStore)
 }
 
+func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
+	return NewStateClassifier(
+		newVersionStore(b.snapStore),
+	)
+}
+
 func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...string) StateNode {
 	r := snapshot.AsRecord(obj, "start").ToUnstructured()
 	vHash := b.snapStore.PublishWithStrategy(r, snapshot.AnonymizedHash)
