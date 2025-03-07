@@ -1023,7 +1023,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 				"Pod":     1,
 				"Service": 1,
 			},
-			stateEvents: events[:2],
+			stateEvents: events,
 		},
 		{
 			contents: ObjectVersions{
@@ -1034,7 +1034,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 				"Pod":     1,
 				"Service": 2,
 			},
-			stateEvents: events[:3],
+			stateEvents: events,
 		},
 		{
 			contents: ObjectVersions{
@@ -1045,7 +1045,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 				"Pod":     2,
 				"Service": 1,
 			},
-			stateEvents: events[:3],
+			stateEvents: events,
 		},
 		{
 			contents: ObjectVersions{
@@ -1078,8 +1078,12 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			continue
 		}
 
+		// check that the stale view has the expected "ground truth" objects
+		assert.Equal(t, state.Objects(), staleView.Objects())
+
 		expectedObjects := expected.Objects()
-		staleViewObjects := staleView.Objects()
+		staleViewObjects := staleView.Observe()
+
 		assert.Equal(t, len(expectedObjects), len(staleViewObjects))
 		for key, expectedVersion := range expectedObjects {
 			staleVersion, exists := staleViewObjects[key]

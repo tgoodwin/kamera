@@ -9,6 +9,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/util"
 )
 
 type StateSnapshot struct {
@@ -22,10 +23,35 @@ type StateSnapshot struct {
 	stateEvents []StateEvent // the changes that led to the current objectVersions
 }
 
+func NewStateSnapshot(contents ObjectVersions, kindSequences map[string]int64, stateEvents []StateEvent) StateSnapshot {
+	if len(contents) > 0 && len(kindSequences) == 0 {
+		panic("kind sequences must be non-empty if contents are non-empty")
+	}
+	// do some validation
+	stateKinds := lo.Map(stateEvents, func(e StateEvent, _ int) string {
+		return e.effect.ObjectKey.Kind
+	})
+	stateKindSet := util.NewSet(stateKinds...)
+	seqKinds := lo.Keys(kindSequences)
+	if len(stateKindSet) != len(seqKinds) {
+		panic(fmt.Sprintf("expected a sequence # for every kind in contents! content keys: %v, sequence keys: %v", stateKindSet.List(), seqKinds))
+	}
+	return StateSnapshot{
+		contents:      contents,
+		KindSequences: kindSequences,
+		stateEvents:   stateEvents,
+	}
+}
+
 type ResourceVersion int
 
 func (s *StateSnapshot) Objects() ObjectVersions {
 	return s.contents
+}
+
+func (s *StateSnapshot) Observe() ObjectVersions {
+	ss := replayEventsAtSequence(s.stateEvents, s.KindSequences)
+	return ss.contents
 }
 
 func (s *StateSnapshot) Debug() {
@@ -312,26 +338,24 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 }
 
 func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
-	state := &StateSnapshot{
-		contents:      make(ObjectVersions),
-		KindSequences: make(map[string]int64),
-		stateEvents:   make([]StateEvent, 0),
-	}
+	contents := make(ObjectVersions)
+	KindSequences := make(map[string]int64)
+	stateEvents := make([]StateEvent, 0)
 
 	for _, e := range events {
 		iKey := e.effect.ObjectKey
 		if e.effect.OpType == event.DELETE {
-			delete(state.contents, iKey)
+			delete(contents, iKey)
 		} else {
 			version := e.effect.Version
-			state.contents[iKey] = version
+			contents[iKey] = version
 		}
-		state.KindSequences[iKey.Kind] = e.Sequence
+		KindSequences[iKey.Kind] = e.Sequence
 
-		state.stateEvents = append(state.stateEvents, e)
+		stateEvents = append(stateEvents, e)
 	}
-
-	return state
+	out := NewStateSnapshot(contents, KindSequences, stateEvents)
+	return &out
 }
 
 func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int64) *StateSnapshot {
@@ -347,7 +371,7 @@ func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int6
 
 		kindSeq, exists := sequencesByKind[kind]
 		if !exists {
-			panic(fmt.Sprintf("no sequence found for kind: %s", kind))
+			panic(fmt.Sprintf("no sequence found for kind: %s, %v", kind, sequencesByKind))
 		}
 		// filter out events that are beyond the target sequence
 		kindEventsAtSequence := lo.Filter(kindEvents, func(e StateEvent, _ int) bool {
@@ -387,9 +411,18 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 		if maps.Equal(combo, snapshot.KindSequences) {
 			continue
 		}
-		staleView := replayEventsAtSequence(snapshot.stateEvents, combo)
-		staleView.mode = "adjusted"
-		staleViews = append(staleViews, staleView)
+
+		// we preserve the original state but adjust the sequence numbers
+		// to reflect the new view among all possible stale views.
+		// the stale view must be "observed" via the Observe() method
+		out := NewStateSnapshot(snapshot.contents, combo, snapshot.stateEvents)
+		// 	contents:      snapshot.contents,
+		// 	KindSequences: combo,
+		// 	stateEvents:   snapshot.stateEvents,
+		// 	mode:          "adjusted",
+		// }
+		// staleView.mode = "adjusted"
+		staleViews = append(staleViews, &out)
 	}
 
 	return staleViews
