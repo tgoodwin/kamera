@@ -39,6 +39,25 @@ func UUID() string {
 	return uuid.New().String()
 }
 
+// InferListKind returns the Kind of the objects contained in the list
+func InferListKind(list client.ObjectList) string {
+	if unstructuredList, ok := list.(*unstructured.UnstructuredList); ok {
+		kind := unstructuredList.GetKind()
+		// if suffixed with "List", remove it
+		if len(kind) > 4 && kind[len(kind)-4:] == "List" {
+			return kind[:len(kind)-4]
+		}
+		return kind
+	}
+
+	itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
+	if !itemsValue.IsValid() {
+		panic("List object does not have Items field")
+	}
+	itemType := itemsValue.Type().Elem()
+	return itemType.Name()
+}
+
 func ConvertToUnstructured(obj client.Object) (*unstructured.Unstructured, error) {
 	// Get the GroupVersionKind (GVK) using reflection or Scheme
 	gvk := obj.GetObjectKind().GroupVersionKind()
