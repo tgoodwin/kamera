@@ -122,5 +122,5 @@ func main() {
 		stateNodes = append(stateNodes, convergedState.State)
 	}
 	tc.Unique(stateNodes)
-	tc.MaterializeResults(result, "results")
+	// tc.MaterializeResults(result, "results")
 }

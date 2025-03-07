@@ -73,7 +73,6 @@ func (b *StateEventBuilder) AddStateEvent(kind, objectID string, obj *unstructur
 		ObjectKey: identityKey,
 		Version:   versionHash,
 	}
-	fmt.Println("created effect:", identityKey)
 
 	// Increment sequence
 	b.sequence++

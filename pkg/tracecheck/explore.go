@@ -214,7 +214,6 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 					seenDepths[newState.depth] = true
 				}
 				if newState.depth > e.maxDepth {
-					fmt.Println("Reached max depth", e.maxDepth)
 					result.AbortedPaths += 1
 				} else {
 					queue = append(queue, newState)

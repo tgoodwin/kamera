@@ -142,69 +142,96 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 
 	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef})
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
+	eb.WithMaxDepth(2) // tuned this experimentally
 
-	// TODO configure staleness depth
-	eb.WithStalenessDepth(1) // Enable staleness exploration
-	eb.WithMaxDepth(2)       // tuned this experimentally
+	check := func(res *tracecheck.Result) bool {
+		// Check if any of the converged states show the bug (PVCs deleted incorrectly)
+		bugDetected := false
+		for _, state := range res.ConvergedStates {
+			// Count objects by kind
+			pvcCount := 0
+			hasZookeeper := false
 
-	explorer, err := eb.Build("standalone")
-	if err != nil {
-		t.Fatal(err)
+			for key := range state.State.Objects() {
+				if key.Kind == "ZookeeperCluster" {
+					hasZookeeper = true
+				}
+				if key.Kind == "PersistentVolumeClaim" {
+					pvcCount++
+				}
+			}
+
+			// The bug is observed when Zookeeper exists but PVCs are gone
+			if hasZookeeper && pvcCount == 0 {
+				bugDetected = true
+				t.Logf("Bug detected: ZookeeperCluster exists but all PVCs were incorrectly deleted")
+				break
+			}
+		}
+		return bugDetected
 	}
 
-	// Build the state events
-	initialState := stateBuilder.Build()
-	initialState.PendingReconciles = []tracecheck.PendingReconcile{
-		{
-			ReconcilerID: "ZookeeperReconciler",
-			Request: reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Namespace: "default",
-					Name:      "zk-cluster",
+	t.Run("Bug manifests under stale reads", func(t *testing.T) {
+		eb.WithStalenessDepth(1) // Enable staleness exploration
+
+		explorer, err := eb.Build("standalone")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Build the state events
+		initialState := stateBuilder.Build()
+		initialState.PendingReconciles = []tracecheck.PendingReconcile{
+			{
+				ReconcilerID: "ZookeeperReconciler",
+				Request: reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Namespace: "default",
+						Name:      "zk-cluster",
+					},
 				},
 			},
-		},
-	}
-
-	initialState.Contents.Debug()
-
-	// Set up a test logger
-	// logger := zap.New(zap.UseDevMode(true))
-	// tracecheck.SetLogger(logger)
-	// log.SetLogger(logger)
-
-	// Explore all possible execution paths
-	result := explorer.Explore(context.Background(), initialState)
-
-	resultWriter := tracecheck.NewResultWriter(emitter)
-	resultWriter.MaterializeResults(result, "testresults")
-
-	// Verify results
-	assert.NotEmpty(t, result.ConvergedStates, "Expected at least one converged state")
-
-	// Check if any of the converged states show the bug (PVCs deleted incorrectly)
-	bugDetected := false
-	for _, state := range result.ConvergedStates {
-		// Count objects by kind
-		pvcCount := 0
-		hasZookeeper := false
-
-		for key := range state.State.Objects() {
-			if key.Kind == "ZookeeperCluster" {
-				hasZookeeper = true
-			}
-			if key.Kind == "PersistentVolumeClaim" {
-				pvcCount++
-			}
 		}
 
-		// The bug is observed when Zookeeper exists but PVCs are gone
-		if hasZookeeper && pvcCount == 0 {
-			bugDetected = true
-			t.Logf("Bug detected: ZookeeperCluster exists but all PVCs were incorrectly deleted")
-			break
-		}
-	}
+		// Explore all possible execution paths
+		result := explorer.Explore(context.Background(), initialState)
 
-	assert.True(t, bugDetected, "Bug not detected: should have found a state where the ZookeeperCluster exists but its PVCs were incorrectly deleted")
+		// Verify results
+		assert.NotEmpty(t, result.ConvergedStates, "Expected at least one converged state")
+
+		// Check if any of the converged states show the bug (PVCs deleted incorrectly)
+		bugDetected := check(result)
+		assert.True(t, bugDetected, "Bug not detected: should have found a state where the ZookeeperCluster exists but its PVCs were incorrectly deleted")
+	})
+	t.Run("Bug does not manifest if no staleness", func(t *testing.T) {
+		eb.WithStalenessDepth(0) // default
+
+		explorer, err := eb.Build("standalone")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Build the state events
+		initialState := stateBuilder.Build()
+		initialState.PendingReconciles = []tracecheck.PendingReconcile{
+			{
+				ReconcilerID: "ZookeeperReconciler",
+				Request: reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Namespace: "default",
+						Name:      "zk-cluster",
+					},
+				},
+			},
+		}
+
+		// Explore all possible execution paths
+		result := explorer.Explore(context.Background(), initialState)
+
+		// Verify results
+		assert.NotEmpty(t, result.ConvergedStates, "Expected at least one converged state")
+
+		bugDetected := check(result)
+		assert.False(t, bugDetected, "Bug should not have been detected")
+	})
 }
