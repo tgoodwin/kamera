@@ -89,42 +89,68 @@ func (f *FileEmitter) appendToFile(data string) {
 }
 
 type InMemoryEmitter struct {
-	blobsByRecordID map[string][]string
+	eventsByReconcileID  map[string][]*Event
+	recordsByOperationID map[string][]snapshot.Record
 }
 
 func NewInMemoryEmitter() *InMemoryEmitter {
 	return &InMemoryEmitter{
-		blobsByRecordID: make(map[string][]string),
+		eventsByReconcileID:  make(map[string][]*Event),
+		recordsByOperationID: make(map[string][]snapshot.Record),
 	}
 }
 
 func (i *InMemoryEmitter) LogOperation(e *Event) {
-	eventJSON, err := json.Marshal(e)
-	if err != nil {
-		panic("failed to serialize event")
+	if _, ok := i.eventsByReconcileID[e.ReconcileID]; !ok {
+		i.eventsByReconcileID[e.ReconcileID] = make([]*Event, 0)
 	}
-	if _, ok := i.blobsByRecordID[e.ReconcileID]; !ok {
-		i.blobsByRecordID[e.ReconcileID] = make([]string, 0)
-	}
-	i.blobsByRecordID[e.ReconcileID] = append(i.blobsByRecordID[e.ReconcileID], string(eventJSON))
+	i.eventsByReconcileID[e.ReconcileID] = append(i.eventsByReconcileID[e.ReconcileID], e)
 }
 
 func (i *InMemoryEmitter) LogObjectVersion(r snapshot.Record) {
-	recordJSON, err := json.Marshal(r)
-	if err != nil {
-		panic("failed to serialize record")
+	if _, ok := i.recordsByOperationID[r.OperationID]; !ok {
+		i.recordsByOperationID[r.OperationID] = make([]snapshot.Record, 0)
 	}
-	if _, ok := i.blobsByRecordID[r.ReconcileID]; !ok {
-		i.blobsByRecordID[r.ReconcileID] = make([]string, 0)
-	}
-	i.blobsByRecordID[r.ReconcileID] = append(i.blobsByRecordID[r.ReconcileID], string(recordJSON))
+	i.recordsByOperationID[r.OperationID] = append(i.recordsByOperationID[r.OperationID], r)
 }
 
 func (i *InMemoryEmitter) Dump(frameID string) []string {
-	logs, ok := i.blobsByRecordID[frameID]
-	if !ok {
+	var logs []string
+
+	if events, ok := i.eventsByReconcileID[frameID]; ok {
+		for _, event := range events {
+			eventJSON, err := json.Marshal(event)
+			if err != nil {
+				panic("failed to serialize event")
+			}
+			logs = append(logs, string(eventJSON))
+
+			if records, ok := i.recordsByOperationID[event.ID]; ok {
+				for _, record := range records {
+					recordJSON, err := json.Marshal(record)
+					if err != nil {
+						panic("failed to serialize record")
+					}
+					logs = append(logs, string(recordJSON))
+				}
+			}
+		}
+	}
+
+	// if records, ok := i.recordsByReconcileID[frameID]; ok {
+	// 	for _, record := range records {
+	// 		recordJSON, err := json.Marshal(record)
+	// 		if err != nil {
+	// 			panic("failed to serialize record")
+	// 		}
+	// 		logs = append(logs, string(recordJSON))
+	// 	}
+	// }
+
+	if len(logs) == 0 {
 		fmt.Println("Error: frameID not found")
 		panic("frameID not found")
 	}
+
 	return logs
 }
