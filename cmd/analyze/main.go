@@ -10,6 +10,7 @@ import (
 
 	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
 	controller "github.com/tgoodwin/sleeve/examples/robinhood/controller"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
 	"github.com/tgoodwin/sleeve/pkg/util"
@@ -111,7 +112,7 @@ func main() {
 		}
 	})
 
-	tc.AddEmitter(tracecheck.NewDebugEmitter())
+	tc.AddEmitter(event.NewDebugEmitter())
 	explorer := tc.NewExplorer(10)
 
 	reconcileEvents := builder.OrderedReconcileEvents()

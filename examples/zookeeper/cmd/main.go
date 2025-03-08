@@ -98,7 +98,7 @@ func main() {
 	eb.WithResourceDep("PersistentVolumeClaim", "ZookeeperReconciler")
 	eb.AssignReconcilerToKind("ZookeeperReconciler", "ZookeeperCluster")
 
-	emitter := event.NewInMemoryEmitter()
+	emitter := event.NewDebugEmitter()
 	eb.WithEmitter(emitter)
 
 	stateBuilder := eb.NewStateEventBuilder()
