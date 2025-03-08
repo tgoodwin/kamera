@@ -74,13 +74,18 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	initialState := eb.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
 	explorer, err := eb.Build("standalone")
 	if err != nil {
-		t.Fail()
+		t.Fatal()
 	}
+
+	observable := initialState.Contents.Observe()
+	base := initialState.Contents.Objects()
+	// no staleness here - the observable should be the same as the base
+	assert.Equal(t, observable, base)
 
 	result := explorer.Explore(context.Background(), initialState)
 
 	if len(result.ConvergedStates) != 1 {
-		t.Errorf("expected 1 result, got %d", len(result.ConvergedStates))
+		t.Fatalf("expected 1 result, got %d", len(result.ConvergedStates))
 	}
 	convergedState := result.ConvergedStates[0]
 	if len(convergedState.Paths) != 8 {

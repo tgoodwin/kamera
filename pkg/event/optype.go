@@ -10,6 +10,7 @@ const (
 	UPDATE OperationType = "UPDATE"
 	DELETE OperationType = "DELETE"
 	PATCH  OperationType = "PATCH"
+	APPLY  OperationType = "APPLY"
 )
 
 var MutationTypes = map[OperationType]struct{}{
