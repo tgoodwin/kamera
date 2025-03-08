@@ -184,12 +184,12 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	})
 
 	return StateNode{
-		Contents: StateSnapshot{
-			contents: ObjectVersions{ikey: vHash},
-			KindSequences: map[string]int64{
+		Contents: NewStateSnapshot(
+			ObjectVersions{ikey: vHash},
+			map[string]int64{
 				ikey.Kind: 1,
 			},
-			stateEvents: []StateEvent{
+			[]StateEvent{
 				{
 					ReconcileID: "TOP",
 					Timestamp:   event.FormatTimeStr(time.Now()),
@@ -202,7 +202,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 					),
 				},
 			},
-		},
+		),
 		PendingReconciles: dependent,
 	}
 }
@@ -225,10 +225,21 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 	// Create version store and knowledge manager
 	vStore := newVersionStore(b.snapStore)
 
+	keys := b.snapStore.ResourceKeys()
+	fmt.Println("instantiating conflict manager with keys:", keys)
 	// Create manager
 	mgr := &manager{
 		versionStore: vStore,
 		effects:      make(map[string]reconcileEffects),
+
+		// resourceValdiator mimics the behavior of the API
+		// server in terms of rejecting operations that conflict
+		// with the current state of the world.
+		// It needs to be hydrated with the current state of the world
+		// before it can be used and uses the snapshot store as the source of truth.
+		resourceValidator: replay.NewResourceConflictManager(
+			keys,
+		),
 	}
 
 	// Initialize reconcilers with appropriate clients

@@ -10,7 +10,6 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -52,24 +51,8 @@ func NewClient(reconcilerID string, scheme *runtime.Scheme, frameReader frameRea
 
 var _ client.Client = (*Client)(nil)
 
-// TODO FIX THIS
-// inferListKind returns the Kind of the objects contained in the list
-func inferListKind(list client.ObjectList) string {
-	if unstructuredList, ok := list.(*unstructured.UnstructuredList); ok {
-		kind := unstructuredList.GetKind()
-		// if suffixed with "List", remove it
-		if len(kind) > 4 && kind[len(kind)-4:] == "List" {
-			return kind[:len(kind)-4]
-		}
-		return kind
-	}
-
-	itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
-	if !itemsValue.IsValid() {
-		panic("List object does not have Items field")
-	}
-	itemType := itemsValue.Type().Elem()
-	return itemType.Name()
+func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType) error {
+	return c.recorder.RecordEffect(ctx, obj, opType)
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -89,7 +72,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
 	if frame, err := c.GetCacheFrame(frameID); err == nil {
 		if frozenObj, ok := frame[kind][key]; ok {
-			if err := c.recorder.RecordEffect(ctx, frozenObj, event.GET); err != nil {
+			if err := c.handleEffect(ctx, frozenObj, event.GET); err != nil {
 				return err
 			}
 
@@ -113,7 +96,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	frameID := FrameIDFromContext(ctx)
-	kind := inferListKind(list)
+	kind := util.InferListKind(list)
 
 	if frame, err := c.GetCacheFrame(frameID); err == nil {
 		if objsForKind, ok := frame[kind]; ok {
@@ -128,7 +111,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 			newSlice := reflect.MakeSlice(reflect.SliceOf(itemType), 0, len(objsForKind))
 
 			for _, obj := range objsForKind {
-				if err := c.recorder.RecordEffect(ctx, obj, event.LIST); err != nil {
+				if err := c.handleEffect(ctx, obj, event.LIST); err != nil {
 					return err
 				}
 
@@ -158,23 +141,23 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	return c.recorder.RecordEffect(ctx, obj, event.CREATE)
+	return c.handleEffect(ctx, obj, event.CREATE)
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	return c.recorder.RecordEffect(ctx, obj, event.DELETE)
+	return c.handleEffect(ctx, obj, event.DELETE)
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	return c.recorder.RecordEffect(ctx, obj, event.UPDATE)
+	return c.handleEffect(ctx, obj, event.UPDATE)
 }
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
-	return c.recorder.RecordEffect(ctx, obj, event.DELETE)
+	return c.handleEffect(ctx, obj, event.DELETE)
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	return c.recorder.RecordEffect(ctx, obj, event.PATCH)
+	return c.handleEffect(ctx, obj, event.PATCH)
 }
 
 func (c *Client) Status() client.SubResourceWriter {
@@ -188,13 +171,13 @@ type subResourceClient struct {
 var _ client.SubResourceWriter = (*subResourceClient)(nil)
 
 func (c *subResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-	return c.wrapped.recorder.RecordEffect(ctx, obj, event.UPDATE)
+	return c.wrapped.handleEffect(ctx, obj, event.UPDATE)
 }
 
 func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-	return c.wrapped.recorder.RecordEffect(ctx, obj, event.PATCH)
+	return c.wrapped.handleEffect(ctx, obj, event.PATCH)
 }
 
 func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
-	return c.wrapped.recorder.RecordEffect(ctx, obj, event.CREATE)
+	return c.wrapped.handleEffect(ctx, obj, event.CREATE)
 }

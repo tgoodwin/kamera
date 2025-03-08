@@ -27,6 +27,7 @@ type effect struct {
 	OpType    event.OperationType
 	ObjectKey snapshot.IdentityKey
 	Version   snapshot.VersionHash
+	// Timestamp time.Time
 }
 
 type reconcileEffects struct {
@@ -42,7 +43,12 @@ func newEffect(kind, uid string, version snapshot.VersionHash, op event.Operatio
 			ObjectID: uid,
 		},
 		Version: version,
+		// Timestamp: time.Now(),
 	}
+}
+
+type resourceValidator interface {
+	ValidateOperation(op event.OperationType, obj client.Object) error
 }
 
 // manager is the "database" for the tracecheck package. It handles
@@ -53,6 +59,8 @@ type manager struct {
 
 	// need to add frame data to the manager as well for reconciler reads
 	*converterImpl
+
+	resourceValidator resourceValidator
 
 	// populated by RecordEffect
 	effects map[string]reconcileEffects
@@ -77,6 +85,11 @@ var DefaultHasher = snapshot.JSONHasher{}
 func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// this will insert a resourceKey into the resourceValidator store
+	if err := m.resourceValidator.ValidateOperation(opType, obj); err != nil {
+		return err
+	}
 
 	logger := log.FromContext(ctx)
 	logger.V(2).Info("recording effect", "opType", opType, "kind", util.GetKind(obj))

@@ -43,15 +43,14 @@ type reconcileImpl struct {
 	frameInserter
 }
 
-func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
-	// create a new cache frame from the current state of the world of objects.
-	// the Reconciler's readset will be a subset of this frame
+func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
 	frameID := util.UUID()
 	logger = log.FromContext(ctx).WithValues("reconciler", r.Name, "frameID", frameID)
 	ctx = replay.WithFrameID(ctx, frameID)
+
 	// insert a "frame" to hold the readset data ahead of the reconcile
-	r.InsertCacheFrame(frameID, r.toFrameData(currState))
-	frameData := r.toFrameData(currState)
+	r.InsertCacheFrame(frameID, r.toFrameData(observableState))
+	frameData := r.toFrameData(observableState)
 
 	if logger.V(2).Enabled() {
 		logger.V(2).Info("frame data for frameID: %s\n", frameID)
@@ -64,7 +63,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 
 	compare := false
 	if compare {
-		inferredReq, err := r.inferReconcileRequest(currState)
+		inferredReq, err := r.inferReconcileRequest(observableState)
 		if err != nil {
 			return nil, errors.Wrap(err, fmt.Sprintf("inferring reconcile request, frameID: %s", frameID))
 		}
@@ -85,7 +84,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, currState ObjectVersion
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
-	deltas := r.computeDeltas(currState, effects.ObjectVersions)
+	deltas := r.computeDeltas(observableState, effects.ObjectVersions)
 	logger.V(2).Info("reconcile complete")
 
 	return &ReconcileResult{
