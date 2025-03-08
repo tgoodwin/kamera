@@ -15,8 +15,6 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -195,41 +193,13 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	if err := c.Client.Get(ctx, key, objCopy, opts...); err != nil {
 		return err
 	}
-	isVisible := c.isVisible(objCopy)
-	if !isVisible {
-		return apierrors.NewNotFound(schema.GroupResource{}, key.Name)
-	}
+	// isVisible := c.isVisible(objCopy)
+	// if !isVisible {
+	// 	return apierrors.NewNotFound(schema.GroupResource{}, key.Name)
+	// }
 	err := c.Client.Get(ctx, key, obj, opts...)
 	c.tracker.TrackOperation(ctx, obj, event.GET)
 	return err
-}
-
-func (c *Client) isVisible(obj client.Object) bool {
-	kind := obj.GetObjectKind().GroupVersionKind().Kind
-	if visDelay, ok := c.config.visibilityDelayByKind[kind]; ok {
-		now := time.Now()
-		created := obj.GetCreationTimestamp().Time
-		if now.Sub(created) < visDelay {
-			c.logger.WithValues(
-				"ObjectKind", kind,
-				"ObjectUID", obj.GetUID(),
-				"TimeSinceCreated", now.Sub(created),
-			).V(1).Info("Object not visible yet")
-			return false
-		}
-		return true
-	}
-	return true
-}
-
-func (c *Client) filterVisible(objs []client.Object) []client.Object {
-	visible := make([]client.Object, 0)
-	for _, obj := range objs {
-		if c.isVisible(obj) {
-			visible = append(visible, obj)
-		}
-	}
-	return visible
 }
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
