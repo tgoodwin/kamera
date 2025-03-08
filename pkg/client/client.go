@@ -106,7 +106,8 @@ func Operation(obj client.Object, reconcileID, controllerID, rootEventID string,
 		RootEventID:  rootEventID,
 		OpType:       string(op),
 		Kind:         util.GetKind(obj),
-		// CHANGE TO SLEEVE OBJECT ID
+
+		// TODO CHANGE TO SLEEVE OBJECT ID
 		ObjectID: string(obj.GetUID()),
 		Version:  obj.GetResourceVersion(),
 		Labels:   obj.GetLabels(),

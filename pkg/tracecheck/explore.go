@@ -26,6 +26,14 @@ type ReconcilerContainer struct {
 	*reconcileImpl
 }
 
+// EffectContextManager manages a "current state of the world" context
+// for each branch of execution (not shared between branches). This is the state
+// that reconcile effects are validated against before being applied.
+type EffectContextManager interface {
+	PrepareEffectContext(ctx context.Context, ov ObjectVersions) error
+	CleanupEffectContext(ctx context.Context)
+}
+
 type Explorer struct {
 	// reconciler implementations keyed by ID
 	reconcilers map[string]ReconcilerContainer
@@ -35,6 +43,8 @@ type Explorer struct {
 	knowledgeManager *EventKnowledge
 
 	triggerManager *TriggerManager
+
+	effectContextManager EffectContextManager
 
 	// config
 	maxDepth       int
@@ -250,16 +260,25 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		return pending.ReconcilerID != pr.ReconcilerID
 	})
 
+	// defensive validation
 	if len(state.Contents.KindSequences) == 0 {
 		panic("reconcile step: state has no kind sequences")
 	}
 
-	observableState := state.Contents.Observe()
+	// create a new frameID for this reconcile state transition
+	frameID := util.UUID()
+	ctx = replay.WithFrameID(ctx, frameID)
 
-	// get the state diff after executing the controller.
+	// prepare the "true state of the world" for the controller
+	fullState := state.Contents.Objects()
+	e.effectContextManager.PrepareEffectContext(ctx, fullState)
+	defer e.effectContextManager.CleanupEffectContext(ctx)
+
+	// invoke the controller at its observed state of the world
+	observableState := state.Contents.Observe()
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil {
-		// return the current state if the controller errored
+		// return the pre-reconcile state if the controller errored
 		return state, err
 	}
 
@@ -296,11 +315,17 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			}
 			newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
 		}
+
 		if effect.OpType == event.DELETE {
 			if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
 				// TODO this should return a 404
 				fmt.Println("warning: deleted key absent in state - ", effect.ObjectKey)
+				fmt.Println("true state:")
 				for k := range newObjectVersions {
+					fmt.Println(k)
+				}
+				fmt.Println("observed state")
+				for k := range observableState {
 					fmt.Println(k)
 				}
 			}
