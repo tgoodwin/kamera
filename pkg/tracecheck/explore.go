@@ -196,7 +196,6 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state. We explore each pending reconcile in a breadth-first manner.
 		for _, pendingReconcile := range currentState.PendingReconciles {
-
 			possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID)
 			if err != nil {
 				panic(fmt.Sprintf("error getting possible views: %s", err))
@@ -205,7 +204,8 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 				// for each view, create a new branch in exploration
 				newState, err := e.takeReconcileStep(ctx, possibleStateView, pendingReconcile)
 				if err != nil {
-					panic(fmt.Sprintf("error taking reconcile step: %s", err))
+					// if we encounter an error during reconciliation, just abandon this branch
+					continue
 				}
 				newState.depth = currentState.depth + 1
 				if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
@@ -250,36 +250,59 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		return pending.ReconcilerID != pr.ReconcilerID
 	})
 
+	if len(state.Contents.KindSequences) == 0 {
+		panic("reconcile step: state has no kind sequences")
+	}
+
+	observableState := state.Contents.Observe()
+
 	// get the state diff after executing the controller.
-	// if the state diff is empty, then the controller did not change anything
-	reconcileResult, err := e.reconcileAtState(ctx, state.Objects(), pr)
+	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil {
-		return StateNode{}, err
+		// return the current state if the controller errored
+		return state, err
 	}
 
 	newSequences := make(map[string]int64)
-	maps.Copy(state.Contents.KindSequences, newSequences)
+	maps.Copy(newSequences, state.Contents.KindSequences)
 
 	effects := reconcileResult.Changes.Effects
 
-	// update the state with the new object versions
+	// update the state with the new object versions.
+	// note that we are updating the "global state" here,
+	// which may be separate from what the controller saw upon reconciling.
 	newObjectVersions := make(ObjectVersions)
 	maps.Copy(newObjectVersions, state.Objects())
 
 	changeOV := reconcileResult.Changes.ObjectVersions
 	for _, effect := range effects {
 		if effect.OpType == event.CREATE {
-			newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
+			if _, ok := newObjectVersions[effect.ObjectKey]; ok {
+				// the effect validation mechanism should prevent this from happening
+				// so panic if it does happen
+				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.ObjectKey))
+			} else {
+				// key not in state as expected, add it
+				newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
+			}
 		}
 		if effect.OpType == event.UPDATE || effect.OpType == event.PATCH {
 			if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
+				// it is possible that a stale read will cause a controller to update an object
+				// that no longer exists in the global state. The effect validation mechanism
+				// should cause the client operation to 404 and prevent the update effect from
+				// going through. If it does go through, we should panic cause something broke.
 				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.ObjectKey))
 			}
 			newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
 		}
 		if effect.OpType == event.DELETE {
 			if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
-				panic("delete effect object not found in prev state: " + fmt.Sprintf("%s", effect.ObjectKey))
+				// TODO this should return a 404
+				fmt.Println("warning: deleted key absent in state - ", effect.ObjectKey)
+				for k := range newObjectVersions {
+					fmt.Println(k)
+				}
 			}
 			delete(newObjectVersions, effect.ObjectKey)
 		}
@@ -291,11 +314,9 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	newStateEvents := slices.Clone(state.Contents.stateEvents)
 	for _, effect := range effects {
 		kind := effect.ObjectKey.Kind
-		currSeqForKind := newSequences[kind]
 		stateEvent := StateEvent{
-			// Kind:   effect.ObjectKey.Kind,
 			ReconcileID: reconcileResult.FrameID,
-			Sequence:    currSeqForKind + 1,
+			Sequence:    newSequences[kind],
 			effect:      effect,
 			// TODO handle time info
 			Timestamp: "",
@@ -315,11 +336,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	currHistory := slices.Clone(state.ExecutionHistory)
 
 	return StateNode{
-		Contents: StateSnapshot{
-			contents:      newObjectVersions,
-			KindSequences: newSequences,
-			stateEvents:   newStateEvents,
-		},
+		Contents:          NewStateSnapshot(newObjectVersions, newSequences, newStateEvents),
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,
