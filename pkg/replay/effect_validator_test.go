@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -23,8 +24,13 @@ func createTestObject(name, namespace string, gvk schema.GroupVersionKind) *unst
 	return obj
 }
 
+func newValidator() *ResourceConflictManager {
+	rKeys := make(map[snapshot.ResourceKey]struct{})
+	return NewResourceConflictManager(rKeys)
+}
+
 func TestResourceConflictValidator_Create(t *testing.T) {
-	validator := NewResourceConflictValidator()
+	validator := newValidator()
 
 	// Define GVK for test
 	gvk := schema.GroupVersionKind{
@@ -56,7 +62,8 @@ func TestResourceConflictValidator_Create(t *testing.T) {
 }
 
 func TestResourceConflictValidator_Get(t *testing.T) {
-	validator := NewResourceConflictValidator()
+	rKeys := make(map[snapshot.ResourceKey]struct{})
+	validator := NewResourceConflictManager(rKeys)
 
 	// Define GVK for test
 	gvk := schema.GroupVersionKind{
@@ -81,7 +88,7 @@ func TestResourceConflictValidator_Get(t *testing.T) {
 }
 
 func TestResourceConflictValidator_List(t *testing.T) {
-	validator := NewResourceConflictValidator()
+	validator := newValidator()
 
 	// Define GVK for test
 	gvk := schema.GroupVersionKind{
@@ -103,7 +110,7 @@ func TestResourceConflictValidator_List(t *testing.T) {
 }
 
 func TestResourceConflictValidator_Update(t *testing.T) {
-	validator := NewResourceConflictValidator()
+	validator := newValidator()
 
 	// Define GVK for test
 	gvk := schema.GroupVersionKind{
@@ -128,7 +135,7 @@ func TestResourceConflictValidator_Update(t *testing.T) {
 }
 
 func TestResourceConflictValidator_Delete(t *testing.T) {
-	validator := NewResourceConflictValidator()
+	validator := newValidator()
 
 	// Define GVK for test
 	gvk := schema.GroupVersionKind{
@@ -156,7 +163,7 @@ func TestResourceConflictValidator_Delete(t *testing.T) {
 }
 
 func TestResourceConflictValidator_Patch(t *testing.T) {
-	validator := NewResourceConflictValidator()
+	validator := newValidator()
 
 	// Define GVK for test
 	gvk := schema.GroupVersionKind{
@@ -181,7 +188,7 @@ func TestResourceConflictValidator_Patch(t *testing.T) {
 }
 
 func TestResourceConflictValidator_Apply(t *testing.T) {
-	validator := NewResourceConflictValidator()
+	validator := newValidator()
 
 	// Define GVK for test
 	gvk := schema.GroupVersionKind{
@@ -205,7 +212,7 @@ func TestResourceConflictValidator_Apply(t *testing.T) {
 }
 
 func TestResourceConflictValidator_DifferentObjectsWithSameName(t *testing.T) {
-	validator := NewResourceConflictValidator()
+	validator := newValidator()
 
 	// Define different GVKs for test
 	deploymentGVK := schema.GroupVersionKind{
@@ -239,7 +246,7 @@ func TestResourceConflictValidator_DifferentObjectsWithSameName(t *testing.T) {
 }
 
 func TestResourceConflictValidator_ConcurrentOperations(t *testing.T) {
-	validator := NewResourceConflictValidator()
+	validator := newValidator()
 
 	// Define GVK for test
 	gvk := schema.GroupVersionKind{

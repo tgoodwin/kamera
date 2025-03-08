@@ -1,36 +1,32 @@
 package replay
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-type ResourceKey struct {
-	Kind      string
-	Namespace string
-	Name      string
-}
-
-type ResourceConflictValidator struct {
-	resources map[ResourceKey]struct{}
+type ResourceConflictManager struct {
+	resources map[snapshot.ResourceKey]struct{}
 	mu        sync.RWMutex
 }
 
-func NewResourceConflictValidator() *ResourceConflictValidator {
-	return &ResourceConflictValidator{
-		resources: make(map[ResourceKey]struct{}),
+func NewResourceConflictManager(keyStore map[snapshot.ResourceKey]struct{}) *ResourceConflictManager {
+	return &ResourceConflictManager{
+		resources: keyStore,
 	}
 }
 
 // ValidateOperation checks if an operation would result in a conflict
 // and automatically updates the internal tracking state.
-func (v *ResourceConflictValidator) ValidateOperation(op event.OperationType, obj client.Object) error {
+func (v *ResourceConflictManager) ValidateOperation(op event.OperationType, obj client.Object) error {
 	gvk := obj.GetObjectKind().GroupVersionKind()
-	key := ResourceKey{
+	key := snapshot.ResourceKey{
 		Kind:      gvk.Kind,
 		Namespace: obj.GetNamespace(),
 		Name:      obj.GetName(),
@@ -40,6 +36,12 @@ func (v *ResourceConflictValidator) ValidateOperation(op event.OperationType, ob
 	defer v.mu.Unlock()
 
 	_, exists := v.resources[key]
+	if !exists && op != event.CREATE {
+		fmt.Println("resource does not exist in the following keys")
+		for k := range v.resources {
+			fmt.Println(k)
+		}
+	}
 
 	switch op {
 	case event.CREATE:
@@ -74,11 +76,13 @@ func (v *ResourceConflictValidator) ValidateOperation(op event.OperationType, ob
 
 	case event.DELETE:
 		if !exists {
+			fmt.Println("KEY NOT FOUND", key)
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
 		}
 		// Automatically remove tracking if DELETE is valid
+		fmt.Println("----deleting key----", key)
 		delete(v.resources, key)
 
 	case event.APPLY:
