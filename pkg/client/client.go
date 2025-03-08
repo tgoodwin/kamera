@@ -184,22 +184,11 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-	// cast back to a client.Ojbject
-	objCopy, ok := obj.DeepCopyObject().(client.Object)
-	if !ok {
-		panic("object does not implement client.Object")
-	}
-
-	if err := c.Client.Get(ctx, key, objCopy, opts...); err != nil {
+	if err := c.Client.Get(ctx, key, obj, opts...); err != nil {
 		return err
 	}
-	// isVisible := c.isVisible(objCopy)
-	// if !isVisible {
-	// 	return apierrors.NewNotFound(schema.GroupResource{}, key.Name)
-	// }
-	err := c.Client.Get(ctx, key, obj, opts...)
 	c.tracker.TrackOperation(ctx, obj, event.GET)
-	return err
+	return nil
 }
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
