@@ -27,6 +27,7 @@ import (
 // var debug = flag.Bool("debug", false, "enable debug logging")
 var searchDepth = flag.Int("search-depth", 10, "search depth for exploration")
 var stalenessDepth = flag.Int("staleness-depth", 1, "staleness depth for exploration")
+var outDir = flag.String("out-dir", "results", "output directory for results")
 
 var scheme = runtime.NewScheme()
 
@@ -212,5 +213,5 @@ func main() {
 	fmt.Println("number of sad states: ", len(sad))
 
 	resultWriter := tracecheck.NewResultWriter(emitter)
-	resultWriter.MaterializeClassified(classified, "testresults")
+	resultWriter.MaterializeClassified(classified, *outDir)
 }
