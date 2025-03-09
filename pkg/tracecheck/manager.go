@@ -26,10 +26,29 @@ type VersionManager interface {
 	Diff(prev, curr *snapshot.VersionHash) string
 }
 
+type CompositeKey struct {
+	snapshot.IdentityKey // unique across history
+	snapshot.ResourceKey // not unique across history, but the default indexing strategy in k8s
+}
+
+func NewCompositeKey(kind, namespace, name, uid string) CompositeKey {
+	return CompositeKey{
+		IdentityKey: snapshot.IdentityKey{
+			Kind:     kind,
+			ObjectID: uid,
+		},
+		ResourceKey: snapshot.ResourceKey{
+			Kind:      kind,
+			Namespace: namespace,
+			Name:      name,
+		},
+	}
+}
+
 type effect struct {
-	OpType    event.OperationType
-	ObjectKey snapshot.IdentityKey
-	Version   snapshot.VersionHash
+	OpType  event.OperationType
+	Key     CompositeKey
+	Version snapshot.VersionHash
 	// Timestamp time.Time
 }
 
@@ -38,13 +57,10 @@ type reconcileEffects struct {
 	writes []effect
 }
 
-func newEffect(kind, uid string, version snapshot.VersionHash, op event.OperationType) effect {
+func newEffect(key CompositeKey, version snapshot.VersionHash, op event.OperationType) effect {
 	return effect{
-		OpType: op,
-		ObjectKey: snapshot.IdentityKey{
-			Kind:     kind,
-			ObjectID: uid,
-		},
+		OpType:  op,
+		Key:     key,
 		Version: version,
 		// Timestamp: time.Now(),
 	}
@@ -107,6 +123,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	if err != nil {
 		return err
 	}
+
 	// publish the object versionHash
 	versionHash := m.Publish(u)
 
@@ -119,7 +136,11 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		}
 	}
 
-	eff := newEffect(kind, objectID, versionHash, opType)
+	key := NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), objectID)
+	eff := newEffect(key, versionHash, opType)
+	if opType == event.DELETE {
+		fmt.Println("creating new delete effect", eff.Key.ResourceKey, frameID)
+	}
 	if opType == event.GET || opType == event.LIST {
 		reffects.reads = append(reffects.reads, eff)
 	} else {
@@ -141,6 +162,16 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 	}
 	m.effectContext[frameID] = rKeys
 
+	fmt.Println("preparing effect context for frame", frameID)
+	for _, k := range rKeys.List() {
+		fmt.Println(k)
+	}
+	fmt.Println("----")
+	for _, k := range iKeys {
+		fmt.Println(k)
+	}
+	fmt.Println("----")
+
 	return nil
 }
 
@@ -158,7 +189,12 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	for _, eff := range effects.writes {
 		// TODO handle the case where there are multiple writes to the same object
 		// in the same frame
-		out[eff.ObjectKey] = eff.Version
+		out[eff.Key.IdentityKey] = eff.Version
+	}
+
+	fmt.Println("getting effects for frame", frameID)
+	for _, k := range effects.writes {
+		fmt.Println(k.Key.IdentityKey, k.OpType)
 	}
 
 	changes := Changes{
@@ -180,13 +216,17 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		Namespace: obj.GetNamespace(),
 		Name:      obj.GetName(),
 	}
-	_, exists := keys[key]
-	if !exists && op != event.CREATE {
-		fmt.Println("resource does not exist in the following keys")
-		for k := range keys {
-			fmt.Println(k)
-		}
+	iKey := snapshot.IdentityKey{
+		Kind:     gvk.Kind,
+		ObjectID: tag.GetSleeveObjectID(obj),
 	}
+	_, exists := keys[key]
+	// if !exists && op != event.CREATE {
+	// 	fmt.Printf("resource with key %v does not exist for operation %s in the following keys:\n", key, op)
+	// 	for k := range keys {
+	// 		fmt.Println(k)
+	// 	}
+	// }
 
 	switch op {
 	case event.CREATE:
@@ -221,13 +261,20 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 
 	case event.DELETE:
 		if !exists {
-			fmt.Println("KEY NOT FOUND", key)
+			fmt.Println("KEY NOT FOUND", frameID, iKey)
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
+		} else {
+			fmt.Println("KEY FOUND", frameID, iKey, key)
+			fmt.Println("existing keys")
+			for k := range keys {
+				fmt.Println(k)
+			}
+			fmt.Println("---")
 		}
 		// Automatically remove tracking if DELETE is valid
-		fmt.Println("----deleting key----", key)
+		// fmt.Println("----deleting key----", key)
 		delete(keys, key)
 
 	case event.APPLY:

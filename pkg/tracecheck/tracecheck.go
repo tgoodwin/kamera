@@ -179,6 +179,8 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 		}
 	})
 
+	key := NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+
 	return StateNode{
 		Contents: StateSnapshot{
 			contents: ObjectVersions{ikey: vHash},
@@ -190,12 +192,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 					ReconcileID: "TOP",
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
-					effect: newEffect(
-						ikey.Kind,
-						sleeveObjectID,
-						vHash,
-						event.CREATE,
-					),
+					effect:      newEffect(key, vHash, event.CREATE),
 				},
 			},
 		},

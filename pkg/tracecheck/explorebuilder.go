@@ -183,6 +183,8 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 		}
 	})
 
+	key := NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+
 	return StateNode{
 		Contents: NewStateSnapshot(
 			ObjectVersions{ikey: vHash},
@@ -195,8 +197,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
 					effect: newEffect(
-						ikey.Kind,
-						sleeveObjectID,
+						key,
 						vHash,
 						event.CREATE,
 					),

@@ -77,11 +77,11 @@ func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 			return err
 		}
 		for _, effect := range r.Changes.Effects {
-			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.ObjectKey); err != nil {
+			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.Key.IdentityKey); err != nil {
 				return err
 			}
-			if _, hasDelta := r.Deltas[effect.ObjectKey]; hasDelta {
-				_, err := fmt.Fprintf(file, "\t%s: %s\n", effect.ObjectKey, r.Deltas[effect.ObjectKey])
+			if _, hasDelta := r.Deltas[effect.Key.IdentityKey]; hasDelta {
+				_, err := fmt.Fprintf(file, "\t%s: %s\n", effect.Key.IdentityKey, r.Deltas[effect.Key.IdentityKey])
 				if err != nil {
 					return err
 				}

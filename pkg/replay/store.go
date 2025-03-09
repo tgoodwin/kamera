@@ -17,6 +17,7 @@ import (
 type Store map[event.CausalKey]*unstructured.Unstructured
 
 // TODO refactor
+// FIX THIS
 func (f Store) ResolveVersion(key event.CausalKey) (snapshot.VersionHash, error) {
 	elem, ok := f[key]
 	if !ok {

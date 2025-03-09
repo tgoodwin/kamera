@@ -105,7 +105,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		fmt.Println("Reconcile result - # changes:", len(changes.ObjectVersions))
 		changes.ObjectVersions.Summarize()
 		for _, eff := range changes.Effects {
-			fmt.Printf("\top: %s, ikey: %s\n", eff.OpType, eff.ObjectKey)
+			fmt.Printf("\top: %s, ikey: %s\n", eff.OpType, eff.Key.IdentityKey)
 		}
 
 		resultingState := e.knowledgeManager.GetStateAfterReconcileID(reconcile.ReconcileID)
@@ -271,6 +271,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// prepare the "true state of the world" for the controller
 	fullState := state.Contents.Objects()
+	fmt.Println("full state that we're preparing effect context for at frame: ", frameID)
+	for k := range fullState {
+		fmt.Println(k)
+	}
+	fmt.Println("---")
 	e.effectContextManager.PrepareEffectContext(ctx, fullState)
 	defer e.effectContextManager.CleanupEffectContext(ctx)
 
@@ -296,49 +301,51 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	changeOV := reconcileResult.Changes.ObjectVersions
 	for _, effect := range effects {
 		if effect.OpType == event.CREATE {
-			if _, ok := newObjectVersions[effect.ObjectKey]; ok {
+			if _, ok := newObjectVersions[effect.Key.IdentityKey]; ok {
 				// the effect validation mechanism should prevent this from happening
 				// so panic if it does happen
-				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.ObjectKey))
+				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.Key.IdentityKey))
 			} else {
 				// key not in state as expected, add it
-				newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
+				newObjectVersions[effect.Key.IdentityKey] = changeOV[effect.Key.IdentityKey]
 			}
 		}
 		if effect.OpType == event.UPDATE || effect.OpType == event.PATCH {
-			if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
+			if _, ok := newObjectVersions[effect.Key.IdentityKey]; !ok {
 				// it is possible that a stale read will cause a controller to update an object
 				// that no longer exists in the global state. The effect validation mechanism
 				// should cause the client operation to 404 and prevent the update effect from
 				// going through. If it does go through, we should panic cause something broke.
-				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.ObjectKey))
+				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.Key.IdentityKey))
 			}
-			newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
+			newObjectVersions[effect.Key.IdentityKey] = changeOV[effect.Key.IdentityKey]
 		}
 
 		if effect.OpType == event.DELETE {
-			if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
-				// TODO this should return a 404
-				fmt.Println("warning: deleted key absent in state - ", effect.ObjectKey)
+			if _, ok := newObjectVersions[effect.Key.IdentityKey]; !ok {
+				// TODO this should return a 404. The effect should not have been materialized
+				fmt.Println("warning: deleted key absent in state - ", effect.Key.IdentityKey)
+				fmt.Println("frameID: ", frameID)
 				fmt.Println("true state:")
-				for k := range newObjectVersions {
+				for k := range state.Objects() {
 					fmt.Println(k)
 				}
 				fmt.Println("observed state")
 				for k := range observableState {
 					fmt.Println(k)
 				}
+				// panic("deleted key absent in state")
 			}
-			delete(newObjectVersions, effect.ObjectKey)
+			delete(newObjectVersions, effect.Key.IdentityKey)
 		}
 
 		// increment resourceversion for the kind
-		newSequences[effect.ObjectKey.Kind] += 1
+		newSequences[effect.Key.IdentityKey.Kind] += 1
 	}
 
 	newStateEvents := slices.Clone(state.Contents.stateEvents)
 	for _, effect := range effects {
-		kind := effect.ObjectKey.Kind
+		kind := effect.Key.IdentityKey.Kind
 		stateEvent := StateEvent{
 			ReconcileID: reconcileResult.FrameID,
 			Sequence:    newSequences[kind],

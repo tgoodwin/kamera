@@ -76,7 +76,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 	uniqueReconciles := make(map[string]PendingReconcile)
 
 	for _, effect := range changes.Effects {
-		objKey, vHash := effect.ObjectKey, effect.Version
+		objKey, vHash := effect.Key.IdentityKey, effect.Version
 		objectVal, ok := tm.resolver.GetByHash(vHash, vHash.Strategy)
 		if !ok {
 			return nil, fmt.Errorf("object not found for hash %s", vHash)
