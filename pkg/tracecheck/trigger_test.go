@@ -86,7 +86,7 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 		Effects: []effect{
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
 				Version: podHash,
 			},
 		},
@@ -165,7 +165,7 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 		Effects: []effect{
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
 				Version: podHash,
 			},
 		},
@@ -199,7 +199,7 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 		Effects: []effect{
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("ReplicaSet", "default", "test-rs", "test-rs"),
+				Key:     snapshot.NewCompositeKey("ReplicaSet", "default", "test-rs", "test-rs"),
 				Version: rsHash,
 			},
 		},
@@ -269,17 +269,17 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 		Effects: []effect{
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: pod1Hash,
 			},
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
 				Version: pod2Hash,
 			},
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: svcHash,
 			},
 		},
@@ -350,7 +350,7 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 		Effects: []effect{
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("RouteConfig", "default", "route-config-1", "route-config-1"),
+				Key:     snapshot.NewCompositeKey("RouteConfig", "default", "route-config-1", "route-config-1"),
 				Version: rcHash,
 			},
 		},
@@ -409,7 +409,7 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 		Effects: []effect{
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("Job", "default", "test-job", "test-job"),
+				Key:     snapshot.NewCompositeKey("Job", "default", "test-job", "test-job"),
 				Version: jobHash,
 			},
 		},
@@ -471,7 +471,7 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 		Effects: []effect{
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
 				Version: podHash,
 			},
 		},
@@ -517,7 +517,7 @@ func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 		Effects: []effect{
 			{
 				OpType:  event.CREATE,
-				Key:     NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
 				Version: snapshot.NewDefaultHash("non-existent-hash"),
 			},
 		},

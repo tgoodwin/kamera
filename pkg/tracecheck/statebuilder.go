@@ -64,7 +64,7 @@ func (b *StateEventBuilder) AddStateEvent(kind, objectID string, obj *unstructur
 	}
 
 	// Create effect
-	key := NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), objectID)
+	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), objectID)
 	effect := newEffect(key, versionHash, opType)
 
 	// Increment sequence
@@ -108,11 +108,11 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 		}
 	})
 
-	key := NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 
 	return StateNode{
 		Contents: StateSnapshot{
-			contents: ObjectVersions{ikey: vHash},
+			contents: ObjectVersions{key: vHash},
 			KindSequences: map[string]int64{
 				ikey.Kind: 1,
 			},

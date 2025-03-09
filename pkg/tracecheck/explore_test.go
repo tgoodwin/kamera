@@ -22,14 +22,8 @@ func Test_serializeState(t *testing.T) {
 				state: StateNode{
 					Contents: StateSnapshot{
 						contents: ObjectVersions{
-							snapshot.IdentityKey{
-								Kind:     "kind1",
-								ObjectID: "object1",
-							}: snapshot.NewDefaultHash("hash1"),
-							snapshot.IdentityKey{
-								Kind:     "kind1",
-								ObjectID: "object2",
-							}: snapshot.NewDefaultHash("hash2"),
+							snapshot.NewCompositeKey("kind1", "namespace1", "name1", "object1"): snapshot.NewDefaultHash("hash1"),
+							snapshot.NewCompositeKey("kind1", "namespace1", "name2", "object2"): snapshot.NewDefaultHash("hash2"),
 						},
 						KindSequences: map[string]int64{
 							"kind1": 1,

@@ -301,28 +301,28 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	changeOV := reconcileResult.Changes.ObjectVersions
 	for _, effect := range effects {
 		if effect.OpType == event.CREATE {
-			if _, ok := newObjectVersions[effect.Key.IdentityKey]; ok {
+			if _, ok := newObjectVersions[effect.Key]; ok {
 				// the effect validation mechanism should prevent this from happening
 				// so panic if it does happen
 				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.Key.IdentityKey))
 			} else {
 				// key not in state as expected, add it
-				newObjectVersions[effect.Key.IdentityKey] = changeOV[effect.Key.IdentityKey]
+				newObjectVersions[effect.Key] = changeOV[effect.Key]
 			}
 		}
 		if effect.OpType == event.UPDATE || effect.OpType == event.PATCH {
-			if _, ok := newObjectVersions[effect.Key.IdentityKey]; !ok {
+			if _, ok := newObjectVersions[effect.Key]; !ok {
 				// it is possible that a stale read will cause a controller to update an object
 				// that no longer exists in the global state. The effect validation mechanism
 				// should cause the client operation to 404 and prevent the update effect from
 				// going through. If it does go through, we should panic cause something broke.
 				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.Key.IdentityKey))
 			}
-			newObjectVersions[effect.Key.IdentityKey] = changeOV[effect.Key.IdentityKey]
+			newObjectVersions[effect.Key] = changeOV[effect.Key]
 		}
 
 		if effect.OpType == event.DELETE {
-			if _, ok := newObjectVersions[effect.Key.IdentityKey]; !ok {
+			if _, ok := newObjectVersions[effect.Key]; !ok {
 				// TODO this should return a 404. The effect should not have been materialized
 				fmt.Println("warning: deleted key absent in state - ", effect.Key.IdentityKey)
 				fmt.Println("frameID: ", frameID)
@@ -336,7 +336,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 				}
 				// panic("deleted key absent in state")
 			}
-			delete(newObjectVersions, effect.Key.IdentityKey)
+			delete(newObjectVersions, effect.Key)
 		}
 
 		// increment resourceversion for the kind

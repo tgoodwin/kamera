@@ -179,11 +179,11 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 		}
 	})
 
-	key := NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 
 	return StateNode{
 		Contents: StateSnapshot{
-			contents: ObjectVersions{ikey: vHash},
+			contents: ObjectVersions{key: vHash},
 			KindSequences: map[string]int64{
 				ikey.Kind: 1,
 			},
@@ -334,9 +334,9 @@ func (tc *TraceChecker) SummarizeResults(result *Result) {
 func (tc *TraceChecker) DiffStates(a, b StateNode) []string {
 	diffs := make([]string, 0)
 	for key, vHash := range a.Objects() {
-		currKind := key.Kind
+		currKind := key.IdentityKey.Kind
 		for otherKey, otherHash := range b.Objects() {
-			if otherKey.Kind == currKind {
+			if otherKey.IdentityKey.Kind == currKind {
 				// disregarding ID, let's identify the difference between teh two objects of kind
 				if diff := tc.manager.Diff(&vHash, &otherHash); diff != "" {
 					diffs = append(diffs, diff)

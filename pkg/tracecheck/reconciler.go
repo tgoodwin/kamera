@@ -123,7 +123,7 @@ func Wrap(name string, r reconcile.Reconciler) reconciler {
 
 func (r *reconcileImpl) inferReconcileRequest(readset ObjectVersions) (reconcile.Request, error) {
 	for key, version := range readset {
-		if key.Kind == r.For {
+		if key.IdentityKey.Kind == r.For {
 			obj := r.versionManager.Resolve(version)
 			if obj == nil {
 				fmt.Printf("missing full object for hash %s\n", version)
@@ -145,7 +145,7 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
 	out := make(replay.CacheFrame)
 
 	for key, hash := range ov {
-		kind := key.Kind
+		kind := key.IdentityKey.Kind
 		if _, ok := out[kind]; !ok {
 			out[kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
 		}
@@ -163,8 +163,8 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
 	return out
 }
 
-func (r *reconcileImpl) computeDeltas(readSet, writeSet ObjectVersions) map[snapshot.IdentityKey]Delta {
-	out := make(map[snapshot.IdentityKey]Delta)
+func (r *reconcileImpl) computeDeltas(readSet, writeSet ObjectVersions) map[snapshot.CompositeKey]Delta {
+	out := make(map[snapshot.CompositeKey]Delta)
 	for key, hash := range writeSet {
 		if prevHash, ok := readSet[key]; ok {
 			delta := r.versionManager.Diff(&prevHash, &hash)

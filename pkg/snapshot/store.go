@@ -24,6 +24,25 @@ type ResourceKey struct {
 	Name      string
 }
 
+type CompositeKey struct {
+	IdentityKey
+	ResourceKey
+}
+
+func NewCompositeKey(kind, namespace, name, uid string) CompositeKey {
+	return CompositeKey{
+		IdentityKey: IdentityKey{
+			Kind:     kind,
+			ObjectID: uid,
+		},
+		ResourceKey: ResourceKey{
+			Kind:      kind,
+			Namespace: namespace,
+			Name:      name,
+		},
+	}
+}
+
 type Hasher interface {
 	Hash(obj *unstructured.Unstructured) (VersionHash, error)
 }

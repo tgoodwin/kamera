@@ -17,7 +17,7 @@ type HashInfo struct {
 }
 
 // ObjectVersions is a map of object IDs to their version hashes
-type ObjectVersions map[snapshot.IdentityKey]snapshot.VersionHash
+type ObjectVersions map[snapshot.CompositeKey]snapshot.VersionHash
 
 func (ov ObjectVersions) Equals(other ObjectVersions) bool {
 	if len(ov) != len(other) {
@@ -65,7 +65,7 @@ type ReconcileResult struct {
 	FrameID      string
 	FrameType    FrameType
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
-	Deltas       map[snapshot.IdentityKey]Delta
+	Deltas       map[snapshot.CompositeKey]Delta
 }
 
 type ExecutionHistory []*ReconcileResult
@@ -80,8 +80,8 @@ func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.Key.IdentityKey); err != nil {
 				return err
 			}
-			if _, hasDelta := r.Deltas[effect.Key.IdentityKey]; hasDelta {
-				_, err := fmt.Fprintf(file, "\t%s: %s\n", effect.Key.IdentityKey, r.Deltas[effect.Key.IdentityKey])
+			if _, hasDelta := r.Deltas[effect.Key]; hasDelta {
+				_, err := fmt.Fprintf(file, "\t%s: %s\n", effect.Key.IdentityKey, r.Deltas[effect.Key])
 				if err != nil {
 					return err
 				}

@@ -168,7 +168,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	}{
 		{
 			objects: tracecheck.ObjectVersions{
-				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.NewDefaultHash(
+				snapshot.NewCompositeKey("Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
 					`{
 						"apiVersion": "appsv1",
 						"kind": "Foo",
@@ -201,7 +201,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 		},
 		{
 			objects: tracecheck.ObjectVersions{
-				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.NewDefaultHash(
+				snapshot.NewCompositeKey("Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
 					`{
 						"apiVersion": "appsv1",
 						"kind": "Foo",

@@ -153,10 +153,10 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 			hasZookeeper := false
 
 			for key := range state.State.Objects() {
-				if key.Kind == "ZookeeperCluster" {
+				if key.IdentityKey.Kind == "ZookeeperCluster" {
 					hasZookeeper = true
 				}
-				if key.Kind == "PersistentVolumeClaim" {
+				if key.IdentityKey.Kind == "PersistentVolumeClaim" {
 					pvcCount++
 				}
 			}

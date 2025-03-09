@@ -26,28 +26,9 @@ type VersionManager interface {
 	Diff(prev, curr *snapshot.VersionHash) string
 }
 
-type CompositeKey struct {
-	snapshot.IdentityKey // unique across history
-	snapshot.ResourceKey // not unique across history, but the default indexing strategy in k8s
-}
-
-func NewCompositeKey(kind, namespace, name, uid string) CompositeKey {
-	return CompositeKey{
-		IdentityKey: snapshot.IdentityKey{
-			Kind:     kind,
-			ObjectID: uid,
-		},
-		ResourceKey: snapshot.ResourceKey{
-			Kind:      kind,
-			Namespace: namespace,
-			Name:      name,
-		},
-	}
-}
-
 type effect struct {
 	OpType  event.OperationType
-	Key     CompositeKey
+	Key     snapshot.CompositeKey
 	Version snapshot.VersionHash
 	// Timestamp time.Time
 }
@@ -57,7 +38,7 @@ type reconcileEffects struct {
 	writes []effect
 }
 
-func newEffect(key CompositeKey, version snapshot.VersionHash, op event.OperationType) effect {
+func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType) effect {
 	return effect{
 		OpType:  op,
 		Key:     key,
@@ -136,7 +117,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		}
 	}
 
-	key := NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), objectID)
+	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), objectID)
 	eff := newEffect(key, versionHash, opType)
 	if opType == event.DELETE {
 		fmt.Println("creating new delete effect", eff.Key.ResourceKey, frameID)
@@ -154,7 +135,12 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) error {
 	frameID := replay.FrameIDFromContext(ctx)
-	iKeys := lo.Keys(ov)
+
+	// TODO cleanup
+	cKeys := lo.Keys(ov)
+	iKeys := lo.Map(cKeys, func(k snapshot.CompositeKey, _ int) snapshot.IdentityKey {
+		return k.IdentityKey
+	})
 
 	rKeys, err := m.snapStore.ResolveResourceKeys(iKeys...)
 	if err != nil {
@@ -189,7 +175,7 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	for _, eff := range effects.writes {
 		// TODO handle the case where there are multiple writes to the same object
 		// in the same frame
-		out[eff.Key.IdentityKey] = eff.Version
+		out[eff.Key] = eff.Version
 	}
 
 	fmt.Println("getting effects for frame", frameID)

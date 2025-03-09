@@ -323,8 +323,8 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 		if err != nil {
 			return errors.Wrap(err, "resolving version")
 		}
-		// TODO fix the whole ResolveVersion business
-		key := NewCompositeKey(e.Kind, "TODO", "TODO", e.ObjectID)
+		// TODO fix the whole ResolveVersion business THIS IS A BLOODY HACK
+		key := snapshot.NewCompositeKey(e.Kind, "default", e.ObjectID, e.ObjectID)
 		effect := newEffect(
 			key,
 			version,
@@ -346,11 +346,11 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	for _, e := range events {
 		iKey := e.effect.Key.IdentityKey
 		if e.effect.OpType == event.DELETE {
-			delete(contents, iKey)
+			delete(contents, e.effect.Key)
 		} else {
 			version := e.effect.Version
 			// change
-			contents[iKey] = version
+			contents[e.effect.Key] = version
 		}
 		KindSequences[iKey.Kind] = e.Sequence
 
