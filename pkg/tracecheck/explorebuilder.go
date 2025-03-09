@@ -231,7 +231,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		// effectContext tracks the state of the world at the time of reconcile
 		// and this is separate from snapshot store because we want this context
 		// to not be shared across branches of the exploration tree.
-		effectContext: make(map[string]util.Set[snapshot.ResourceKey]),
+		effectRKeys: make(map[string]util.Set[snapshot.ResourceKey]),
 
 		// effectIKeys tracks the identity keys that were read or written
 		// during a reconcile operation.

@@ -69,13 +69,11 @@ type manager struct {
 	// need to add frame data to the manager as well for reconciler reads
 	*converterImpl
 
-	// resourceValidator resourceValidator
-
 	// populated by RecordEffect
 	effects map[string]reconcileEffects
 
-	effectContext map[string]util.Set[snapshot.ResourceKey]
-	effectIKeys   map[string]util.Set[snapshot.IdentityKey]
+	effectRKeys map[string]util.Set[snapshot.ResourceKey]
+	effectIKeys map[string]util.Set[snapshot.IdentityKey]
 
 	mu sync.RWMutex
 }
@@ -146,35 +144,23 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) error {
 	frameID := replay.FrameIDFromContext(ctx)
 
-	// TODO cleanup
 	cKeys := lo.Keys(ov)
 	iKeys := lo.Map(cKeys, func(k snapshot.CompositeKey, _ int) snapshot.IdentityKey {
 		return k.IdentityKey
 	})
 
-	rKeys, err := m.snapStore.ResolveResourceKeys(iKeys...)
-	if err != nil {
-		return err
-	}
-	m.effectContext[frameID] = rKeys
+	rKeys := lo.Map(cKeys, func(k snapshot.CompositeKey, _ int) snapshot.ResourceKey {
+		return k.ResourceKey
+	})
+
+	m.effectRKeys[frameID] = util.NewSet(rKeys...)
 	m.effectIKeys[frameID] = util.NewSet(iKeys...)
-
-	fmt.Println("preparing effect context for frame", frameID)
-	for _, k := range rKeys.List() {
-		fmt.Println(k)
-	}
-	fmt.Println("----")
-	for _, k := range iKeys {
-		fmt.Println(k)
-	}
-	fmt.Println("----")
-
 	return nil
 }
 
 func (m *manager) CleanupEffectContext(ctx context.Context) {
 	frameID := replay.FrameIDFromContext(ctx)
-	delete(m.effectContext, frameID)
+	delete(m.effectRKeys, frameID)
 	delete(m.effectIKeys, frameID)
 }
 
@@ -204,7 +190,7 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 
 func (m *manager) validateEffect(ctx context.Context, op event.OperationType, obj client.Object, precondition *replay.PreconditionInfo) error {
 	frameID := replay.FrameIDFromContext(ctx)
-	rKeys, ok := m.effectContext[frameID]
+	rKeys, ok := m.effectRKeys[frameID]
 	if !ok {
 		return fmt.Errorf("no effect context found for frameID %s", frameID)
 	}

@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -57,13 +56,6 @@ type Store struct {
 
 	// Hash generator functions
 	hashGenerators map[HashStrategy]Hasher
-
-	// set of all resource keys, used to determine if a resource exists
-	// during client operations so we can return appropriate errors
-	// in the same way that a real k8s client would
-	resourceKeys map[ResourceKey]struct{}
-
-	idKeysToResourceKeys map[IdentityKey]ResourceKey
 }
 
 func NewStore() *Store {
@@ -71,9 +63,6 @@ func NewStore() *Store {
 		indices:        make(map[HashStrategy]map[VersionHash]*unstructured.Unstructured),
 		objectHashes:   make(map[string]map[HashStrategy]VersionHash),
 		hashGenerators: make(map[HashStrategy]Hasher),
-
-		resourceKeys:         make(map[ResourceKey]struct{}),
-		idKeysToResourceKeys: make(map[IdentityKey]ResourceKey),
 	}
 
 	// Initialize indices for each hash strategy
@@ -85,10 +74,6 @@ func NewStore() *Store {
 	store.RegisterHashGenerator(AnonymizedHash, NewAnonymizingHasher(DefaultLabelReplacements))
 
 	return store
-}
-
-func (s *Store) ResourceKeys() map[ResourceKey]struct{} {
-	return s.resourceKeys
 }
 
 func (s *Store) GetVersionMap(strategy HashStrategy) map[VersionHash]*unstructured.Unstructured {
@@ -105,30 +90,8 @@ func getObjectKey(obj *unstructured.Unstructured) string {
 	return fmt.Sprintf("%s/%s/%s", kind, obj.GetNamespace(), obj.GetName())
 }
 
-func getIdentityKey(obj *unstructured.Unstructured) IdentityKey {
-	kind := util.GetKind(obj)
-	return IdentityKey{
-		Kind:     kind,
-		ObjectID: tag.GetSleeveObjectID(obj),
-	}
-}
-
-func getResourceKey(obj *unstructured.Unstructured) ResourceKey {
-	kind := util.GetKind(obj)
-	return ResourceKey{
-		Kind:      kind,
-		Namespace: obj.GetNamespace(),
-		Name:      obj.GetName(),
-	}
-}
-
 func (s *Store) indexObject(obj *unstructured.Unstructured, strategies ...HashStrategy) error {
 	objKey := getObjectKey(obj)
-	rKey := getResourceKey(obj)
-	iKey := getIdentityKey(obj)
-
-	s.resourceKeys[rKey] = struct{}{}
-	s.idKeysToResourceKeys[iKey] = rKey
 
 	if _, exists := s.objectHashes[objKey]; !exists {
 		s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
@@ -288,17 +251,4 @@ func (s *Store) Oldest(candidates ...VersionHash) VersionHash {
 		}
 	}
 	return oldest
-}
-
-func (s *Store) ResolveResourceKeys(keys ...IdentityKey) (util.Set[ResourceKey], error) {
-	result := util.NewSet[ResourceKey]()
-	for _, key := range keys {
-		if rKey, exists := s.idKeysToResourceKeys[key]; exists {
-			result.Add(rKey)
-		}
-	}
-	if len(result) != len(keys) {
-		return nil, fmt.Errorf("failed to resolve all keys")
-	}
-	return result, nil
 }
