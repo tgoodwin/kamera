@@ -6,6 +6,28 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Operation Preconditions
+
+// Delete Preconditions:
+
+// DeleteOptions.Preconditions.UID: Object is only deleted if current UID matches
+// DeleteOptions.Preconditions.ResourceVersion: Object is only deleted if current ResourceVersion matches
+
+// Update/Patch Preconditions:
+
+// ResourceVersion: For optimistic concurrency control
+// Strategic Merge Patch includes the current state in its calculation
+// Server-side Apply uses "field manager" ownership for conflict resolution
+
+// Create Preconditions:
+
+// No direct UID preconditions (as object doesn't exist yet)
+// DryRun flag can be used to validate without committing
+
+// Get Preconditions:
+
+// No preconditions, but can filter responses
+
 // PreconditionInfo stores preconditions extracted from client operation options
 type PreconditionInfo struct {
 	ResourceVersion *string    // For optimistic concurrency control

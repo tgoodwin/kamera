@@ -321,21 +321,39 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			newObjectVersions[effect.Key] = changeOV[effect.Key]
 		}
 
+		// need to determine how to update state based on preconditions
 		if effect.OpType == event.DELETE {
 			if _, ok := newObjectVersions[effect.Key]; !ok {
-				// TODO this should return a 404. The effect should not have been materialized
-				fmt.Println("warning: deleted key absent in state - ", effect.Key)
-				fmt.Println("frameID: ", frameID)
-				fmt.Println("true state:")
-				for k := range state.Objects() {
-					fmt.Println(k)
+				_, rok := newObjectVersions.HasResourceKey(effect.Key.ResourceKey)
+				if !rok {
+					fmt.Println("warning: deleted key absent in state - ", effect.Key)
+					fmt.Println("frameID: ", frameID)
+					fmt.Println("true state:")
+					for k := range state.Objects() {
+						fmt.Println(k)
+					}
+					fmt.Println("observed state")
+					for k := range observableState {
+						fmt.Println(k)
+					}
+					panic("deleted key is not present in prev state. effect validation should have prevented this")
 				}
-				fmt.Println("observed state")
-				for k := range observableState {
-					fmt.Println(k)
-				}
-				// panic("deleted key absent in state")
 			}
+			// TODO when properly implementing preconditions, test with this:
+			// "go run examples/zookeeper/cmd/main.go --search-depth 2"
+			// and then uncomment the code below
+
+			// fmt.Println("warning: deleted key absent in state - ", effect.Key)
+			// fmt.Println("frameID: ", frameID)
+			// fmt.Println("true state:")
+			// for k := range state.Objects() {
+			// 	fmt.Println(k)
+			// }
+			// fmt.Println("observed state")
+			// for k := range observableState {
+			// 	fmt.Println(k)
+			// }
+			// panic("deletion effect")
 			delete(newObjectVersions, effect.Key)
 		}
 

@@ -233,6 +233,10 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		// to not be shared across branches of the exploration tree.
 		effectContext: make(map[string]util.Set[snapshot.ResourceKey]),
 
+		// effectIKeys tracks the identity keys that were read or written
+		// during a reconcile operation.
+		effectIKeys: make(map[string]util.Set[snapshot.IdentityKey]),
+
 		// resourceValdiator mimics the behavior of the API
 		// server in terms of rejecting operations that conflict
 		// with the current state of the world.

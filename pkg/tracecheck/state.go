@@ -31,6 +31,15 @@ func (ov ObjectVersions) Equals(other ObjectVersions) bool {
 	return true
 }
 
+func (ov ObjectVersions) HasResourceKey(key snapshot.ResourceKey) (snapshot.CompositeKey, bool) {
+	for compositeKey := range ov {
+		if compositeKey.ResourceKey == key {
+			return compositeKey, true
+		}
+	}
+	return snapshot.CompositeKey{}, false
+}
+
 func (ov ObjectVersions) Objects() ObjectVersions {
 	return ov
 }

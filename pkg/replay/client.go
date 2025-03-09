@@ -51,8 +51,9 @@ func NewClient(reconcilerID string, scheme *runtime.Scheme, frameReader frameRea
 
 var _ client.Client = (*Client)(nil)
 
-func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType) error {
-	return c.recorder.RecordEffect(ctx, obj, opType)
+func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType, preconditions *PreconditionInfo) error {
+	// TODO validate preconditions
+	return c.recorder.RecordEffect(ctx, obj, opType, preconditions)
 }
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -72,7 +73,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
 	if frame, err := c.GetCacheFrame(frameID); err == nil {
 		if frozenObj, ok := frame[kind][key]; ok {
-			if err := c.handleEffect(ctx, frozenObj, event.GET); err != nil {
+			if err := c.handleEffect(ctx, frozenObj, event.GET, nil); err != nil {
 				return err
 			}
 
@@ -111,7 +112,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 			newSlice := reflect.MakeSlice(reflect.SliceOf(itemType), 0, len(objsForKind))
 
 			for _, obj := range objsForKind {
-				if err := c.handleEffect(ctx, obj, event.LIST); err != nil {
+				if err := c.handleEffect(ctx, obj, event.LIST, nil); err != nil {
 					return err
 				}
 
@@ -140,24 +141,31 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 	return fmt.Errorf("frame %s not found", frameID)
 }
 
+// TODO create or set an ObjectID here
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	return c.handleEffect(ctx, obj, event.CREATE)
+	// TODO obj.SetUID(uuid.NewUUID())
+	preconditions := ExtractCreatePreconditions(opts)
+	return c.handleEffect(ctx, obj, event.CREATE, &preconditions)
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	return c.handleEffect(ctx, obj, event.DELETE)
+	preconditions := ExtractDeletePreconditions(opts)
+	return c.handleEffect(ctx, obj, event.DELETE, &preconditions)
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
-	return c.handleEffect(ctx, obj, event.UPDATE)
+	preconditions := ExtractUpdatePreconditions(opts)
+	return c.handleEffect(ctx, obj, event.UPDATE, &preconditions)
 }
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
-	return c.handleEffect(ctx, obj, event.DELETE)
+	preconditions := ExtractDeleteAllOfPreconditions(opts)
+	return c.handleEffect(ctx, obj, event.DELETE, &preconditions)
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	return c.handleEffect(ctx, obj, event.PATCH)
+	preconditions := ExtractPatchPreconditions(opts)
+	return c.handleEffect(ctx, obj, event.PATCH, &preconditions)
 }
 
 func (c *Client) Status() client.SubResourceWriter {
@@ -171,13 +179,16 @@ type subResourceClient struct {
 var _ client.SubResourceWriter = (*subResourceClient)(nil)
 
 func (c *subResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-	return c.wrapped.handleEffect(ctx, obj, event.UPDATE)
+	preconditions := ExtractStatusUpdatePreconditions(opts)
+	return c.wrapped.handleEffect(ctx, obj, event.UPDATE, &preconditions)
 }
 
 func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-	return c.wrapped.handleEffect(ctx, obj, event.PATCH)
+	preconditions := ExtractStatusPatchPreconditions(opts)
+	return c.wrapped.handleEffect(ctx, obj, event.PATCH, &preconditions)
 }
 
 func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
-	return c.wrapped.handleEffect(ctx, obj, event.CREATE)
+	preconditions := ExtractSubResourceCreatePreconditions(opts)
+	return c.wrapped.handleEffect(ctx, obj, event.CREATE, &preconditions)
 }
