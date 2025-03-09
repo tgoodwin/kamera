@@ -270,17 +270,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	ctx = replay.WithFrameID(ctx, frameID)
 
 	// prepare the "true state of the world" for the controller
-	fullState := state.Contents.Objects()
-	fmt.Println("full state that we're preparing effect context for at frame: ", frameID)
-	for k := range fullState {
-		fmt.Println(k)
-	}
-	fmt.Println("---")
-	e.effectContextManager.PrepareEffectContext(ctx, fullState)
+	e.effectContextManager.PrepareEffectContext(ctx, state.Contents.All())
 	defer e.effectContextManager.CleanupEffectContext(ctx)
 
 	// invoke the controller at its observed state of the world
-	observableState := state.Contents.Observe()
+	observableState := state.Contents.Observable()
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil {
 		// return the pre-reconcile state if the controller errored

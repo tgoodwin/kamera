@@ -176,11 +176,6 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 		out[eff.Key] = eff.Version
 	}
 
-	fmt.Println("getting effects for frame", frameID)
-	for _, k := range effects.writes {
-		fmt.Println(k.Key.IdentityKey, k.OpType)
-	}
-
 	changes := Changes{
 		ObjectVersions: out,
 		Effects:        effects.writes,

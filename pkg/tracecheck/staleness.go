@@ -45,11 +45,11 @@ func NewStateSnapshot(contents ObjectVersions, kindSequences map[string]int64, s
 
 type ResourceVersion int
 
-func (s *StateSnapshot) Objects() ObjectVersions {
+func (s *StateSnapshot) All() ObjectVersions {
 	return s.contents
 }
 
-func (s *StateSnapshot) Observe() ObjectVersions {
+func (s *StateSnapshot) Observable() ObjectVersions {
 	ss := replayEventsAtSequence(s.stateEvents, s.KindSequences)
 	return ss.contents
 }

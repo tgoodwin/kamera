@@ -77,8 +77,8 @@ func TestExhaustiveInterleavings(t *testing.T) {
 		t.Fatal()
 	}
 
-	observable := initialState.Contents.Observe()
-	base := initialState.Contents.Objects()
+	observable := initialState.Contents.Observable()
+	base := initialState.Contents.All()
 	// no staleness here - the observable should be the same as the base
 	assert.Equal(t, observable, base)
 

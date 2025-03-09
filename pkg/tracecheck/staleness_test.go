@@ -459,12 +459,12 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 
 		// Replay all events
 		state := g.GetStateAtReconcileID("r4")
-		if len(state.Objects()) != 3 {
-			t.Errorf("Expected 3 objects in state, got %d", len(state.Objects()))
+		if len(state.All()) != 3 {
+			t.Errorf("Expected 3 objects in state, got %d", len(state.All()))
 		}
 
 		afterState := g.GetStateAfterReconcileID("r4")
-		assert.Equal(t, 2, len(afterState.Objects()))
+		assert.Equal(t, 2, len(afterState.All()))
 
 		expectedKeys := []snapshot.CompositeKey{
 			snapshot.NewCompositeKey("Deployment", "default", "dep-1", "dep-1"),
@@ -473,7 +473,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
 		}
 		for _, key := range expectedKeys {
-			if _, exists := state.Objects()[key]; !exists {
+			if _, exists := state.All()[key]; !exists {
 				t.Errorf("Expected %s in state", key)
 			}
 		}
@@ -492,14 +492,14 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			t.Fatalf("Load failed: %v", err)
 		}
 		state := g.GetStateAtReconcileID("r2")
-		if len(state.Objects()) != 4 {
-			t.Errorf("Expected 4 objects in state, got %d", len(state.Objects()))
+		if len(state.All()) != 4 {
+			t.Errorf("Expected 4 objects in state, got %d", len(state.All()))
 		}
 		// ensure the correct objects are in the state
-		if _, exists := state.Objects()[snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1")]; !exists {
+		if _, exists := state.All()[snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1")]; !exists {
 			t.Error("Expected pod-1 in state")
 		}
-		if _, exists := state.Objects()[snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2")]; !exists {
+		if _, exists := state.All()[snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2")]; !exists {
 			t.Error("Expected pod-2 in state")
 		}
 		// check kind sequence
@@ -510,7 +510,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 	t.Run("rewind knowledge", func(t *testing.T) {
 		countPods := func(s *StateSnapshot) int {
 			count := 0
-			for k := range s.Objects() {
+			for k := range s.All() {
 				if k.IdentityKey.Kind == "Pod" {
 					count++
 				}
@@ -525,14 +525,14 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		// replay all events
 		state := g.GetStateAtReconcileID("r4")
 		if countPods(state) != 1 {
-			t.Errorf("Expected 1 pods in state, got %d", len(state.Objects()))
+			t.Errorf("Expected 1 pods in state, got %d", len(state.All()))
 		}
 		rewind, err := g.AdjustKnowledgeForResourceType(state, "Pod", -1)
 		if err != nil {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}
 		if countPods(rewind) != 2 {
-			t.Errorf("Expected 2 pods in state, got %d", len(rewind.Objects()))
+			t.Errorf("Expected 2 pods in state, got %d", len(rewind.All()))
 		}
 
 		ff, err := g.AdjustKnowledgeForResourceType(state, "Pod", 1)
@@ -540,7 +540,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}
 		if countPods(ff) != 0 {
-			t.Errorf("Expected 0 pods in state, got %d", len(ff.Objects()))
+			t.Errorf("Expected 0 pods in state, got %d", len(ff.All()))
 		}
 	})
 }
@@ -670,7 +670,7 @@ func TestReplayEventsToState(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			state := replayEventSequenceToState(tt.events)
 
-			assert.Equal(t, tt.expectedState, state.Objects())
+			assert.Equal(t, tt.expectedState, state.All())
 			assert.Equal(t, tt.expectedSeq, state.KindSequences)
 			assert.Equal(t, tt.events, state.stateEvents)
 		})
@@ -951,7 +951,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			state := replayEventsAtSequence(events, tt.sequencesByKind)
 
-			assert.Equal(t, tt.expectedState, state.Objects())
+			assert.Equal(t, tt.expectedState, state.All())
 			assert.Equal(t, tt.expectedSeq, state.KindSequences)
 		})
 	}
@@ -1078,10 +1078,10 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		}
 
 		// check that the stale view has the expected "ground truth" objects
-		assert.Equal(t, state.Objects(), staleView.Objects())
+		assert.Equal(t, state.All(), staleView.All())
 
-		expectedObjects := expected.Objects()
-		staleViewObjects := staleView.Observe()
+		expectedObjects := expected.All()
+		staleViewObjects := staleView.Observable()
 
 		assert.Equal(t, len(expectedObjects), len(staleViewObjects))
 		for key, expectedVersion := range expectedObjects {

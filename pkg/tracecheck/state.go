@@ -162,7 +162,7 @@ func (sn StateNode) IsConverged() bool {
 }
 
 func (sn StateNode) Objects() ObjectVersions {
-	return sn.Contents.Objects()
+	return sn.Contents.All()
 }
 
 func (sn StateNode) Summarize() {
