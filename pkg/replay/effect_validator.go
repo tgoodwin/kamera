@@ -71,13 +71,11 @@ func ValidateAgainstKeys(op event.OperationType, obj client.Object, keys map[sna
 
 	case event.DELETE:
 		if !exists {
-			fmt.Println("KEY NOT FOUND", key)
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
 		}
 		// Automatically remove tracking if DELETE is valid
-		fmt.Println("----deleting key----", key)
 		delete(keys, key)
 
 	case event.APPLY:

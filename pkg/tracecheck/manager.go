@@ -249,7 +249,6 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 
 		if !rKeyExists {
 			// case 1 and 3
-			fmt.Println("resource key NOT FOUND", frameID, rKey)
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
