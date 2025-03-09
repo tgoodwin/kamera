@@ -324,7 +324,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		if effect.OpType == event.DELETE {
 			if _, ok := newObjectVersions[effect.Key]; !ok {
 				// TODO this should return a 404. The effect should not have been materialized
-				fmt.Println("warning: deleted key absent in state - ", effect.Key.IdentityKey)
+				fmt.Println("warning: deleted key absent in state - ", effect.Key)
 				fmt.Println("frameID: ", frameID)
 				fmt.Println("true state:")
 				for k := range state.Objects() {
