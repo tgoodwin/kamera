@@ -217,29 +217,27 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		return nil, fmt.Errorf("no emitter specified")
 	}
 
-	// Set up snapshot store
-	if b.snapStore == nil {
-		b.snapStore = snapshot.NewStore()
-	}
-
 	// Create version store and knowledge manager
 	vStore := newVersionStore(b.snapStore)
 
-	keys := b.snapStore.ResourceKeys()
-	fmt.Println("instantiating conflict manager with keys:", keys)
 	// Create manager
 	mgr := &manager{
 		versionStore: vStore,
 		effects:      make(map[string]reconcileEffects),
+
+		snapStore: b.snapStore,
+
+		// effectContext tracks the state of the world at the time of reconcile
+		// and this is separate from snapshot store because we want this context
+		// to not be shared across branches of the exploration tree.
+		effectContext: make(map[string]util.Set[snapshot.ResourceKey]),
 
 		// resourceValdiator mimics the behavior of the API
 		// server in terms of rejecting operations that conflict
 		// with the current state of the world.
 		// It needs to be hydrated with the current state of the world
 		// before it can be used and uses the snapshot store as the source of truth.
-		resourceValidator: replay.NewResourceConflictManager(
-			keys,
-		),
+		// resourceValidator: replay.NewResourceConflictManager(b.snapStore.ResourceKeys()),
 	}
 
 	// Initialize reconcilers with appropriate clients
@@ -269,6 +267,8 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		stalenessDepth:   b.stalenessDepth,
 		triggerManager:   triggerManager,
 		knowledgeManager: knowledgeManager,
+
+		effectContextManager: mgr,
 	}
 
 	return explorer, nil

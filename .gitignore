@@ -33,3 +33,5 @@ webhook/**
 examples/chaos/**
 
 results/**
+
+testresults/**

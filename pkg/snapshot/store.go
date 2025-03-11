@@ -3,6 +3,8 @@ package snapshot
 import (
 	"fmt"
 
+	"github.com/samber/lo"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -41,6 +43,8 @@ type Store struct {
 	// during client operations so we can return appropriate errors
 	// in the same way that a real k8s client would
 	resourceKeys map[ResourceKey]struct{}
+
+	idKeysToResourceKeys map[IdentityKey]ResourceKey
 }
 
 func NewStore() *Store {
@@ -48,7 +52,9 @@ func NewStore() *Store {
 		indices:        make(map[HashStrategy]map[VersionHash]*unstructured.Unstructured),
 		objectHashes:   make(map[string]map[HashStrategy]VersionHash),
 		hashGenerators: make(map[HashStrategy]Hasher),
-		resourceKeys:   make(map[ResourceKey]struct{}),
+
+		resourceKeys:         make(map[ResourceKey]struct{}),
+		idKeysToResourceKeys: make(map[IdentityKey]ResourceKey),
 	}
 
 	// Initialize indices for each hash strategy
@@ -80,6 +86,14 @@ func getObjectKey(obj *unstructured.Unstructured) string {
 	return fmt.Sprintf("%s/%s/%s", kind, obj.GetNamespace(), obj.GetName())
 }
 
+func getIdentityKey(obj *unstructured.Unstructured) IdentityKey {
+	kind := util.GetKind(obj)
+	return IdentityKey{
+		Kind:     kind,
+		ObjectID: tag.GetSleeveObjectID(obj),
+	}
+}
+
 func getResourceKey(obj *unstructured.Unstructured) ResourceKey {
 	kind := util.GetKind(obj)
 	return ResourceKey{
@@ -89,22 +103,20 @@ func getResourceKey(obj *unstructured.Unstructured) ResourceKey {
 	}
 }
 
-// Store an object with all registered hash strategies
-func (s *Store) StoreObject(obj *unstructured.Unstructured) error {
+func (s *Store) indexObject(obj *unstructured.Unstructured, strategies ...HashStrategy) error {
 	objKey := getObjectKey(obj)
-
 	rKey := getResourceKey(obj)
-	s.resourceKeys[rKey] = struct{}{}
-	fmt.Println("adding rkey", rKey)
+	iKey := getIdentityKey(obj)
 
-	// Initialize hash map for this object if it doesn't exist
+	s.resourceKeys[rKey] = struct{}{}
+	s.idKeysToResourceKeys[iKey] = rKey
+
 	if _, exists := s.objectHashes[objKey]; !exists {
 		s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
 	}
 
-	// Calculate and store all hash strategies for this object
-	for strategy, generator := range s.hashGenerators {
-		hash, err := generator.Hash(obj)
+	for _, strategy := range strategies {
+		hash, err := s.hashGenerators[strategy].Hash(obj)
 		if err != nil {
 			return fmt.Errorf("failed to generate %s hash: %w", strategy, err)
 		}
@@ -118,29 +130,69 @@ func (s *Store) StoreObject(obj *unstructured.Unstructured) error {
 	return nil
 }
 
+// Store an object with all registered hash strategies
+func (s *Store) StoreObject(obj *unstructured.Unstructured) error {
+	strategies := lo.Keys(s.hashGenerators)
+	return s.indexObject(obj, strategies...)
+	// objKey := getObjectKey(obj)
+
+	// rKey := getResourceKey(obj)
+	// s.resourceKeys[rKey] = struct{}{}
+	// fmt.Println("adding rkey", rKey)
+
+	// iKey := getIdentityKey(obj)
+	// s.idKeysToResourceKeys[iKey] = rKey
+
+	// // Initialize hash map for this object if it doesn't exist
+	// if _, exists := s.objectHashes[objKey]; !exists {
+	// 	s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
+	// }
+
+	// // Calculate and store all hash strategies for this object
+	// for strategy, generator := range s.hashGenerators {
+	// 	hash, err := generator.Hash(obj)
+	// 	if err != nil {
+	// 		return fmt.Errorf("failed to generate %s hash: %w", strategy, err)
+	// 	}
+
+	// 	// Store in indices
+	// 	s.indices[strategy][hash] = obj
+
+	// 	// Record hash value for this object and strategy
+	// 	s.objectHashes[objKey][strategy] = hash
+	// }
+	// return nil
+}
+
 func (s *Store) PublishWithStrategy(obj *unstructured.Unstructured, strategy HashStrategy) VersionHash {
-	// Calculate hash
-	hash, err := s.hashGenerators[strategy].Hash(obj)
-	if err != nil {
-		panic(fmt.Sprintf("error hashing object: %v", err))
+	if err := s.indexObject(obj, strategy); err != nil {
+		panic(fmt.Sprintf("error storing object: %v", err))
 	}
-
-	// Store in indices
-	s.indices[strategy][hash] = obj
-
-	// Record hash value for this object and strategy
 	objKey := getObjectKey(obj)
-	// Initialize hash map for this object if it doesn't exist
-	if _, exists := s.objectHashes[objKey]; !exists {
-		s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
-	}
+	return s.objectHashes[objKey][strategy]
 
-	rKey := getResourceKey(obj)
-	s.resourceKeys[rKey] = struct{}{}
+	// // Calculate hash
+	// hash, err := s.hashGenerators[strategy].Hash(obj)
+	// if err != nil {
+	// 	panic(fmt.Sprintf("error hashing object: %v", err))
+	// }
 
-	s.objectHashes[objKey][strategy] = hash
+	// // Store in indices
+	// s.indices[strategy][hash] = obj
 
-	return hash
+	// // Record hash value for this object and strategy
+	// objKey := getObjectKey(obj)
+	// // Initialize hash map for this object if it doesn't exist
+	// if _, exists := s.objectHashes[objKey]; !exists {
+	// 	s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
+	// }
+
+	// rKey := getResourceKey(obj)
+	// s.resourceKeys[rKey] = struct{}{}
+
+	// s.objectHashes[objKey][strategy] = hash
+
+	// return hash
 }
 
 func (s *Store) ResolveWithStrategy(hash VersionHash, strategy HashStrategy) *unstructured.Unstructured {
@@ -205,7 +257,6 @@ func (s *Store) Newest(candidates ...VersionHash) VersionHash {
 	return newest
 }
 
-// implement oldest
 func (s *Store) Oldest(candidates ...VersionHash) VersionHash {
 	var oldest VersionHash
 	minResourceVersion := candidates[0].Value
@@ -218,4 +269,17 @@ func (s *Store) Oldest(candidates ...VersionHash) VersionHash {
 		}
 	}
 	return oldest
+}
+
+func (s *Store) ResolveResourceKeys(keys ...IdentityKey) (util.Set[ResourceKey], error) {
+	result := util.NewSet[ResourceKey]()
+	for _, key := range keys {
+		if rKey, exists := s.idKeysToResourceKeys[key]; exists {
+			result.Add(rKey)
+		}
+	}
+	if len(result) != len(keys) {
+		return nil, fmt.Errorf("failed to resolve all keys")
+	}
+	return result, nil
 }

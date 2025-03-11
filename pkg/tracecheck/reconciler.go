@@ -7,7 +7,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -44,9 +43,10 @@ type reconcileImpl struct {
 }
 
 func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
-	frameID := util.UUID()
-	logger = log.FromContext(ctx).WithValues("reconciler", r.Name, "frameID", frameID)
-	ctx = replay.WithFrameID(ctx, frameID)
+	// frameID := util.UUID()
+	// logger = log.FromContext(ctx).WithValues("reconciler", r.Name, "frameID", frameID)
+	// ctx = replay.WithFrameID(ctx, frameID)
+	frameID := replay.FrameIDFromContext(ctx)
 
 	// insert a "frame" to hold the readset data ahead of the reconcile
 	r.InsertCacheFrame(frameID, r.toFrameData(observableState))
