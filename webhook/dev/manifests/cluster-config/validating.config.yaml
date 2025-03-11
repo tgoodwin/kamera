@@ -1,0 +1,56 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: "intercept-resources.discrete.events"
+webhooks:
+  - name: "sleeve-webhook.discrete.events"
+    namespaceSelector:
+      matchLabels:
+        admission-webhook: enabled
+    clientConfig:
+      service:
+        namespace: default
+        name: simple-kubernetes-webhook
+        path: /validate-resource
+        port: 443
+      caBundle: |
+        LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSURRekNDQWl1Z0F3SUJBZ0lVZHRKaUhhbjJyRFp2
+        UldNQW91Mm4rMDYxUUE4d0RRWUpLb1pJaHZjTkFRRUwKQlFBd01URUxNQWtHQTFVRUJoTUNRVlV4SWpB
+        Z0JnTlZCQU1NR1hOcGJYQnNaUzFyZFdKbGNtNWxkR1Z6TFhkbApZbWh2YjJzd0hoY05NalF3TkRFd01q
+        RTBOekF4V2hjTk1qVXdOREV3TWpFME56QXhXakF4TVFzd0NRWURWUVFHCkV3SkJWVEVpTUNBR0ExVUVB
+        d3daYzJsdGNHeGxMV3QxWW1WeWJtVjBaWE10ZDJWaWFHOXZhekNDQVNJd0RRWUoKS29aSWh2Y05BUUVC
+        QlFBRGdnRVBBRENDQVFvQ2dnRUJBTEVJMFZLVlRDRVczOFRPdUlSZEpYS1p0QjBmVW9wcQpqQnZXQStW
+        bFZ4QkhIU3dUMmRRalg2K1FvVVlKaERwY1dDaktiSWlpWTNhU3BMR3lPM2lCUlBkTUZNVE9DUUVkCmJG
+        Sk5oNzIzaGZpVkcwRkJoQnhzbnFCbEwxMlh2MHJZQVBMTm00dEV0MzEvNnpqaExmS0tNeG5PSjBEQXBU
+        bmoKU3l5U3VMK3VyUVVpUmpteENxMStWUUdUbUo2VXk2amFTcVlnTG9jaWFvTDNYMCtHU0lUVVZ4UkRG
+        OVhBM3JsWgova1hicHVWcUFDRkpYYmczYmhIclFKdlorZytyVG5VREtSbW9vNTdtU2ZRUHdNNzR4QnRW
+        cUdrNERwQjRsN1FMCitSWkRuK2lzdHFKbmxOWDZGbkt0aUhPSmNKYmwvc0hrNXR5bDVnRnBNR0ZWTTNv
+        NWo5dWMySThDQXdFQUFhTlQKTUZFd0hRWURWUjBPQkJZRUZFK3JRNXhSZHpiTUxONHY0cGI5MHlMV3JM
+        QXFNQjhHQTFVZEl3UVlNQmFBRkUrcgpRNXhSZHpiTUxONHY0cGI5MHlMV3JMQXFNQThHQTFVZEV3RUIv
+        d1FGTUFNQkFmOHdEUVlKS29aSWh2Y05BUUVMCkJRQURnZ0VCQUl5U2s2ZGhmdi9DUkEya3RrcGdrSTFa
+        VjZQc0JNemd6NFg3bmZ1aWJqeHB5ZnZVSXM1OUR4QXoKRXVGa0RvdlhnTklzcWtvY1FzMWdxQTNRSHor
+        US83NHY5VlRTbHlHckU5dDhESSs1Z0loRjFqck5JQnNBYUZ5WgpmL3hLRk1nVU5VaEh3V09VQWJsdlFh
+        cTZkOWQxbUlhdjR6UDgyNHdQMFZ1aDArWnBlQTExaE53N0p1cHlZbEN0ClhXT0YzWHIxck9nZ3VQWVZJ
+        SkZRWnRJS0tKai9UNlcwZzlVbE56Uys1YkpKZXpINnRBWEZhM0xIeTYxdlQrY2sKZVBKQkREM3VHRE5x
+        QmRwNDFVb0dhZXpBSTBJZDNlSnRMUHJmMDJibzV5WFlLM2dDY1JxU3FjRjRsVkZERi9weQpZb3FmK045
+        N0wwUUtPb2ZsVlZRUHBTdE9mZm1xQW9BPQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
+    rules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["deployments", "statefulsets", "replicasets", "daemonsets"]
+        scope: "Namespaced"
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["jobs", "cronjobs"]
+        scope: "Namespaced"
+      - apiGroups: [""] # "" indicates the core API group
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["pods", "persistentvolumeclaims", "services"]
+        scope: "Namespaced"
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    timeoutSeconds: 5
+    failurePolicy: Fail  # This ensures the request is rejected if the webhook fails

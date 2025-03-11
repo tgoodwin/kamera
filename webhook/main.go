@@ -20,6 +20,7 @@ func main() {
 	setLogger()
 
 	http.HandleFunc("/tag-resource", ServeTagResource)
+	http.HandleFunc("/validate-resource", ServeValidateResource)
 	http.HandleFunc("/health", ServeHealth)
 
 	// start the server
@@ -53,6 +54,22 @@ type withlabels struct {
 
 func cameFromTheOutside(in *admissionv1.AdmissionReview) bool {
 	return in.Request.UserInfo.Username == KUBECTL_USERNAME
+}
+
+func hasSleeveLabels(in *admissionv1.AdmissionReview) bool {
+	wl := withlabels{}
+	if err := json.Unmarshal(in.Request.Object.Raw, &wl); err != nil {
+		return false
+	}
+	var labels map[string]string
+	if wl.Labels == nil {
+		labels = make(map[string]string)
+	} else {
+		labels = wl.Labels
+	}
+	// current heuristic: if the object has a creator tag, it's a sleeve object
+	_, hasCreatorTag := labels[sleevetag.TRACEY_CREATOR_ID]
+	return hasCreatorTag
 }
 
 var KUBECTL_USERNAME = "kubernetes-admin"
@@ -136,6 +153,66 @@ func ServeTagResource(w http.ResponseWriter, r *http.Request) {
 
 	fmt.Fprintf(w, "%s", jout)
 
+}
+
+// ServeValidateResource validates an admission request and then writes an admission
+// review to `w`
+func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
+	logger := logrus.WithField("uri", r.RequestURI)
+	logger.Debug("received validation request")
+
+	in, err := parseRequest(*r)
+	if err != nil {
+		logger.Error(err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	cameFromOutside := cameFromTheOutside(in)
+	hasSleeveTags := hasSleeveLabels(in)
+
+	var message string
+	if cameFromOutside {
+		message = "external request"
+	} else if hasSleeveTags {
+		message = "Has sleeve tags"
+	} else {
+		message = "sleeve tags are required for this namespace"
+	}
+
+	allowed := cameFromOutside || hasSleeveTags
+	statusCode := http.StatusForbidden
+	if allowed {
+		statusCode = http.StatusAccepted
+	}
+
+	out := &admissionv1.AdmissionReview{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "AdmissionReview",
+			APIVersion: "admission.k8s.io/v1",
+		},
+		Response: &admissionv1.AdmissionResponse{
+			UID:     in.Request.UID,
+			Allowed: allowed,
+			Result: &metav1.Status{
+				Code:    int32(statusCode),
+				Message: message,
+			},
+		},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	jout, err := json.Marshal(out)
+	if err != nil {
+		e := fmt.Sprintf("could not parse admission response: %v", err)
+		logger.Error(e)
+		http.Error(w, e, http.StatusInternalServerError)
+		return
+	}
+
+	logger.Debug("sending response")
+	logger.Debugf("%s", jout)
+	fmt.Fprintf(w, "%s", jout)
 }
 
 // setLogger sets the logger using env vars, it defaults to text logs on
