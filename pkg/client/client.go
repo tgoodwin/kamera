@@ -158,7 +158,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 	origLabels := obj.GetLabels()
 	tag.AddDeletionID(obj)
 	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
-		c.logger.Error(err, "deleting object")
+		// c.logger.Error(err, "deleting object")
 		// revert object labels to original state if the operation fails
 		obj.SetLabels(origLabels)
 		return err
@@ -173,7 +173,7 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 	origLabels := obj.GetLabels()
 	tag.AddDeletionID(obj)
 	if err := c.Client.DeleteAllOf(ctx, obj, opts...); err != nil {
-		c.logger.Error(err, "deleting objects")
+		// c.logger.Error(err, "deleting objects")
 		// revert object labels to original state
 		obj.SetLabels(origLabels)
 		return err

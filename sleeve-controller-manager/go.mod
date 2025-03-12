@@ -2,6 +2,8 @@ module github.com/tgoodwin/sleeve-controller-manager
 
 go 1.23
 
+toolchain go1.23.7
+
 require (
 	github.com/google/uuid v1.3.0
 	github.com/onsi/ginkgo/v2 v2.17.1
