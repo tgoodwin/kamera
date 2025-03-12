@@ -21,9 +21,6 @@
 go.work
 go.work.sum
 
-# webhook
-webhook/**
-
 # python crap!
 *.pyc
 
