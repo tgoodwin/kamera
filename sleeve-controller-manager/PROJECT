@@ -13,4 +13,22 @@ resources:
   kind: StatefulSet
   path: k8s.io/api/apps/v1
   version: v1
+- controller: true
+  domain: my.domain
+  kind: Service
+  version: v1
+- controller: true
+  group: apps
+  kind: Deployment
+  path: k8s.io/api/apps/v1
+  version: v1
+- controller: true
+  group: apps
+  kind: ReplicaSet
+  path: k8s.io/api/apps/v1
+  version: v1
+- controller: true
+  domain: my.domain
+  kind: PersistentVolumeClaim
+  version: v1
 version: "3"

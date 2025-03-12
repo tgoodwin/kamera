@@ -35,7 +35,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/tgoodwin/sleeve/internal/controller"
+	"github.com/tgoodwin/sleeve"
+	"github.com/tgoodwin/sleeve-controller-manager/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -138,10 +139,38 @@ func main() {
 	}
 
 	if err = (&controller.StatefulSetReconciler{
-		Client: mgr.GetClient(),
+		Client: sleeve.Wrap(mgr.GetClient(), "StatefulSetReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "StatefulSet")
+		os.Exit(1)
+	}
+	if err = (&controller.ServiceReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Service")
+		os.Exit(1)
+	}
+	if err = (&controller.DeploymentReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Deployment")
+		os.Exit(1)
+	}
+	if err = (&controller.ReplicaSetReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ReplicaSet")
+		os.Exit(1)
+	}
+	if err = (&controller.PersistentVolumeClaimReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "PersistentVolumeClaim")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder
