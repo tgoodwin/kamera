@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrl "sigs.k8s.io/controller-runtime/pkg/controller"
@@ -140,7 +139,7 @@ func (ct *ContextTracker) setReconcileID(ctx context.Context) {
 	}
 }
 
-func (ct *ContextTracker) setRootContext(ctx context.Context, obj client.Object) {
+func (ct *ContextTracker) setRootContextFromObservation(ctx context.Context, obj client.Object) error {
 	ct.setReconcileID(ctx)
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	name := obj.GetName()
@@ -160,6 +159,13 @@ func (ct *ContextTracker) setRootContext(ctx context.Context, obj client.Object)
 
 	currReconcileID := ct.rc.GetReconcileID()
 	ct.rc.SetRootID(currReconcileID, rootID)
+	return nil
+}
+
+func (Ct *ContextTracker) MustSetRootContextFromObservation(ctx context.Context, obj client.Object) {
+	if err := Ct.setRootContextFromObservation(ctx, obj); err != nil {
+		panic(err)
+	}
 }
 
 // TODO refactor cause this is only ever called by GET and LIST
@@ -172,11 +178,7 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 	}
 
 	if op == event.GET || op == event.LIST {
-		ct.setRootContext(ctx, obj)
-
-		// log the observed object version
-		// r := snapshot.AsRecord(obj, ct.rc.GetReconcileID())
-		// ct.emitter.LogObjectVersion(r)
+		ct.MustSetRootContextFromObservation(ctx, obj)
 	}
 
 	// assign a change label to the object
@@ -192,23 +194,6 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 	if op == event.DELETE {
 		tag.AddDeletionID(obj)
 	}
-
-	operation := Operation(obj, ct.rc.reconcileID, ct.reconcilerID, ct.rc.GetRootID(ct.rc.reconcileID), op)
-	ct.emitter.LogOperation(operation)
-	r := snapshot.AsRecord(obj, ct.rc.GetReconcileID())
-	r.OperationID = operation.ID
-	r.OperationType = string(op)
-	ct.emitter.LogObjectVersion(r)
-
-	// TODO REMOVE THIS
-	// We need to know if the actual API operation succeeded or not to determine if we should log the operation
-	// but we dont have that information here.
-
-	// OLD COMMENT
-	// propagate labels after logging so we capture the label values prior to the operation
-	// e.g. we want to log out "prev-write-reconcile-id" before we overwrite it
-	// with the current reconcileID when we are propagating labels
-	// however, only do this for mutation operations
 
 	if _, ok := event.MutationTypes[op]; ok {
 		ct.propagateLabels(obj)

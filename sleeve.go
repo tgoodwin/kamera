@@ -18,5 +18,5 @@ func TrackSnapshots() client.Option {
 }
 
 func Wrap(wrapped kclient.Client, name string) *client.Client {
-	return client.Wrap(wrapped, name)
+	return client.Wrap(wrapped, name).WithEnvConfig()
 }
