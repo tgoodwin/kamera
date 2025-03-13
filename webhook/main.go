@@ -159,14 +159,19 @@ func ServeTagResource(w http.ResponseWriter, r *http.Request) {
 // review to `w`
 func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 	logger := logrus.WithField("uri", r.RequestURI)
-	logger.Debug("received validation request")
-
 	in, err := parseRequest(*r)
 	if err != nil {
 		logger.Error(err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	logger.WithFields(logrus.Fields{
+		"kind":            in.Request.Kind,
+		"subResource":     in.Request.SubResource,
+		"requestKind":     in.Request.RequestKind,
+		"requestResource": in.Request.RequestResource,
+		"user":            in.Request.UserInfo.Username,
+	}).Debug("received tag resource request")
 
 	cameFromOutside := cameFromTheOutside(in)
 	hasSleeveTags := hasSleeveLabels(in)
