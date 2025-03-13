@@ -45,7 +45,8 @@ func newConverter(things []joinRecord) *converterImpl {
 	for reconcileID, reads := range byReconcileID {
 		out := make(ObjectVersions)
 		for _, r := range reads {
-			out[r.ikey] = r.versionHash
+			cKey := snapshot.NewCompositeKey(r.ikey.Kind, r.nsName.Namespace, r.nsName.Name, r.ikey.ObjectID)
+			out[cKey] = r.versionHash
 		}
 		reconcileIDToReads[reconcileID] = out
 	}

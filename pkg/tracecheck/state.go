@@ -17,7 +17,7 @@ type HashInfo struct {
 }
 
 // ObjectVersions is a map of object IDs to their version hashes
-type ObjectVersions map[snapshot.IdentityKey]snapshot.VersionHash
+type ObjectVersions map[snapshot.CompositeKey]snapshot.VersionHash
 
 func (ov ObjectVersions) Equals(other ObjectVersions) bool {
 	if len(ov) != len(other) {
@@ -29,6 +29,15 @@ func (ov ObjectVersions) Equals(other ObjectVersions) bool {
 		}
 	}
 	return true
+}
+
+func (ov ObjectVersions) HasResourceKey(key snapshot.ResourceKey) (snapshot.CompositeKey, bool) {
+	for compositeKey := range ov {
+		if compositeKey.ResourceKey == key {
+			return compositeKey, true
+		}
+	}
+	return snapshot.CompositeKey{}, false
 }
 
 func (ov ObjectVersions) Objects() ObjectVersions {
@@ -65,7 +74,7 @@ type ReconcileResult struct {
 	FrameID      string
 	FrameType    FrameType
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
-	Deltas       map[snapshot.IdentityKey]Delta
+	Deltas       map[snapshot.CompositeKey]Delta
 }
 
 type ExecutionHistory []*ReconcileResult
@@ -77,11 +86,11 @@ func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 			return err
 		}
 		for _, effect := range r.Changes.Effects {
-			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.ObjectKey); err != nil {
+			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.Key.IdentityKey); err != nil {
 				return err
 			}
-			if _, hasDelta := r.Deltas[effect.ObjectKey]; hasDelta {
-				_, err := fmt.Fprintf(file, "\t%s: %s\n", effect.ObjectKey, r.Deltas[effect.ObjectKey])
+			if _, hasDelta := r.Deltas[effect.Key]; hasDelta {
+				_, err := fmt.Fprintf(file, "\t%s: %s\n", effect.Key.IdentityKey, r.Deltas[effect.Key])
 				if err != nil {
 					return err
 				}
@@ -153,7 +162,7 @@ func (sn StateNode) IsConverged() bool {
 }
 
 func (sn StateNode) Objects() ObjectVersions {
-	return sn.Contents.Objects()
+	return sn.Contents.All()
 }
 
 func (sn StateNode) Summarize() {

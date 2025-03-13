@@ -65,8 +65,7 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 
 	for i, e := range events {
 		effect := newEffect(
-			e.Kind,
-			e.ObjectID,
+			snapshot.NewCompositeKey(e.Kind, "TODO", "TODO", e.ObjectID),
 			snapshot.NewDefaultHash("blah"),
 			event.OperationType(e.OpType),
 		)
@@ -460,21 +459,21 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 
 		// Replay all events
 		state := g.GetStateAtReconcileID("r4")
-		if len(state.Objects()) != 3 {
-			t.Errorf("Expected 3 objects in state, got %d", len(state.Objects()))
+		if len(state.All()) != 3 {
+			t.Errorf("Expected 3 objects in state, got %d", len(state.All()))
 		}
 
 		afterState := g.GetStateAfterReconcileID("r4")
-		assert.Equal(t, 2, len(afterState.Objects()))
+		assert.Equal(t, 2, len(afterState.All()))
 
-		expectedKeys := []snapshot.IdentityKey{
-			{Kind: "Deployment", ObjectID: "dep-1"},
-			{Kind: "Deployment", ObjectID: "dep-2"},
+		expectedKeys := []snapshot.CompositeKey{
+			snapshot.NewCompositeKey("Deployment", "default", "dep-1", "dep-1"),
+			snapshot.NewCompositeKey("Deployment", "default", "dep-2", "dep-2"),
 			// Pod 1 was deleted
-			{Kind: "Pod", ObjectID: "pod-2"},
+			snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
 		}
 		for _, key := range expectedKeys {
-			if _, exists := state.Objects()[key]; !exists {
+			if _, exists := state.All()[key]; !exists {
 				t.Errorf("Expected %s in state", key)
 			}
 		}
@@ -493,14 +492,14 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			t.Fatalf("Load failed: %v", err)
 		}
 		state := g.GetStateAtReconcileID("r2")
-		if len(state.Objects()) != 4 {
-			t.Errorf("Expected 4 objects in state, got %d", len(state.Objects()))
+		if len(state.All()) != 4 {
+			t.Errorf("Expected 4 objects in state, got %d", len(state.All()))
 		}
 		// ensure the correct objects are in the state
-		if _, exists := state.Objects()[snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"}]; !exists {
+		if _, exists := state.All()[snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1")]; !exists {
 			t.Error("Expected pod-1 in state")
 		}
-		if _, exists := state.Objects()[snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"}]; !exists {
+		if _, exists := state.All()[snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2")]; !exists {
 			t.Error("Expected pod-2 in state")
 		}
 		// check kind sequence
@@ -511,8 +510,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 	t.Run("rewind knowledge", func(t *testing.T) {
 		countPods := func(s *StateSnapshot) int {
 			count := 0
-			for k := range s.Objects() {
-				if k.Kind == "Pod" {
+			for k := range s.All() {
+				if k.IdentityKey.Kind == "Pod" {
 					count++
 				}
 			}
@@ -526,14 +525,14 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		// replay all events
 		state := g.GetStateAtReconcileID("r4")
 		if countPods(state) != 1 {
-			t.Errorf("Expected 1 pods in state, got %d", len(state.Objects()))
+			t.Errorf("Expected 1 pods in state, got %d", len(state.All()))
 		}
 		rewind, err := g.AdjustKnowledgeForResourceType(state, "Pod", -1)
 		if err != nil {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}
 		if countPods(rewind) != 2 {
-			t.Errorf("Expected 2 pods in state, got %d", len(rewind.Objects()))
+			t.Errorf("Expected 2 pods in state, got %d", len(rewind.All()))
 		}
 
 		ff, err := g.AdjustKnowledgeForResourceType(state, "Pod", 1)
@@ -541,7 +540,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}
 		if countPods(ff) != 0 {
-			t.Errorf("Expected 0 pods in state, got %d", len(ff.Objects()))
+			t.Errorf("Expected 0 pods in state, got %d", len(ff.All()))
 		}
 	})
 }
@@ -559,15 +558,15 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
 					effect: effect{
-						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						Version:   snapshot.NewDefaultHash("v1"),
-						OpType:    event.CREATE,
+						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Version: snapshot.NewDefaultHash("v1"),
+						OpType:  event.CREATE,
 					},
 					Sequence: 1,
 				},
 			},
-			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{
-				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v1"),
+			expectedState: map[snapshot.CompositeKey]snapshot.VersionHash{
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v1"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod": 1,
@@ -580,9 +579,9 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
 					effect: effect{
-						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						Version:   snapshot.NewDefaultHash("v1"),
-						OpType:    event.CREATE,
+						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Version: snapshot.NewDefaultHash("v1"),
+						OpType:  event.CREATE,
 					},
 					Sequence: 1,
 				},
@@ -590,13 +589,13 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
 					effect: effect{
-						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						OpType:    event.DELETE,
+						Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						OpType: event.DELETE,
 					},
 					Sequence: 2,
 				},
 			},
-			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{},
+			expectedState: map[snapshot.CompositeKey]snapshot.VersionHash{},
 			expectedSeq: map[string]int64{
 				"Pod": 2,
 			},
@@ -608,9 +607,9 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
 					effect: effect{
-						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						Version:   snapshot.NewDefaultHash("v1"),
-						OpType:    event.CREATE,
+						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Version: snapshot.NewDefaultHash("v1"),
+						OpType:  event.CREATE,
 					},
 					Sequence: 1,
 				},
@@ -618,16 +617,16 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
 					effect: effect{
-						ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-						Version:   snapshot.NewDefaultHash("v2"),
-						OpType:    event.CREATE,
+						Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+						Version: snapshot.NewDefaultHash("v2"),
+						OpType:  event.CREATE,
 					},
 					Sequence: 1,
 				},
 			},
-			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{
-				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v1"),
-				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+			expectedState: map[snapshot.CompositeKey]snapshot.VersionHash{
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod":     1,
@@ -641,9 +640,9 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
 					effect: effect{
-						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						Version:   snapshot.NewDefaultHash("v1"),
-						OpType:    event.CREATE,
+						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Version: snapshot.NewDefaultHash("v1"),
+						OpType:  event.CREATE,
 					},
 					Sequence: 1,
 				},
@@ -651,15 +650,15 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
 					effect: effect{
-						ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-						Version:   snapshot.NewDefaultHash("v2"),
-						OpType:    event.UPDATE,
+						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Version: snapshot.NewDefaultHash("v2"),
+						OpType:  event.UPDATE,
 					},
 					Sequence: 2,
 				},
 			},
-			expectedState: map[snapshot.IdentityKey]snapshot.VersionHash{
-				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v2"),
+			expectedState: map[snapshot.CompositeKey]snapshot.VersionHash{
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod": 2,
@@ -671,7 +670,7 @@ func TestReplayEventsToState(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			state := replayEventSequenceToState(tt.events)
 
-			assert.Equal(t, tt.expectedState, state.Objects())
+			assert.Equal(t, tt.expectedState, state.All())
 			assert.Equal(t, tt.expectedSeq, state.KindSequences)
 			assert.Equal(t, tt.events, state.stateEvents)
 		})
@@ -683,9 +682,9 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r1",
 			Timestamp:   "2024-02-21T10:00:01Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-				Version:   snapshot.NewDefaultHash("v1"),
-				OpType:    event.CREATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+				Version: snapshot.NewDefaultHash("v1"),
+				OpType:  event.CREATE,
 			},
 			Sequence: 1,
 		},
@@ -693,9 +692,9 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r2",
 			Timestamp:   "2024-02-21T10:00:02Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-				Version:   snapshot.NewDefaultHash("v2"),
-				OpType:    event.UPDATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+				Version: snapshot.NewDefaultHash("v2"),
+				OpType:  event.UPDATE,
 			},
 			Sequence: 2,
 		},
@@ -703,8 +702,8 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r3",
 			Timestamp:   "2024-02-21T10:00:03Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-				OpType:    event.DELETE,
+				Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+				OpType: event.DELETE,
 			},
 			Sequence: 3,
 		},
@@ -712,9 +711,9 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r4",
 			Timestamp:   "2024-02-21T10:00:04Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"},
-				Version:   snapshot.NewDefaultHash("v1"),
-				OpType:    event.CREATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
+				Version: snapshot.NewDefaultHash("v1"),
+				OpType:  event.CREATE,
 			},
 			Sequence: 4,
 		},
@@ -722,9 +721,9 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r5",
 			Timestamp:   "2024-02-21T10:00:05Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"},
-				Version:   snapshot.NewDefaultHash("v2"),
-				OpType:    event.UPDATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
+				Version: snapshot.NewDefaultHash("v2"),
+				OpType:  event.UPDATE,
 			},
 			Sequence: 5,
 		},
@@ -732,8 +731,8 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r6",
 			Timestamp:   "2024-02-21T10:00:06Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-2"},
-				OpType:    event.DELETE,
+				Key:    snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
+				OpType: event.DELETE,
 			},
 			Sequence: 6,
 		},
@@ -741,9 +740,9 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r7",
 			Timestamp:   "2024-02-21T10:00:07Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-				Version:   snapshot.NewDefaultHash("v1"),
-				OpType:    event.CREATE,
+				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+				Version: snapshot.NewDefaultHash("v1"),
+				OpType:  event.CREATE,
 			},
 			Sequence: 1,
 		},
@@ -751,9 +750,9 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r8",
 			Timestamp:   "2024-02-21T10:00:08Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-				Version:   snapshot.NewDefaultHash("v2"),
-				OpType:    event.UPDATE,
+				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+				Version: snapshot.NewDefaultHash("v2"),
+				OpType:  event.UPDATE,
 			},
 			Sequence: 2,
 		},
@@ -761,8 +760,8 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r9",
 			Timestamp:   "2024-02-21T10:00:09Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-				OpType:    event.DELETE,
+				Key:    snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+				OpType: event.DELETE,
 			},
 			Sequence: 3,
 		},
@@ -770,9 +769,9 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r10",
 			Timestamp:   "2024-02-21T10:00:10Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-2"},
-				Version:   snapshot.NewDefaultHash("v1"),
-				OpType:    event.CREATE,
+				Key:     snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"),
+				Version: snapshot.NewDefaultHash("v1"),
+				OpType:  event.CREATE,
 			},
 			Sequence: 4,
 		},
@@ -780,9 +779,9 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r11",
 			Timestamp:   "2024-02-21T10:00:11Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-2"},
-				Version:   snapshot.NewDefaultHash("v2"),
-				OpType:    event.UPDATE,
+				Key:     snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"),
+				Version: snapshot.NewDefaultHash("v2"),
+				OpType:  event.UPDATE,
 			},
 			Sequence: 5,
 		},
@@ -790,8 +789,8 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: "r12",
 			Timestamp:   "2024-02-21T10:00:12Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-2"},
-				OpType:    event.DELETE,
+				Key:    snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"),
+				OpType: event.DELETE,
 			},
 			Sequence: 6,
 		},
@@ -819,7 +818,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v1"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod": 1,
@@ -832,7 +831,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}: snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod": 2,
@@ -856,7 +855,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-2"}: snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v1"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod": 4,
@@ -869,7 +868,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-2"}: snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v2"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod": 5,
@@ -893,8 +892,8 @@ func TestReplayEventsAtSequence(t *testing.T) {
 				"Service": 1,
 			},
 			expectedState: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v1"),
-				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v1"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod":     1,
@@ -908,8 +907,8 @@ func TestReplayEventsAtSequence(t *testing.T) {
 				"Service": 2,
 			},
 			expectedState: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
-				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod":     2,
@@ -923,8 +922,8 @@ func TestReplayEventsAtSequence(t *testing.T) {
 				"Service": 4,
 			},
 			expectedState: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
-				{Kind: "Service", ObjectID: "svc-2"}: snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"): snapshot.NewDefaultHash("v1"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod":     2,
@@ -938,8 +937,8 @@ func TestReplayEventsAtSequence(t *testing.T) {
 				"Service": 5,
 			},
 			expectedState: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
-				{Kind: "Service", ObjectID: "svc-2"}: snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"): snapshot.NewDefaultHash("v2"),
 			},
 			expectedSeq: map[string]int64{
 				"Pod":     2,
@@ -952,7 +951,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			state := replayEventsAtSequence(events, tt.sequencesByKind)
 
-			assert.Equal(t, tt.expectedState, state.Objects())
+			assert.Equal(t, tt.expectedState, state.All())
 			assert.Equal(t, tt.expectedSeq, state.KindSequences)
 		})
 	}
@@ -963,9 +962,9 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			ReconcileID: "r1",
 			Timestamp:   "2024-02-21T10:00:01Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-				Version:   snapshot.NewDefaultHash("v1"),
-				OpType:    event.CREATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+				Version: snapshot.NewDefaultHash("v1"),
+				OpType:  event.CREATE,
 			},
 			Sequence: 1,
 		},
@@ -973,9 +972,9 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			ReconcileID: "r2",
 			Timestamp:   "2024-02-21T10:00:02Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "pod-1"},
-				Version:   snapshot.NewDefaultHash("v2"),
-				OpType:    event.UPDATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+				Version: snapshot.NewDefaultHash("v2"),
+				OpType:  event.UPDATE,
 			},
 			Sequence: 2,
 		},
@@ -983,9 +982,9 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			ReconcileID: "r3",
 			Timestamp:   "2024-02-21T10:00:03Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-				Version:   snapshot.NewDefaultHash("v1"),
-				OpType:    event.CREATE,
+				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+				Version: snapshot.NewDefaultHash("v1"),
+				OpType:  event.CREATE,
 			},
 			Sequence: 1,
 		},
@@ -993,9 +992,9 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			ReconcileID: "r4",
 			Timestamp:   "2024-02-21T10:00:04Z",
 			effect: effect{
-				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "svc-1"},
-				Version:   snapshot.NewDefaultHash("v2"),
-				OpType:    event.UPDATE,
+				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+				Version: snapshot.NewDefaultHash("v2"),
+				OpType:  event.UPDATE,
 			},
 			Sequence: 2,
 		},
@@ -1003,8 +1002,8 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 
 	state := &StateSnapshot{
 		contents: ObjectVersions{
-			{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
-			{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+			snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
+			snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
 		},
 		KindSequences: map[string]int64{
 			"Pod":     2,
@@ -1016,8 +1015,8 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 	expectedStaleViews := []*StateSnapshot{
 		{
 			contents: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v1"),
-				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v1"),
 			},
 			KindSequences: map[string]int64{
 				"Pod":     1,
@@ -1027,8 +1026,8 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		},
 		{
 			contents: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v1"),
-				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
 			},
 			KindSequences: map[string]int64{
 				"Pod":     1,
@@ -1038,8 +1037,8 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		},
 		{
 			contents: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
-				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v1"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v1"),
 			},
 			KindSequences: map[string]int64{
 				"Pod":     2,
@@ -1049,8 +1048,8 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		},
 		{
 			contents: ObjectVersions{
-				{Kind: "Pod", ObjectID: "pod-1"}:     snapshot.NewDefaultHash("v2"),
-				{Kind: "Service", ObjectID: "svc-1"}: snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
+				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
 			},
 			KindSequences: map[string]int64{
 				"Pod":     2,
@@ -1079,10 +1078,10 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		}
 
 		// check that the stale view has the expected "ground truth" objects
-		assert.Equal(t, state.Objects(), staleView.Objects())
+		assert.Equal(t, state.All(), staleView.All())
 
-		expectedObjects := expected.Objects()
-		staleViewObjects := staleView.Observe()
+		expectedObjects := expected.All()
+		staleViewObjects := staleView.Observable()
 
 		assert.Equal(t, len(expectedObjects), len(staleViewObjects))
 		for key, expectedVersion := range expectedObjects {

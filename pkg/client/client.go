@@ -119,7 +119,7 @@ func Operation(obj client.Object, reconcileID, controllerID, rootEventID string,
 	}
 	changeID := e.ChangeID()
 	if changeID == "" {
-		panic(fmt.Sprintf("event does not have a change ID: %v", e))
+		// panic(fmt.Sprintf("event does not have a change ID: %v", e))
 	}
 	return e
 }

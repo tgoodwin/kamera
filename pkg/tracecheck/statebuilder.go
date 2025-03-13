@@ -64,15 +64,8 @@ func (b *StateEventBuilder) AddStateEvent(kind, objectID string, obj *unstructur
 	}
 
 	// Create effect
-	identityKey := snapshot.IdentityKey{
-		Kind:     kind,
-		ObjectID: objectID,
-	}
-	effect := effect{
-		OpType:    opType,
-		ObjectKey: identityKey,
-		Version:   versionHash,
-	}
+	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), objectID)
+	effect := newEffect(key, versionHash, opType)
 
 	// Increment sequence
 	b.sequence++
@@ -115,9 +108,11 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 		}
 	})
 
+	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+
 	return StateNode{
 		Contents: StateSnapshot{
-			contents: ObjectVersions{ikey: vHash},
+			contents: ObjectVersions{key: vHash},
 			KindSequences: map[string]int64{
 				ikey.Kind: 1,
 			},
@@ -126,12 +121,7 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 					ReconcileID: "TOP",
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
-					effect: newEffect(
-						ikey.Kind,
-						sleeveObjectID,
-						vHash,
-						event.CREATE,
-					),
+					effect:      newEffect(key, vHash, event.CREATE),
 				},
 			},
 		},

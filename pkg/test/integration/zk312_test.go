@@ -116,12 +116,12 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.UPDATE, "ZookeeperReconciler")
 
 	// 4. PVCs are deleted during deletion process
-	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", nil, event.DELETE, "ZookeeperReconciler")
-	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-2", nil, event.DELETE, "ZookeeperReconciler")
-	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", nil, event.DELETE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1, event.DELETE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-2", pvc2, event.DELETE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", pvc3, event.DELETE, "ZookeeperReconciler")
 
 	// 5. First ZK is fully deleted
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", nil, event.DELETE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.DELETE, "ZookeeperReconciler")
 
 	// 6. New ZK with same name but different UID is created
 	zk2 := CreateZookeeperObject("zk-cluster", "default", "zk-new-uid", 3, nil)
@@ -153,10 +153,10 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 			hasZookeeper := false
 
 			for key := range state.State.Objects() {
-				if key.Kind == "ZookeeperCluster" {
+				if key.IdentityKey.Kind == "ZookeeperCluster" {
 					hasZookeeper = true
 				}
-				if key.Kind == "PersistentVolumeClaim" {
+				if key.IdentityKey.Kind == "PersistentVolumeClaim" {
 					pvcCount++
 				}
 			}

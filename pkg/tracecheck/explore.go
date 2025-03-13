@@ -105,7 +105,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		fmt.Println("Reconcile result - # changes:", len(changes.ObjectVersions))
 		changes.ObjectVersions.Summarize()
 		for _, eff := range changes.Effects {
-			fmt.Printf("\top: %s, ikey: %s\n", eff.OpType, eff.ObjectKey)
+			fmt.Printf("\top: %s, ikey: %s\n", eff.OpType, eff.Key.IdentityKey)
 		}
 
 		resultingState := e.knowledgeManager.GetStateAfterReconcileID(reconcile.ReconcileID)
@@ -270,12 +270,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	ctx = replay.WithFrameID(ctx, frameID)
 
 	// prepare the "true state of the world" for the controller
-	fullState := state.Contents.Objects()
-	e.effectContextManager.PrepareEffectContext(ctx, fullState)
+	e.effectContextManager.PrepareEffectContext(ctx, state.Contents.All())
 	defer e.effectContextManager.CleanupEffectContext(ctx)
 
 	// invoke the controller at its observed state of the world
-	observableState := state.Contents.Observe()
+	observableState := state.Contents.Observable()
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil {
 		// return the pre-reconcile state if the controller errored
@@ -296,49 +295,69 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	changeOV := reconcileResult.Changes.ObjectVersions
 	for _, effect := range effects {
 		if effect.OpType == event.CREATE {
-			if _, ok := newObjectVersions[effect.ObjectKey]; ok {
+			if _, ok := newObjectVersions[effect.Key]; ok {
 				// the effect validation mechanism should prevent this from happening
 				// so panic if it does happen
-				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.ObjectKey))
+				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.Key.IdentityKey))
 			} else {
 				// key not in state as expected, add it
-				newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
+				newObjectVersions[effect.Key] = changeOV[effect.Key]
 			}
 		}
 		if effect.OpType == event.UPDATE || effect.OpType == event.PATCH {
-			if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
+			if _, ok := newObjectVersions[effect.Key]; !ok {
 				// it is possible that a stale read will cause a controller to update an object
 				// that no longer exists in the global state. The effect validation mechanism
 				// should cause the client operation to 404 and prevent the update effect from
 				// going through. If it does go through, we should panic cause something broke.
-				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.ObjectKey))
+				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.Key.IdentityKey))
 			}
-			newObjectVersions[effect.ObjectKey] = changeOV[effect.ObjectKey]
+			newObjectVersions[effect.Key] = changeOV[effect.Key]
 		}
 
+		// need to determine how to update state based on preconditions
 		if effect.OpType == event.DELETE {
-			if _, ok := newObjectVersions[effect.ObjectKey]; !ok {
-				// TODO this should return a 404
-				fmt.Println("warning: deleted key absent in state - ", effect.ObjectKey)
-				fmt.Println("true state:")
-				for k := range newObjectVersions {
-					fmt.Println(k)
-				}
-				fmt.Println("observed state")
-				for k := range observableState {
-					fmt.Println(k)
+			if _, ok := newObjectVersions[effect.Key]; !ok {
+				_, rok := newObjectVersions.HasResourceKey(effect.Key.ResourceKey)
+				if !rok {
+					fmt.Println("warning: deleted key absent in state - ", effect.Key)
+					fmt.Println("frameID: ", frameID)
+					fmt.Println("true state:")
+					for k := range state.Objects() {
+						fmt.Println(k)
+					}
+					fmt.Println("observed state")
+					for k := range observableState {
+						fmt.Println(k)
+					}
+					panic("deleted key is not present in prev state. effect validation should have prevented this")
 				}
 			}
-			delete(newObjectVersions, effect.ObjectKey)
+			// TODO when properly implementing preconditions, test with this:
+			// "go run examples/zookeeper/cmd/main.go --search-depth 2"
+			// and then uncomment the code below
+
+			// fmt.Println("warning: deleted key absent in state - ", effect.Key)
+			// fmt.Println("frameID: ", frameID)
+			// fmt.Println("true state:")
+			// for k := range state.Objects() {
+			// 	fmt.Println(k)
+			// }
+			// fmt.Println("observed state")
+			// for k := range observableState {
+			// 	fmt.Println(k)
+			// }
+			// panic("deletion effect")
+			delete(newObjectVersions, effect.Key)
 		}
 
 		// increment resourceversion for the kind
-		newSequences[effect.ObjectKey.Kind] += 1
+		newSequences[effect.Key.IdentityKey.Kind] += 1
 	}
 
 	newStateEvents := slices.Clone(state.Contents.stateEvents)
 	for _, effect := range effects {
-		kind := effect.ObjectKey.Kind
+		kind := effect.Key.IdentityKey.Kind
 		stateEvent := StateEvent{
 			ReconcileID: reconcileResult.FrameID,
 			Sequence:    newSequences[kind],

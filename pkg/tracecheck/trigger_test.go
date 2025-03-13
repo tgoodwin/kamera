@@ -85,9 +85,9 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 	changes := Changes{
 		Effects: []effect{
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"},
-				Version:   podHash,
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Version: podHash,
 			},
 		},
 	}
@@ -164,9 +164,9 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 	changes := Changes{
 		Effects: []effect{
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"},
-				Version:   podHash,
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Version: podHash,
 			},
 		},
 	}
@@ -198,9 +198,9 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 	changes = Changes{
 		Effects: []effect{
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "ReplicaSet", ObjectID: "default/test-rs"},
-				Version:   rsHash,
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("ReplicaSet", "default", "test-rs", "test-rs"),
+				Version: rsHash,
 			},
 		},
 	}
@@ -268,19 +268,19 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 	changes := Changes{
 		Effects: []effect{
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/pod-1"},
-				Version:   pod1Hash,
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+				Version: pod1Hash,
 			},
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/pod-2"},
-				Version:   pod2Hash,
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
+				Version: pod2Hash,
 			},
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "Service", ObjectID: "default/svc-1"},
-				Version:   svcHash,
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+				Version: svcHash,
 			},
 		},
 	}
@@ -349,9 +349,9 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 	changes := Changes{
 		Effects: []effect{
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "RouteConfig", ObjectID: "default/route-config-1"},
-				Version:   rcHash,
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("RouteConfig", "default", "route-config-1", "route-config-1"),
+				Version: rcHash,
 			},
 		},
 	}
@@ -408,9 +408,9 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 	changes := Changes{
 		Effects: []effect{
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "Job", ObjectID: "default/test-job"},
-				Version:   jobHash,
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("Job", "default", "test-job", "test-job"),
+				Version: jobHash,
 			},
 		},
 	}
@@ -470,9 +470,9 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 	changes := Changes{
 		Effects: []effect{
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"},
-				Version:   podHash,
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Version: podHash,
 			},
 		},
 	}
@@ -516,9 +516,9 @@ func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 	changes := Changes{
 		Effects: []effect{
 			{
-				OpType:    event.CREATE,
-				ObjectKey: snapshot.IdentityKey{Kind: "Pod", ObjectID: "default/test-pod"},
-				Version:   snapshot.NewDefaultHash("non-existent-hash"),
+				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Version: snapshot.NewDefaultHash("non-existent-hash"),
 			},
 		},
 	}

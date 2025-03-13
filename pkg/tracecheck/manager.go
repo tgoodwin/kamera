@@ -27,9 +27,11 @@ type VersionManager interface {
 }
 
 type effect struct {
-	OpType    event.OperationType
-	ObjectKey snapshot.IdentityKey
-	Version   snapshot.VersionHash
+	OpType  event.OperationType
+	Key     snapshot.CompositeKey
+	Version snapshot.VersionHash
+
+	Precondition *replay.PreconditionInfo
 	// Timestamp time.Time
 }
 
@@ -38,14 +40,21 @@ type reconcileEffects struct {
 	writes []effect
 }
 
-func newEffect(kind, uid string, version snapshot.VersionHash, op event.OperationType) effect {
+func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType) effect {
 	return effect{
-		OpType: op,
-		ObjectKey: snapshot.IdentityKey{
-			Kind:     kind,
-			ObjectID: uid,
-		},
+		OpType:  op,
+		Key:     key,
 		Version: version,
+		// Timestamp: time.Now(),
+	}
+}
+
+func newEffectWithPrecondition(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType, precondition *replay.PreconditionInfo) effect {
+	return effect{
+		OpType:       op,
+		Key:          key,
+		Version:      version,
+		Precondition: precondition,
 		// Timestamp: time.Now(),
 	}
 }
@@ -60,12 +69,11 @@ type manager struct {
 	// need to add frame data to the manager as well for reconciler reads
 	*converterImpl
 
-	// resourceValidator resourceValidator
-
 	// populated by RecordEffect
 	effects map[string]reconcileEffects
 
-	effectContext map[string]util.Set[snapshot.ResourceKey]
+	effectRKeys map[string]util.Set[snapshot.ResourceKey]
+	effectIKeys map[string]util.Set[snapshot.IdentityKey]
 
 	mu sync.RWMutex
 }
@@ -84,12 +92,12 @@ var _ replay.EffectRecorder = (*manager)(nil)
 
 var DefaultHasher = snapshot.JSONHasher{}
 
-func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType) error {
+func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, precondition *replay.PreconditionInfo) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// this will insert a resourceKey into the resourceValidator store
-	if err := m.validateEffect(ctx, opType, obj); err != nil {
+	if err := m.validateEffect(ctx, opType, obj, precondition); err != nil {
 		return err
 	}
 
@@ -107,6 +115,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	if err != nil {
 		return err
 	}
+
 	// publish the object versionHash
 	versionHash := m.Publish(u)
 
@@ -119,7 +128,8 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		}
 	}
 
-	eff := newEffect(kind, objectID, versionHash, opType)
+	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), objectID)
+	eff := newEffectWithPrecondition(key, versionHash, opType, precondition)
 	if opType == event.GET || opType == event.LIST {
 		reffects.reads = append(reffects.reads, eff)
 	} else {
@@ -133,20 +143,25 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) error {
 	frameID := replay.FrameIDFromContext(ctx)
-	iKeys := lo.Keys(ov)
 
-	rKeys, err := m.snapStore.ResolveResourceKeys(iKeys...)
-	if err != nil {
-		return err
-	}
-	m.effectContext[frameID] = rKeys
+	cKeys := lo.Keys(ov)
+	iKeys := lo.Map(cKeys, func(k snapshot.CompositeKey, _ int) snapshot.IdentityKey {
+		return k.IdentityKey
+	})
 
+	rKeys := lo.Map(cKeys, func(k snapshot.CompositeKey, _ int) snapshot.ResourceKey {
+		return k.ResourceKey
+	})
+
+	m.effectRKeys[frameID] = util.NewSet(rKeys...)
+	m.effectIKeys[frameID] = util.NewSet(iKeys...)
 	return nil
 }
 
 func (m *manager) CleanupEffectContext(ctx context.Context) {
 	frameID := replay.FrameIDFromContext(ctx)
-	delete(m.effectContext, frameID)
+	delete(m.effectRKeys, frameID)
+	delete(m.effectIKeys, frameID)
 }
 
 func (m *manager) retrieveEffects(frameID string) (Changes, error) {
@@ -158,7 +173,7 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	for _, eff := range effects.writes {
 		// TODO handle the case where there are multiple writes to the same object
 		// in the same frame
-		out[eff.ObjectKey] = eff.Version
+		out[eff.Key] = eff.Version
 	}
 
 	changes := Changes{
@@ -168,38 +183,43 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	return changes, nil
 }
 
-func (m *manager) validateEffect(ctx context.Context, op event.OperationType, obj client.Object) error {
+func (m *manager) validateEffect(ctx context.Context, op event.OperationType, obj client.Object, precondition *replay.PreconditionInfo) error {
 	frameID := replay.FrameIDFromContext(ctx)
-	keys, ok := m.effectContext[frameID]
+	rKeys, ok := m.effectRKeys[frameID]
 	if !ok {
 		return fmt.Errorf("no effect context found for frameID %s", frameID)
 	}
 	gvk := obj.GetObjectKind().GroupVersionKind()
-	key := snapshot.ResourceKey{
+	rKey := snapshot.ResourceKey{
 		Kind:      gvk.Kind,
 		Namespace: obj.GetNamespace(),
 		Name:      obj.GetName(),
 	}
-	_, exists := keys[key]
-	if !exists && op != event.CREATE {
-		fmt.Println("resource does not exist in the following keys")
-		for k := range keys {
-			fmt.Println(k)
-		}
+	iKey := snapshot.IdentityKey{
+		Kind:     gvk.Kind,
+		ObjectID: tag.GetSleeveObjectID(obj),
 	}
 
+	// object with same kind/namespace/name already exists
+	_, rKeyExists := rKeys[rKey]
+
+	// objecty with same kind/objectID already exists
+	_, iKeyExists := m.effectIKeys[frameID][iKey]
+
 	switch op {
+	// there are no UID preconditions for create.
+	// a dry run flag can be used to validate without committing
 	case event.CREATE:
-		if exists {
+		if rKeyExists {
 			return apierrors.NewAlreadyExists(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
 		}
 		// Automatically track the resource if CREATE is valid
-		keys[key] = struct{}{}
+		rKeys[rKey] = struct{}{}
 
 	case event.GET:
-		if !exists {
+		if !rKeyExists {
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
@@ -212,7 +232,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		return nil
 
 	case event.UPDATE, event.PATCH:
-		if !exists {
+		if !rKeyExists {
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
@@ -220,21 +240,51 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		// No need to change tracking state for UPDATE/PATCH
 
 	case event.DELETE:
-		if !exists {
-			fmt.Println("KEY NOT FOUND", key)
+		// need to handle cases where:
+		// 1. no precondition, rkey does not exist (error)
+		// 2. no precondition, rkey exists (delete)
+		// 3. precondition with UID, rkey does not exist (error)
+		// 4. precondition with UID, rkey exists, UID does not match (error)
+		// 5. precondition with UID, rkey exists, UID matches iKey (delete)
+
+		if !rKeyExists {
+			// case 1 and 3
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
 		}
-		// Automatically remove tracking if DELETE is valid
-		fmt.Println("----deleting key----", key)
-		delete(keys, key)
+
+		if precondition == nil {
+			// case 2
+			// Automatically remove tracking if DELETE is valid
+			delete(rKeys, rKey)
+			delete(m.effectIKeys[frameID], iKey)
+			return nil
+		}
+
+		if precondition.UID != nil {
+			if !iKeyExists {
+				// case 4
+				return apierrors.NewConflict(
+					schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
+					obj.GetName(),
+					fmt.Errorf("UID precondition failed"),
+				)
+			}
+			if iKeyExists {
+				// case 5
+				// Automatically remove tracking if DELETE is valid
+				delete(rKeys, rKey)
+				delete(m.effectIKeys[frameID], iKey)
+				return nil
+			}
+		}
 
 	case event.APPLY:
 		// APPLY implements upsert semantics - creates or updates as needed
-		if !exists {
+		if !rKeyExists {
 			// Add it for a new resource
-			keys[key] = struct{}{}
+			rKeys[rKey] = struct{}{}
 		}
 		// Existing resource just gets updated, no change to tracking state
 	}

@@ -77,8 +77,8 @@ func TestExhaustiveInterleavings(t *testing.T) {
 		t.Fatal()
 	}
 
-	observable := initialState.Contents.Observe()
-	base := initialState.Contents.Objects()
+	observable := initialState.Contents.Observable()
+	base := initialState.Contents.All()
 	// no staleness here - the observable should be the same as the base
 	assert.Equal(t, observable, base)
 
@@ -168,7 +168,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	}{
 		{
 			objects: tracecheck.ObjectVersions{
-				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.NewDefaultHash(
+				snapshot.NewCompositeKey("Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
 					`{
 						"apiVersion": "appsv1",
 						"kind": "Foo",
@@ -201,7 +201,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 		},
 		{
 			objects: tracecheck.ObjectVersions{
-				snapshot.IdentityKey{"Foo", "foo-123"}: snapshot.NewDefaultHash(
+				snapshot.NewCompositeKey("Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
 					`{
 						"apiVersion": "appsv1",
 						"kind": "Foo",

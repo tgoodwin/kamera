@@ -89,7 +89,7 @@ func SanityCheckLabels(obj client.Object) error {
 func GetRootID(obj client.Object) (string, error) {
 	labels := obj.GetLabels()
 	if labels == nil {
-		return "", fmt.Errorf("no labels found")
+		return "", fmt.Errorf("getting sleeve root id: no labels found")
 	}
 	// set by the webhook
 	rootID, ok := labels[TraceyWebhookLabel]

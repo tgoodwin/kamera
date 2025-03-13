@@ -29,7 +29,7 @@ func NewStateSnapshot(contents ObjectVersions, kindSequences map[string]int64, s
 	}
 	// do some validation
 	stateKinds := lo.Map(stateEvents, func(e StateEvent, _ int) string {
-		return e.effect.ObjectKey.Kind
+		return e.effect.Key.IdentityKey.Kind
 	})
 	stateKindSet := util.NewSet(stateKinds...)
 	seqKinds := lo.Keys(kindSequences)
@@ -45,11 +45,11 @@ func NewStateSnapshot(contents ObjectVersions, kindSequences map[string]int64, s
 
 type ResourceVersion int
 
-func (s *StateSnapshot) Objects() ObjectVersions {
+func (s *StateSnapshot) All() ObjectVersions {
 	return s.contents
 }
 
-func (s *StateSnapshot) Observe() ObjectVersions {
+func (s *StateSnapshot) Observable() ObjectVersions {
 	ss := replayEventsAtSequence(s.stateEvents, s.KindSequences)
 	return ss.contents
 }
@@ -57,7 +57,7 @@ func (s *StateSnapshot) Observe() ObjectVersions {
 func (s *StateSnapshot) Debug() {
 	fmt.Println("State events:")
 	for _, e := range s.stateEvents {
-		fmt.Printf("%s %s %d\n", e.effect.ObjectKey, e.effect.OpType, e.Sequence)
+		fmt.Printf("%s %s %d\n", e.effect.Key.IdentityKey, e.effect.OpType, e.Sequence)
 	}
 	fmt.Println("contents:")
 	for key, value := range s.contents {
@@ -110,7 +110,7 @@ func (s *StateSnapshot) Adjust(kind string, steps int64) (*StateSnapshot, error)
 	currSeqForKind := currSequences[kind]
 
 	eventsForKind := lo.Filter(s.stateEvents, func(e StateEvent, _ int) bool {
-		return e.effect.ObjectKey.Kind == kind
+		return e.effect.Key.IdentityKey.Kind == kind
 	})
 	earlierEventsForKind := lo.Filter(eventsForKind, func(e StateEvent, _ int) bool {
 		return e.Sequence < currSeqForKind
@@ -323,9 +323,10 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 		if err != nil {
 			return errors.Wrap(err, "resolving version")
 		}
+		// TODO fix the whole ResolveVersion business THIS IS A BLOODY HACK
+		key := snapshot.NewCompositeKey(e.Kind, "default", e.ObjectID, e.ObjectID)
 		effect := newEffect(
-			e.Kind,
-			e.ObjectID,
+			key,
 			version,
 			event.OperationType(e.OpType),
 		)
@@ -343,12 +344,13 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	stateEvents := make([]StateEvent, 0)
 
 	for _, e := range events {
-		iKey := e.effect.ObjectKey
+		iKey := e.effect.Key.IdentityKey
 		if e.effect.OpType == event.DELETE {
-			delete(contents, iKey)
+			delete(contents, e.effect.Key)
 		} else {
 			version := e.effect.Version
-			contents[iKey] = version
+			// change
+			contents[e.effect.Key] = version
 		}
 		KindSequences[iKey.Kind] = e.Sequence
 
@@ -360,7 +362,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 
 func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int64) *StateSnapshot {
 	eventsByKind := lo.GroupBy(events, func(e StateEvent) string {
-		return e.effect.ObjectKey.Kind
+		return e.effect.Key.IdentityKey.Kind
 	})
 	toReplay := make([]StateEvent, 0)
 	for kind, kindEvents := range eventsByKind {
@@ -389,7 +391,7 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 	staleViews = append(staleViews, snapshot)
 
 	eventsByKind := lo.GroupBy(snapshot.stateEvents, func(e StateEvent) string {
-		return e.effect.ObjectKey.Kind
+		return e.effect.Key.IdentityKey.Kind
 	})
 	seqByKind := lo.MapValues(eventsByKind, func(events []StateEvent, key string) []int64 {
 		return lo.Map(events, func(e StateEvent, _ int) int64 {

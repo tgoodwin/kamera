@@ -58,6 +58,11 @@ type ContextTracker struct {
 	getFrameID   frameExtractor
 	reconcilerID string
 
+	// if strict is true, panic if the labels necessary for full causal tracing are not present
+	// full causal tracing requires every controller in the system to be instrumented with sleeve,
+	// which may not be the case, so this is off by default
+	strict bool
+
 	mu sync.Mutex
 }
 
@@ -81,6 +86,12 @@ func NewProdTracker(reconcilerID string) *ContextTracker {
 	}
 }
 
+func (ct *ContextTracker) handleError(msg string) {
+	if ct.strict {
+		panic(msg)
+	}
+}
+
 func (ct *ContextTracker) propagateLabels(target client.Object) {
 	currLabels := target.GetLabels()
 	out := make(map[string]string)
@@ -92,7 +103,7 @@ func (ct *ContextTracker) propagateLabels(target client.Object) {
 	if _, ok := out[tag.TraceyRootID]; !ok {
 		if rootID == "" {
 			fmt.Printf("current propagation target: %#v\n", target)
-			panic("rootID is empty")
+			ct.handleError("rootID is empty")
 		}
 		out[tag.TraceyRootID] = rootID
 	}
@@ -111,6 +122,7 @@ func (ct *ContextTracker) setReconcileID(ctx context.Context) {
 	if frameID == "" {
 		f, ok := ctx.Value(reconcileIDKey{}).(string)
 		if !ok {
+			// this indicates there's a bug in our code. we set the reconcileID in the context
 			panic("reconcileID not set in context")
 		}
 		frameID = f
@@ -129,14 +141,16 @@ func (ct *ContextTracker) setReconcileID(ctx context.Context) {
 
 func (ct *ContextTracker) setRootContextFromObservation(ctx context.Context, obj client.Object) error {
 	ct.setReconcileID(ctx)
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	name := obj.GetName()
 	rootID, err := tag.GetRootID(obj)
 	if err != nil {
 		log.V(2).WithValues("labels", obj.GetLabels()).Error(err, "setting root context")
-		return err
+		ct.handleError(fmt.Sprintf("no root ID on object - gvk: %s, name: %s", gvk, name))
 	}
 	if rootID == "" {
 		log.Error(nil, "rootID is empty")
-		return fmt.Errorf("got labels, but rootID is empty")
+		ct.handleError(fmt.Sprintf("no root ID on object - gvk: %s, name: %s", gvk, name))
 	}
 	currRootID, ok := ct.rc.rootIDByReconcileID[ct.rc.GetReconcileID()]
 	if ok && currRootID != rootID {

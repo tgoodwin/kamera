@@ -34,18 +34,18 @@ func (tc *TraceChecker) DiffObjectVersions(first, second ConvergedState) DiffRes
 	firstWorld := first.State.Objects()
 	secondWorld := second.State.Objects()
 
-	firstNormalized := lo.MapValues(firstWorld, func(v snapshot.VersionHash, _ snapshot.IdentityKey) snapshot.NormalizedObject {
+	firstNormalized := lo.MapValues(firstWorld, func(v snapshot.VersionHash, _ snapshot.CompositeKey) snapshot.NormalizedObject {
 		return snapshot.NormalizeObject(v)
 	})
-	secondNormalized := lo.MapValues(secondWorld, func(v snapshot.VersionHash, _ snapshot.IdentityKey) snapshot.NormalizedObject {
+	secondNormalized := lo.MapValues(secondWorld, func(v snapshot.VersionHash, _ snapshot.CompositeKey) snapshot.NormalizedObject {
 		return snapshot.NormalizeObject(v)
 	})
 
-	fn := lo.MapEntries(firstNormalized, func(k snapshot.IdentityKey, v snapshot.NormalizedObject) (string, snapshot.NormalizedObject) {
+	fn := lo.MapEntries(firstNormalized, func(k snapshot.CompositeKey, v snapshot.NormalizedObject) (string, snapshot.NormalizedObject) {
 		return v.Identity(), v
 	})
 
-	sn := lo.MapEntries(secondNormalized, func(k snapshot.IdentityKey, v snapshot.NormalizedObject) (string, snapshot.NormalizedObject) {
+	sn := lo.MapEntries(secondNormalized, func(k snapshot.CompositeKey, v snapshot.NormalizedObject) (string, snapshot.NormalizedObject) {
 		return v.Identity(), v
 	})
 

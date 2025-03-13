@@ -12,34 +12,28 @@ func Test_ExecutionHistoryFilterNoOps(t *testing.T) {
 			ControllerID: "1",
 			FrameID:      "1",
 			Changes:      Changes{ObjectVersions: ObjectVersions{}},
-			Deltas:       map[snapshot.IdentityKey]Delta{},
+			Deltas:       map[snapshot.CompositeKey]Delta{},
 		},
 		{
 			ControllerID: "2",
 			FrameID:      "2",
 			Changes:      Changes{ObjectVersions: ObjectVersions{}},
-			Deltas:       map[snapshot.IdentityKey]Delta{},
+			Deltas:       map[snapshot.CompositeKey]Delta{},
 		},
 		{
 			ControllerID: "3",
 			FrameID:      "3",
 			Changes:      Changes{ObjectVersions: ObjectVersions{}},
-			Deltas:       map[snapshot.IdentityKey]Delta{},
+			Deltas:       map[snapshot.CompositeKey]Delta{},
 		},
 		{
 			ControllerID: "4",
 			FrameID:      "4",
 			Changes: Changes{ObjectVersions: ObjectVersions{
-				{
-					Kind:     "Pod",
-					ObjectID: "1",
-				}: snapshot.NewDefaultHash("Hash"),
+				snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
 			}},
-			Deltas: map[snapshot.IdentityKey]Delta{
-				{
-					Kind:     "Pod",
-					ObjectID: "1",
-				}: "delta",
+			Deltas: map[snapshot.CompositeKey]Delta{
+				snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
 			},
 		},
 	}
@@ -56,23 +50,17 @@ func Test_GetUniquePaths(t *testing.T) {
 				ControllerID: "1",
 				FrameID:      "1",
 				Changes: Changes{ObjectVersions: ObjectVersions{
-					{
-						Kind:     "Pod",
-						ObjectID: "1",
-					}: snapshot.NewDefaultHash("Hash"),
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
 				}},
-				Deltas: map[snapshot.IdentityKey]Delta{
-					{
-						Kind:     "Pod",
-						ObjectID: "1",
-					}: "delta",
+				Deltas: map[snapshot.CompositeKey]Delta{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
 				},
 			},
 			{
 				ControllerID: "2",
 				FrameID:      "2",
 				Changes:      Changes{ObjectVersions: ObjectVersions{}},
-				Deltas:       map[snapshot.IdentityKey]Delta{},
+				Deltas:       map[snapshot.CompositeKey]Delta{},
 			},
 		},
 		{
@@ -80,13 +68,13 @@ func Test_GetUniquePaths(t *testing.T) {
 				ControllerID: "1",
 				FrameID:      "1",
 				Changes:      Changes{ObjectVersions: ObjectVersions{}},
-				Deltas:       map[snapshot.IdentityKey]Delta{},
+				Deltas:       map[snapshot.CompositeKey]Delta{},
 			},
 			{
 				ControllerID: "2",
 				FrameID:      "2",
 				Changes:      Changes{ObjectVersions: ObjectVersions{}},
-				Deltas:       map[snapshot.IdentityKey]Delta{},
+				Deltas:       map[snapshot.CompositeKey]Delta{},
 			},
 		},
 		{
@@ -94,29 +82,23 @@ func Test_GetUniquePaths(t *testing.T) {
 				ControllerID: "1",
 				FrameID:      "1",
 				Changes:      Changes{ObjectVersions: ObjectVersions{}},
-				Deltas:       map[snapshot.IdentityKey]Delta{},
+				Deltas:       map[snapshot.CompositeKey]Delta{},
 			},
 			{
 				ControllerID: "2",
 				FrameID:      "2",
 				Changes: Changes{ObjectVersions: ObjectVersions{
-					{
-						Kind:     "Pod",
-						ObjectID: "1",
-					}: snapshot.NewDefaultHash("Hash"),
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
 				}},
-				Deltas: map[snapshot.IdentityKey]Delta{
-					{
-						Kind:     "Pod",
-						ObjectID: "1",
-					}: "delta",
+				Deltas: map[snapshot.CompositeKey]Delta{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
 				},
 			},
 			{
 				ControllerID: "1",
 				FrameID:      "3",
 				Changes:      Changes{ObjectVersions: ObjectVersions{}},
-				Deltas:       map[snapshot.IdentityKey]Delta{},
+				Deltas:       map[snapshot.CompositeKey]Delta{},
 			},
 		},
 	}
@@ -127,11 +109,8 @@ func Test_GetUniquePaths(t *testing.T) {
 				ControllerID: "1",
 				FrameID:      "1",
 				Changes:      Changes{ObjectVersions: ObjectVersions{}},
-				Deltas: map[snapshot.IdentityKey]Delta{
-					{
-						Kind:     "Pod",
-						ObjectID: "1",
-					}: "delta",
+				Deltas: map[snapshot.CompositeKey]Delta{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
 				},
 			},
 		},
@@ -140,11 +119,8 @@ func Test_GetUniquePaths(t *testing.T) {
 				ControllerID: "2",
 				FrameID:      "2",
 				Changes:      Changes{ObjectVersions: ObjectVersions{}},
-				Deltas: map[snapshot.IdentityKey]Delta{
-					{
-						Kind:     "Pod",
-						ObjectID: "1",
-					}: "delta",
+				Deltas: map[snapshot.CompositeKey]Delta{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
 				},
 			},
 		},

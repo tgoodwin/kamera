@@ -103,12 +103,12 @@ func NewPredicateBuilder(resolver VersionManager) *PredicateBuilder {
 // ObjectExists creates a predicate that checks if an object exists
 func (b *PredicateBuilder) ObjectExists(kind, objectID string) StatePredicate {
 	return func(state StateNode) (bool, string) {
-		key := snapshot.IdentityKey{Kind: kind, ObjectID: objectID}
-		_, exists := state.Objects()[key]
-		if !exists {
-			return false, fmt.Sprintf("Object %s/%s does not exist", kind, objectID)
+		for key := range state.Objects() {
+			if key.IdentityKey.Kind == kind && key.IdentityKey.ObjectID == objectID {
+				return true, ""
+			}
 		}
-		return true, ""
+		return false, fmt.Sprintf("Object %s/%s does not exist", kind, objectID)
 	}
 }
 
@@ -117,7 +117,7 @@ func (b *PredicateBuilder) ObjectsCountOfKind(kind string, expectedCount int) St
 	return func(state StateNode) (bool, string) {
 		count := 0
 		for key := range state.Objects() {
-			if key.Kind == kind {
+			if key.IdentityKey.Kind == kind {
 				count++
 			}
 		}
@@ -132,8 +132,15 @@ func (b *PredicateBuilder) ObjectsCountOfKind(kind string, expectedCount int) St
 // ObjectField creates a predicate that checks a specific field in an object
 func (b *PredicateBuilder) ObjectField(kind, objectID string, fieldPath []string, expectedValue interface{}) StatePredicate {
 	return func(state StateNode) (bool, string) {
-		key := snapshot.IdentityKey{Kind: kind, ObjectID: objectID}
-		versionHash, exists := state.Objects()[key]
+		exists := false
+		var versionHash snapshot.VersionHash
+		for key, vHash := range state.Objects() {
+			if key.IdentityKey.Kind == kind && key.IdentityKey.ObjectID == objectID {
+				exists = true
+				versionHash = vHash
+				break
+			}
+		}
 		if !exists {
 			return false, fmt.Sprintf("Object %s/%s does not exist", kind, objectID)
 		}

@@ -183,9 +183,11 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 		}
 	})
 
+	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+
 	return StateNode{
 		Contents: NewStateSnapshot(
-			ObjectVersions{ikey: vHash},
+			ObjectVersions{key: vHash},
 			map[string]int64{
 				ikey.Kind: 1,
 			},
@@ -195,8 +197,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
 					effect: newEffect(
-						ikey.Kind,
-						sleeveObjectID,
+						key,
 						vHash,
 						event.CREATE,
 					),
@@ -230,7 +231,11 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		// effectContext tracks the state of the world at the time of reconcile
 		// and this is separate from snapshot store because we want this context
 		// to not be shared across branches of the exploration tree.
-		effectContext: make(map[string]util.Set[snapshot.ResourceKey]),
+		effectRKeys: make(map[string]util.Set[snapshot.ResourceKey]),
+
+		// effectIKeys tracks the identity keys that were read or written
+		// during a reconcile operation.
+		effectIKeys: make(map[string]util.Set[snapshot.IdentityKey]),
 
 		// resourceValdiator mimics the behavior of the API
 		// server in terms of rejecting operations that conflict
