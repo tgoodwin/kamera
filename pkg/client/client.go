@@ -84,13 +84,18 @@ func (c *Client) WithEnvConfig() *Client {
 			envVars[pair[0]] = pair[1]
 		}
 	}
+	// Log the environment variables
+	for key, value := range envVars {
+		if strings.HasPrefix(key, "SLEEVE_") {
+			c.logger.WithValues("key", key, "value", value).Info("configuring sleeve client from env")
+		}
+	}
+
 	if logSnapshots, ok := envVars["SLEEVE_LOG_SNAPSHOTS"]; ok {
 		c.config.LogObjectSnapshots = logSnapshots == "1"
 	}
-
-	// Log the environment variables
-	for key, value := range envVars {
-		c.logger.WithValues("key", key, "value", value).Info("configuring sleeve client from env")
+	if disableLogging, ok := envVars["SLEEVE_DISABLE_LOGGING"]; ok {
+		c.config.disableLogging = disableLogging == "1"
 	}
 
 	return c
@@ -120,6 +125,9 @@ func Operation(obj client.Object, reconcileID, controllerID, rootEventID string,
 }
 
 func (c *Client) logOperation(obj client.Object, op event.OperationType) {
+	if c.config.disableLogging {
+		return
+	}
 	reconcileID := c.tracker.rc.GetReconcileID()
 	event := Operation(
 		obj,

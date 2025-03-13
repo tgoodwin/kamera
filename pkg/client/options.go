@@ -5,6 +5,8 @@ import "time"
 type Config struct {
 	LogObjectSnapshots    bool
 	visibilityDelayByKind map[string]time.Duration
+
+	disableLogging bool
 }
 
 func NewConfig() *Config {
