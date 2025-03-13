@@ -127,7 +127,7 @@ func (ct *ContextTracker) setReconcileID(ctx context.Context) {
 	}
 }
 
-func (ct *ContextTracker) setRootContext(ctx context.Context, obj client.Object) error {
+func (ct *ContextTracker) setRootContextFromObservation(ctx context.Context, obj client.Object) error {
 	ct.setReconcileID(ctx)
 	rootID, err := tag.GetRootID(obj)
 	if err != nil {
@@ -148,8 +148,8 @@ func (ct *ContextTracker) setRootContext(ctx context.Context, obj client.Object)
 	return nil
 }
 
-func (Ct *ContextTracker) MustSetRootContext(ctx context.Context, obj client.Object) {
-	if err := Ct.setRootContext(ctx, obj); err != nil {
+func (Ct *ContextTracker) MustSetRootContextFromObservation(ctx context.Context, obj client.Object) {
+	if err := Ct.setRootContextFromObservation(ctx, obj); err != nil {
 		panic(err)
 	}
 }
@@ -164,11 +164,7 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 	}
 
 	if op == event.GET || op == event.LIST {
-		ct.MustSetRootContext(ctx, obj)
-
-		// log the observed object version
-		// r := snapshot.AsRecord(obj, ct.rc.GetReconcileID())
-		// ct.emitter.LogObjectVersion(r)
+		ct.MustSetRootContextFromObservation(ctx, obj)
 	}
 
 	// assign a change label to the object
