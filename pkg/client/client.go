@@ -98,6 +98,10 @@ func (c *Client) WithEnvConfig() *Client {
 		c.config.disableLogging = disableLogging == "1"
 	}
 
+	if disableStrictMode, ok := envVars["SLEEVE_DISABLE_STRICT_MODE"]; ok {
+		c.tracker.strict = disableStrictMode == "1"
+	}
+
 	return c
 }
 
