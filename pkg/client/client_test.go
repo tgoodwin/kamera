@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func getFrameID(ctx context.Context) string {
@@ -56,6 +57,68 @@ func Test_Get(t *testing.T) {
 
 	assert.Equal(t, c.tracker.rc.reconcileID, "test-reconcileID")
 	assert.Equal(t, c.tracker.rc.rootID, "test-uid")
+}
+
+func Test_List(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mocks.NewMockClient(ctrl)
+	mockEmitter := mocks.NewMockEmitter(ctrl)
+	c := &Client{
+		Client:  mockClient,
+		emitter: mockEmitter,
+		config:  NewConfig(),
+		tracker: &ContextTracker{
+			rc:         &ReconcileContext{},
+			emitter:    mockEmitter,
+			getFrameID: getFrameID,
+		},
+	}
+	c.reconcilerID = "test-reconcilerID"
+
+	ctx := context.WithValue(context.TODO(), reconcileIDKey{}, "test-reconcileID")
+	podList := &corev1.PodList{
+		Items: []corev1.Pod{
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test-pod-1",
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test-pod-2",
+				},
+			},
+			{
+				ObjectMeta: metav1.ObjectMeta{
+					Namespace: "default",
+					Name:      "test-pod-3",
+				},
+			},
+		},
+	}
+
+	traceyUID := "test-uid"
+	for i := range podList.Items {
+		podList.Items[i].SetLabels(map[string]string{"tracey-uid": traceyUID})
+	}
+
+	mockClient.EXPECT().List(ctx, gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+			*list.(*corev1.PodList) = *podList
+			return nil
+		},
+	).Times(1)
+	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(3)
+	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(3)
+
+	err := c.List(ctx, podList)
+	assert.NoError(t, err)
+
+	assert.Equal(t, 3, len(podList.Items))
 }
 
 func Test_UpdateFail(t *testing.T) {

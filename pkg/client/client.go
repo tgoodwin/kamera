@@ -197,6 +197,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return err
 	}
 	c.tracker.TrackOperation(ctx, obj, event.GET)
+	c.logOperation(obj, event.GET)
 	return nil
 }
 
@@ -220,6 +221,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		// instead of treating the LIST operation as a singular observation event,
 		// we treat each item in the list as a separate event
 		c.tracker.TrackOperation(ctx, item, event.LIST)
+		c.logOperation(item, event.LIST)
 		out = reflect.Append(out, itemsValue.Index(i))
 	}
 
@@ -240,8 +242,8 @@ func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.U
 	tag.LabelChange(obj)
 	// make a copy of the object before we propagate labels
 	objPrePropagation := obj.DeepCopyObject().(client.Object)
-	c.tracker.propagateLabels(obj)
 
+	c.tracker.propagateLabels(obj)
 	if err := c.Client.Update(ctx, obj, opts...); err != nil {
 		c.logger.Error(err, "operation failed, not tracking it")
 		// revert object labels to original state
@@ -251,21 +253,25 @@ func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.U
 
 	// happy path! the update went through successfully - let's record that!
 	c.logOperation(objPrePropagation, event.UPDATE)
-
 	return nil
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 	currLabels := obj.GetLabels()
-	tag.LabelChange(obj)
-	objPrePropagation := obj.DeepCopyObject().(client.Object)
-	c.tracker.propagateLabels(obj)
 
+	// generate a label to the object to associate it with the change event
+	tag.LabelChange(obj)
+
+	// make a copy of the object before we propagate labels
+	objPrePropagation := obj.DeepCopyObject().(client.Object)
+
+	c.tracker.propagateLabels(obj)
 	if err := c.Client.Patch(ctx, obj, patch, opts...); err != nil {
 		c.logger.Error(err, "operation failed, not tracking it")
 		obj.SetLabels(currLabels)
 		return err
 	}
+
 	c.logOperation(objPrePropagation, event.PATCH)
 	return nil
 }
