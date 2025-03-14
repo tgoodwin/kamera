@@ -72,6 +72,9 @@ func NewContextTracker(reconcilerID string, emitter event.Emitter, extract frame
 		getFrameID:   extract,
 		reconcilerID: reconcilerID,
 		emitter:      emitter,
+
+		// default to strict mode and support disabling it
+		strict: true,
 	}
 }
 
@@ -102,7 +105,7 @@ func (ct *ContextTracker) propagateLabels(target client.Object) {
 	out[tag.TraceyCreatorID] = ct.reconcilerID
 	if _, ok := out[tag.TraceyRootID]; !ok {
 		if rootID == "" {
-			fmt.Printf("current propagation target: %#v\n", target)
+			log.WithValues("propagation labels", out).Error(nil, "rootID label is empty")
 			ct.handleError("rootID is empty")
 		}
 		out[tag.TraceyRootID] = rootID
@@ -146,11 +149,11 @@ func (ct *ContextTracker) setRootContextFromObservation(ctx context.Context, obj
 	rootID, err := tag.GetRootID(obj)
 	if err != nil {
 		log.V(2).WithValues("labels", obj.GetLabels()).Error(err, "setting root context")
-		ct.handleError(fmt.Sprintf("no root ID on object - gvk: %s, name: %s", gvk, name))
+		return fmt.Errorf("no root ID on object - gvk: %s, name: %s", gvk, name)
 	}
 	if rootID == "" {
 		log.Error(nil, "rootID is empty")
-		ct.handleError(fmt.Sprintf("no root ID on object - gvk: %s, name: %s", gvk, name))
+		return fmt.Errorf("no root ID on object - gvk: %s, name: %s", gvk, name)
 	}
 	currRootID, ok := ct.rc.rootIDByReconcileID[ct.rc.GetReconcileID()]
 	if ok && currRootID != rootID {
@@ -162,9 +165,12 @@ func (ct *ContextTracker) setRootContextFromObservation(ctx context.Context, obj
 	return nil
 }
 
-func (Ct *ContextTracker) MustSetRootContextFromObservation(ctx context.Context, obj client.Object) {
-	if err := Ct.setRootContextFromObservation(ctx, obj); err != nil {
-		panic(err)
+func (ct *ContextTracker) MustSetRootContextFromObservation(ctx context.Context, obj client.Object) {
+	if err := ct.setRootContextFromObservation(ctx, obj); err != nil {
+		log.V(0).Error(err, "setting root context")
+		if ct.strict {
+			panic(err)
+		}
 	}
 }
 

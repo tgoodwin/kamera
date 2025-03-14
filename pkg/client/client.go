@@ -98,6 +98,10 @@ func (c *Client) WithEnvConfig() *Client {
 		c.config.disableLogging = disableLogging == "1"
 	}
 
+	if disableStrictMode, ok := envVars["SLEEVE_DISABLE_STRICT_MODE"]; ok {
+		c.tracker.strict = disableStrictMode == "1"
+	}
+
 	return c
 }
 
@@ -119,7 +123,7 @@ func Operation(obj client.Object, reconcileID, controllerID, rootEventID string,
 	}
 	changeID := e.ChangeID()
 	if changeID == "" {
-		// panic(fmt.Sprintf("event does not have a change ID: %v", e))
+		panic(fmt.Sprintf("event does not have a change ID: %v", e))
 	}
 	return e
 }
@@ -166,7 +170,6 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 	origLabels := obj.GetLabels()
 	tag.AddDeletionID(obj)
 	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
-		c.logger.Error(err, "deleting object")
 		// revert object labels to original state if the operation fails
 		obj.SetLabels(origLabels)
 		return err
@@ -181,7 +184,6 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 	origLabels := obj.GetLabels()
 	tag.AddDeletionID(obj)
 	if err := c.Client.DeleteAllOf(ctx, obj, opts...); err != nil {
-		c.logger.Error(err, "deleting objects")
 		// revert object labels to original state
 		obj.SetLabels(origLabels)
 		return err

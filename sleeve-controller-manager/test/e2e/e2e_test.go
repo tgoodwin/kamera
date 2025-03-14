@@ -23,8 +23,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-
-	"github.com/tgoodwin/sleeve/test/utils"
+	"github.com/tgoodwin/sleeve-controller-manager/test/utils"
 )
 
 const namespace = "sleeve-core-controllers-system"
