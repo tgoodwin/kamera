@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio-demo
+  labels:
+    app: minio
+spec:
+  clusterIP: None  # It means:‘You are a HeadlessService honey : )’
+  ports:
+    - port: 9000
+      name: minio
+  selector:
+    app: minio
