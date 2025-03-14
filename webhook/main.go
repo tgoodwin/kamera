@@ -6,13 +6,14 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
-	// TODO this is imported as client. rename it to sleeve at the source.
-	sleevetag "github.com/tgoodwin/sleeve/tag"
+	"github.com/tgoodwin/sleeve/tag"
 	admissionv1 "k8s.io/api/admission/v1"
+	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -56,6 +57,12 @@ func cameFromTheOutside(in *admissionv1.AdmissionReview) bool {
 	return in.Request.UserInfo.Username == KUBECTL_USERNAME
 }
 
+func notTaggedYet(labels map[string]string) bool {
+	_, hasWebhookTag := labels[tag.TRACEY_WEBHOOK_LABEL]
+	_, hasPropagatedTag := labels[tag.TRACEY_ROOT_ID]
+	return !hasWebhookTag && !hasPropagatedTag
+}
+
 func hasSleeveLabels(in *admissionv1.AdmissionReview) bool {
 	wl := withlabels{}
 	if err := json.Unmarshal(in.Request.Object.Raw, &wl); err != nil {
@@ -68,7 +75,7 @@ func hasSleeveLabels(in *admissionv1.AdmissionReview) bool {
 		labels = wl.Labels
 	}
 	// current heuristic: if the object has a creator tag, it's a sleeve object
-	_, hasCreatorTag := labels[sleevetag.TRACEY_CREATOR_ID]
+	_, hasCreatorTag := labels[tag.TRACEY_CREATOR_ID]
 	return hasCreatorTag
 }
 
@@ -103,16 +110,10 @@ func ServeTagResource(w http.ResponseWriter, r *http.Request) {
 		labels = wl.Labels
 	}
 
-	notTaggedYet := func() bool {
-		_, hasWebhookTag := labels[sleevetag.TRACEY_WEBHOOK_LABEL]
-		_, hasPropagatedTag := labels[sleevetag.TRACEY_ROOT_ID]
-		return !hasWebhookTag && !hasPropagatedTag
-	}
-
 	// only label the object if it doesn't already have a propagated root label
-	if cameFromTheOutside(in) && notTaggedYet() {
+	if cameFromTheOutside(in) && notTaggedYet(labels) {
 		// set the top-level label. that's all we do here.
-		labels[sleevetag.TRACEY_WEBHOOK_LABEL] = uuid.New().String()
+		labels[tag.TRACEY_WEBHOOK_LABEL] = uuid.New().String()
 	}
 
 	patches := []patchOperation{
@@ -152,35 +153,63 @@ func ServeTagResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fmt.Fprintf(w, "%s", jout)
+}
 
+func canByPassvalidation(userInfo authenticationv1.UserInfo) bool {
+	validSubstrings := []string{
+		"system:node",       // kubelet
+		"garbage-collector", // default garbage collector
+	}
+	for _, s := range validSubstrings {
+		if strings.Contains(userInfo.Username, s) {
+			return true
+		}
+	}
+	return false
 }
 
 // ServeValidateResource validates an admission request and then writes an admission
 // review to `w`
 func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 	logger := logrus.WithField("uri", r.RequestURI)
-	logger.Debug("received validation request")
-
 	in, err := parseRequest(*r)
 	if err != nil {
 		logger.Error(err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	logger.WithFields(logrus.Fields{
+		"kind":            in.Request.Kind,
+		"subResource":     in.Request.SubResource,
+		"requestKind":     in.Request.RequestKind,
+		"requestResource": in.Request.RequestResource,
+		"user":            in.Request.UserInfo.Username,
+	}).Debug("received tag resource request")
 
 	cameFromOutside := cameFromTheOutside(in)
 	hasSleeveTags := hasSleeveLabels(in)
+	canBypass := canByPassvalidation(in.Request.UserInfo)
+
+	logger.WithFields(logrus.Fields{
+		"user":            in.Request.UserInfo.Username,
+		"cameFromOutside": cameFromOutside,
+		"hasSleeveTags":   hasSleeveTags,
+		"canBypass":       canBypass,
+	}).Debug("evaluated validation checks")
 
 	var message string
-	if cameFromOutside {
+	switch {
+	case cameFromOutside:
 		message = "external request"
-	} else if hasSleeveTags {
+	case hasSleeveTags:
 		message = "Has sleeve tags"
-	} else {
+	case canBypass:
+		message = "user whitelisted: can bypass validation"
+	default:
 		message = "sleeve tags are required for this namespace"
 	}
 
-	allowed := cameFromOutside || hasSleeveTags
+	allowed := cameFromOutside || hasSleeveTags || canBypass
 	statusCode := http.StatusForbidden
 	if allowed {
 		statusCode = http.StatusAccepted
