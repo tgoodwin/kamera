@@ -34,3 +34,8 @@ mc admin user svcacct add local sleeve --access-key "myaccesskey" --secret-key "
 ```
 
 n.b. this accesskey/secretkey pair is currently hardcoded into the minio_emitter.go code. TODO externalize this config somewhere.
+
+## collecting trace data
+use a parallelized script to read data back down.
+```
+go run cmd/collect/main.go --bucket <BUCKET_NAME>
