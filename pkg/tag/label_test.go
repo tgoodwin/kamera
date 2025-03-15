@@ -49,3 +49,28 @@ func TestAddDeletionID(t *testing.T) {
 	assert.True(t, exists, "DeletionID label should be set")
 	assert.Equal(t, existingUUID, deletionID, "DeletionID label should not be overwritten")
 }
+func TestGetSleeveLabels(t *testing.T) {
+	// Create a fake object with some labels
+	obj := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Labels: map[string]string{
+				"discrete.events/label1": "value1",
+				"discrete.events/label2": "value2",
+				"other.label":            "othervalue",
+
+				// todo use the same prefix here
+				"tracey-uid": "tracey-uid",
+			},
+		},
+	}
+
+	// Call GetSleeveLabels
+	sleeveLabels := GetSleeveLabels(obj)
+
+	// Verify that only labels with the "discrete.events" prefix are returned
+	assert.Len(t, sleeveLabels, 3, "Only labels with the 'discrete.events' prefix should be returned")
+	assert.Equal(t, "value1", sleeveLabels["discrete.events/label1"], "Label value mismatch for 'discrete.events/label1'")
+	assert.Equal(t, "value2", sleeveLabels["discrete.events/label2"], "Label value mismatch for 'discrete.events/label2'")
+	assert.Equal(t, "tracey-uid", sleeveLabels["tracey-uid"], "Label value mismatch for 'tracey-uid'")
+	assert.NotContains(t, sleeveLabels, "other.label", "'other.label' should not be included in the result")
+}

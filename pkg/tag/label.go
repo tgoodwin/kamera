@@ -86,6 +86,20 @@ func SanityCheckLabels(obj client.Object) error {
 	return nil
 }
 
+func GetSleeveLabels(obj client.Object) map[string]string {
+	labels := obj.GetLabels()
+	filteredLabels := make(map[string]string)
+	for key, value := range labels {
+		if key == TraceyWebhookLabel {
+			filteredLabels[key] = value
+		}
+		if len(key) >= len("discrete.events") && key[:len("discrete.events")] == "discrete.events" {
+			filteredLabels[key] = value
+		}
+	}
+	return filteredLabels
+}
+
 func GetRootID(obj client.Object) (string, error) {
 	labels := obj.GetLabels()
 	if labels == nil {
