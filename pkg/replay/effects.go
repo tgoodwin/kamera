@@ -3,7 +3,6 @@ package replay
 import (
 	"context"
 
-	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,7 +46,10 @@ var _ EffectRecorder = (*Recorder)(nil)
 // TODO delete this legacy code
 func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, _ *PreconditionInfo) error {
 	reconcileID := FrameIDFromContext(ctx)
-	e := sleeveclient.Operation(obj, reconcileID, r.reconcilerID, "<REPLAY>", opType)
+	e, err := event.NewOperation(obj, reconcileID, r.reconcilerID, "<REPLAY>", opType)
+	if err != nil {
+		return err
+	}
 	r.effectContainer.AddEffect(reconcileID, e)
 
 	if event.IsWriteOp(*e) {

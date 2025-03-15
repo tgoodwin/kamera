@@ -7,14 +7,10 @@ import (
 	"reflect"
 	"strings"
 
-	"time"
-
 	"github.com/go-logr/logr"
-	"github.com/google/uuid"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
-	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -100,41 +96,19 @@ func (c *Client) WithEnvConfig() *Client {
 	return c
 }
 
-func Operation(obj client.Object, reconcileID, controllerID, rootEventID string, op event.OperationType) *event.Event {
-	id := uuid.New().String()
-	e := &event.Event{
-		ID:           id,
-		Timestamp:    event.FormatTimeStr(time.Now()),
-		ReconcileID:  reconcileID,
-		ControllerID: controllerID,
-		RootEventID:  rootEventID,
-		OpType:       string(op),
-		Kind:         util.GetKind(obj),
-
-		// TODO CHANGE TO SLEEVE OBJECT ID
-		ObjectID: string(obj.GetUID()),
-		Version:  obj.GetResourceVersion(),
-		Labels:   obj.GetLabels(),
-	}
-	changeID := e.ChangeID()
-	if changeID == "" {
-		// panic(fmt.Sprintf("event does not have a change ID: %v", e))
-	}
-	return e
-}
-
 func (c *Client) logOperation(ctx context.Context, obj client.Object, op event.OperationType) {
 	if c.config.disableLogging {
 		return
 	}
 	reconcileID := c.tracker.rc.GetReconcileID()
-	event := Operation(
-		obj,
-		reconcileID,
-		c.reconcilerID,
-		c.tracker.rc.GetRootID(reconcileID),
-		op,
-	)
+	event, err := event.NewOperation(obj, reconcileID, c.reconcilerID, c.tracker.rc.GetRootID(reconcileID), op)
+	if err != nil {
+		c.logger.Error(err, "creating event")
+		if c.tracker.strict {
+			panic(err)
+		}
+		return
+	}
 	r := snapshot.AsRecord(obj, reconcileID)
 	c.emitter.LogOperation(ctx, event)
 
