@@ -79,7 +79,7 @@ func DefaultMinioEmitter() (*MinioEmitter, error) {
 }
 
 // LogOperation implements the Emitter interface to store operation events in Minio
-func (m *MinioEmitter) LogOperation(e *Event) {
+func (m *MinioEmitter) LogOperation(ctx context.Context, e *Event) {
 	// Serialize event to JSON
 	eventJSON, err := json.Marshal(e)
 	if err != nil {
@@ -101,7 +101,7 @@ func (m *MinioEmitter) LogOperation(e *Event) {
 	// Upload to Minio
 	contentType := "application/json"
 	_, err = m.client.PutObject(
-		context.Background(),
+		ctx,
 		m.bucketName,
 		objectName,
 		bytes.NewReader(eventJSON),
@@ -115,7 +115,7 @@ func (m *MinioEmitter) LogOperation(e *Event) {
 }
 
 // LogObjectVersion implements the Emitter interface to store object version records in Minio
-func (m *MinioEmitter) LogObjectVersion(r snapshot.Record) {
+func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
 	// Serialize record to JSON
 	recordJSON, err := json.Marshal(r)
 	if err != nil {
@@ -135,7 +135,7 @@ func (m *MinioEmitter) LogObjectVersion(r snapshot.Record) {
 	// Upload to Minio
 	contentType := "application/json"
 	_, err = m.client.PutObject(
-		context.Background(),
+		ctx,
 		m.bucketName,
 		objectName,
 		bytes.NewReader(recordJSON),
