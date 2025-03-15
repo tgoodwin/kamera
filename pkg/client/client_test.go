@@ -49,8 +49,8 @@ func Test_Get(t *testing.T) {
 	key := types.NamespacedName{Namespace: "default", Name: "test-pod"}
 
 	mockClient.EXPECT().Get(ctx, key, pod).Return(nil).AnyTimes()
-	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
-	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogOperation(ctx, gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogObjectVersion(ctx, gomock.Any()).Times(1)
 
 	err := c.Get(ctx, key, pod)
 	assert.NoError(t, err)
@@ -112,8 +112,8 @@ func Test_List(t *testing.T) {
 			return nil
 		},
 	).Times(1)
-	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(3)
-	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(3)
+	mockEmitter.EXPECT().LogOperation(ctx, gomock.Any()).Times(3)
+	mockEmitter.EXPECT().LogObjectVersion(ctx, gomock.Any()).Times(3)
 
 	err := c.List(ctx, podList)
 	assert.NoError(t, err)
@@ -147,7 +147,8 @@ func Test_UpdateFail(t *testing.T) {
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Update(ctx, pod).Return(errors.New("API call failed"))
-	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(0)
+	mockEmitter.EXPECT().LogOperation(ctx, gomock.Any()).Times(0)
+	mockEmitter.EXPECT().LogObjectVersion(ctx, gomock.Any()).Times(0)
 
 	err := c.Update(ctx, pod)
 	assert.Error(t, err)
@@ -181,8 +182,8 @@ func Test_CreateSuccess(t *testing.T) {
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Create(ctx, pod).Return(nil)
-	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
-	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogOperation(ctx, gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogObjectVersion(ctx, gomock.Any()).Times(1)
 
 	shouldBePresent := []string{
 		tag.TraceyCreatorID,
@@ -226,8 +227,8 @@ func Test_UpdateSuccess(t *testing.T) {
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Update(ctx, pod).Return(nil)
-	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
-	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogOperation(ctx, gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogObjectVersion(ctx, gomock.Any()).Times(1)
 
 	err := c.Update(ctx, pod)
 	assert.NoError(t, err)
@@ -303,8 +304,8 @@ func Test_PatchSuccess(t *testing.T) {
 	pod.SetLabels(origLabels)
 
 	mockClient.EXPECT().Patch(ctx, pod, gomock.Any()).Return(nil)
-	mockEmitter.EXPECT().LogOperation(gomock.Any()).Times(1)
-	mockEmitter.EXPECT().LogObjectVersion(gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogOperation(ctx, gomock.Any()).Times(1)
+	mockEmitter.EXPECT().LogObjectVersion(ctx, gomock.Any()).Times(1)
 
 	err := c.Patch(ctx, pod, nil)
 	assert.NoError(t, err)
