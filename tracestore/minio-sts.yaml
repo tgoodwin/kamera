@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: minio
-  namespace: minio-demo
+  namespace: sleeve-system
   labels:
     app: minio
 spec:
@@ -20,25 +20,25 @@ spec:
       - name: minio
         env:
         - name: MINIO_ROOT_USER
-          value: "minioadmin"
+          value: "sleeveadmin"
         - name: MINIO_ROOT_PASSWORD
-          value: "minioadmin"
+          value: "sleevepassword"
         - name: MINIO_DOMAIN
           value: "minio.miniodemo.xyz"
         image: minio/minio:latest
         args:
         - server   # who are our servers in cluster (below)
         - /data
-        # - http://minio-0.minio.minio-demo.svc.cluster.local/data
-        #- http://minio-1.minio.minio-demo.svc.cluster.local/data
-        #- http://minio-2.minio.minio-demo.svc.cluster.local/data
+        # - http://minio-0.minio.sleeve-system.svc.cluster.local/data
+        #- http://minio-1.minio.sleeve-system.svc.cluster.local/data
+        #- http://minio-2.minio.sleeve-system.svc.cluster.local/data
         - --console-address   # which port for console
         - :9001
         ports:
         - containerPort: 9000
           hostPort: 9000
         - containerPort: 9001
-          hostPort: 9001          
+          hostPort: 9001
         volumeMounts:
         - name: data
           mountPath: /data

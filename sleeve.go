@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/tgoodwin/sleeve/pkg/client"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -18,5 +19,9 @@ func TrackSnapshots() client.Option {
 }
 
 func Wrap(wrapped kclient.Client, name string) *client.Client {
-	return client.Wrap(wrapped, name).WithEnvConfig()
+	minioEmitter, err := event.DefaultMinioEmitter()
+	if err != nil {
+		panic(err)
+	}
+	return client.Wrap(wrapped, name).WithEnvConfig().WithEmitter(minioEmitter)
 }
