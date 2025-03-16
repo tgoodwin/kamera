@@ -23,8 +23,6 @@ func TestAsRecord(t *testing.T) {
 	// Mock frameID
 	frameID := "test-frame-id"
 
-	// Mock util.ConvertToUnstructured
-
 	// Call AsRecord
 	record, err := AsRecord(obj, frameID)
 
