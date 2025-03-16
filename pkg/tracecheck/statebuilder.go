@@ -91,8 +91,12 @@ func (b *StateEventBuilder) Build() StateNode {
 }
 
 func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentControllers ...string) StateNode {
-	r := snapshot.AsRecord(obj, "start").ToUnstructured()
-	vHash := b.store.PublishWithStrategy(r, snapshot.AnonymizedHash)
+	r, err := snapshot.AsRecord(obj, "start")
+	if err != nil {
+		panic("converting to unstructured: " + err.Error())
+	}
+	u := r.ToUnstructured()
+	vHash := b.store.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
 

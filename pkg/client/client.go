@@ -109,13 +109,20 @@ func (c *Client) logOperation(ctx context.Context, obj client.Object, op event.O
 		}
 		return
 	}
-	r := snapshot.AsRecord(obj, reconcileID)
+	r, err := snapshot.AsRecord(obj, reconcileID)
+	if err != nil {
+		c.logger.Error(err, "creating record")
+		if c.tracker.strict {
+			panic(err)
+		}
+		return
+	}
 	c.emitter.LogOperation(ctx, event)
 
 	// associate the operation with the object's snapshot
 	r.OperationID = event.ID
 	r.OperationType = string(op)
-	c.emitter.LogObjectVersion(ctx, r)
+	c.emitter.LogObjectVersion(ctx, *r)
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
