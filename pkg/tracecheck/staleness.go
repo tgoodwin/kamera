@@ -60,8 +60,8 @@ func (s *StateSnapshot) Debug() {
 		fmt.Printf("%s %s %d\n", e.effect.Key.IdentityKey, e.effect.OpType, e.Sequence)
 	}
 	fmt.Println("contents:")
-	for key, value := range s.contents {
-		fmt.Println(key, value)
+	for key := range s.contents {
+		fmt.Println(key)
 	}
 	fmt.Println("KindSequences:")
 	for key, value := range s.KindSequences {
@@ -338,7 +338,16 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 	return nil
 }
 
+func Rollup(events []StateEvent) *StateSnapshot {
+	return replayEventSequenceToState(events)
+}
+
 func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
+	// defensively ensure that the events are only write ops
+	events = lo.Filter(events, func(e StateEvent, _ int) bool {
+		return event.IsWriteOp(*e.Event)
+	})
+
 	contents := make(ObjectVersions)
 	KindSequences := make(map[string]int64)
 	stateEvents := make([]StateEvent, 0)
@@ -346,10 +355,16 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	for _, e := range events {
 		iKey := e.effect.Key.IdentityKey
 		if e.effect.OpType == event.DELETE {
+			if e.Kind == "PersistentVolumeClaim" {
+				fmt.Printf("deleting %s\n", iKey)
+			}
 			delete(contents, e.effect.Key)
 		} else {
 			version := e.effect.Version
 			// change
+			if e.Kind == "PersistentVolumeClaim" {
+				fmt.Printf("adding %s\n", iKey)
+			}
 			contents[e.effect.Key] = version
 		}
 		KindSequences[iKey.Kind] = e.Sequence
