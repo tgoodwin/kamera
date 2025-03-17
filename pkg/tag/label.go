@@ -39,13 +39,17 @@ func LabelChange(obj client.Object) {
 }
 
 func AddSleeveObjectID(obj client.Object) {
-	addUIDTag(obj, TraceyObjectID)
+	addTagIfNotExists(obj, TraceyObjectID)
 }
 
 func AddDeletionID(obj client.Object) {
+	addTagIfNotExists(obj, DeletionID)
+}
+
+func addTagIfNotExists(obj client.Object, key string) {
 	labels := obj.GetLabels()
-	if _, ok := labels[DeletionID]; !ok {
-		addUIDTag(obj, DeletionID)
+	if _, ok := labels[key]; !ok {
+		addUIDTag(obj, key)
 	}
 }
 
