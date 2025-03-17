@@ -11,7 +11,10 @@ require (
 	github.com/minio/minio-go/v7 v7.0.88
 	github.com/pkg/errors v0.9.1
 	github.com/samber/lo v1.47.0
+	github.com/sirupsen/logrus v1.9.0
+	github.com/slackhq/simple-kubernetes-webhook v0.0.0-20211014080913-8b884847badb
 	github.com/stretchr/testify v1.9.0
+	github.com/wI2L/jsondiff v0.6.1
 	k8s.io/api v0.30.1
 	k8s.io/apimachinery v0.30.1
 	k8s.io/client-go v0.30.1
@@ -61,6 +64,10 @@ require (
 	github.com/rs/xid v1.6.0 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/tetratelabs/wazero v1.8.1 // indirect
+	github.com/tidwall/gjson v1.18.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/crypto v0.33.0 // indirect

@@ -7,11 +7,15 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 
-	"github.com/tgoodwin/sleeve/tag"
+	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 	admissionv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,13 +57,16 @@ type withlabels struct {
 	metav1.ObjectMeta `json:"metadata,omitempty" protobuf:"bytes,1,opt,name=metadata"`
 }
 
+// N.B. if running controllers outside of the cluster,
+// the request username will be that of the kubectl user
+// because they use the same kubeconfig credentials.
 func cameFromTheOutside(in *admissionv1.AdmissionReview) bool {
 	return in.Request.UserInfo.Username == KUBECTL_USERNAME
 }
 
 func notTaggedYet(labels map[string]string) bool {
-	_, hasWebhookTag := labels[tag.TRACEY_WEBHOOK_LABEL]
-	_, hasPropagatedTag := labels[tag.TRACEY_ROOT_ID]
+	_, hasWebhookTag := labels[tag.TraceyWebhookLabel]
+	_, hasPropagatedTag := labels[tag.TraceyRootID]
 	return !hasWebhookTag && !hasPropagatedTag
 }
 
@@ -75,7 +82,7 @@ func hasSleeveLabels(in *admissionv1.AdmissionReview) bool {
 		labels = wl.Labels
 	}
 	// current heuristic: if the object has a creator tag, it's a sleeve object
-	_, hasCreatorTag := labels[tag.TRACEY_CREATOR_ID]
+	_, hasCreatorTag := labels[tag.TraceyCreatorID]
 	return hasCreatorTag
 }
 
@@ -113,7 +120,7 @@ func ServeTagResource(w http.ResponseWriter, r *http.Request) {
 	// only label the object if it doesn't already have a propagated root label
 	if cameFromTheOutside(in) && notTaggedYet(labels) {
 		// set the top-level label. that's all we do here.
-		labels[tag.TRACEY_WEBHOOK_LABEL] = uuid.New().String()
+		labels[tag.TraceyWebhookLabel] = uuid.New().String()
 	}
 
 	patches := []patchOperation{
@@ -184,7 +191,7 @@ func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 		"requestKind":     in.Request.RequestKind,
 		"requestResource": in.Request.RequestResource,
 		"user":            in.Request.UserInfo.Username,
-	}).Debug("received tag resource request")
+	}).Debug("received validate resource request")
 
 	cameFromOutside := cameFromTheOutside(in)
 	hasSleeveTags := hasSleeveLabels(in)
@@ -197,6 +204,15 @@ func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 		"canBypass":       canBypass,
 	}).Debug("evaluated validation checks")
 
+	if cameFromOutside {
+		logger.WithField("userinfo", in.Request.UserInfo).Debug("logging external declaration event")
+		err := emitDeclarativeEvent(in.Request, "")
+		if err != nil {
+			logger.Error(err)
+			return
+		}
+	}
+
 	var message string
 	switch {
 	case cameFromOutside:
@@ -204,7 +220,7 @@ func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 	case hasSleeveTags:
 		message = "Has sleeve tags"
 	case canBypass:
-		message = "user whitelisted: can bypass validation"
+		message = fmt.Sprintf("user %s whitelisted: can bypass validation", in.Request.UserInfo.Username)
 	default:
 		message = "sleeve tags are required for this namespace"
 	}
@@ -289,4 +305,48 @@ func parseRequest(r http.Request) (*admissionv1.AdmissionReview, error) {
 	}
 
 	return &a, nil
+}
+
+func emitDeclarativeEvent(req *admissionv1.AdmissionRequest, rootID string) error {
+	op := req.Operation
+	kind := req.Kind.Kind
+	namespace := req.Namespace
+	name := req.Name
+
+	logrus.WithFields(logrus.Fields{
+		"kind": kind,
+	}).Debug("emitting declarative event")
+	// Temp hack: hard-code the CRDs being declared externally via kubectl.
+	// This is necessary because external requests cannot be reliably
+	// distinguished when controllers are run locally using the same
+	// client configuration as the kubectl CLI tool.
+	// TODO
+	externalKinds := []string{
+		"CassandraDatacenter",
+	}
+	if !lo.Contains(externalKinds, kind) {
+		// return early if the kind is not in the list of external kinds
+		return nil
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"kind": kind,
+		"op":   op,
+	}).Debug("emitting event")
+	event := event.DeclarativeEvent{
+		ID:        uuid.New().String(),
+		Timestamp: event.FormatTimeStr(time.Now()),
+		OpType:    string(op),
+		ResourceKey: snapshot.ResourceKey{
+			Kind:      kind,
+			Namespace: namespace,
+			Name:      name,
+		},
+		// Value:       string(serializedObj),
+		RootEventID: rootID,
+	}
+	logger := logrus.WithField("event", event)
+	logger.Debug("emitting event")
+
+	return nil
 }
