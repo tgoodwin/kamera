@@ -16,7 +16,7 @@ docker-build:
 
 
 .PHONY: push-webhook
-push: docker-build
+push-webhook: docker-build
 	@echo "\n📦 Pushing admission-webhook image into Kind's Docker daemon..."
 	kind load docker-image simple-kubernetes-webhook:latest
 
@@ -26,12 +26,11 @@ deploy-config:
 	kubectl apply -f webhook/dev/manifests/cluster-config/
 
 .PHONY: delete-webhook
-delete:
+delete-webhook:
 	@echo "\n♻️  Deleting webhook deployment if existing..."
 	kubectl delete -f webhook/dev/manifests/webhook/ || true
 
-
 .PHONY: deploy-webhook
-deploy: push-webhook delete-webhook deploy-config
-	@echo "\n🚀 Deploying simple-kubernetes-webhook..."
+deploy-webhook: push-webhook delete-webhook deploy-config
+	@echo "\n🚀 Deploying webhook..."
 	kubectl apply -f webhook/dev/manifests/webhook/

@@ -70,9 +70,17 @@ func notTaggedYet(labels map[string]string) bool {
 	return !hasWebhookTag && !hasPropagatedTag
 }
 
+// hasSleeveLabels checks that objects created by controllers
+// are instrumented under sleeve.
 func hasSleeveLabels(in *admissionv1.AdmissionReview) bool {
+	var rawData []byte
+	if in.Request.Operation == admissionv1.Delete {
+		rawData = in.Request.OldObject.Raw
+	} else {
+		rawData = in.Request.Object.Raw
+	}
 	wl := withlabels{}
-	if err := json.Unmarshal(in.Request.Object.Raw, &wl); err != nil {
+	if err := json.Unmarshal(rawData, &wl); err != nil {
 		return false
 	}
 	var labels map[string]string
@@ -229,6 +237,17 @@ func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 	statusCode := http.StatusForbidden
 	if allowed {
 		statusCode = http.StatusAccepted
+	}
+
+	if !allowed {
+		logger.WithFields(logrus.Fields{
+			"kind":            in.Request.Kind,
+			"name":            in.Request.Name,
+			"user":            in.Request.UserInfo.Username,
+			"cameFromOutside": cameFromOutside,
+			"hasSleeveTags":   hasSleeveTags,
+			"canBypass":       canBypass,
+		}).Debug("rejecting request")
 	}
 
 	out := &admissionv1.AdmissionReview{
