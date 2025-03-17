@@ -2,14 +2,17 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"path"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/minio/minio-go/v7"
 	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 
@@ -21,11 +24,18 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+var KUBECTL_USERNAME = "kubernetes-admin"
+
 func main() {
 	setLogger()
 
-	http.HandleFunc("/tag-resource", ServeTagResource)
-	http.HandleFunc("/validate-resource", ServeValidateResource)
+	handler, err := NewHandler()
+	if err != nil {
+		logrus.Fatal(err)
+	}
+
+	http.HandleFunc("/tag-resource", handler.ServeTagResource)
+	http.HandleFunc("/validate-resource", handler.ServeValidateResource)
 	http.HandleFunc("/health", ServeHealth)
 
 	// start the server
@@ -71,7 +81,9 @@ func notTaggedYet(labels map[string]string) bool {
 }
 
 // hasSleeveLabels checks that objects created by controllers
-// are instrumented under sleeve.
+// are instrumented under sleeve. WARNING - its possible that
+// a non-instrumented controller is operating on an instrumented
+// object, so dont use this as a way to determine controller identity
 func hasSleeveLabels(in *admissionv1.AdmissionReview) bool {
 	var rawData []byte
 	if in.Request.Operation == admissionv1.Delete {
@@ -94,9 +106,35 @@ func hasSleeveLabels(in *admissionv1.AdmissionReview) bool {
 	return hasCreatorTag
 }
 
-var KUBECTL_USERNAME = "kubernetes-admin"
+type Handler struct {
+	minioClient *minio.Client
+	minioCfg    event.MinioConfig
+}
 
-func ServeTagResource(w http.ResponseWriter, r *http.Request) {
+// TODO de-hardcode
+func NewHandler() (*Handler, error) {
+	clientCfg := event.MinioConfig{
+		Endpoint:        "minio-svc.sleeve-system.svc.cluster.local:9000",
+		AccessKeyID:     "myaccesskey",
+		SecretAccessKey: "mysecretkey",
+		UseSSL:          false,
+		BucketName:      "tracey",
+	}
+
+	client, err := event.GetBucketClient(clientCfg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize Minio client")
+	}
+
+	sh := &Handler{
+		minioCfg:    clientCfg,
+		minioClient: client,
+	}
+
+	return sh, nil
+}
+
+func (s *Handler) ServeTagResource(w http.ResponseWriter, r *http.Request) {
 	in, err := parseRequest(*r)
 	logger := logrus.WithField("resource", in.Request.RequestResource)
 	logger.WithFields(logrus.Fields{
@@ -185,7 +223,7 @@ func canByPassvalidation(userInfo authenticationv1.UserInfo) bool {
 
 // ServeValidateResource validates an admission request and then writes an admission
 // review to `w`
-func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
+func (s *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 	logger := logrus.WithField("uri", r.RequestURI)
 	in, err := parseRequest(*r)
 	if err != nil {
@@ -225,7 +263,7 @@ func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 
 	if cameFromOutside {
 		logger.WithField("userinfo", in.Request.UserInfo).Debug("logging external declaration event")
-		err := emitDeclarativeEvent(in.Request, "")
+		err := s.emitDeclarativeEvent(in.Request, "")
 		if err != nil {
 			logger.Error(err)
 			return
@@ -240,7 +278,6 @@ func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 		message = "Has sleeve tags"
 	case canBypass:
 		message = fmt.Sprintf("user %s whitelisted: can bypass validation", in.Request.UserInfo.Username)
-		message = "user whitelisted: can bypass validation"
 	case isSleeve:
 		message = "you are sleeve"
 	default:
@@ -347,7 +384,7 @@ func parseRequest(r http.Request) (*admissionv1.AdmissionReview, error) {
 	return &a, nil
 }
 
-func emitDeclarativeEvent(req *admissionv1.AdmissionRequest, rootID string) error {
+func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest, rootID string) error {
 	op := req.Operation
 	kind := req.Kind.Kind
 	namespace := req.Namespace
@@ -388,5 +425,30 @@ func emitDeclarativeEvent(req *admissionv1.AdmissionRequest, rootID string) erro
 	logger := logrus.WithField("event", event)
 	logger.Debug("emitting event")
 
-	return nil
+	eventJSON, err := json.Marshal(event)
+	if err != nil {
+		logger.Errorf("could not marshal event: %v", err)
+	}
+	objName := path.Join(
+		"external",
+		kind,
+		fmt.Sprintf("%s_%s_%s.json", event.ResourceKey.Name, event.OpType, event.ID),
+	)
+
+	// upload to minio
+	contentType := "application/json"
+	logger.WithFields(logrus.Fields{
+		"object":   objName,
+		"bucket":   h.minioCfg.BucketName,
+		"endpoint": h.minioCfg.Endpoint,
+	}).Debug("uploading event to minio")
+	_, err = h.minioClient.PutObject(
+		context.TODO(),
+		h.minioCfg.BucketName,
+		objName,
+		bytes.NewReader(eventJSON),
+		int64(len(eventJSON)),
+		minio.PutObjectOptions{ContentType: contentType},
+	)
+	return err
 }

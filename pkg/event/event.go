@@ -26,6 +26,15 @@ type Event struct {
 	Labels       map[string]string `json:"labels,omitempty"`
 }
 
+type DeclarativeEvent struct {
+	ID          string               `json:"id"`
+	Timestamp   string               `json:"timestamp"`
+	OpType      string               `json:"op_type"`
+	ResourceKey snapshot.ResourceKey `json:"resource_key"`
+	RootEventID string               `json:"root_event_id"`
+	Value       string               `json:"value"`
+}
+
 // Ensure Event implements the json.Marshaler and json.Unmarshaler interfaces
 var _ json.Marshaler = (*Event)(nil)
 var _ json.Unmarshaler = (*Event)(nil)

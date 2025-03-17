@@ -13,6 +13,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/util"
 )
 
 // MinioEmitter implements the Emitter interface to store event data in a Minio bucket
@@ -32,7 +33,7 @@ type MinioConfig struct {
 	UseCompression  bool
 }
 
-func NewMinioEmitter(config MinioConfig) (*MinioEmitter, error) {
+func GetBucketClient(config MinioConfig) (*minio.Client, error) {
 	// Initialize Minio client
 	fmt.Println("initializing minio client")
 	client, err := minio.New(config.Endpoint, &minio.Options{
@@ -57,7 +58,14 @@ func NewMinioEmitter(config MinioConfig) (*MinioEmitter, error) {
 			return nil, fmt.Errorf("failed to create bucket: %w", err)
 		}
 	}
+	return client, nil
+}
 
+func NewMinioEmitter(config MinioConfig) (*MinioEmitter, error) {
+	client, err := GetBucketClient(config)
+	if err != nil {
+		return nil, err
+	}
 	return &MinioEmitter{
 		client:         client,
 		bucketName:     config.BucketName,
@@ -71,7 +79,7 @@ func DefaultMinioEmitter() (*MinioEmitter, error) {
 		AccessKeyID:     "myaccesskey",
 		SecretAccessKey: "mysecretkey",
 		UseSSL:          false,
-		BucketName:      "sleeve",
+		BucketName:      "sleeve3",
 		UseCompression:  true,
 	}
 
@@ -89,13 +97,13 @@ func (m *MinioEmitter) LogOperation(ctx context.Context, e *Event) {
 	}
 
 	// Create a meaningful object name/path
-	timestamp := time.Now().Format(time.RFC3339)
+	// timestamp := time.Now().Format(time.RFC3339)
 	// for example, "operations/controllerID/reconcileID/2021-08-01T12:00:00Z_create_123.json"
 	objectName := path.Join(
 		"operations",
 		e.ControllerID,
-		e.ReconcileID,
-		fmt.Sprintf("%s_%s_%s.json", timestamp, e.OpType, e.ID),
+		// e.ReconcileID,
+		fmt.Sprintf("%s_%s_%s.json", util.Shorter(e.ReconcileID), e.OpType, e.ID),
 	)
 
 	// Upload to Minio
@@ -148,8 +156,8 @@ func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) 
 	}
 }
 
-// K8sMinioConfig holds the environment variable names for Minio configuration
-type K8sMinioConfig struct {
+// K8sMinioEnvConfig holds the environment variable names for Minio configuration
+type K8sMinioEnvConfig struct {
 	EndpointEnv        string
 	AccessKeyIDEnv     string
 	SecretAccessKeyEnv string
@@ -161,8 +169,8 @@ type K8sMinioConfig struct {
 }
 
 // DefaultK8sMinioConfig returns a K8sMinioConfig with default environment variable names
-func DefaultK8sMinioConfig() K8sMinioConfig {
-	return K8sMinioConfig{
+func DefaultK8sMinioConfig() K8sMinioEnvConfig {
+	return K8sMinioEnvConfig{
 		EndpointEnv:        "SLEEVE_MINIO_ENDPOINT",
 		AccessKeyIDEnv:     "SLEEVE_MINIO_ACCESS_KEY",
 		SecretAccessKeyEnv: "SLEEVE_MINIO_SECRET_KEY",
@@ -180,7 +188,7 @@ func NewMinioEmitterFromEnv() (*MinioEmitter, error) {
 }
 
 // NewMinioEmitterFromK8sConfig creates a new MinioEmitter using the provided K8sMinioConfig
-func NewMinioEmitterFromK8sConfig(config K8sMinioConfig) (*MinioEmitter, error) {
+func NewMinioEmitterFromK8sConfig(config K8sMinioEnvConfig) (*MinioEmitter, error) {
 	// Get environment variables
 	endpoint := os.Getenv(config.EndpointEnv)
 	accessKeyID := os.Getenv(config.AccessKeyIDEnv)
