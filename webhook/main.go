@@ -184,18 +184,18 @@ func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 		"requestKind":     in.Request.RequestKind,
 		"requestResource": in.Request.RequestResource,
 		"user":            in.Request.UserInfo.Username,
-	}).Debug("received tag resource request")
+	}).Debug("received validate resource request")
 
+	// let kubelet operations through
 	cameFromOutside := cameFromTheOutside(in)
+
+	// used to guard against objects created by non-instrumented controllers
 	hasSleeveTags := hasSleeveLabels(in)
+
+	// let kubelet and garbage collector just do their thing
 	canBypass := canByPassvalidation(in.Request.UserInfo)
 
-	logger.WithFields(logrus.Fields{
-		"user":            in.Request.UserInfo.Username,
-		"cameFromOutside": cameFromOutside,
-		"hasSleeveTags":   hasSleeveTags,
-		"canBypass":       canBypass,
-	}).Debug("evaluated validation checks")
+	isSleeve := in.Request.UserInfo.Username == "sleeve:controller-user"
 
 	var message string
 	switch {
@@ -205,15 +205,36 @@ func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 		message = "Has sleeve tags"
 	case canBypass:
 		message = "user whitelisted: can bypass validation"
+	case isSleeve:
+		message = "you are sleeve"
 	default:
 		message = "sleeve tags are required for this namespace"
 	}
 
-	allowed := cameFromOutside || hasSleeveTags || canBypass
+	// I removed the `hasSleeveTags` check because it was allowing some
+	// operations from non-sleeve controllers to pass through.
+	// this went against my goals, but I didn't realize that these operations that were slipping
+	// through were actually helping the statefulset controller to create the pods it needed to.
+	// When I remove the `hasSleeveTags` check, the statefulset controller is able to create the pods
+	// but they do not fully become ready (as the core statefulset controller is no longer helping).
+	// creating / deleting is all I really need for the bug I am experimenting with, so I will leave
+	// the code as it is now.
+	// - TODO - get the sleeve:statefulset-controller working so it doesnt need help
+	allowed := cameFromOutside || isSleeve || canBypass
 	statusCode := http.StatusForbidden
 	if allowed {
 		statusCode = http.StatusAccepted
 	}
+
+	logger.WithFields(logrus.Fields{
+		"user":            in.Request.UserInfo.Username,
+		"allowed":         allowed,
+		"message":         message,
+		"cameFromOutside": cameFromOutside,
+		"hasSleeveTags":   hasSleeveTags,
+		"isSleeve":        isSleeve,
+		"canBypass":       canBypass,
+	}).Debug("evaluated validation checks")
 
 	out := &admissionv1.AdmissionReview{
 		TypeMeta: metav1.TypeMeta{
@@ -239,7 +260,6 @@ func ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Debug("sending response")
 	logger.Debugf("%s", jout)
 	fmt.Fprintf(w, "%s", jout)
 }
