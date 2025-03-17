@@ -35,6 +35,13 @@ webhooks:
         QmRwNDFVb0dhZXpBSTBJZDNlSnRMUHJmMDJibzV5WFlLM2dDY1JxU3FjRjRsVkZERi9weQpZb3FmK045
         N0wwUUtPb2ZsVlZRUHBTdE9mZm1xQW9BPQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
     rules:
+    # TODO GENERALIZE
+      - apiGroups: ["cassandra.datastax.com"]
+        apiVersions: ["v1beta1"]
+        operations: ["CREATE", "UPDATE", "DELETE"]
+        resources: ["cassandradatacenters"]
+        scope: "Namespaced"
+
       - apiGroups: ["apps"]
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE", "DELETE"]
