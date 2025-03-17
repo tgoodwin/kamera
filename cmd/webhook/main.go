@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/minio/minio-go/v7"
 	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 
@@ -22,6 +20,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 var KUBECTL_USERNAME = "kubernetes-admin"
@@ -107,28 +106,26 @@ func hasSleeveLabels(in *admissionv1.AdmissionReview) bool {
 }
 
 type Handler struct {
-	minioClient *minio.Client
-	minioCfg    event.MinioConfig
+	emitter event.Emitter
 }
 
 // TODO de-hardcode
 func NewHandler() (*Handler, error) {
 	clientCfg := event.MinioConfig{
-		Endpoint:        "minio-svc.sleeve-system.svc.cluster.local:9000",
+		Endpoint:        event.InternalEndpoint,
 		AccessKeyID:     "myaccesskey",
 		SecretAccessKey: "mysecretkey",
 		UseSSL:          false,
-		BucketName:      "tracey",
+		BucketName:      event.DefaultBucketName,
 	}
 
-	client, err := event.GetBucketClient(clientCfg)
+	emitter, err := event.NewMinioEmitter(clientCfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize Minio client")
+		return nil, fmt.Errorf("failed to initialize Minio emitter")
 	}
 
 	sh := &Handler{
-		minioCfg:    clientCfg,
-		minioClient: client,
+		emitter: emitter,
 	}
 
 	return sh, nil
@@ -165,8 +162,13 @@ func (s *Handler) ServeTagResource(w http.ResponseWriter, r *http.Request) {
 
 	// only label the object if it doesn't already have a propagated root label
 	if cameFromTheOutside(in) && notTaggedYet(labels) {
-		// set the top-level label. that's all we do here.
+		// set the top-level label, which is used to track
+		// causal relationships between downstream events.
+		// also assign a unique object ID to the object to be consistent
+		// with simulation contexts when there is no APIServer to assign
+		// a UID.
 		labels[tag.TraceyWebhookLabel] = uuid.New().String()
+		labels[tag.TraceyObjectID] = uuid.New().String()
 	}
 
 	patches := []patchOperation{
@@ -263,7 +265,7 @@ func (s *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 
 	if cameFromOutside {
 		logger.WithField("userinfo", in.Request.UserInfo).Debug("logging external declaration event")
-		err := s.emitDeclarativeEvent(in.Request, "")
+		err := s.emitDeclarativeEvent(in.Request)
 		if err != nil {
 			logger.Error(err)
 			return
@@ -384,11 +386,11 @@ func parseRequest(r http.Request) (*admissionv1.AdmissionReview, error) {
 	return &a, nil
 }
 
-func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest, rootID string) error {
+func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error {
 	op := req.Operation
 	kind := req.Kind.Kind
-	namespace := req.Namespace
-	name := req.Name
+	// namespace := req.Namespace
+	// name := req.Name
 
 	logrus.WithFields(logrus.Fields{
 		"kind": kind,
@@ -406,49 +408,68 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest, rootID
 		return nil
 	}
 
+	var rawBytes []byte
+	if op == admissionv1.Delete {
+		rawBytes = req.OldObject.Raw
+	} else {
+		rawBytes = req.Object.Raw
+	}
+	// dont try to make this work if the object is absent.
+	if len(rawBytes) == 0 {
+		return fmt.Errorf("object is empty")
+	}
+
+	var obj unstructured.Unstructured
+	if err := json.Unmarshal(rawBytes, &obj.Object); err != nil {
+		return fmt.Errorf("could not unmarshal object into unstructured: %v", err)
+	}
+	// get it serialized again, but as JSON
+	recordJSON, err := json.Marshal(obj.Object)
+	if err != nil {
+		return fmt.Errorf("could not marshal object: %v", err)
+	}
+	logrus.WithFields(logrus.Fields{
+		"kind": kind,
+		"op":   op,
+		// Kubelet -> APIServer -> Mutation -> Validation
+		"object": string(recordJSON), //already has UID by the time it gets here
+	}).Debug("found object on request")
+
 	logrus.WithFields(logrus.Fields{
 		"kind": kind,
 		"op":   op,
 	}).Debug("emitting event")
-	event := event.DeclarativeEvent{
-		ID:        uuid.New().String(),
-		Timestamp: event.FormatTimeStr(time.Now()),
-		OpType:    string(op),
-		ResourceKey: snapshot.ResourceKey{
-			Kind:      kind,
-			Namespace: namespace,
-			Name:      name,
-		},
-		// Value:       string(serializedObj),
-		RootEventID: rootID,
-	}
-	logger := logrus.WithField("event", event)
-	logger.Debug("emitting event")
-
-	eventJSON, err := json.Marshal(event)
+	rootEventID, err := tag.GetRootID(&obj)
 	if err != nil {
-		logger.Errorf("could not marshal event: %v", err)
+		return fmt.Errorf("could not get root ID: %v", err)
 	}
-	objName := path.Join(
-		"external",
-		kind,
-		fmt.Sprintf("%s_%s_%s.json", event.ResourceKey.Name, event.OpType, event.ID),
-	)
+	baseEvent := event.Event{
+		ID:           uuid.New().String(),
+		Timestamp:    event.FormatTimeStr(time.Now()),
+		OpType:       string(op),
+		Kind:         kind,
+		ObjectID:     string(obj.GetUID()),
+		ReconcileID:  "EXTERNAL",
+		ControllerID: "TraceyWebhook",
+		RootEventID:  rootEventID,
+		Version:      obj.GetResourceVersion(),
+		Labels:       tag.GetSleeveLabels(&obj),
+	}
 
-	// upload to minio
-	contentType := "application/json"
-	logger.WithFields(logrus.Fields{
-		"object":   objName,
-		"bucket":   h.minioCfg.BucketName,
-		"endpoint": h.minioCfg.Endpoint,
-	}).Debug("uploading event to minio")
-	_, err = h.minioClient.PutObject(
-		context.TODO(),
-		h.minioCfg.BucketName,
-		objName,
-		bytes.NewReader(eventJSON),
-		int64(len(eventJSON)),
-		minio.PutObjectOptions{ContentType: contentType},
-	)
+	record := snapshot.Record{
+		ObjectID:      string(obj.GetUID()),
+		ReconcileID:   "EXTERNAL",
+		OperationID:   baseEvent.ID,
+		OperationType: string(op),
+		Kind:          kind,
+		Version:       obj.GetResourceVersion(),
+		Value:         string(recordJSON),
+	}
+
+	h.emitter.LogOperation(context.TODO(), &baseEvent)
+	h.emitter.LogObjectVersion(context.TODO(), record)
+
+	logger := logrus.WithField("event", baseEvent)
+	logger.Debug("emitting event")
 	return err
 }

@@ -19,7 +19,8 @@ type Record struct {
 	OperationType string `json:"op_type"`      // the operation type that produced this record
 	Kind          string `json:"kind"`
 	Version       string `json:"version"` // resource version
-	Value         string `json:"value"`   // full object value (snapshot.VersionHash)
+	// TODO change this to an interface that just requires the object is Marhsalable
+	Value string `json:"value"` // full object value (snapshot.VersionHash)
 }
 
 func (r Record) ToUnstructured() *unstructured.Unstructured {

@@ -16,6 +16,10 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/util"
 )
 
+const DefaultBucketName = "sleeve"
+const InternalEndpoint = "minio-svc.sleeve-system.svc.cluster.local:9000"
+const ExternalEndpoint = "localhost:9000"
+
 // MinioEmitter implements the Emitter interface to store event data in a Minio bucket
 type MinioEmitter struct {
 	client         *minio.Client
@@ -75,11 +79,11 @@ func NewMinioEmitter(config MinioConfig) (*MinioEmitter, error) {
 
 func DefaultMinioEmitter() (*MinioEmitter, error) {
 	config := MinioConfig{
-		Endpoint:        "localhost:9000",
+		Endpoint:        ExternalEndpoint,
 		AccessKeyID:     "myaccesskey",
 		SecretAccessKey: "mysecretkey",
 		UseSSL:          false,
-		BucketName:      "sleeve3",
+		BucketName:      DefaultBucketName,
 		UseCompression:  true,
 	}
 
