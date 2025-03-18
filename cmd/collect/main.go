@@ -22,6 +22,7 @@ func main() {
 	useSSL := flag.Bool("use-ssl", false, "Use SSL for MinIO connection")
 	bucketName := flag.String("bucket", "sleeve", "Bucket name to fetch objects from")
 	outputFile := flag.String("output-file", "all_traces.jsonl", "Output file to save the objects")
+	cleanup := flag.Bool("cleanup", false, "Empty the bucket after fetching objects")
 
 	// Parse flags
 	flag.Parse()
@@ -117,6 +118,22 @@ func main() {
 	wg.Wait()
 
 	log.Printf("All %d objects processed. Output saved to %s", objectCount, *outputFile)
+	if *cleanup {
+		log.Println("Starting cleanup...")
+
+		objectsCh := minioClient.ListObjects(ctx, *bucketName, minio.ListObjectsOptions{
+			Recursive: true,
+		})
+
+		// Remove the objects in the bucket using the RemoveObjects API
+		for rErr := range minioClient.RemoveObjects(ctx, *bucketName, objectsCh, minio.RemoveObjectsOptions{}) {
+			if rErr.Err != nil {
+				log.Printf("error removing object %s: %v", rErr.ObjectName, rErr.Err)
+			}
+		}
+
+		// return nil
+	}
 }
 
 // Global mutex for file writing
