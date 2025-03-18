@@ -125,7 +125,7 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		things = append(things, thing)
 
 		// now build the read deps
-		if event.IsReadOp(e) {
+		if event.IsReadOp(event.OperationType(e.OpType)) {
 			if _, ok := readDeps[e.Kind]; !ok {
 				readDeps[e.Kind] = util.NewSet[string]()
 			}
@@ -196,7 +196,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 					ReconcileID: "TOP",
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
-					effect:      newEffect(key, vHash, event.CREATE),
+					Effect:      newEffect(key, vHash, event.CREATE),
 				},
 			},
 		},

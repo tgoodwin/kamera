@@ -25,9 +25,10 @@ func (ec EffectContainer) AddEffect(frameID string, e *event.Event) {
 		de = DataEffect{}
 	}
 
-	if event.IsReadOp(*e) {
+	opType := event.OperationType(e.OpType)
+	if event.IsReadOp(opType) {
 		de.Reads = append(de.Reads, *e)
-	} else if event.IsWriteOp(*e) {
+	} else if event.IsWriteOp(opType) {
 		de.Writes = append(de.Writes, *e)
 	}
 
@@ -52,7 +53,7 @@ func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType e
 	}
 	r.effectContainer.AddEffect(reconcileID, e)
 
-	if event.IsWriteOp(*e) {
+	if event.IsWriteOp(event.OperationType(e.OpType)) {
 		// in the case where we are recording a perturbed execution,
 		// see if the perturbation produced the desired effect
 		r.evaluatePredicates(ctx, obj)

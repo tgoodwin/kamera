@@ -557,7 +557,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -578,7 +578,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -588,7 +588,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
-					effect: effect{
+					Effect: effect{
 						Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						OpType: event.DELETE,
 					},
@@ -606,7 +606,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -616,7 +616,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 						Version: snapshot.NewDefaultHash("v2"),
 						OpType:  event.CREATE,
@@ -639,7 +639,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -649,7 +649,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v2"),
 						OpType:  event.UPDATE,
@@ -681,7 +681,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r1",
 			Timestamp:   "2024-02-21T10:00:01Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -691,7 +691,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r2",
 			Timestamp:   "2024-02-21T10:00:02Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -701,7 +701,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r3",
 			Timestamp:   "2024-02-21T10:00:03Z",
-			effect: effect{
+			Effect: effect{
 				Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				OpType: event.DELETE,
 			},
@@ -710,7 +710,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r4",
 			Timestamp:   "2024-02-21T10:00:04Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -720,7 +720,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r5",
 			Timestamp:   "2024-02-21T10:00:05Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -730,7 +730,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r6",
 			Timestamp:   "2024-02-21T10:00:06Z",
-			effect: effect{
+			Effect: effect{
 				Key:    snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
 				OpType: event.DELETE,
 			},
@@ -739,7 +739,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r7",
 			Timestamp:   "2024-02-21T10:00:07Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -749,7 +749,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r8",
 			Timestamp:   "2024-02-21T10:00:08Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -759,7 +759,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r9",
 			Timestamp:   "2024-02-21T10:00:09Z",
-			effect: effect{
+			Effect: effect{
 				Key:    snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				OpType: event.DELETE,
 			},
@@ -768,7 +768,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r10",
 			Timestamp:   "2024-02-21T10:00:10Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -778,7 +778,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r11",
 			Timestamp:   "2024-02-21T10:00:11Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -788,7 +788,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r12",
 			Timestamp:   "2024-02-21T10:00:12Z",
-			effect: effect{
+			Effect: effect{
 				Key:    snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"),
 				OpType: event.DELETE,
 			},
@@ -961,7 +961,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		{
 			ReconcileID: "r1",
 			Timestamp:   "2024-02-21T10:00:01Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -971,7 +971,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		{
 			ReconcileID: "r2",
 			Timestamp:   "2024-02-21T10:00:02Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -981,7 +981,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		{
 			ReconcileID: "r3",
 			Timestamp:   "2024-02-21T10:00:03Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -991,7 +991,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		{
 			ReconcileID: "r4",
 			Timestamp:   "2024-02-21T10:00:04Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,

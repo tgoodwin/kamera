@@ -29,7 +29,7 @@ func NewStateSnapshot(contents ObjectVersions, kindSequences map[string]int64, s
 	}
 	// do some validation
 	stateKinds := lo.Map(stateEvents, func(e StateEvent, _ int) string {
-		return e.effect.Key.IdentityKey.Kind
+		return e.Effect.Key.IdentityKey.Kind
 	})
 	stateKindSet := util.NewSet(stateKinds...)
 	seqKinds := lo.Keys(kindSequences)
@@ -57,7 +57,7 @@ func (s *StateSnapshot) Observable() ObjectVersions {
 func (s *StateSnapshot) Debug() {
 	fmt.Println("State events:")
 	for _, e := range s.stateEvents {
-		fmt.Printf("%s %s %d\n", e.effect.Key.IdentityKey, e.effect.OpType, e.Sequence)
+		fmt.Printf("%s %s %d\n", e.Effect.Key.IdentityKey, e.Effect.OpType, e.Sequence)
 	}
 	fmt.Println("contents:")
 	for key := range s.contents {
@@ -110,7 +110,7 @@ func (s *StateSnapshot) Adjust(kind string, steps int64) (*StateSnapshot, error)
 	currSeqForKind := currSequences[kind]
 
 	eventsForKind := lo.Filter(s.stateEvents, func(e StateEvent, _ int) bool {
-		return e.effect.Key.IdentityKey.Kind == kind
+		return e.Effect.Key.IdentityKey.Kind == kind
 	})
 	earlierEventsForKind := lo.Filter(eventsForKind, func(e StateEvent, _ int) bool {
 		return e.Sequence < currSeqForKind
@@ -143,10 +143,14 @@ type StateEvent struct {
 	*event.Event
 	ReconcileID string
 	Timestamp   string
-	effect      effect
+	Effect      effect
 	Sequence    int64 // the sequence within the kind
 
 	rv ResourceVersion // model etcd resource version
+}
+
+func (s *StateEvent) Key() string {
+	return fmt.Sprintf("%s", s.Effect.Key.IdentityKey.ObjectID)
 }
 
 // Tracks the complete history of a single object
@@ -206,7 +210,7 @@ func (k *KindKnowledge) AddEvent(e event.Event, eff effect, rv ResourceVersion) 
 		ReconcileID: e.ReconcileID,
 		Timestamp:   e.Timestamp,
 		// contains redundant info as E
-		effect: eff,
+		Effect: eff,
 		// ChangeID: e.ChangeID(),
 		Sequence: k.CurrentSequence,
 		rv:       rv,
@@ -314,7 +318,7 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 
 	// we only want to track state change events. This includes top-level state declaration events.
 	changeEvents := lo.Filter(sortedEvents, func(e event.Event, _ int) bool {
-		return event.IsWriteOp(e) || event.IsTopLevel(e)
+		return event.IsWriteOp(event.OperationType(e.OpType)) || event.IsTopLevel(e)
 	})
 
 	// process each event
@@ -343,29 +347,30 @@ func Rollup(events []StateEvent) *StateSnapshot {
 }
 
 func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
-	// defensively ensure that the events are only write ops
-	events = lo.Filter(events, func(e StateEvent, _ int) bool {
-		return event.IsWriteOp(*e.Event)
-	})
-
 	contents := make(ObjectVersions)
 	KindSequences := make(map[string]int64)
 	stateEvents := make([]StateEvent, 0)
 
+	deletions := make(map[snapshot.CompositeKey]bool)
+
 	for _, e := range events {
-		iKey := e.effect.Key.IdentityKey
-		if e.effect.OpType == event.DELETE {
-			if e.Kind == "PersistentVolumeClaim" {
-				fmt.Printf("deleting %s\n", iKey)
-			}
-			delete(contents, e.effect.Key)
+		// ensure that we are only applying write ops
+		if !event.IsWriteOp(e.Effect.OpType) {
+			continue
+		}
+		if _, wasDeleted := deletions[e.Effect.Key]; wasDeleted {
+			// if the object was deleted, we don't need to apply any more changes
+			// TODO its unclear what to do when we observe update events after
+			// a deletion event. For now, ignore them.
+			continue
+		}
+		iKey := e.Effect.Key.IdentityKey
+		if e.Effect.OpType == event.DELETE {
+			delete(contents, e.Effect.Key)
+			deletions[e.Effect.Key] = true
 		} else {
-			version := e.effect.Version
-			// change
-			if e.Kind == "PersistentVolumeClaim" {
-				fmt.Printf("adding %s\n", iKey)
-			}
-			contents[e.effect.Key] = version
+			version := e.Effect.Version
+			contents[e.Effect.Key] = version
 		}
 		KindSequences[iKey.Kind] = e.Sequence
 
@@ -377,7 +382,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 
 func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int64) *StateSnapshot {
 	eventsByKind := lo.GroupBy(events, func(e StateEvent) string {
-		return e.effect.Key.IdentityKey.Kind
+		return e.Effect.Key.IdentityKey.Kind
 	})
 	toReplay := make([]StateEvent, 0)
 	for kind, kindEvents := range eventsByKind {
@@ -406,7 +411,7 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 	staleViews = append(staleViews, snapshot)
 
 	eventsByKind := lo.GroupBy(snapshot.stateEvents, func(e StateEvent) string {
-		return e.effect.Key.IdentityKey.Kind
+		return e.Effect.Key.IdentityKey.Kind
 	})
 	seqByKind := lo.MapValues(eventsByKind, func(events []StateEvent, key string) []int64 {
 		return lo.Map(events, func(e StateEvent, _ int) int64 {

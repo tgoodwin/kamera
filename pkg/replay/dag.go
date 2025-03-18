@@ -16,7 +16,7 @@ func FindReadDeps(events []event.Event) map[string]util.Set[string] {
 	// reads by controller ID
 	reads := make(map[string]util.Set[string])
 	for _, e := range events {
-		if event.IsReadOp(e) {
+		if event.IsReadOp(event.OperationType(e.OpType)) {
 			if _, ok := reads[e.ControllerID]; !ok {
 				reads[e.ControllerID] = util.NewSet[string]()
 			}
@@ -30,7 +30,7 @@ func FindWriteDeps(events []event.Event) map[string]util.Set[string] {
 	// writes by controller ID
 	writes := make(map[string]util.Set[string])
 	for _, e := range events {
-		if event.IsWriteOp(e) {
+		if event.IsWriteOp(event.OperationType(e.OpType)) {
 			if _, ok := writes[e.ControllerID]; !ok {
 				writes[e.ControllerID] = util.NewSet[string]()
 			}

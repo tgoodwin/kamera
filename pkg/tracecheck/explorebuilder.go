@@ -200,7 +200,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 					ReconcileID: "TOP",
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
-					effect: newEffect(
+					Effect: newEffect(
 						key,
 						vHash,
 						event.CREATE,

@@ -114,7 +114,7 @@ func (b *Builder) AnalyzeObject(objectID string) {
 	var prevKey event.CausalKey
 	for _, e := range objectEvents {
 		ckey := e.CausalKey()
-		if event.IsWriteOp(e) {
+		if event.IsWriteOp(event.OperationType(e.OpType)) {
 			currentVersion, ok := b.Store()[ckey]
 			if !ok {
 				// fmt.Printf("WARNING: object not found in store: %#v\n", ckey)

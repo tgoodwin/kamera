@@ -67,7 +67,7 @@ func ParseJSONLTrace(filePath string) ([]StateEvent, error) {
 			fmt.Printf("event %s has no associated record\n", id)
 			continue
 		}
-		if event.IsWriteOp(*evt) {
+		if event.IsWriteOp(event.OperationType(evt.OpType)) {
 			sequenesByKind[evt.Kind]++
 		}
 		evtSequenceNum := sequenesByKind[evt.Kind]
@@ -78,7 +78,7 @@ func ParseJSONLTrace(filePath string) ([]StateEvent, error) {
 			Event:       evt,
 			ReconcileID: evt.ReconcileID,
 			Timestamp:   evt.Timestamp,
-			effect: newEffect(
+			Effect: newEffect(
 				snapshot.NewCompositeKey(obj.GetKind(), ns, name, record.ObjectID),
 				snapshot.NewDefaultHash(record.Value),
 				event.OperationType(evt.OpType),

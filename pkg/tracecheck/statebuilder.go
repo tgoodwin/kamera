@@ -74,7 +74,7 @@ func (b *StateEventBuilder) AddStateEvent(kind, objectID string, obj *unstructur
 	stateEvent := StateEvent{
 		ReconcileID: reconcileID,
 		Timestamp:   timeStr,
-		effect:      effect,
+		Effect:      effect,
 		Sequence:    b.sequence,
 	}
 
@@ -125,7 +125,7 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 					ReconcileID: "TOP",
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
-					effect:      newEffect(key, vHash, event.CREATE),
+					Effect:      newEffect(key, vHash, event.CREATE),
 				},
 			},
 		},
