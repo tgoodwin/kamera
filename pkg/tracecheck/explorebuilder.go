@@ -166,8 +166,12 @@ func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
 }
 
 func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...string) StateNode {
-	r := snapshot.AsRecord(obj, "start").ToUnstructured()
-	vHash := b.snapStore.PublishWithStrategy(r, snapshot.AnonymizedHash)
+	r, err := snapshot.AsRecord(obj, "start")
+	if err != nil {
+		panic("converting to unstructured: " + err.Error())
+	}
+	u := r.ToUnstructured()
+	vHash := b.snapStore.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
 
@@ -196,7 +200,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 					ReconcileID: "TOP",
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
-					effect: newEffect(
+					Effect: newEffect(
 						key,
 						vHash,
 						event.CREATE,

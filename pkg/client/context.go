@@ -155,6 +155,15 @@ func (ct *ContextTracker) setRootContextFromObservation(ctx context.Context, obj
 	currRootID, ok := ct.rc.rootIDByReconcileID[ct.rc.GetReconcileID()]
 	if ok && currRootID != rootID {
 		log.V(0).Error(err, "rootID changed within the reconcile", "currRootID", currRootID, "newRootID", rootID)
+
+		// Prioritize the first rootID we see.
+		// Sometimes we may observe a Resource with a different rootID than the one
+		// that the top-level Reconcile was invoked with. This happens if the controller
+		// queries for resources that existed prior to the top-level causal event
+		// corresponding to the first rootID we set within this reconcile.
+		// For now, we just ignore the rootID update and honor the first one we saw.
+		// TODO: SLE-27
+		return nil
 	}
 
 	currReconcileID := ct.rc.GetReconcileID()

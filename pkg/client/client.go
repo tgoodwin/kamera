@@ -7,14 +7,10 @@ import (
 	"reflect"
 	"strings"
 
-	"time"
-
 	"github.com/go-logr/logr"
-	"github.com/google/uuid"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
-	"github.com/tgoodwin/sleeve/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -67,9 +63,8 @@ func Wrap(c client.Client, id string) *Client {
 	return newClient(c, id)
 }
 
-func (c *Client) WithName(name string) *Client {
-	c.reconcilerID = name
-	c.tracker.reconcilerID = name
+func (c *Client) WithEmitter(emitter event.Emitter) *Client {
+	c.emitter = emitter
 	return c
 }
 
@@ -101,47 +96,33 @@ func (c *Client) WithEnvConfig() *Client {
 	return c
 }
 
-func Operation(obj client.Object, reconcileID, controllerID, rootEventID string, op event.OperationType) *event.Event {
-	id := uuid.New().String()
-	e := &event.Event{
-		ID:           id,
-		Timestamp:    event.FormatTimeStr(time.Now()),
-		ReconcileID:  reconcileID,
-		ControllerID: controllerID,
-		RootEventID:  rootEventID,
-		OpType:       string(op),
-		Kind:         util.GetKind(obj),
-
-		// TODO CHANGE TO SLEEVE OBJECT ID
-		ObjectID: string(obj.GetUID()),
-		Version:  obj.GetResourceVersion(),
-		Labels:   obj.GetLabels(),
-	}
-	changeID := e.ChangeID()
-	if changeID == "" {
-		// panic(fmt.Sprintf("event does not have a change ID: %v", e))
-	}
-	return e
-}
-
-func (c *Client) logOperation(obj client.Object, op event.OperationType) {
+func (c *Client) logOperation(ctx context.Context, obj client.Object, op event.OperationType) {
 	if c.config.disableLogging {
 		return
 	}
 	reconcileID := c.tracker.rc.GetReconcileID()
-	event := Operation(
-		obj,
-		reconcileID,
-		c.reconcilerID,
-		c.tracker.rc.GetRootID(reconcileID),
-		op,
-	)
-	r := snapshot.AsRecord(obj, reconcileID)
-	c.emitter.LogOperation(event)
+	event, err := event.NewOperation(obj, reconcileID, c.reconcilerID, c.tracker.rc.GetRootID(reconcileID), op)
+	if err != nil {
+		c.logger.Error(err, "creating event")
+		if c.tracker.strict {
+			panic(err)
+		}
+		return
+	}
+	r, err := snapshot.AsRecord(obj, reconcileID)
+	if err != nil {
+		c.logger.Error(err, "creating record")
+		if c.tracker.strict {
+			panic(err)
+		}
+		return
+	}
+	c.emitter.LogOperation(ctx, event)
+
 	// associate the operation with the object's snapshot
 	r.OperationID = event.ID
 	r.OperationType = string(op)
-	c.emitter.LogObjectVersion(r)
+	c.emitter.LogObjectVersion(ctx, *r)
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
@@ -158,7 +139,7 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 
 	// this is the *first* time the object is being updated (definition of create)
 	// so we don't need to worry about logging before propagating labels here
-	c.logOperation(obj, event.CREATE)
+	c.logOperation(ctx, obj, event.CREATE)
 	return nil
 }
 
@@ -172,7 +153,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 		return err
 	}
 	// c.logObjectVersion(obj)
-	c.logOperation(obj, event.DELETE)
+	c.logOperation(ctx, obj, event.DELETE)
 	// c.trackOperation(ctx, obj, DELETE)
 	return nil
 }
@@ -187,7 +168,7 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 		return err
 	}
 	// c.logObjectVersion(obj)
-	c.logOperation(obj, event.DELETE)
+	c.logOperation(ctx, obj, event.DELETE)
 	// c.trackOperation(ctx, obj, DELETE)
 	return nil
 }
@@ -197,7 +178,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return err
 	}
 	c.tracker.TrackOperation(ctx, obj, event.GET)
-	c.logOperation(obj, event.GET)
+	c.logOperation(ctx, obj, event.GET)
 	return nil
 }
 
@@ -221,7 +202,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		// instead of treating the LIST operation as a singular observation event,
 		// we treat each item in the list as a separate event
 		c.tracker.TrackOperation(ctx, item, event.LIST)
-		c.logOperation(item, event.LIST)
+		c.logOperation(ctx, item, event.LIST)
 		out = reflect.Append(out, itemsValue.Index(i))
 	}
 
@@ -252,7 +233,7 @@ func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.U
 	}
 
 	// happy path! the update went through successfully - let's record that!
-	c.logOperation(objPrePropagation, event.UPDATE)
+	c.logOperation(ctx, objPrePropagation, event.UPDATE)
 	return nil
 }
 
@@ -272,6 +253,6 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 		return err
 	}
 
-	c.logOperation(objPrePropagation, event.PATCH)
+	c.logOperation(ctx, objPrePropagation, event.PATCH)
 	return nil
 }

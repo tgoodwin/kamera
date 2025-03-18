@@ -5,6 +5,7 @@
 package mocks
 
 import (
+	context "context"
 	reflect "reflect"
 
 	gomock "github.com/golang/mock/gomock"
@@ -36,25 +37,25 @@ func (m *MockEmitter) EXPECT() *MockEmitterMockRecorder {
 }
 
 // LogObjectVersion mocks base method.
-func (m *MockEmitter) LogObjectVersion(arg0 snapshot.Record) {
+func (m *MockEmitter) LogObjectVersion(arg0 context.Context, arg1 snapshot.Record) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "LogObjectVersion", arg0)
+	m.ctrl.Call(m, "LogObjectVersion", arg0, arg1)
 }
 
 // LogObjectVersion indicates an expected call of LogObjectVersion.
-func (mr *MockEmitterMockRecorder) LogObjectVersion(arg0 interface{}) *gomock.Call {
+func (mr *MockEmitterMockRecorder) LogObjectVersion(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogObjectVersion", reflect.TypeOf((*MockEmitter)(nil).LogObjectVersion), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogObjectVersion", reflect.TypeOf((*MockEmitter)(nil).LogObjectVersion), arg0, arg1)
 }
 
 // LogOperation mocks base method.
-func (m *MockEmitter) LogOperation(arg0 *event.Event) {
+func (m *MockEmitter) LogOperation(arg0 context.Context, arg1 *event.Event) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "LogOperation", arg0)
+	m.ctrl.Call(m, "LogOperation", arg0, arg1)
 }
 
 // LogOperation indicates an expected call of LogOperation.
-func (mr *MockEmitterMockRecorder) LogOperation(arg0 interface{}) *gomock.Call {
+func (mr *MockEmitterMockRecorder) LogOperation(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogOperation", reflect.TypeOf((*MockEmitter)(nil).LogOperation), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogOperation", reflect.TypeOf((*MockEmitter)(nil).LogOperation), arg0, arg1)
 }

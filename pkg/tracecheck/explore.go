@@ -361,7 +361,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		stateEvent := StateEvent{
 			ReconcileID: reconcileResult.FrameID,
 			Sequence:    newSequences[kind],
-			effect:      effect,
+			Effect:      effect,
 			// TODO handle time info
 			Timestamp: "",
 		}

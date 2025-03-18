@@ -198,7 +198,7 @@ func formatEventList(events []event.Event) string {
 	}
 	s := ""
 	for _, e := range events {
-		if event.IsReadOp(e) {
+		if event.IsReadOp(event.OperationType(e.OpType)) {
 			s += fmt.Sprintf("\t{kind: %s, id: %s, ver: %s}\n", e.Kind, util.Shorter(e.ObjectID), e.Version)
 		} else {
 			s += fmt.Sprintf("\t{kind: %s, id: %s, op: %s}\n", e.Kind, util.Shorter(e.ObjectID), e.OpType)

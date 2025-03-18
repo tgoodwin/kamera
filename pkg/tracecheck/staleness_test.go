@@ -31,7 +31,7 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 			Kind:         "TestKind",
 			ObjectID:     "obj-1",
 			Labels: map[string]string{
-				"tracey-uid": "root-1",
+				tag.TraceyWebhookLabel: "root-1",
 			},
 		},
 		{
@@ -105,7 +105,7 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Parent",
 				ObjectID:     "parent-1",
 				Labels: map[string]string{
-					"tracey-uid": "root-1",
+					tag.TraceyWebhookLabel: "root-1",
 				},
 			},
 
@@ -119,8 +119,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-1",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-1",
 				},
 			},
 
@@ -134,8 +134,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-2",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-2",
 				},
 			},
 
@@ -149,8 +149,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/deletion-id":   "del-1",
+					tag.TraceyRootID: "root-1",
+					tag.DeletionID:   "del-1",
 				},
 			},
 		}
@@ -187,7 +187,7 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Parent",
 				ObjectID:     "parent-1",
 				Labels: map[string]string{
-					"tracey-uid": "root-1",
+					tag.TraceyWebhookLabel: "root-1",
 				},
 			},
 			// Controller creates two children
@@ -200,8 +200,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-1",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-1",
 				},
 			},
 			{
@@ -213,8 +213,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-2",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-2",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-2",
 				},
 			},
 			// More reads that shouldn't affect state
@@ -227,8 +227,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-1",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-1",
 				},
 			},
 			{
@@ -240,8 +240,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-2",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-2",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-2",
 				},
 			},
 			// Update one of the children
@@ -254,8 +254,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-3",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-3",
 				},
 			},
 		}
@@ -290,6 +290,30 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 	events := []event.Event{
 		{
+			ID:           "evt-00",
+			Timestamp:    "2024-02-21T10:00:00Z",
+			ReconcileID:  "external",
+			ControllerID: "TraceyWebhook",
+			OpType:       "CREATE",
+			Kind:         "Deployment",
+			ObjectID:     "dep-1",
+			Labels: map[string]string{
+				tag.TraceyWebhookLabel: "root-1",
+			},
+		},
+		{
+			ID:           "evt-001",
+			Timestamp:    "2024-02-21T10:00:00Z",
+			ReconcileID:  "external",
+			ControllerID: "TraceyWebhook",
+			OpType:       "CREATE",
+			Kind:         "Deployment",
+			ObjectID:     "dep-2",
+			Labels: map[string]string{
+				tag.TraceyWebhookLabel: "root-2",
+			},
+		},
+		{
 			ID:           "evt-01",
 			Timestamp:    "2024-02-21T10:00:01Z",
 			ReconcileID:  "r0",
@@ -298,7 +322,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Deployment",
 			ObjectID:     "dep-1",
 			Labels: map[string]string{
-				"tracey-uid": "root-1",
+				tag.TraceyWebhookLabel: "root-1",
 			},
 		},
 		{
@@ -310,7 +334,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Deployment",
 			ObjectID:     "dep-2",
 			Labels: map[string]string{
-				"tracey-uid": "root-2",
+				tag.TraceyWebhookLabel: "root-2",
 			},
 		},
 		// Add two pods
@@ -323,8 +347,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1",
 			},
 		},
 		{
@@ -336,8 +360,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2",
 			},
 		},
 		// Get pods before updating
@@ -350,8 +374,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1",
 			},
 		},
 		{
@@ -363,8 +387,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2",
 			},
 		},
 		// Update pods
@@ -377,8 +401,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1a",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1a",
 			},
 		},
 		{
@@ -390,8 +414,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2a",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2a",
 			},
 		},
 		// Delete pods
@@ -404,8 +428,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1a",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1a",
 			},
 		},
 		{
@@ -417,9 +441,9 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1a",
-				tag.DeletionID:                  "del-1",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1a",
+				tag.DeletionID:   "del-1",
 			},
 		},
 		{
@@ -431,8 +455,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2a",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2a",
 			},
 		},
 		{
@@ -444,9 +468,9 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2a",
-				tag.DeletionID:                  "del-2",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2a",
+				tag.DeletionID:   "del-2",
 			},
 		},
 	}
@@ -557,7 +581,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -578,7 +602,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -588,7 +612,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
-					effect: effect{
+					Effect: effect{
 						Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						OpType: event.DELETE,
 					},
@@ -606,7 +630,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -616,7 +640,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 						Version: snapshot.NewDefaultHash("v2"),
 						OpType:  event.CREATE,
@@ -639,7 +663,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -649,7 +673,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
-					effect: effect{
+					Effect: effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v2"),
 						OpType:  event.UPDATE,
@@ -681,7 +705,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r1",
 			Timestamp:   "2024-02-21T10:00:01Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -691,7 +715,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r2",
 			Timestamp:   "2024-02-21T10:00:02Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -701,7 +725,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r3",
 			Timestamp:   "2024-02-21T10:00:03Z",
-			effect: effect{
+			Effect: effect{
 				Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				OpType: event.DELETE,
 			},
@@ -710,7 +734,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r4",
 			Timestamp:   "2024-02-21T10:00:04Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -720,7 +744,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r5",
 			Timestamp:   "2024-02-21T10:00:05Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -730,7 +754,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r6",
 			Timestamp:   "2024-02-21T10:00:06Z",
-			effect: effect{
+			Effect: effect{
 				Key:    snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
 				OpType: event.DELETE,
 			},
@@ -739,7 +763,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r7",
 			Timestamp:   "2024-02-21T10:00:07Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -749,7 +773,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r8",
 			Timestamp:   "2024-02-21T10:00:08Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -759,7 +783,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r9",
 			Timestamp:   "2024-02-21T10:00:09Z",
-			effect: effect{
+			Effect: effect{
 				Key:    snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				OpType: event.DELETE,
 			},
@@ -768,7 +792,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r10",
 			Timestamp:   "2024-02-21T10:00:10Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -778,7 +802,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r11",
 			Timestamp:   "2024-02-21T10:00:11Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -788,7 +812,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		{
 			ReconcileID: "r12",
 			Timestamp:   "2024-02-21T10:00:12Z",
-			effect: effect{
+			Effect: effect{
 				Key:    snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"),
 				OpType: event.DELETE,
 			},
@@ -961,7 +985,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		{
 			ReconcileID: "r1",
 			Timestamp:   "2024-02-21T10:00:01Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -971,7 +995,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		{
 			ReconcileID: "r2",
 			Timestamp:   "2024-02-21T10:00:02Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
@@ -981,7 +1005,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		{
 			ReconcileID: "r3",
 			Timestamp:   "2024-02-21T10:00:03Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
@@ -991,7 +1015,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		{
 			ReconcileID: "r4",
 			Timestamp:   "2024-02-21T10:00:04Z",
-			effect: effect{
+			Effect: effect{
 				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,

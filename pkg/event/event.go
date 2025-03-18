@@ -4,9 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/sleeve/pkg/util"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type Event struct {
@@ -22,9 +26,41 @@ type Event struct {
 	Labels       map[string]string `json:"labels,omitempty"`
 }
 
+type DeclarativeEvent struct {
+	ID          string               `json:"id"`
+	Timestamp   string               `json:"timestamp"`
+	OpType      string               `json:"op_type"`
+	ResourceKey snapshot.ResourceKey `json:"resource_key"`
+	RootEventID string               `json:"root_event_id"`
+	Value       string               `json:"value"`
+}
+
 // Ensure Event implements the json.Marshaler and json.Unmarshaler interfaces
 var _ json.Marshaler = (*Event)(nil)
 var _ json.Unmarshaler = (*Event)(nil)
+
+func NewOperation(obj client.Object, reconcileID, controllerID, rootEventID string, op OperationType) (*Event, error) {
+	id := uuid.New().String()
+	e := &Event{
+		ID:           id,
+		Timestamp:    FormatTimeStr(time.Now()),
+		ReconcileID:  reconcileID,
+		ControllerID: controllerID,
+		RootEventID:  rootEventID,
+		OpType:       string(op),
+		Kind:         util.GetKind(obj),
+
+		// TODO CHANGE TO SLEEVE OBJECT ID
+		ObjectID: string(obj.GetUID()),
+		Version:  obj.GetResourceVersion(),
+		Labels:   tag.GetSleeveLabels(obj),
+	}
+	changeID := e.ChangeID()
+	if changeID == "" {
+		return nil, fmt.Errorf("event does not have a change ID: %v", e)
+	}
+	return e, nil
+}
 
 func (e *Event) CausalKey() CausalKey {
 	return CausalKey{

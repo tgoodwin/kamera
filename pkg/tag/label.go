@@ -39,13 +39,17 @@ func LabelChange(obj client.Object) {
 }
 
 func AddSleeveObjectID(obj client.Object) {
-	addUIDTag(obj, TraceyObjectID)
+	addTagIfNotExists(obj, TraceyObjectID)
 }
 
 func AddDeletionID(obj client.Object) {
+	addTagIfNotExists(obj, DeletionID)
+}
+
+func addTagIfNotExists(obj client.Object, key string) {
 	labels := obj.GetLabels()
-	if _, ok := labels[DeletionID]; !ok {
-		addUIDTag(obj, DeletionID)
+	if _, ok := labels[key]; !ok {
+		addUIDTag(obj, key)
 	}
 }
 
@@ -84,6 +88,20 @@ func SanityCheckLabels(obj client.Object) error {
 		}
 	}
 	return nil
+}
+
+func GetSleeveLabels(obj client.Object) map[string]string {
+	labels := obj.GetLabels()
+	filteredLabels := make(map[string]string)
+	for key, value := range labels {
+		if key == TraceyWebhookLabel {
+			filteredLabels[key] = value
+		}
+		if len(key) >= len("discrete.events") && key[:len("discrete.events")] == "discrete.events" {
+			filteredLabels[key] = value
+		}
+	}
+	return filteredLabels
 }
 
 func GetRootID(obj client.Object) (string, error) {

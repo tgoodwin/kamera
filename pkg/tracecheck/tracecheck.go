@@ -125,7 +125,7 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		things = append(things, thing)
 
 		// now build the read deps
-		if event.IsReadOp(e) {
+		if event.IsReadOp(event.OperationType(e.OpType)) {
 			if _, ok := readDeps[e.Kind]; !ok {
 				readDeps[e.Kind] = util.NewSet[string]()
 			}
@@ -157,8 +157,12 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 }
 
 func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentControllers ...string) StateNode {
-	r := snapshot.AsRecord(obj, "start").ToUnstructured()
-	vHash := tc.manager.versionStore.Publish(r)
+	r, err := snapshot.AsRecord(obj, "start")
+	if err != nil {
+		panic("converting to unstructured: " + err.Error())
+	}
+	u := r.ToUnstructured()
+	vHash := tc.manager.versionStore.Publish(u)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
 
@@ -192,7 +196,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 					ReconcileID: "TOP",
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
-					effect:      newEffect(key, vHash, event.CREATE),
+					Effect:      newEffect(key, vHash, event.CREATE),
 				},
 			},
 		},

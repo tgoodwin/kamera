@@ -74,7 +74,7 @@ func (b *StateEventBuilder) AddStateEvent(kind, objectID string, obj *unstructur
 	stateEvent := StateEvent{
 		ReconcileID: reconcileID,
 		Timestamp:   timeStr,
-		effect:      effect,
+		Effect:      effect,
 		Sequence:    b.sequence,
 	}
 
@@ -91,8 +91,12 @@ func (b *StateEventBuilder) Build() StateNode {
 }
 
 func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentControllers ...string) StateNode {
-	r := snapshot.AsRecord(obj, "start").ToUnstructured()
-	vHash := b.store.PublishWithStrategy(r, snapshot.AnonymizedHash)
+	r, err := snapshot.AsRecord(obj, "start")
+	if err != nil {
+		panic("converting to unstructured: " + err.Error())
+	}
+	u := r.ToUnstructured()
+	vHash := b.store.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
 
@@ -121,7 +125,7 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 					ReconcileID: "TOP",
 					Timestamp:   event.FormatTimeStr(time.Now()),
 					Sequence:    1,
-					effect:      newEffect(key, vHash, event.CREATE),
+					Effect:      newEffect(key, vHash, event.CREATE),
 				},
 			},
 		},

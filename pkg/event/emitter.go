@@ -1,6 +1,7 @@
 package event
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,8 +12,8 @@ import (
 )
 
 type Emitter interface {
-	LogOperation(e *Event)
-	LogObjectVersion(r snapshot.Record)
+	LogOperation(ctx context.Context, e *Event)
+	LogObjectVersion(ctx context.Context, r snapshot.Record)
 }
 
 type LogEmitter struct {
@@ -23,7 +24,7 @@ func NewLogEmitter(logger logr.Logger) *LogEmitter {
 	return &LogEmitter{logger: logger}
 }
 
-func (l *LogEmitter) LogOperation(e *Event) {
+func (l *LogEmitter) LogOperation(ctx context.Context, e *Event) {
 	eventJSON, err := json.Marshal(e)
 	if err != nil {
 		panic("failed to serialize event")
@@ -31,7 +32,7 @@ func (l *LogEmitter) LogOperation(e *Event) {
 	l.logger.WithValues("LogType", tag.ControllerOperationKey).Info(string(eventJSON))
 }
 
-func (l *LogEmitter) LogObjectVersion(r snapshot.Record) {
+func (l *LogEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
 	recordJSON, err := json.Marshal(r)
 	if err != nil {
 		panic("failed to serialize record")
@@ -60,7 +61,7 @@ func NewFileEmitter(filePath string) *FileEmitter {
 	return &FileEmitter{filePath: filePath}
 }
 
-func (f *FileEmitter) LogOperation(e *Event) {
+func (f *FileEmitter) LogOperation(ctx context.Context, e *Event) {
 	eventJSON, err := json.Marshal(e)
 	if err != nil {
 		panic("failed to serialize event")
@@ -68,7 +69,7 @@ func (f *FileEmitter) LogOperation(e *Event) {
 	f.appendToFile(string(eventJSON))
 }
 
-func (f *FileEmitter) LogObjectVersion(r snapshot.Record) {
+func (f *FileEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
 	recordJSON, err := json.Marshal(r)
 	if err != nil {
 		panic("failed to serialize record")
@@ -100,14 +101,14 @@ func NewInMemoryEmitter() *InMemoryEmitter {
 	}
 }
 
-func (i *InMemoryEmitter) LogOperation(e *Event) {
+func (i *InMemoryEmitter) LogOperation(ctx context.Context, e *Event) {
 	if _, ok := i.eventsByReconcileID[e.ReconcileID]; !ok {
 		i.eventsByReconcileID[e.ReconcileID] = make([]*Event, 0)
 	}
 	i.eventsByReconcileID[e.ReconcileID] = append(i.eventsByReconcileID[e.ReconcileID], e)
 }
 
-func (i *InMemoryEmitter) LogObjectVersion(r snapshot.Record) {
+func (i *InMemoryEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
 	if _, ok := i.recordsByOperationID[r.OperationID]; !ok {
 		i.recordsByOperationID[r.OperationID] = make([]snapshot.Record, 0)
 	}
@@ -167,12 +168,12 @@ func NewDebugEmitter() *DebugEmitter {
 	}
 }
 
-func (d *DebugEmitter) LogOperation(e *Event) {
-	d.fileEmitter.LogOperation(e)
-	d.InMemoryEmitter.LogOperation(e)
+func (d *DebugEmitter) LogOperation(ctx context.Context, e *Event) {
+	d.fileEmitter.LogOperation(ctx, e)
+	d.InMemoryEmitter.LogOperation(ctx, e)
 }
 
-func (d *DebugEmitter) LogObjectVersion(r snapshot.Record) {
-	d.fileEmitter.LogObjectVersion(r)
-	d.InMemoryEmitter.LogObjectVersion(r)
+func (d *DebugEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
+	d.fileEmitter.LogObjectVersion(ctx, r)
+	d.InMemoryEmitter.LogObjectVersion(ctx, r)
 }

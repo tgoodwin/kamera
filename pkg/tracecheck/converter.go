@@ -34,7 +34,7 @@ func newConverter(things []joinRecord) *converterImpl {
 	})
 
 	reads := lo.Filter(things, func(t joinRecord, _ int) bool {
-		return event.IsReadOp(t.event)
+		return event.IsReadOp(event.OperationType(t.event.OpType))
 	})
 
 	byReconcileID := lo.GroupBy(reads, func(t joinRecord) string {

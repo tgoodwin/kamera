@@ -11,12 +11,12 @@ func FilterReadsWrites(events []Event) (reads, writes []Event) {
 	return
 }
 
-func IsReadOp(e Event) bool {
-	return e.OpType == "GET" || e.OpType == "LIST"
+func IsReadOp(op OperationType) bool {
+	return op == GET || op == LIST
 }
 
-func IsWriteOp(e Event) bool {
-	return !IsReadOp(e)
+func IsWriteOp(op OperationType) bool {
+	return !IsReadOp(op)
 }
 
 // IsTopLevel returns true if the event is a top-level declarative state change event.
