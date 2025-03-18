@@ -5,17 +5,14 @@ ARG TARGETARCH
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
-COPY sleeve-controller-manager/ .
-# COPY go.mod go.mod
-# COPY go.sum go.sum
+COPY controller-manager/ /workspace
+COPY pkg/ /workspace/pkg/
 
-RUN mkdir -p /sleeve/pkg
+COPY go.mod /workspace
+COPY go.sum /workspace
 
-# Copy the sleeve repo
-COPY sleeve/go.mod /sleeve
-COPY sleeve/go.sum /sleeve
-COPY sleeve/pkg/ /sleeve/pkg/
-COPY sleeve/sleeve.go /sleeve/sleeve.go
+# COPY sleeve/pkg/ /sleeve/pkg/
+# COPY sleeve/sleeve.go /sleeve/sleeve.go
 
 # cache deps before building and copying source so that we don't need to re-download as much
 # and so that source changes don't invalidate our downloaded layer

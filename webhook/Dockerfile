@@ -12,6 +12,9 @@ COPY pkg/ /work/pkg/
 COPY go.mod /work
 COPY go.sum /work
 
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download
 
 # Build admission-webhook
 RUN --mount=type=cache,target=/root/.cache/go-build,sharing=private \
