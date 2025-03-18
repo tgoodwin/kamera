@@ -225,7 +225,7 @@ func canByPassvalidation(userInfo authenticationv1.UserInfo) bool {
 
 // ServeValidateResource validates an admission request and then writes an admission
 // review to `w`
-func (s *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) {
 	logger := logrus.WithField("uri", r.RequestURI)
 	in, err := parseRequest(*r)
 	if err != nil {
@@ -250,6 +250,12 @@ func (s *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 	// let kubelet and garbage collector just do their thing
 	canBypass := canByPassvalidation(in.Request.UserInfo)
 
+	// Ensure we capture delete events in the traces
+	isGarbageCollector := strings.Contains(in.Request.UserInfo.Username, "garbage-collector")
+	if isGarbageCollector {
+		h.emitGarbageCollectionEvent(in.Request)
+	}
+
 	// this requires explicitly impersonating the sleeve controller user
 	// in he controller setup configuration:
 	// 	cfg := ctrl.GetConfigOrDie()
@@ -265,7 +271,7 @@ func (s *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 
 	if cameFromOutside {
 		logger.WithField("userinfo", in.Request.UserInfo).Debug("logging external declaration event")
-		err := s.emitDeclarativeEvent(in.Request)
+		err := h.emitDeclarativeEvent(in.Request)
 		if err != nil {
 			logger.Error(err)
 			return
@@ -386,6 +392,74 @@ func parseRequest(r http.Request) (*admissionv1.AdmissionReview, error) {
 	return &a, nil
 }
 
+func parseObject(req *admissionv1.AdmissionRequest) (*unstructured.Unstructured, error) {
+	var rawBytes []byte
+	if req.Operation == admissionv1.Delete {
+		rawBytes = req.OldObject.Raw
+	} else {
+		rawBytes = req.Object.Raw
+	}
+	if len(rawBytes) == 0 {
+		return nil, fmt.Errorf("object is empty")
+	}
+
+	var obj unstructured.Unstructured
+	if err := json.Unmarshal(rawBytes, &obj.Object); err != nil {
+		return nil, fmt.Errorf("could not unmarshal object into unstructured: %v", err)
+	}
+	return &obj, nil
+}
+
+func (h *Handler) emitGarbageCollectionEvent(req *admissionv1.AdmissionRequest) error {
+	op := req.Operation
+	kind := req.Kind.Kind
+	if op != admissionv1.Delete {
+		return nil
+	}
+	obj, err := parseObject(req)
+	if err != nil {
+		return fmt.Errorf("could not parse object: %v", err)
+	}
+	rootEventID, err := tag.GetRootID(obj)
+	if err != nil {
+		return fmt.Errorf("could not get root ID: %v", err)
+	}
+	recordJSON, err := json.Marshal(obj.Object)
+	if err != nil {
+		return fmt.Errorf("could not marshal object: %v", err)
+	}
+	baseEvent := event.Event{
+		ID:           uuid.New().String(),
+		Timestamp:    event.FormatTimeStr(time.Now()),
+		OpType:       string(op),
+		Kind:         kind,
+		ObjectID:     string(obj.GetUID()),
+		ReconcileID:  "EXTERNAL",
+		ControllerID: "GarbageCollector",
+		RootEventID:  rootEventID,
+		Version:      obj.GetResourceVersion(),
+		Labels:       tag.GetSleeveLabels(obj),
+	}
+
+	record := snapshot.Record{
+		ObjectID:      string(obj.GetUID()),
+		ReconcileID:   "EXTERNAL",
+		OperationID:   baseEvent.ID,
+		OperationType: string(op),
+		Kind:          kind,
+		Version:       obj.GetResourceVersion(),
+		Value:         string(recordJSON),
+	}
+
+	h.emitter.LogOperation(context.TODO(), &baseEvent)
+	h.emitter.LogObjectVersion(context.TODO(), record)
+
+	logger := logrus.WithField("event", baseEvent)
+	logger.Debug("emitting event")
+
+	return nil
+}
+
 func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error {
 	op := req.Operation
 	kind := req.Kind.Kind
@@ -408,20 +482,9 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 		return nil
 	}
 
-	var rawBytes []byte
-	if op == admissionv1.Delete {
-		rawBytes = req.OldObject.Raw
-	} else {
-		rawBytes = req.Object.Raw
-	}
-	// dont try to make this work if the object is absent.
-	if len(rawBytes) == 0 {
-		return fmt.Errorf("object is empty")
-	}
-
-	var obj unstructured.Unstructured
-	if err := json.Unmarshal(rawBytes, &obj.Object); err != nil {
-		return fmt.Errorf("could not unmarshal object into unstructured: %v", err)
+	obj, err := parseObject(req)
+	if err != nil {
+		return fmt.Errorf("could not parse object: %v", err)
 	}
 	// get it serialized again, but as JSON
 	recordJSON, err := json.Marshal(obj.Object)
@@ -439,7 +502,7 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 		"kind": kind,
 		"op":   op,
 	}).Debug("emitting event")
-	rootEventID, err := tag.GetRootID(&obj)
+	rootEventID, err := tag.GetRootID(obj)
 	if err != nil {
 		return fmt.Errorf("could not get root ID: %v", err)
 	}
@@ -453,7 +516,7 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 		ControllerID: "TraceyWebhook",
 		RootEventID:  rootEventID,
 		Version:      obj.GetResourceVersion(),
-		Labels:       tag.GetSleeveLabels(&obj),
+		Labels:       tag.GetSleeveLabels(obj),
 	}
 
 	record := snapshot.Record{
@@ -471,5 +534,5 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 
 	logger := logrus.WithField("event", baseEvent)
 	logger.Debug("emitting event")
-	return err
+	return nil
 }
