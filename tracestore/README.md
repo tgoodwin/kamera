@@ -38,4 +38,5 @@ n.b. this accesskey/secretkey pair is currently hardcoded into the minio_emitter
 ## collecting trace data
 use a parallelized script to read data back down.
 ```
-go run cmd/collect/main.go --bucket <BUCKET_NAME>
+go run cmd/collect/main.go --bucket <BUCKET_NAME> --output-file out.jsonl
+```
