@@ -119,8 +119,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-1",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-1",
 				},
 			},
 
@@ -134,8 +134,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-2",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-2",
 				},
 			},
 
@@ -149,8 +149,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/deletion-id":   "del-1",
+					tag.TraceyRootID: "root-1",
+					tag.DeletionID:   "del-1",
 				},
 			},
 		}
