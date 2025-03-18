@@ -481,7 +481,6 @@ func (g *EventKnowledge) eventsBeforeTimestamp(ts string) []StateEvent {
 
 func (g *EventKnowledge) GetStateAtReconcileID(reconcileID string) *StateSnapshot {
 	// First find all events in this reconcile
-
 	reconcileEvents := lo.Filter(g.allEvents, func(e event.Event, _ int) bool {
 		return e.ReconcileID == reconcileID
 	})

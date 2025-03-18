@@ -31,7 +31,7 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 			Kind:         "TestKind",
 			ObjectID:     "obj-1",
 			Labels: map[string]string{
-				"tracey-uid": "root-1",
+				tag.TraceyWebhookLabel: "root-1",
 			},
 		},
 		{
@@ -105,7 +105,7 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Parent",
 				ObjectID:     "parent-1",
 				Labels: map[string]string{
-					"tracey-uid": "root-1",
+					tag.TraceyWebhookLabel: "root-1",
 				},
 			},
 
@@ -187,7 +187,7 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Parent",
 				ObjectID:     "parent-1",
 				Labels: map[string]string{
-					"tracey-uid": "root-1",
+					tag.TraceyWebhookLabel: "root-1",
 				},
 			},
 			// Controller creates two children
@@ -200,8 +200,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-1",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-1",
 				},
 			},
 			{
@@ -213,8 +213,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-2",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-2",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-2",
 				},
 			},
 			// More reads that shouldn't affect state
@@ -227,8 +227,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-1",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-1",
 				},
 			},
 			{
@@ -240,8 +240,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-2",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-2",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-2",
 				},
 			},
 			// Update one of the children
@@ -254,8 +254,8 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				Kind:         "Child",
 				ObjectID:     "child-1",
 				Labels: map[string]string{
-					"discrete.events/root-event-id": "root-1",
-					"discrete.events/change-id":     "change-3",
+					tag.TraceyRootID: "root-1",
+					tag.ChangeID:     "change-3",
 				},
 			},
 		}
@@ -290,6 +290,30 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 	events := []event.Event{
 		{
+			ID:           "evt-00",
+			Timestamp:    "2024-02-21T10:00:00Z",
+			ReconcileID:  "external",
+			ControllerID: "TraceyWebhook",
+			OpType:       "CREATE",
+			Kind:         "Deployment",
+			ObjectID:     "dep-1",
+			Labels: map[string]string{
+				tag.TraceyWebhookLabel: "root-1",
+			},
+		},
+		{
+			ID:           "evt-001",
+			Timestamp:    "2024-02-21T10:00:00Z",
+			ReconcileID:  "external",
+			ControllerID: "TraceyWebhook",
+			OpType:       "CREATE",
+			Kind:         "Deployment",
+			ObjectID:     "dep-2",
+			Labels: map[string]string{
+				tag.TraceyWebhookLabel: "root-2",
+			},
+		},
+		{
 			ID:           "evt-01",
 			Timestamp:    "2024-02-21T10:00:01Z",
 			ReconcileID:  "r0",
@@ -298,7 +322,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Deployment",
 			ObjectID:     "dep-1",
 			Labels: map[string]string{
-				"tracey-uid": "root-1",
+				tag.TraceyWebhookLabel: "root-1",
 			},
 		},
 		{
@@ -310,7 +334,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Deployment",
 			ObjectID:     "dep-2",
 			Labels: map[string]string{
-				"tracey-uid": "root-2",
+				tag.TraceyWebhookLabel: "root-2",
 			},
 		},
 		// Add two pods
@@ -323,8 +347,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1",
 			},
 		},
 		{
@@ -336,8 +360,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2",
 			},
 		},
 		// Get pods before updating
@@ -350,8 +374,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1",
 			},
 		},
 		{
@@ -363,8 +387,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2",
 			},
 		},
 		// Update pods
@@ -377,8 +401,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1a",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1a",
 			},
 		},
 		{
@@ -390,8 +414,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2a",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2a",
 			},
 		},
 		// Delete pods
@@ -404,8 +428,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1a",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1a",
 			},
 		},
 		{
@@ -417,9 +441,9 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-1",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-1",
-				"discrete.events/change-id":     "change-1a",
-				tag.DeletionID:                  "del-1",
+				tag.TraceyRootID: "root-1",
+				tag.ChangeID:     "change-1a",
+				tag.DeletionID:   "del-1",
 			},
 		},
 		{
@@ -431,8 +455,8 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2a",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2a",
 			},
 		},
 		{
@@ -444,9 +468,9 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			Kind:         "Pod",
 			ObjectID:     "pod-2",
 			Labels: map[string]string{
-				"discrete.events/root-event-id": "root-2",
-				"discrete.events/change-id":     "change-2a",
-				tag.DeletionID:                  "del-2",
+				tag.TraceyRootID: "root-2",
+				tag.ChangeID:     "change-2a",
+				tag.DeletionID:   "del-2",
 			},
 		},
 	}
