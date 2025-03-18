@@ -7,7 +7,7 @@ ENV GOARCH=amd64
 ENV CGO_ENABLED=0
 
 WORKDIR /work
-COPY cmd/webhook/ /work
+COPY webhook/ /work
 COPY pkg/ /work/pkg/
 COPY go.mod /work
 COPY go.sum /work
@@ -15,7 +15,7 @@ COPY go.sum /work
 
 # Build admission-webhook
 RUN --mount=type=cache,target=/root/.cache/go-build,sharing=private \
-  go build -o bin/admission-webhook .
+  go build -o bin/admission-webhook cmd/main.go
 
 # ---
 FROM scratch AS run
