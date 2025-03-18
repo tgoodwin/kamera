@@ -38,7 +38,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	"github.com/tgoodwin/sleeve"
-	"github.com/tgoodwin/sleeve/controller-manager/internal/controller"
+	"github.com/tgoodwin/sleeve/controller-manager/pkg/controller"
 	// +kubebuilder:scaffold:imports
 )
 
