@@ -31,7 +31,9 @@ func ParseJSONLTrace(filePath string) ([]StateEvent, error) {
 		line := scanner.Text()
 
 		var record snapshot.Record
-		if err := json.Unmarshal([]byte(line), &record); err == nil && record.OperationID != "" && record.Value != "" {
+		if err := json.Unmarshal([]byte(line), &record); err == nil &&
+			// heuristic for identifying JSON lines that fit the snapshot.Record schema
+			record.OperationID != "" && record.Value != "" {
 			recordsByOperationID[record.OperationID] = &record
 			entriesParsed++
 			continue
@@ -57,11 +59,18 @@ func ParseJSONLTrace(filePath string) ([]StateEvent, error) {
 	fmt.Println("# entries parsed:", entriesParsed)
 
 	stateEvents := make([]StateEvent, 0)
+	sequenesByKind := make(map[string]int64)
 	for id, evt := range eventsByID {
 		record, ok := recordsByOperationID[id]
 		if !ok {
-			return nil, fmt.Errorf("event %s has no associated record", id)
+			// return nil, fmt.Errorf("event %s has no associated record", id)
+			fmt.Printf("event %s has no associated record\n", id)
+			continue
 		}
+		if event.IsWriteOp(*evt) {
+			sequenesByKind[evt.Kind]++
+		}
+		evtSequenceNum := sequenesByKind[evt.Kind]
 		obj := record.ToUnstructured()
 		ns := obj.GetNamespace()
 		name := obj.GetName()
@@ -74,6 +83,7 @@ func ParseJSONLTrace(filePath string) ([]StateEvent, error) {
 				snapshot.NewDefaultHash(record.Value),
 				event.OperationType(evt.OpType),
 			),
+			Sequence: evtSequenceNum,
 		}
 		stateEvents = append(stateEvents, stateEvent)
 	}
