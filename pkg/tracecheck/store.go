@@ -9,11 +9,7 @@ import (
 
 type versionStore struct {
 	snapStore *snapshot.Store
-
-	// TODO perhaps multiple hash strategies?
-	// hasher snapshot.Hasher
-
-	mu sync.RWMutex
+	mu        sync.RWMutex
 }
 
 var _ VersionManager = (*versionStore)(nil)
@@ -21,30 +17,19 @@ var _ VersionManager = (*versionStore)(nil)
 func newVersionStore(store *snapshot.Store) *versionStore {
 	return &versionStore{
 		snapStore: store,
-		// hasher: snapshot.NewAnonymizingHasher(
-		// 	snapshot.DefaultLabelReplacements,
-		// ),
 	}
 }
 
-func (vs *versionStore) Resolve(anonymizedHash snapshot.VersionHash) *unstructured.Unstructured {
-	res := vs.snapStore.ResolveWithStrategy(anonymizedHash, snapshot.AnonymizedHash)
+func (vs *versionStore) DebugKey(key string) {
+	vs.snapStore.DebugKey(key)
+}
+
+func (vs *versionStore) Resolve(hash snapshot.VersionHash) *unstructured.Unstructured {
+	res, ok := vs.snapStore.ResolveWithStrategy(hash, hash.Strategy)
+	if !ok {
+		return nil
+	}
 	return res
-	// res, ok := vs.store[anonymizedHash]
-	// if !ok {
-	// 	fmt.Printf("Miss for key\n%v\n", anonymizedHash)
-	// 	fmt.Println("There was a lookup miss: Here's the store contents")
-	// 	for hash, v := range vs.store {
-	// 		ckey, err := event.GetCausalKey(v)
-	// 		fmt.Println("causal key", ckey)
-	// 		fmt.Printf("%v\n", hash)
-	// 		if err != nil {
-	// 			logger.Error(err, "error getting causal key")
-	// 		}
-	// 	}
-	// 	// logger.Error(nil, "resolving version Hash for key", hash)
-	// }
-	// return res
 }
 
 func (vs *versionStore) Publish(obj *unstructured.Unstructured) snapshot.VersionHash {
@@ -52,23 +37,6 @@ func (vs *versionStore) Publish(obj *unstructured.Unstructured) snapshot.Version
 	defer vs.mu.Unlock()
 
 	return vs.snapStore.PublishWithStrategy(obj, snapshot.AnonymizedHash)
-
-	// objCopy := obj.DeepCopy()
-	// hash, err := vs.hasher.Hash(objCopy)
-	// if err != nil {
-	// 	panic("error hashing object")
-	// }
-	// vs.store[hash] = objCopy
-
-	// // TODO ensure that all objects being mutated are still instrumented with Sleeve labels
-	// ckey, err := event.GetCausalKey(objCopy)
-	// // vs.keyToObj[ckey] = objCopy
-	// if err != nil {
-	// 	panic("object does not have causal key")
-	// }
-	// vs.causalKeyToVersion[ckey] = hash
-
-	// return hash
 }
 
 func (vs *versionStore) Diff(prev, curr *snapshot.VersionHash) string {
