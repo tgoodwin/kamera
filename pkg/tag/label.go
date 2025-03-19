@@ -42,6 +42,15 @@ func AddSleeveObjectID(obj client.Object) {
 	addTagIfNotExists(obj, TraceyObjectID)
 }
 
+func AddLabel(obj client.Object, key, value string) {
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	labels[key] = value
+	obj.SetLabels(labels)
+}
+
 func AddDeletionID(obj client.Object) {
 	addTagIfNotExists(obj, DeletionID)
 }
@@ -109,16 +118,19 @@ func GetRootID(obj client.Object) (string, error) {
 	if labels == nil {
 		return "", fmt.Errorf("getting sleeve root id: no labels found")
 	}
+	return GetRootIDFromLabels(labels)
+}
+
+func GetRootIDFromLabels(labels map[string]string) (string, error) {
 	// set by the webhook
 	rootID, ok := labels[TraceyWebhookLabel]
 	if ok {
 		return rootID, nil
 	}
-	if !ok {
-		rootID, ok = labels[TraceyRootID]
-		if !ok || rootID == "" {
-			return "", fmt.Errorf("no root ID set on object - is this namespace handled by the sleeve webhook?")
-		}
+	// propagated by an instrumented controller
+	rootID, ok = labels[TraceyRootID]
+	if !ok || rootID == "" {
+		return "", fmt.Errorf("no root ID set on object - is this namespace handled by the sleeve webhook?")
 	}
 	return rootID, nil
 }

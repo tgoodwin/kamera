@@ -24,6 +24,7 @@ type VersionManager interface {
 	Resolve(key snapshot.VersionHash) *unstructured.Unstructured
 	Publish(obj *unstructured.Unstructured) snapshot.VersionHash
 	Diff(prev, curr *snapshot.VersionHash) string
+	DebugKey(key string)
 }
 
 type effect struct {
@@ -105,9 +106,14 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	logger.V(2).Info("recording effect", "opType", opType, "kind", util.GetKind(obj))
 
 	kind := util.GetKind(obj)
-	objectID := tag.GetSleeveObjectID(obj)
-	if objectID == "" {
-		panic("object does not have a sleeve object ID")
+	sleeveObjectID := tag.GetSleeveObjectID(obj)
+
+	// TODO SLE-28 figure out why this can happen.
+	if sleeveObjectID == "" {
+		labels := obj.GetLabels()
+		fmt.Printf("Op Type: %s, Object labels: %v\n", opType, labels)
+		fmt.Printf("Object: %+v\n", obj)
+		panic(fmt.Sprintf("object does not have a sleeve object ID: kind=%s, namespace=%s, name=%s, uid=%s", kind, obj.GetNamespace(), obj.GetName(), obj.GetUID()))
 	}
 
 	frameID := replay.FrameIDFromContext(ctx)
@@ -128,7 +134,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		}
 	}
 
-	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), objectID)
+	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 	eff := newEffectWithPrecondition(key, versionHash, opType, precondition)
 	if opType == event.GET || opType == event.LIST {
 		reffects.reads = append(reffects.reads, eff)
@@ -190,13 +196,18 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		return fmt.Errorf("no effect context found for frameID %s", frameID)
 	}
 	gvk := obj.GetObjectKind().GroupVersionKind()
+
+	// as objects may be created under simulation,
+	// we need to use reflection to infer the kind
+	safeKind := util.GetKind(obj)
+
 	rKey := snapshot.ResourceKey{
-		Kind:      gvk.Kind,
+		Kind:      safeKind,
 		Namespace: obj.GetNamespace(),
 		Name:      obj.GetName(),
 	}
 	iKey := snapshot.IdentityKey{
-		Kind:     gvk.Kind,
+		Kind:     safeKind,
 		ObjectID: tag.GetSleeveObjectID(obj),
 	}
 

@@ -126,7 +126,8 @@ func (s *Store) indexObject(obj *unstructured.Unstructured, strategies ...HashSt
 		s.indices[strategy][hash] = obj
 
 		// Record hash value for this object and strategy
-		// TODO this does not support multiple versions of the same objectKey!!!!!
+		// TODO this does not support multiple versions of the same objectKey!
+		// DO NOT USE THIS IT IS BROKEN
 		s.objectHashes[objKey][strategy] = hash
 	}
 	return nil
