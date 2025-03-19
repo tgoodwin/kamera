@@ -14,11 +14,12 @@ import (
 
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 )
 
 // ParseJSONLFile reads a JSONL file and parses each record into either a snapshot.Record or an event.Event.
 // the input is assumed to be the output of cmd/collect/main.go
-func ParseJSONLTrace(filePath string) ([]StateEvent, error) {
+func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -37,6 +38,21 @@ func ParseJSONLTrace(filePath string) ([]StateEvent, error) {
 		if err := json.Unmarshal([]byte(line), &record); err == nil &&
 			// heuristic for identifying JSON lines that fit the snapshot.Record schema
 			record.OperationID != "" && record.Value != "" {
+			// extract the object
+			obj := record.ToUnstructured()
+			if obj == nil {
+				return nil, fmt.Errorf("failed to unmarshal object from record %s", record.OperationID)
+			}
+
+			// do some validation on the object labels
+			sleeveObjectID := tag.GetSleeveObjectID(obj)
+			if sleeveObjectID == "" {
+				panic(fmt.Sprintf("no sleeve object ID for kind: %s, namespace: %s, name: %s", obj.GetKind(), obj.GetNamespace(), obj.GetName()))
+			}
+			if err := b.snapStore.StoreObject(obj); err != nil {
+				return nil, fmt.Errorf("failed to store object: %v", err)
+			}
+
 			recordsByOperationID[record.OperationID] = &record
 			entriesParsed++
 			continue
@@ -73,12 +89,13 @@ func ParseJSONLTrace(filePath string) ([]StateEvent, error) {
 		obj := record.ToUnstructured()
 		ns := obj.GetNamespace()
 		name := obj.GetName()
+		sleeveObjectID := tag.GetSleeveObjectID(obj)
 		stateEvent := StateEvent{
 			Event:       evt,
 			ReconcileID: evt.ReconcileID,
 			Timestamp:   evt.Timestamp,
 			Effect: newEffect(
-				snapshot.NewCompositeKey(obj.GetKind(), ns, name, record.ObjectID),
+				snapshot.NewCompositeKey(obj.GetKind(), ns, name, sleeveObjectID),
 				snapshot.NewDefaultHash(record.Value),
 				event.OperationType(evt.OpType),
 			),
