@@ -295,22 +295,22 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	changeOV := reconcileResult.Changes.ObjectVersions
 	for _, effect := range effects {
 		if effect.OpType == event.CREATE {
-			if _, ok := newObjectVersions[effect.Key]; ok {
-				// the effect validation mechanism should prevent this from happening
-				// so panic if it does happen
-				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.Key.IdentityKey))
+			if _, ok := newObjectVersions.HasResourceKey(effect.Key.ResourceKey); ok {
+				// the effect validation mechanism should prevent a create effect from going through
+				// if an object with the same kind/namespace/name already exists, so panic if it does happen
+				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.Key))
 			} else {
 				// key not in state as expected, add it
 				newObjectVersions[effect.Key] = changeOV[effect.Key]
 			}
 		}
 		if effect.OpType == event.UPDATE || effect.OpType == event.PATCH {
-			if _, ok := newObjectVersions[effect.Key]; !ok {
+			if _, ok := newObjectVersions.HasResourceKey(effect.Key.ResourceKey); !ok {
 				// it is possible that a stale read will cause a controller to update an object
 				// that no longer exists in the global state. The effect validation mechanism
 				// should cause the client operation to 404 and prevent the update effect from
 				// going through. If it does go through, we should panic cause something broke.
-				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.Key.IdentityKey))
+				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.Key))
 			}
 			newObjectVersions[effect.Key] = changeOV[effect.Key]
 		}
