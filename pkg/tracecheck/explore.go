@@ -289,36 +289,36 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// update the state with the new object versions.
 	// note that we are updating the "global state" here,
 	// which may be separate from what the controller saw upon reconciling.
-	newObjectVersions := make(ObjectVersions)
-	maps.Copy(newObjectVersions, state.Objects())
+	prevState := make(ObjectVersions)
+	maps.Copy(prevState, state.Objects())
 
 	changeOV := reconcileResult.Changes.ObjectVersions
 	for _, effect := range effects {
 		if effect.OpType == event.CREATE {
-			if _, ok := newObjectVersions.HasResourceKey(effect.Key.ResourceKey); ok {
+			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); ok {
 				// the effect validation mechanism should prevent a create effect from going through
 				// if an object with the same kind/namespace/name already exists, so panic if it does happen
 				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.Key))
 			} else {
 				// key not in state as expected, add it
-				newObjectVersions[effect.Key] = changeOV[effect.Key]
+				prevState[effect.Key] = changeOV[effect.Key]
 			}
 		}
 		if effect.OpType == event.UPDATE || effect.OpType == event.PATCH {
-			if _, ok := newObjectVersions.HasResourceKey(effect.Key.ResourceKey); !ok {
+			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !ok {
 				// it is possible that a stale read will cause a controller to update an object
 				// that no longer exists in the global state. The effect validation mechanism
 				// should cause the client operation to 404 and prevent the update effect from
 				// going through. If it does go through, we should panic cause something broke.
 				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.Key))
 			}
-			newObjectVersions[effect.Key] = changeOV[effect.Key]
+			prevState[effect.Key] = changeOV[effect.Key]
 		}
 
 		// need to determine how to update state based on preconditions
 		if effect.OpType == event.DELETE {
-			if _, ok := newObjectVersions[effect.Key]; !ok {
-				_, rok := newObjectVersions.HasResourceKey(effect.Key.ResourceKey)
+			if _, ok := prevState[effect.Key]; !ok {
+				_, rok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey)
 				if !rok {
 					fmt.Println("warning: deleted key absent in state - ", effect.Key)
 					fmt.Println("frameID: ", frameID)
@@ -348,7 +348,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			// 	fmt.Println(k)
 			// }
 			// panic("deletion effect")
-			delete(newObjectVersions, effect.Key)
+			delete(prevState, effect.Key)
 		}
 
 		// increment resourceversion for the kind
@@ -380,7 +380,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	currHistory := slices.Clone(state.ExecutionHistory)
 
 	return StateNode{
-		Contents:          NewStateSnapshot(newObjectVersions, newSequences, newStateEvents),
+		Contents:          NewStateSnapshot(prevState, newSequences, newStateEvents),
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,
@@ -461,9 +461,12 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return []StateNode{currState}, nil
 	}
 
+	if reconcilerID != "CassandraDatacenter" {
+		return []StateNode{currState}, nil
+	}
+
 	currSnapshot := currState.Contents
 	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies)
-	// fmt.Println("produced", len(all), "stale views for", pending.ReconcilerID)
 	if err != nil {
 		return nil, err
 	}

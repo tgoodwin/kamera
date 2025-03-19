@@ -443,8 +443,8 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 
 		staleSequences := make(map[string]int64)
 		maps.Copy(staleSequences, snapshot.KindSequences)
-		// This means that controllers implicitly "see" the state of the
-		// resources they dont subscribe to at their latest state.
+		// State for kinds outside of relevantKinds is included at the latest sequence.
+		// Only the relevant kinds are adjusted to the stale sequence.
 		for k, v := range combo {
 			staleSequences[k] = v
 		}
@@ -453,12 +453,6 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 		// to reflect the new view among all possible stale views.
 		// the stale view must be "observed" via the Observe() method
 		out := NewStateSnapshot(snapshot.contents, staleSequences, snapshot.stateEvents)
-		// 	contents:      snapshot.contents,
-		// 	KindSequences: combo,
-		// 	stateEvents:   snapshot.stateEvents,
-		// 	mode:          "adjusted",
-		// }
-		// staleView.mode = "adjusted"
 		staleViews = append(staleViews, &out)
 	}
 
