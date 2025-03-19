@@ -3,7 +3,9 @@ package util
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -18,6 +20,20 @@ func Shorter(s string) string {
 		return s[:idx]
 	}
 	return s
+}
+
+func ShortenHash(input string) string {
+	h := fnv.New64a() // Use 64-bit hash instead of 32-bit
+	h.Write([]byte(input))
+	hashNum := h.Sum64()
+
+	// Convert to base36 for readability, but use more characters
+	// A 64-bit hash in base36 gives ~13 chars, so we'll use 8
+	hash := strconv.FormatUint(hashNum, 36)
+	if len(hash) > 8 {
+		hash = hash[:8]
+	}
+	return hash
 }
 
 // GetKind returns the kind of the object. It uses reflection to determine the kind if the client.Object instance
