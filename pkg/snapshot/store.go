@@ -28,11 +28,11 @@ type CompositeKey struct {
 	ResourceKey
 }
 
-func NewCompositeKey(kind, namespace, name, uid string) CompositeKey {
+func NewCompositeKey(kind, namespace, name, sleeveObjectID string) CompositeKey {
 	return CompositeKey{
 		IdentityKey: IdentityKey{
 			Kind:     kind,
-			ObjectID: uid,
+			ObjectID: sleeveObjectID,
 		},
 		ResourceKey: ResourceKey{
 			Kind:      kind,
@@ -84,6 +84,25 @@ func (s *Store) RegisterHashGenerator(strategy HashStrategy, generator Hasher) {
 	s.hashGenerators[strategy] = generator
 }
 
+func (s *Store) DebugKey(key string) {
+	fmt.Println("as object key", key)
+	if _, exists := s.objectHashes[key]; !exists {
+		fmt.Println("key not found")
+		return
+	}
+	for strategy, hash := range s.objectHashes[key] {
+		fmt.Printf("strategy: %s\nhash: %s\n", strategy, util.ShortenHash(hash.Value))
+	}
+
+	fmt.Println("everything:")
+	for strategy, hashes := range s.indices {
+		fmt.Printf("Strategy: %s\n", strategy)
+		for hash := range hashes {
+			fmt.Printf("  Hash: %s\n", util.ShortenHash(hash.Value))
+		}
+	}
+}
+
 // Get object identity key (could be namespace/name or another unique identifier)
 func getObjectKey(obj *unstructured.Unstructured) string {
 	kind := util.GetKind(obj)
@@ -107,6 +126,7 @@ func (s *Store) indexObject(obj *unstructured.Unstructured, strategies ...HashSt
 		s.indices[strategy][hash] = obj
 
 		// Record hash value for this object and strategy
+		// TODO this does not support multiple versions of the same objectKey!!!!!
 		s.objectHashes[objKey][strategy] = hash
 	}
 	return nil
@@ -177,14 +197,21 @@ func (s *Store) PublishWithStrategy(obj *unstructured.Unstructured, strategy Has
 	// return hash
 }
 
-func (s *Store) ResolveWithStrategy(hash VersionHash, strategy HashStrategy) *unstructured.Unstructured {
+func (s *Store) ResolveWithStrategy(hash VersionHash, strategy HashStrategy) (*unstructured.Unstructured, bool) {
 	if idx, exists := s.indices[strategy]; exists {
 		obj, found := idx[hash]
 		if found {
-			return obj
+			return obj, true
+		} else {
+			shortHash := util.ShortenHash(hash.Value)
+			fmt.Printf("lookup miss: hash %s strategy %s\n", shortHash, strategy)
+			fmt.Println("curr contents under strategy", strategy)
+			for h := range idx {
+				fmt.Printf("hash: %s\n", util.ShortenHash(h.Value))
+			}
 		}
 	}
-	return nil
+	return nil, false
 }
 
 // Get object by hash value and strategy
@@ -229,7 +256,7 @@ func (s *Store) Newest(candidates ...VersionHash) VersionHash {
 	var newest VersionHash
 	maxResourceVersion := ""
 	for _, candidate := range candidates {
-		obj := s.ResolveWithStrategy(candidate, candidate.Strategy)
+		obj, _ := s.ResolveWithStrategy(candidate, candidate.Strategy)
 		rv := obj.GetResourceVersion()
 		if rv > maxResourceVersion {
 			maxResourceVersion = rv
@@ -243,7 +270,7 @@ func (s *Store) Oldest(candidates ...VersionHash) VersionHash {
 	var oldest VersionHash
 	minResourceVersion := candidates[0].Value
 	for _, candidate := range candidates {
-		obj := s.ResolveWithStrategy(candidate, candidate.Strategy)
+		obj, _ := s.ResolveWithStrategy(candidate, candidate.Strategy)
 		rv := obj.GetResourceVersion()
 		if rv < minResourceVersion {
 			minResourceVersion = rv

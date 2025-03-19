@@ -329,7 +329,12 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 			return errors.Wrap(err, "resolving version")
 		}
 		// TODO fix the whole ResolveVersion business THIS IS A BLOODY HACK
-		key := snapshot.NewCompositeKey(e.Kind, "default", e.ObjectID, e.ObjectID)
+		key := snapshot.NewCompositeKey(
+			e.Kind,
+			"default",
+			e.ObjectID, // this is supposed to be NAME
+			e.ObjectID, // this is supposed to be SLEEVE OBJECT ID
+		)
 		effect := newEffect(
 			key,
 			version,
