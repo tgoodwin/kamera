@@ -34,6 +34,7 @@ func NewStateSnapshot(contents ObjectVersions, kindSequences map[string]int64, s
 	stateKindSet := util.NewSet(stateKinds...)
 	seqKinds := lo.Keys(kindSequences)
 	if len(stateKindSet) != len(seqKinds) {
+		fmt.Println("stateKinds", stateKindSet.List(), "seqKinds", seqKinds)
 		panic(fmt.Sprintf("expected a sequence # for every kind in contents! content keys: %v, sequence keys: %v", stateKindSet.List(), seqKinds))
 	}
 	return StateSnapshot{
@@ -435,10 +436,18 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 			continue
 		}
 
+		staleSequences := make(map[string]int64)
+		maps.Copy(staleSequences, snapshot.KindSequences)
+		// This means that controllers implicitly "see" the state of the
+		// resources they dont subscribe to at their latest state.
+		for k, v := range combo {
+			staleSequences[k] = v
+		}
+
 		// we preserve the original state but adjust the sequence numbers
 		// to reflect the new view among all possible stale views.
 		// the stale view must be "observed" via the Observe() method
-		out := NewStateSnapshot(snapshot.contents, combo, snapshot.stateEvents)
+		out := NewStateSnapshot(snapshot.contents, staleSequences, snapshot.stateEvents)
 		// 	contents:      snapshot.contents,
 		// 	KindSequences: combo,
 		// 	stateEvents:   snapshot.stateEvents,
