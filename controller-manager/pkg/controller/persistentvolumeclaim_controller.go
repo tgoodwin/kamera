@@ -240,6 +240,9 @@ func (r *PersistentVolumeClaimReconciler) createPVForPVC(pvc *corev1.PersistentV
 	pv := &corev1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: pvName,
+			// sleeve code assumes every object has a namespace/name. This is not true for PVs
+			// in reality, but we need to set it here to avoid panics in the tracecheck code.
+			Namespace: "default",
 		},
 		Spec: corev1.PersistentVolumeSpec{
 			StorageClassName: storageClass,
