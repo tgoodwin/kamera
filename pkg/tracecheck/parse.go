@@ -89,7 +89,7 @@ func ParseJSONLTrace(filePath string) ([]StateEvent, error) {
 	return stateEvents, nil
 }
 
-func AssignResourceVersions(in []StateEvent) []StateEvent {
+func assignResourceVersions(in []StateEvent) []StateEvent {
 	stateEvents := slices.Clone(in)
 	sort.Slice(stateEvents, func(i, j int) bool {
 		return stateEvents[i].Timestamp < stateEvents[j].Timestamp

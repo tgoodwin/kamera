@@ -343,7 +343,8 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 }
 
 func Rollup(events []StateEvent) *StateSnapshot {
-	return replayEventSequenceToState(events)
+	sequencedEvents := assignResourceVersions(events)
+	return replayEventSequenceToState(sequencedEvents)
 }
 
 func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
@@ -428,8 +429,8 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 
 	combos := getAllCombos(filtered)
 
-	// // Iterate over each kind in the snapshot
 	for _, combo := range combos {
+		// there may be duplicates in the generated kind sequences
 		if maps.Equal(combo, snapshot.KindSequences) {
 			continue
 		}
