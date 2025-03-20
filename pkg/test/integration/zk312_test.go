@@ -172,7 +172,10 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	}
 
 	t.Run("Bug manifests under stale reads", func(t *testing.T) {
-		eb.WithStalenessDepth(1) // Enable staleness exploration
+		eb.ExploreStaleStates() // Enable staleness exploration
+		eb.WithKindBounds(tracecheck.KindBounds{
+			"ZookeeperCluster": 3,
+		})
 
 		explorer, err := eb.Build("standalone")
 		if err != nil {
@@ -203,8 +206,11 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 		bugDetected := check(result)
 		assert.True(t, bugDetected, "Bug not detected: should have found a state where the ZookeeperCluster exists but its PVCs were incorrectly deleted")
 	})
-	t.Run("Bug does not manifest if no staleness", func(t *testing.T) {
-		eb.WithStalenessDepth(0) // default
+	t.Run("Bug does not manifest if staleness doesnt go back far enough", func(t *testing.T) {
+		eb.ExploreStaleStates() // default
+		eb.WithKindBounds(tracecheck.KindBounds{
+			"ZookeeperCluster": 1, // using staleness but not going back far enough (showing only most recent version)
+		})
 
 		explorer, err := eb.Build("standalone")
 		if err != nil {

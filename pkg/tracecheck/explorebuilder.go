@@ -18,14 +18,15 @@ import (
 )
 
 type ExplorerBuilder struct {
-	reconcilers      map[string]ReconcilerConstructor
-	resourceDeps     ResourceDeps
-	scheme           *runtime.Scheme
-	maxDepth         int
-	stalenessDepth   int
-	emitter          testEmitter
-	snapStore        *snapshot.Store
-	reconcilerToKind map[string]string
+	reconcilers        map[string]ReconcilerConstructor
+	resourceDeps       ResourceDeps
+	scheme             *runtime.Scheme
+	maxDepth           int
+	exploreStaleStates int
+	kindBounds         KindBounds
+	emitter            testEmitter
+	snapStore          *snapshot.Store
+	reconcilerToKind   map[string]string
 
 	// for replay mode
 	builder *replay.Builder
@@ -33,13 +34,13 @@ type ExplorerBuilder struct {
 
 func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	return &ExplorerBuilder{
-		reconcilers:      make(map[string]ReconcilerConstructor),
-		resourceDeps:     make(ResourceDeps),
-		scheme:           scheme,
-		snapStore:        snapshot.NewStore(),
-		maxDepth:         10, // Default value
-		stalenessDepth:   0,  // Default value
-		reconcilerToKind: make(map[string]string),
+		reconcilers:        make(map[string]ReconcilerConstructor),
+		resourceDeps:       make(ResourceDeps),
+		scheme:             scheme,
+		snapStore:          snapshot.NewStore(),
+		maxDepth:           10, // Default value
+		exploreStaleStates: 0,  // Default value
+		reconcilerToKind:   make(map[string]string),
 	}
 }
 
@@ -63,8 +64,13 @@ func (b *ExplorerBuilder) WithMaxDepth(depth int) *ExplorerBuilder {
 	return b
 }
 
-func (b *ExplorerBuilder) WithStalenessDepth(depth int) *ExplorerBuilder {
-	b.stalenessDepth = depth
+func (b *ExplorerBuilder) ExploreStaleStates() *ExplorerBuilder {
+	b.exploreStaleStates = 1
+	return b
+}
+
+func (b *ExplorerBuilder) WithKindBounds(kb KindBounds) *ExplorerBuilder {
+	b.kindBounds = kb
 	return b
 }
 
@@ -272,10 +278,14 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 	explorer := &Explorer{
 		reconcilers:      reconcilers,
 		dependencies:     b.resourceDeps,
-		maxDepth:         b.maxDepth,
-		stalenessDepth:   b.stalenessDepth,
 		triggerManager:   triggerManager,
 		knowledgeManager: knowledgeManager,
+
+		config: &ExploreConfig{
+			MaxDepth:       b.maxDepth,
+			StalenessDepth: b.exploreStaleStates,
+			KindBounds:     b.kindBounds,
+		},
 
 		effectContextManager: mgr,
 	}

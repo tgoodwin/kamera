@@ -151,7 +151,7 @@ type StateEvent struct {
 }
 
 func (s *StateEvent) Key() string {
-	return fmt.Sprintf("%s", s.Effect.Key.IdentityKey.ObjectID)
+	return s.Effect.Key.IdentityKey.ObjectID
 }
 
 // Tracks the complete history of a single object
@@ -412,7 +412,33 @@ func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int6
 	return replayEventSequenceToState(toReplay)
 }
 
-func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*StateSnapshot {
+func limitEventHistory(seqByKind map[string][]int64, kindBounds KindBounds) map[string][]int64 {
+	if kindBounds == nil {
+		return seqByKind
+	}
+	out := make(map[string][]int64)
+	maps.Copy(out, seqByKind)
+	for k, v := range out {
+		kindBound, ok := kindBounds[k]
+		if ok {
+			// define zero as no bound
+			if kindBound == 0 {
+				continue
+			}
+			if len(v) > kindBound {
+				out[k] = v[len(v)-kindBound:]
+			}
+		}
+	}
+
+	return out
+}
+
+// KindBounds is a map of kind to the number of RVs to consider in the history
+// when producing stale views. A value of 0 means no bound (all RVs considered).
+type KindBounds map[string]int
+
+func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBounds KindBounds) []*StateSnapshot {
 	var staleViews []*StateSnapshot
 
 	staleViews = append(staleViews, snapshot)
@@ -426,6 +452,10 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 		})
 	})
 
+	if len(kindBounds) > 0 {
+		seqByKind = limitEventHistory(seqByKind, kindBounds)
+	}
+
 	filtered := make(map[string][]int64)
 	for k, v := range seqByKind {
 		if lo.Contains(relevantKinds, k) {
@@ -434,7 +464,6 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 	}
 
 	combos := getAllCombos(filtered)
-
 	for _, combo := range combos {
 		// there may be duplicates in the generated kind sequences
 		if maps.Equal(combo, snapshot.KindSequences) {
@@ -459,14 +488,14 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 	return staleViews
 }
 
-func getAllViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps) ([]*StateSnapshot, error) {
+func getAllViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps, kindBounds KindBounds) ([]*StateSnapshot, error) {
 	controllerDeps, err := deps.ForReconciler(reconcilerID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get the current sequence for the kind
-	staleViews := getAllPossibleViews(snapshot, controllerDeps)
+	staleViews := getAllPossibleViews(snapshot, controllerDeps, kindBounds)
 	return staleViews, nil
 }
 

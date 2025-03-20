@@ -17,6 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+var DefaultMaxDepth = 10
+
 type reconciler interface {
 	doReconcile(ctx context.Context, readset ObjectVersions, req reconcile.Request) (*ReconcileResult, error)
 	replayReconcile(ctx context.Context, req reconcile.Request) (*ReconcileResult, error)
@@ -34,6 +36,13 @@ type EffectContextManager interface {
 	CleanupEffectContext(ctx context.Context)
 }
 
+type ExploreConfig struct {
+	MaxDepth       int
+	StalenessDepth int
+
+	KindBounds KindBounds
+}
+
 type Explorer struct {
 	// reconciler implementations keyed by ID
 	reconcilers map[string]ReconcilerContainer
@@ -46,9 +55,7 @@ type Explorer struct {
 
 	effectContextManager EffectContextManager
 
-	// config
-	maxDepth       int
-	stalenessDepth int
+	config *ExploreConfig
 }
 
 type ConvergedState struct {
@@ -165,8 +172,8 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 }
 
 func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Result {
-	if e.maxDepth == 0 {
-		e.maxDepth = 10
+	if e.config.MaxDepth == 0 {
+		e.config.MaxDepth = DefaultMaxDepth
 	}
 
 	result := &Result{
@@ -225,7 +232,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 					depthStart = time.Now()
 					seenDepths[newState.depth] = true
 				}
-				if newState.depth > e.maxDepth {
+				if newState.depth > e.config.MaxDepth {
 					result.AbortedPaths += 1
 				} else {
 					queue = append(queue, newState)
@@ -445,24 +452,18 @@ func serializeState(state StateNode) string {
 		return pr.ReconcilerID
 	})
 	reconcilesStr := strings.Join(reconcileStr, ",")
-	// reconcilesStr := strings.Join(state.PendingReconciles, ",")
-
-	// Sort PendingReconciles to ensure deterministic order
-	// sortedPendingReconciles := append([]string{}, state.PendingReconciles...)
-	// sort.Strings(sortedPendingReconciles)
-	// reconcilesStr := strings.Join(sortedPendingReconciles, ",")
 
 	return fmt.Sprintf("Objects:{%s}|PendingReconciles:{%s}", objectsStr, reconcilesStr)
 }
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string) ([]StateNode, error) {
 	// TODO update to use some staleness depth configuration
-	if e.stalenessDepth == 0 {
+	if e.config.StalenessDepth == 0 {
 		return []StateNode{currState}, nil
 	}
 
 	currSnapshot := currState.Contents
-	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies)
+	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, e.config.KindBounds)
 	if err != nil {
 		return nil, err
 	}
