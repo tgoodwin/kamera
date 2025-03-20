@@ -162,9 +162,7 @@ func main() {
 	// TODO configure staleness depth
 	eb.ExploreStaleStates() // Enable staleness exploration
 	// configure stale view depth per kind
-	eb.WithKindBounds(tracecheck.KindBounds{
-		"ZookeeperCluster": *stalenessDepth,
-	})
+	eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{"ZookeeperCluster": *stalenessDepth})
 	eb.WithMaxDepth(*searchDepth) // tuned this experimentally
 
 	explorer, err := eb.Build("standalone")

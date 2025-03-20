@@ -40,7 +40,7 @@ type ExploreConfig struct {
 	MaxDepth       int
 	StalenessDepth int
 
-	KindBounds KindBounds
+	KindBoundsPerReconciler map[string]KindBounds
 }
 
 type Explorer struct {
@@ -463,7 +463,12 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	}
 
 	currSnapshot := currState.Contents
-	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, e.config.KindBounds)
+	bounds, ok := e.config.KindBoundsPerReconciler[reconcilerID]
+	if !ok {
+		// no staleness bounds configured for this reconciler, so dont compute stale states
+		return []StateNode{currState}, nil
+	}
+	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, bounds)
 	if err != nil {
 		return nil, err
 	}

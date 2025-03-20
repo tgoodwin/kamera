@@ -23,7 +23,7 @@ type ExplorerBuilder struct {
 	scheme             *runtime.Scheme
 	maxDepth           int
 	exploreStaleStates int
-	kindBounds         KindBounds
+	kindBounds         map[string]KindBounds
 	emitter            testEmitter
 	snapStore          *snapshot.Store
 	reconcilerToKind   map[string]string
@@ -69,8 +69,11 @@ func (b *ExplorerBuilder) ExploreStaleStates() *ExplorerBuilder {
 	return b
 }
 
-func (b *ExplorerBuilder) WithKindBounds(kb KindBounds) *ExplorerBuilder {
-	b.kindBounds = kb
+func (b *ExplorerBuilder) WithKindBounds(reconcilerID string, kb KindBounds) *ExplorerBuilder {
+	if b.kindBounds == nil {
+		b.kindBounds = make(map[string]KindBounds)
+	}
+	b.kindBounds[reconcilerID] = kb
 	return b
 }
 
@@ -282,9 +285,9 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		knowledgeManager: knowledgeManager,
 
 		config: &ExploreConfig{
-			MaxDepth:       b.maxDepth,
-			StalenessDepth: b.exploreStaleStates,
-			KindBounds:     b.kindBounds,
+			MaxDepth:                b.maxDepth,
+			StalenessDepth:          b.exploreStaleStates,
+			KindBoundsPerReconciler: b.kindBounds,
 		},
 
 		effectContextManager: mgr,
