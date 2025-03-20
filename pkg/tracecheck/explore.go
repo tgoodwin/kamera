@@ -461,10 +461,6 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return []StateNode{currState}, nil
 	}
 
-	if reconcilerID != "CassandraDatacenter" {
-		return []StateNode{currState}, nil
-	}
-
 	currSnapshot := currState.Contents
 	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies)
 	if err != nil {
