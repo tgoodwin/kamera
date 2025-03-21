@@ -12,18 +12,20 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/util"
 )
 
+type KindSequences map[string]int64
+
 type StateSnapshot struct {
 	contents ObjectVersions
 
 	mode string // original or adjusted
 
 	// per-kind sequence info for computing relative states
-	KindSequences map[string]int64
+	KindSequences KindSequences
 
 	stateEvents []StateEvent // the changes that led to the current objectVersions
 }
 
-func NewStateSnapshot(contents ObjectVersions, kindSequences map[string]int64, stateEvents []StateEvent) StateSnapshot {
+func NewStateSnapshot(contents ObjectVersions, kindSequences KindSequences, stateEvents []StateEvent) StateSnapshot {
 	if len(contents) > 0 && len(kindSequences) == 0 {
 		panic("kind sequences must be non-empty if contents are non-empty")
 	}
@@ -37,6 +39,7 @@ func NewStateSnapshot(contents ObjectVersions, kindSequences map[string]int64, s
 		fmt.Println("stateKinds", stateKindSet.List(), "seqKinds", seqKinds)
 		panic(fmt.Sprintf("expected a sequence # for every kind in contents! content keys: %v, sequence keys: %v", stateKindSet.List(), seqKinds))
 	}
+
 	return StateSnapshot{
 		contents:      contents,
 		KindSequences: kindSequences,
@@ -55,14 +58,25 @@ func (s *StateSnapshot) Observable() ObjectVersions {
 	return ss.contents
 }
 
+func (s *StateSnapshot) ObserveAt(ks KindSequences) ObjectVersions {
+	// merge the others
+	for k, v := range s.KindSequences {
+		if _, exists := ks[k]; !exists {
+			ks[k] = v
+		}
+	}
+	ss := replayEventsAtSequence(s.stateEvents, ks)
+	return ss.contents
+}
+
 func (s *StateSnapshot) Debug() {
 	fmt.Println("State events:")
 	for _, e := range s.stateEvents {
-		fmt.Printf("%s %s %d\n", e.Effect.Key.IdentityKey, e.Effect.OpType, e.Sequence)
+		fmt.Printf("%s:%s %s %d, %s\n", e.ControllerID, e.Effect.OpType, e.Kind, e.Sequence, util.ShortenHash(e.Effect.Version.Value))
 	}
 	fmt.Println("contents:")
-	for key := range s.contents {
-		fmt.Println(key)
+	for key, val := range s.contents {
+		fmt.Println(key, util.ShortenHash(val.Value))
 	}
 	fmt.Println("KindSequences:")
 	for key, value := range s.KindSequences {
@@ -71,10 +85,10 @@ func (s *StateSnapshot) Debug() {
 }
 
 // generateCombos recursively generates all possible combinations
-func generateCombos(values map[string][]int64, keys []string, index int, current map[string]int64, result *[]map[string]int64) {
+func generateCombos(values map[string][]int64, keys []string, index int, current KindSequences, result *[]KindSequences) {
 	if index == len(keys) {
 		// Create a copy of the current combination and store it
-		comboCopy := make(map[string]int64)
+		comboCopy := make(KindSequences)
 		for k, v := range current {
 			comboCopy[k] = v
 		}
@@ -90,19 +104,19 @@ func generateCombos(values map[string][]int64, keys []string, index int, current
 }
 
 // getAllCombos returns a slice of all possible maps
-func getAllCombos(values map[string][]int64) []map[string]int64 {
+func getAllCombos(values map[string][]int64) []KindSequences {
 	keys := make([]string, 0, len(values))
 	for k := range values {
 		keys = append(keys, k)
 	}
 
-	var result []map[string]int64
-	generateCombos(values, keys, 0, make(map[string]int64), &result)
+	var result []KindSequences
+	generateCombos(values, keys, 0, make(KindSequences), &result)
 	return result
 }
 
 func (s *StateSnapshot) Adjust(kind string, steps int64) (*StateSnapshot, error) {
-	currSequences := make(map[string]int64)
+	currSequences := make(KindSequences)
 	maps.Copy(currSequences, s.KindSequences)
 
 	if _, exists := currSequences[kind]; !exists {
@@ -355,7 +369,7 @@ func Rollup(events []StateEvent) *StateSnapshot {
 
 func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	contents := make(ObjectVersions)
-	KindSequences := make(map[string]int64)
+	KindSequences := make(KindSequences)
 	stateEvents := make([]StateEvent, 0)
 
 	deletions := make(map[snapshot.CompositeKey]bool)
@@ -387,7 +401,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	return &out
 }
 
-func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int64) *StateSnapshot {
+func replayEventsAtSequence(events []StateEvent, sequencesByKind KindSequences) *StateSnapshot {
 	eventsByKind := lo.GroupBy(events, func(e StateEvent) string {
 		return e.Effect.Key.IdentityKey.Kind
 	})
@@ -470,7 +484,7 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBo
 			continue
 		}
 
-		staleSequences := make(map[string]int64)
+		staleSequences := make(KindSequences)
 		maps.Copy(staleSequences, snapshot.KindSequences)
 		// State for kinds outside of relevantKinds is included at the latest sequence.
 		// Only the relevant kinds are adjusted to the stale sequence.

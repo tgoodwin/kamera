@@ -188,7 +188,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 	return StateNode{
 		Contents: StateSnapshot{
 			contents: ObjectVersions{key: vHash},
-			KindSequences: map[string]int64{
+			KindSequences: KindSequences{
 				ikey.Kind: 1,
 			},
 			stateEvents: []StateEvent{

@@ -25,7 +25,7 @@ func Test_serializeState(t *testing.T) {
 							snapshot.NewCompositeKey("kind1", "namespace1", "name1", "object1"): snapshot.NewDefaultHash("hash1"),
 							snapshot.NewCompositeKey("kind1", "namespace1", "name2", "object2"): snapshot.NewDefaultHash("hash2"),
 						},
-						KindSequences: map[string]int64{
+						KindSequences: KindSequences{
 							"kind1": 1,
 							"kind2": 2,
 						},

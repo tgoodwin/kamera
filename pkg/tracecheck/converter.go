@@ -114,7 +114,7 @@ func (c *converterImpl) getStart() StateNode {
 	return StateNode{
 		Contents: StateSnapshot{
 			contents: firstOV,
-			KindSequences: map[string]int64{
+			KindSequences: KindSequences{
 				firstRecord.ikey.Kind: 1,
 			},
 		},

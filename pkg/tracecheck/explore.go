@@ -288,7 +288,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		return state, err
 	}
 
-	newSequences := make(map[string]int64)
+	newSequences := make(KindSequences)
 	maps.Copy(newSequences, state.Contents.KindSequences)
 
 	effects := reconcileResult.Changes.Effects

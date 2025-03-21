@@ -117,7 +117,7 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 	return StateNode{
 		Contents: StateSnapshot{
 			contents: ObjectVersions{key: vHash},
-			KindSequences: map[string]int64{
+			KindSequences: KindSequences{
 				ikey.Kind: 1,
 			},
 			stateEvents: []StateEvent{
