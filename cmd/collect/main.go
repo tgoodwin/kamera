@@ -21,7 +21,7 @@ func main() {
 	secretAccessKey := flag.String("secret-key", "mysecretkey", "Secret access key for MinIO")
 	useSSL := flag.Bool("use-ssl", false, "Use SSL for MinIO connection")
 	bucketName := flag.String("bucket", "sleeve", "Bucket name to fetch objects from")
-	outputFile := flag.String("output-file", "all_traces.jsonl", "Output file to save the objects")
+	outputFile := flag.String("output-file", "trace.jsonl", "Output file to save the objects")
 	cleanup := flag.Bool("cleanup", false, "Empty the bucket after fetching objects")
 
 	// Parse flags

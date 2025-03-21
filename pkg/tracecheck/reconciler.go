@@ -7,6 +7,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -151,7 +152,8 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
 		}
 		obj := r.versionManager.Resolve(hash)
 		if obj == nil {
-			panic(fmt.Sprintf("unable to resolve object hash for key: %s", key))
+			fmt.Printf("hash that missed:\n%v\n", util.ShortenHash(hash.Value))
+			panic(fmt.Sprintf("unable to resolve object hash for key: %s stragegy %s", key, hash.Strategy))
 		}
 		namespacedName := types.NamespacedName{
 			Name:      obj.GetName(),

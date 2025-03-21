@@ -6,16 +6,17 @@ import (
 	"sort"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func main() {
 	logfile := flag.String("logfile", "app.log", "path to the log file")
 	flag.Parse()
 
-	traces, err := tracecheck.ParseJSONLTrace(*logfile)
+	eb := tracecheck.NewExplorerBuilder(runtime.NewScheme())
+
+	traces, err := eb.ParseJSONLTrace(*logfile)
 	if err != nil {
 		log.Fatalf("failed to parse JSONL trace: %v", err)
 	}
@@ -38,11 +39,8 @@ func main() {
 		}
 	}
 
-	log.Println("Write operations:")
-	for _, t := range traces {
-		if event.IsWriteOp(t.Effect.OpType) {
-			log.Printf("  %s %s %s %s %s %s", t.Timestamp, util.Shorter(t.RootEventID), t.OpType, t.Kind, util.Shorter(t.ObjectID), t.ControllerID)
-		}
+	for _, trace := range traces {
+		log.Printf("RootEventID: %s, Kind: %s, ObjectID: %s, OpType: %s", trace.RootEventID, trace.Kind, trace.ObjectID, trace.OpType)
 	}
 
 	topState := tracecheck.Rollup(traces)
@@ -53,6 +51,11 @@ func main() {
 	})
 	for _, key := range allKeys {
 		log.Printf("  %s", key)
+	}
+
+	log.Printf("kind sequences")
+	for kind, seq := range topState.KindSequences {
+		log.Printf("  %s: %d", kind, seq)
 	}
 
 	log.Println("Traces sorted by timestamp")

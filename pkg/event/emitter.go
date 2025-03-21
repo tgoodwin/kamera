@@ -163,7 +163,7 @@ type DebugEmitter struct {
 
 func NewDebugEmitter() *DebugEmitter {
 	return &DebugEmitter{
-		fileEmitter:     NewFileEmitter("debug.log"),
+		fileEmitter:     NewFileEmitter("debug.jsonl"),
 		InMemoryEmitter: NewInMemoryEmitter(),
 	}
 }

@@ -34,6 +34,7 @@ func NewStateSnapshot(contents ObjectVersions, kindSequences map[string]int64, s
 	stateKindSet := util.NewSet(stateKinds...)
 	seqKinds := lo.Keys(kindSequences)
 	if len(stateKindSet) != len(seqKinds) {
+		fmt.Println("stateKinds", stateKindSet.List(), "seqKinds", seqKinds)
 		panic(fmt.Sprintf("expected a sequence # for every kind in contents! content keys: %v, sequence keys: %v", stateKindSet.List(), seqKinds))
 	}
 	return StateSnapshot{
@@ -150,7 +151,7 @@ type StateEvent struct {
 }
 
 func (s *StateEvent) Key() string {
-	return fmt.Sprintf("%s", s.Effect.Key.IdentityKey.ObjectID)
+	return s.Effect.Key.IdentityKey.ObjectID
 }
 
 // Tracks the complete history of a single object
@@ -328,7 +329,12 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 			return errors.Wrap(err, "resolving version")
 		}
 		// TODO fix the whole ResolveVersion business THIS IS A BLOODY HACK
-		key := snapshot.NewCompositeKey(e.Kind, "default", e.ObjectID, e.ObjectID)
+		key := snapshot.NewCompositeKey(
+			e.Kind,
+			"default",
+			e.ObjectID, // this is supposed to be NAME
+			e.ObjectID, // this is supposed to be SLEEVE OBJECT ID
+		)
 		effect := newEffect(
 			key,
 			version,
@@ -343,7 +349,8 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 }
 
 func Rollup(events []StateEvent) *StateSnapshot {
-	return replayEventSequenceToState(events)
+	sequencedEvents := assignResourceVersions(events)
+	return replayEventSequenceToState(sequencedEvents)
 }
 
 func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
@@ -405,7 +412,33 @@ func replayEventsAtSequence(events []StateEvent, sequencesByKind map[string]int6
 	return replayEventSequenceToState(toReplay)
 }
 
-func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*StateSnapshot {
+func limitEventHistory(seqByKind map[string][]int64, kindBounds KindBounds) map[string][]int64 {
+	if kindBounds == nil {
+		return seqByKind
+	}
+	out := make(map[string][]int64)
+	maps.Copy(out, seqByKind)
+	for k, v := range out {
+		kindBound, ok := kindBounds[k]
+		if ok {
+			// define zero as no bound
+			if kindBound == 0 {
+				continue
+			}
+			if len(v) > kindBound {
+				out[k] = v[len(v)-kindBound:]
+			}
+		}
+	}
+
+	return out
+}
+
+// KindBounds is a map of kind to the number of RVs to consider in the history
+// when producing stale views. A value of 0 means no bound (all RVs considered).
+type KindBounds map[string]int
+
+func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBounds KindBounds) []*StateSnapshot {
 	var staleViews []*StateSnapshot
 
 	staleViews = append(staleViews, snapshot)
@@ -419,6 +452,10 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 		})
 	})
 
+	if len(kindBounds) > 0 {
+		seqByKind = limitEventHistory(seqByKind, kindBounds)
+	}
+
 	filtered := make(map[string][]int64)
 	for k, v := range seqByKind {
 		if lo.Contains(relevantKinds, k) {
@@ -427,37 +464,38 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string) []*Sta
 	}
 
 	combos := getAllCombos(filtered)
-
-	// // Iterate over each kind in the snapshot
 	for _, combo := range combos {
+		// there may be duplicates in the generated kind sequences
 		if maps.Equal(combo, snapshot.KindSequences) {
 			continue
+		}
+
+		staleSequences := make(map[string]int64)
+		maps.Copy(staleSequences, snapshot.KindSequences)
+		// State for kinds outside of relevantKinds is included at the latest sequence.
+		// Only the relevant kinds are adjusted to the stale sequence.
+		for k, v := range combo {
+			staleSequences[k] = v
 		}
 
 		// we preserve the original state but adjust the sequence numbers
 		// to reflect the new view among all possible stale views.
 		// the stale view must be "observed" via the Observe() method
-		out := NewStateSnapshot(snapshot.contents, combo, snapshot.stateEvents)
-		// 	contents:      snapshot.contents,
-		// 	KindSequences: combo,
-		// 	stateEvents:   snapshot.stateEvents,
-		// 	mode:          "adjusted",
-		// }
-		// staleView.mode = "adjusted"
+		out := NewStateSnapshot(snapshot.contents, staleSequences, snapshot.stateEvents)
 		staleViews = append(staleViews, &out)
 	}
 
 	return staleViews
 }
 
-func getAllViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps) ([]*StateSnapshot, error) {
+func getAllViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps, kindBounds KindBounds) ([]*StateSnapshot, error) {
 	controllerDeps, err := deps.ForReconciler(reconcilerID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get the current sequence for the kind
-	staleViews := getAllPossibleViews(snapshot, controllerDeps)
+	staleViews := getAllPossibleViews(snapshot, controllerDeps, kindBounds)
 	return staleViews, nil
 }
 

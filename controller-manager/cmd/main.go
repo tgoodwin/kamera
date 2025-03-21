@@ -24,18 +24,21 @@ import (
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
+	"k8s.io/client-go/rest"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/tgoodwin/sleeve/internal/controller"
+	"github.com/tgoodwin/sleeve"
+	"github.com/tgoodwin/sleeve/controller-manager/pkg/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -43,6 +46,8 @@ var (
 	scheme   = runtime.NewScheme()
 	setupLog = ctrl.Log.WithName("setup")
 )
+
+const DEFAULT_NAMESPACE = "tracey"
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
@@ -56,6 +61,8 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+	var namespace string
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -66,6 +73,7 @@ func main() {
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&namespace, "namespace", DEFAULT_NAMESPACE, "The namespace to watch for resources")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -94,7 +102,13 @@ func main() {
 		TLSOpts: tlsOpts,
 	})
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	cfg := ctrl.GetConfigOrDie()
+	cfg.Impersonate = rest.ImpersonationConfig{
+		UserName: "sleeve:controller-user",
+		Groups:   []string{"system:masters"},
+	}
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme,
 		// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
 		// More info:
@@ -131,6 +145,13 @@ func main() {
 		// if you are doing or is intended to do any operation such as perform cleanups
 		// after the manager stops then its usage might be unsafe.
 		// LeaderElectionReleaseOnCancel: true,
+
+		// only respond to events in a certain namespace (the one that the webhook redirects to)
+		Cache: cache.Options{
+			DefaultNamespaces: map[string]cache.Config{
+				namespace: {},
+			},
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -138,10 +159,39 @@ func main() {
 	}
 
 	if err = (&controller.StatefulSetReconciler{
-		Client: mgr.GetClient(),
+		Client: sleeve.Wrap(mgr.GetClient(), "StatefulSetReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "StatefulSet")
+		os.Exit(1)
+	}
+	if err = (&controller.ServiceReconciler{
+		Client: sleeve.Wrap(mgr.GetClient(), "ServiceReconciler"),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Service")
+		os.Exit(1)
+	}
+	if err = (&controller.DeploymentReconciler{
+		Client: sleeve.Wrap(mgr.GetClient(), "DeploymentReconciler"),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Deployment")
+		os.Exit(1)
+	}
+	if err = (&controller.ReplicaSetReconciler{
+		Client:   sleeve.Wrap(mgr.GetClient(), "ReplicaSetReconciler"),
+		Scheme:   mgr.GetScheme(),
+		KWOKMode: true,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ReplicaSet")
+		os.Exit(1)
+	}
+	if err = (&controller.PersistentVolumeClaimReconciler{
+		Client: sleeve.Wrap(mgr.GetClient(), "PersistentVolumeClaimReconciler"),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "PersistentVolumeClaim")
 		os.Exit(1)
 	}
 	// +kubebuilder:scaffold:builder

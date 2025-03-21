@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -143,7 +144,6 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 
 // TODO create or set an ObjectID here
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	// TODO obj.SetUID(uuid.NewUUID())
 	preconditions := ExtractCreatePreconditions(opts)
 	return c.handleEffect(ctx, obj, event.CREATE, &preconditions)
 }
@@ -155,6 +155,12 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	preconditions := ExtractUpdatePreconditions(opts)
+	labels := obj.GetLabels()
+	// TODO SLE-28 diagnose why this case even exists
+	if _, ok := labels[tag.TraceyObjectID]; !ok {
+		logger.Error(nil, "no tracey object ID found on object")
+		tag.AddSleeveObjectID(obj)
+	}
 	return c.handleEffect(ctx, obj, event.UPDATE, &preconditions)
 }
 

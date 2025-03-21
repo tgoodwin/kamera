@@ -160,8 +160,10 @@ func main() {
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
 
 	// TODO configure staleness depth
-	eb.WithStalenessDepth(*stalenessDepth) // Enable staleness exploration
-	eb.WithMaxDepth(*searchDepth)          // tuned this experimentally
+	eb.ExploreStaleStates() // Enable staleness exploration
+	// configure stale view depth per kind
+	eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{"ZookeeperCluster": *stalenessDepth})
+	eb.WithMaxDepth(*searchDepth) // tuned this experimentally
 
 	explorer, err := eb.Build("standalone")
 	if err != nil {

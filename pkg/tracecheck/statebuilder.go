@@ -35,7 +35,7 @@ func NewStateEventBuilder(store *snapshot.Store) *StateEventBuilder {
 }
 
 // AddStateEvent adds a new state event with a specific object
-func (b *StateEventBuilder) AddStateEvent(kind, objectID string, obj *unstructured.Unstructured,
+func (b *StateEventBuilder) AddStateEvent(kind, sleeveObjectID string, obj *unstructured.Unstructured,
 	opType event.OperationType, controllerID string) {
 	// Set unique reconcileID
 	reconcileNum, ok := b.reconcileIDs[controllerID]
@@ -64,7 +64,7 @@ func (b *StateEventBuilder) AddStateEvent(kind, objectID string, obj *unstructur
 	}
 
 	// Create effect
-	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), objectID)
+	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 	effect := newEffect(key, versionHash, opType)
 
 	// Increment sequence

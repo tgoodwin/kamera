@@ -152,9 +152,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 		obj.SetLabels(origLabels)
 		return err
 	}
-	// c.logObjectVersion(obj)
 	c.logOperation(ctx, obj, event.DELETE)
-	// c.trackOperation(ctx, obj, DELETE)
 	return nil
 }
 
@@ -167,9 +165,7 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 		obj.SetLabels(origLabels)
 		return err
 	}
-	// c.logObjectVersion(obj)
 	c.logOperation(ctx, obj, event.DELETE)
-	// c.trackOperation(ctx, obj, DELETE)
 	return nil
 }
 

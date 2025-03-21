@@ -7,15 +7,18 @@ ENV GOARCH=amd64
 ENV CGO_ENABLED=0
 
 WORKDIR /work
-COPY cmd/webhook/ /work
+COPY webhook/ /work
 COPY pkg/ /work/pkg/
 COPY go.mod /work
 COPY go.sum /work
 
+# cache deps before building and copying source so that we don't need to re-download as much
+# and so that source changes don't invalidate our downloaded layer
+RUN go mod download
 
 # Build admission-webhook
 RUN --mount=type=cache,target=/root/.cache/go-build,sharing=private \
-  go build -o bin/admission-webhook .
+  go build -o bin/admission-webhook cmd/main.go
 
 # ---
 FROM scratch AS run

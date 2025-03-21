@@ -1010,7 +1010,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 				Version: snapshot.NewDefaultHash("v1"),
 				OpType:  event.CREATE,
 			},
-			Sequence: 1,
+			Sequence: 3,
 		},
 		{
 			ReconcileID: "r4",
@@ -1020,7 +1020,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 				Version: snapshot.NewDefaultHash("v2"),
 				OpType:  event.UPDATE,
 			},
-			Sequence: 2,
+			Sequence: 4,
 		},
 	}
 
@@ -1031,7 +1031,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 		},
 		KindSequences: map[string]int64{
 			"Pod":     2,
-			"Service": 2,
+			"Service": 4,
 		},
 		stateEvents: events,
 	}
@@ -1044,7 +1044,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			},
 			KindSequences: map[string]int64{
 				"Pod":     1,
-				"Service": 1,
+				"Service": 3,
 			},
 			stateEvents: events,
 		},
@@ -1055,7 +1055,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			},
 			KindSequences: map[string]int64{
 				"Pod":     1,
-				"Service": 2,
+				"Service": 4,
 			},
 			stateEvents: events,
 		},
@@ -1066,7 +1066,7 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			},
 			KindSequences: map[string]int64{
 				"Pod":     2,
-				"Service": 1,
+				"Service": 3,
 			},
 			stateEvents: events,
 		},
@@ -1077,13 +1077,13 @@ func TestGetAllPossibleStaleViews(t *testing.T) {
 			},
 			KindSequences: map[string]int64{
 				"Pod":     2,
-				"Service": 2,
+				"Service": 4,
 			},
 			stateEvents: events,
 		},
 	}
 
-	staleViews := getAllPossibleViews(state, []string{"Pod", "Service"})
+	staleViews := getAllPossibleViews(state, []string{"Pod", "Service"}, nil)
 
 	assert.Equal(t, len(expectedStaleViews), len(staleViews))
 
@@ -1138,4 +1138,106 @@ func Test_getAllCombos(t *testing.T) {
 		{"a": 3, "b": 20},
 	}
 	assert.ElementsMatch(t, expected, combos)
+}
+func TestLimitEventHistory(t *testing.T) {
+	tests := []struct {
+		name           string
+		seqByKind      map[string][]int64
+		limit          KindBounds
+		expectedResult map[string][]int64
+	}{
+		{
+			name: "no limits applied",
+			seqByKind: map[string][]int64{
+				"Pod":     {1, 2, 3, 4},
+				"Service": {1, 2, 3},
+			},
+			limit: nil,
+			expectedResult: map[string][]int64{
+				"Pod":     {1, 2, 3, 4},
+				"Service": {1, 2, 3},
+			},
+		},
+		{
+			name: "limit applied to one kind",
+			seqByKind: map[string][]int64{
+				"Pod":     {1, 2, 3, 4},
+				"Service": {1, 2, 3},
+			},
+			limit: KindBounds{
+				"Pod": 2,
+			},
+			expectedResult: map[string][]int64{
+				"Pod":     {3, 4},
+				"Service": {1, 2, 3},
+			},
+		},
+		{
+			name: "limit applied to multiple kinds",
+			seqByKind: map[string][]int64{
+				"Pod":     {1, 2, 3, 4},
+				"Service": {1, 2, 3},
+			},
+			limit: KindBounds{
+				"Pod":     2,
+				"Service": 1,
+			},
+			expectedResult: map[string][]int64{
+				"Pod":     {3, 4},
+				"Service": {3},
+			},
+		},
+		{
+			name: "limit exceeds sequence length",
+			seqByKind: map[string][]int64{
+				"Pod":     {1, 2},
+				"Service": {1},
+			},
+			limit: KindBounds{
+				"Pod":     5,
+				"Service": 3,
+			},
+			expectedResult: map[string][]int64{
+				"Pod":     {1, 2},
+				"Service": {1},
+			},
+		},
+		{
+			name: "limit is zero",
+			seqByKind: map[string][]int64{
+				"Pod":     {1, 2},
+				"Service": {1},
+			},
+			limit: KindBounds{
+				"Pod":     0,
+				"Service": 0,
+			},
+			expectedResult: map[string][]int64{
+				"Pod":     {1, 2},
+				"Service": {1},
+			},
+		},
+		{
+			name: "empty sequences",
+			seqByKind: map[string][]int64{
+				"Pod":     {},
+				"Service": {},
+			},
+			limit: KindBounds{
+				"Pod":     2,
+				"Service": 1,
+			},
+			expectedResult: map[string][]int64{
+				"Pod":     {},
+				"Service": {},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := limitEventHistory(tt.seqByKind, tt.limit)
+			assert.Equal(t, tt.expectedResult, result)
+		})
+	}
 }
