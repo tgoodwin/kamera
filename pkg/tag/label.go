@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/samber/lo"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -31,7 +32,17 @@ const (
 
 	// Special stable ID for deletion events. Like ChangeID, but it is never overwritten once set.
 	DeletionID = "discrete.events/deletion-id"
+
+	// Custom Finalizer
+	SleeveFinalizer = "discrete.events/sleeve-finalizer"
 )
+
+// add our custom finalizer to objects during creation/update
+func EnsureSleeveFinalizer(obj client.Object) {
+	if !lo.Contains(obj.GetFinalizers(), SleeveFinalizer) {
+		obj.SetFinalizers(append(obj.GetFinalizers(), SleeveFinalizer))
+	}
+}
 
 // LabelChange sets a change-id on the object to associate an object's current value with the change event that produced it.
 func LabelChange(obj client.Object) {
