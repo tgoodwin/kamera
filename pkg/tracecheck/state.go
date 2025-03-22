@@ -51,7 +51,7 @@ func (ov ObjectVersions) Summarize() {
 		return keys[i].ObjectID < keys[j].ObjectID
 	})
 	for _, key := range keys {
-		fmt.Printf("\t%s\n", key)
+		fmt.Printf("\t%s:%s\n", key, util.ShortenHash(ov[key].Value))
 	}
 }
 

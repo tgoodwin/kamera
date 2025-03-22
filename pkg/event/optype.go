@@ -3,14 +3,14 @@ package event
 type OperationType string
 
 const (
-	INIT   OperationType = "INIT"
-	GET    OperationType = "GET"
-	LIST   OperationType = "LIST"
-	CREATE OperationType = "CREATE"
-	UPDATE OperationType = "UPDATE"
-	DELETE OperationType = "DELETE"
-	PATCH  OperationType = "PATCH"
-	APPLY  OperationType = "APPLY"
+	INIT              OperationType = "INIT"
+	GET               OperationType = "GET"
+	LIST              OperationType = "LIST"
+	CREATE            OperationType = "CREATE"
+	UPDATE            OperationType = "UPDATE"
+	MARK_FOR_DELETION OperationType = "DELETE"
+	PATCH             OperationType = "PATCH"
+	APPLY             OperationType = "APPLY"
 
 	// custom op types
 
@@ -21,8 +21,8 @@ const (
 )
 
 var MutationTypes = map[OperationType]struct{}{
-	CREATE: {},
-	UPDATE: {},
-	DELETE: {},
-	PATCH:  {},
+	CREATE:            {},
+	UPDATE:            {},
+	MARK_FOR_DELETION: {},
+	PATCH:             {},
 }

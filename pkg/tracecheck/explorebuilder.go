@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/samber/lo"
+	"github.com/tgoodwin/sleeve/controller-manager/pkg/controller"
 	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
@@ -16,6 +17,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+var CleanupReconcilerID = "CleanupReconciler"
 
 type ExplorerBuilder struct {
 	reconcilers        map[string]ReconcilerConstructor
@@ -145,7 +148,8 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 
 		// Create reconciler implementation
 		rImpl := &reconcileImpl{
-			Name:           reconcilerID,
+			Name: reconcilerID,
+			// TODO remove this. We no longer need to "infer" the reconcile request
 			For:            kindForReconciler,
 			Reconciler:     r,
 			versionManager: mgr,
@@ -162,6 +166,45 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 	}
 
 	return containers
+}
+
+// instantiateCleanupReconciler adds a reconciler to the system that handles
+// actual deletion of resources after they have been "marked" for deletion. In reality,
+// the APIServer would handle this, but we need to simulate this behavior in our system.
+func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) ReconcilerContainer {
+	fm := replay.NewFrameManager(nil)
+	replayClient := replay.NewClient(
+		CleanupReconcilerID,
+		b.scheme,
+		fm,
+		mgr,
+	)
+	wrappedClient := sleeveclient.New(
+		replayClient,
+		CleanupReconcilerID,
+		b.emitter,
+		sleeveclient.NewContextTracker(
+			CleanupReconcilerID,
+			b.emitter,
+			replay.FrameIDFromContext,
+		),
+	)
+	r := &controller.FinalizerReconciler{
+		Client:   wrappedClient,
+		Recorder: mgr,
+	}
+	rImpl := &reconcileImpl{
+		Name: CleanupReconcilerID,
+		// For:  "Finalizer",
+		Reconciler:     r,
+		versionManager: mgr,
+		effectReader:   mgr,
+		frameInserter:  fm,
+	}
+	container := ReconcilerContainer{
+		reconcileImpl: rImpl,
+	}
+	return container
 }
 
 func (b *ExplorerBuilder) NewStateEventBuilder() *StateEventBuilder {
@@ -260,6 +303,8 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 
 	// Initialize reconcilers with appropriate clients
 	reconcilers := b.instantiateReconcilers(mgr)
+	cleanupReconciler := b.instantiateCleanupReconciler(mgr)
+	reconcilers[CleanupReconcilerID] = cleanupReconciler
 
 	// Create knowledge manager if using replay builder
 	var knowledgeManager *EventKnowledge

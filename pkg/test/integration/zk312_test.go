@@ -98,7 +98,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 		Name:       "zk-cluster",
 		UID:        zk1.GetUID(),
 	}
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.CREATE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.CREATE, "ExternalUser")
 
 	// 2. PVCs are created for the first ZK
 	pvc1 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-1", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef})
@@ -113,15 +113,23 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	// 3. First ZK is marked for deletion
 	deletionTime := metav1.NewTime(time.Now())
 	zk1WithDeletion := CreateZookeeperObject("zk-cluster", "default", "zk-old-uid", 3, &deletionTime)
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.UPDATE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.UPDATE, "ExternalUser")
 
-	// 4. PVCs are deleted during deletion process
-	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1, event.DELETE, "ZookeeperReconciler")
-	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-2", pvc2, event.DELETE, "ZookeeperReconciler")
-	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", pvc3, event.DELETE, "ZookeeperReconciler")
+	// TODO remove the update event above this
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.MARK_FOR_DELETION, "ExternalUser")
+
+	// 4. PVCs are marked for deletion
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1, event.MARK_FOR_DELETION, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-2", pvc2, event.MARK_FOR_DELETION, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", pvc3, event.MARK_FOR_DELETION, "ZookeeperReconciler")
+
+	// 5. PVCs are fully removed from cluster state (deleted)
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1, event.REMOVE, "APIServer")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1, event.REMOVE, "APIServer")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1, event.REMOVE, "APIServer")
 
 	// 5. First ZK is fully deleted
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.DELETE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.REMOVE, "APIServer")
 
 	// 6. New ZK with same name but different UID is created
 	zk2 := CreateZookeeperObject("zk-cluster", "default", "zk-new-uid", 3, nil)
@@ -131,7 +139,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 		Name:       "zk-cluster",
 		UID:        zk2.GetUID(),
 	}
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-new-uid", zk2, event.CREATE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-new-uid", zk2, event.CREATE, "ExternalUser")
 
 	// 7. New PVCs are created for the new ZK
 	pvc4 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-4", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef})
@@ -172,6 +180,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	}
 
 	t.Run("Bug manifests under stale reads", func(t *testing.T) {
+		eb.WithMaxDepth(2)
 		eb.ExploreStaleStates() // Enable staleness exploration
 		eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{
 			"ZookeeperCluster": 3,

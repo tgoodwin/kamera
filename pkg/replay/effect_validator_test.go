@@ -149,7 +149,7 @@ func TestResourceConflictValidator_Delete(t *testing.T) {
 	_ = validator.ValidateOperation(event.CREATE, obj)
 
 	// Test case 1: Delete existing object (should succeed)
-	err := validator.ValidateOperation(event.DELETE, obj)
+	err := validator.ValidateOperation(event.MARK_FOR_DELETION, obj)
 	assert.NoError(t, err, "Delete should succeed for existing object")
 
 	// Verify the object was removed from tracking
@@ -157,7 +157,7 @@ func TestResourceConflictValidator_Delete(t *testing.T) {
 	assert.True(t, apierrors.IsNotFound(err), "Object should be removed after delete")
 
 	// Test case 2: Delete non-existent object (should fail with NotFound)
-	err = validator.ValidateOperation(event.DELETE, obj)
+	err = validator.ValidateOperation(event.MARK_FOR_DELETION, obj)
 	assert.Error(t, err, "Delete should fail for non-existent object")
 	assert.True(t, apierrors.IsNotFound(err), "Error should be NotFound")
 }

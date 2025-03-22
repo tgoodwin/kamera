@@ -107,3 +107,23 @@ func ConvertToUnstructured(obj client.Object) (*unstructured.Unstructured, error
 	unstructuredObj := &unstructured.Unstructured{Object: objMap}
 	return unstructuredObj, nil
 }
+
+func GetNext[T any](slice []T, mode string) (T, []T, error) {
+	var zeroValue T
+	if len(slice) == 0 {
+		return zeroValue, slice, fmt.Errorf("slice is empty")
+	}
+
+	switch mode {
+	case "stack":
+		// LIFO: Pop the last element
+		element := slice[len(slice)-1]
+		return element, slice[:len(slice)-1], nil
+	case "queue":
+		// FIFO: Pop the first element
+		element := slice[0]
+		return element, slice[1:], nil
+	default:
+		return zeroValue, slice, fmt.Errorf("invalid mode: %s", mode)
+	}
+}

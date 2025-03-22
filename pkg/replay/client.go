@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -74,6 +76,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
 	if frame, err := c.GetCacheFrame(frameID); err == nil {
 		if frozenObj, ok := frame[kind][key]; ok {
+			// fmt.Printf("frame: %s - got object: %s/%s timestamp %v\n", frameID, kind, key, frozenObj.GetDeletionTimestamp())
 			if err := c.handleEffect(ctx, frozenObj, event.GET, nil); err != nil {
 				return err
 			}
@@ -87,12 +90,13 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 				return err
 			}
 		} else {
+			// fmt.Println("not found!!!", kind, key)
 			return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
 		}
 	} else {
+		fmt.Println("frame NOT found!", frameID)
 		return fmt.Errorf("frame %s not found", frameID)
 	}
-	// c.logOperation(ctx, obj, event.GET)
 	return nil
 }
 
@@ -149,8 +153,18 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
+	// in the replay client, we're not actually interacting with the API server
+	// so the object won't take on a deletion timestamp unless we set it here.
+	ts := v1.Time{Time: time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)}
+	obj.SetDeletionTimestamp(&ts)
+
 	preconditions := ExtractDeletePreconditions(opts)
-	return c.handleEffect(ctx, obj, event.DELETE, &preconditions)
+	return c.handleEffect(ctx, obj, event.MARK_FOR_DELETION, &preconditions)
+}
+
+func (c *Client) Remove(ctx context.Context, obj client.Object) error {
+	// preconditions := ExtractRemovePreconditions(opts)
+	return c.handleEffect(ctx, obj, event.REMOVE, nil)
 }
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
@@ -166,7 +180,7 @@ func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.U
 
 func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...client.DeleteAllOfOption) error {
 	preconditions := ExtractDeleteAllOfPreconditions(opts)
-	return c.handleEffect(ctx, obj, event.DELETE, &preconditions)
+	return c.handleEffect(ctx, obj, event.MARK_FOR_DELETION, &preconditions)
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {

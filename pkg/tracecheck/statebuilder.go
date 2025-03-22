@@ -73,9 +73,10 @@ func (b *StateEventBuilder) AddStateEvent(kind, sleeveObjectID string, obj *unst
 	// Create state event
 	stateEvent := StateEvent{
 		ReconcileID: reconcileID,
-		Timestamp:   timeStr,
-		Effect:      effect,
-		Sequence:    b.sequence,
+		// ControllerID: controllerID,
+		Timestamp: timeStr,
+		Effect:    effect,
+		Sequence:  b.sequence,
 	}
 
 	b.events = append(b.events, stateEvent)

@@ -153,7 +153,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 		obj.SetLabels(origLabels)
 		return err
 	}
-	c.LogOperation(ctx, obj, event.DELETE)
+	c.LogOperation(ctx, obj, event.MARK_FOR_DELETION)
 	return nil
 }
 
@@ -166,7 +166,7 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 		obj.SetLabels(origLabels)
 		return err
 	}
-	c.LogOperation(ctx, obj, event.DELETE)
+	c.LogOperation(ctx, obj, event.MARK_FOR_DELETION)
 	return nil
 }
 
@@ -215,8 +215,6 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	currLabels := obj.GetLabels()
-
-	tag.EnsureSleeveFinalizer(obj)
 	// generate a label to the object to associate it with the change event
 	tag.LabelChange(obj)
 	// make a copy of the object before we propagate labels

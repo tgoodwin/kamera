@@ -69,6 +69,12 @@ func (s *StateSnapshot) ObserveAt(ks KindSequences) ObjectVersions {
 	return ss.contents
 }
 
+func (s *StateSnapshot) FixAt(ks KindSequences) StateSnapshot {
+	fixedView := s.ObserveAt(ks)
+	ss := NewStateSnapshot(fixedView, ks, s.stateEvents)
+	return ss
+}
+
 func (s *StateSnapshot) Debug() {
 	fmt.Println("State events:")
 	for _, e := range s.stateEvents {

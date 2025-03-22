@@ -54,7 +54,7 @@ func CreateZookeeperObject(name, namespace, uid string, size int64, deletionTime
 }
 
 // CreatePVCObject creates a PVC unstructured object
-func CreatePVCObject(name, namespace, uid string, zkName string, ownerRef []metav1.OwnerReference) *unstructured.Unstructured {
+func CreatePVCObject(name, namespace, uid string, zkName string, ownerRef []metav1.OwnerReference, deletionTimestamp *metav1.Time) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "",
@@ -73,6 +73,7 @@ func CreatePVCObject(name, namespace, uid string, zkName string, ownerRef []meta
 	if ownerRef != nil {
 		obj.SetOwnerReferences(ownerRef)
 	}
+	obj.SetDeletionTimestamp(deletionTimestamp)
 
 	_ = unstructured.SetNestedField(obj.Object, "10Gi", "spec", "resources", "requests", "storage")
 	_ = unstructured.SetNestedField(obj.Object, "standard", "spec", "storageClassName")
@@ -117,27 +118,37 @@ func main() {
 	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.CREATE, "ZookeeperReconciler")
 
 	// 2. PVCs are created for the first ZK
-	pvc1 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-1", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef})
+	pvc1 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-1", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef}, nil)
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1, event.CREATE, "ZookeeperReconciler")
 
-	pvc2 := CreatePVCObject("zk-cluster-pvc-1", "default", "pvc-uid-2", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef})
+	pvc2 := CreatePVCObject("zk-cluster-pvc-1", "default", "pvc-uid-2", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef}, nil)
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-2", pvc2, event.CREATE, "ZookeeperReconciler")
 
-	pvc3 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-3", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef})
+	pvc3 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-3", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef}, nil)
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", pvc3, event.CREATE, "ZookeeperReconciler")
 
 	// 3. First ZK is marked for deletion
 	deletionTime := metav1.NewTime(time.Now())
 	zk1WithDeletion := CreateZookeeperObject("zk-cluster", "default", "zk-old-uid", 3, &deletionTime)
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.UPDATE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.MARK_FOR_DELETION, "ZookeeperReconciler")
 
-	// 4. PVCs are deleted during deletion process
-	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1, event.DELETE, "ZookeeperReconciler")
-	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-2", pvc2, event.DELETE, "ZookeeperReconciler")
-	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", pvc3, event.DELETE, "ZookeeperReconciler")
+	// 4. As a result, PVCs are marked for deletion
+	deletionTime = metav1.NewTime(time.Now())
+	pvc1d := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-1", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef}, &deletionTime)
+	pvc2d := CreatePVCObject("zk-cluster-pvc-1", "default", "pvc-uid-2", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef}, &deletionTime)
+	pvc3d := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-3", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef}, &deletionTime)
 
-	// 5. First ZK is fully deleted
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.DELETE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1d, event.MARK_FOR_DELETION, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-2", pvc2d, event.MARK_FOR_DELETION, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", pvc3d, event.MARK_FOR_DELETION, "ZookeeperReconciler")
+
+	// 5. PVCs are fully removed from cluster state (deleted)
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-1", pvc1d, event.REMOVE, "CleanupReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-2", pvc2d, event.REMOVE, "CleanupReconciler")
+	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", pvc3d, event.REMOVE, "CleanupReconciler")
+
+	// 6. First ZK is fully deleted
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.REMOVE, "CleanupReconciler")
 
 	// 6. New ZK with same name but different UID is created
 	zk2 := CreateZookeeperObject("zk-cluster", "default", "zk-new-uid", 3, nil)
@@ -150,19 +161,17 @@ func main() {
 	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-new-uid", zk2, event.CREATE, "ZookeeperReconciler")
 
 	// 7. New PVCs are created for the new ZK
-	pvc4 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-4", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef})
+	pvc4 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-4", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef}, nil)
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-4", pvc4, event.CREATE, "ZookeeperReconciler")
 
-	pvc5 := CreatePVCObject("zk-cluster-pvc-1", "default", "pvc-uid-5", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef})
+	pvc5 := CreatePVCObject("zk-cluster-pvc-1", "default", "pvc-uid-5", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef}, nil)
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-5", pvc5, event.CREATE, "ZookeeperReconciler")
 
-	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef})
+	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef}, nil)
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
 
-	// TODO configure staleness depth
-	eb.ExploreStaleStates() // Enable staleness exploration
-	// configure stale view depth per kind
-	eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{"ZookeeperCluster": *stalenessDepth})
+	// eb.ExploreStaleStates() // Enable staleness exploration
+	// eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{"ZookeeperCluster": *stalenessDepth})
 	eb.WithMaxDepth(*searchDepth) // tuned this experimentally
 
 	explorer, err := eb.Build("standalone")
@@ -172,6 +181,13 @@ func main() {
 
 	// Build the state events
 	initialState := stateBuilder.Build()
+	initialState.Contents.Debug()
+
+	debugState := initialState.Contents.ObserveAt(
+		tracecheck.KindSequences{"ZookeeperCluster": 7},
+	)
+	fmt.Println("debug state:")
+	debugState.Summarize()
 	initialState.PendingReconciles = []tracecheck.PendingReconcile{
 		{
 			ReconcilerID: "ZookeeperReconciler",
@@ -184,7 +200,9 @@ func main() {
 		},
 	}
 
-	initialState.Contents.Debug()
+	initialState.Contents = initialState.Contents.FixAt(
+		tracecheck.KindSequences{"ZookeeperCluster": 7},
+	)
 
 	// Set up a test logger
 	// logger := zap.New(zap.UseDevMode(true))

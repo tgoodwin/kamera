@@ -76,6 +76,8 @@ type manager struct {
 	effectRKeys map[string]util.Set[snapshot.ResourceKey]
 	effectIKeys map[string]util.Set[snapshot.IdentityKey]
 
+	keysMarkedForDeletion map[string]util.Set[snapshot.IdentityKey]
+
 	mu sync.RWMutex
 }
 
@@ -124,6 +126,12 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 	// publish the object versionHash
 	versionHash := m.Publish(u)
+	if opType == event.MARK_FOR_DELETION {
+		// inspect the object to see if it has a deletion timestamp
+		deletionTS := u.GetDeletionTimestamp()
+		shortHash := util.ShortenHash(versionHash.Value)
+		fmt.Printf("recording mark for deletion effect: name=%s, hash=%s, deletionTS=%v\n", obj.GetName(), shortHash, deletionTS)
+	}
 
 	// now manifest an event and record it as an effect
 	reffects, ok := m.effects[frameID]
@@ -250,7 +258,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		}
 		// No need to change tracking state for UPDATE/PATCH
 
-	case event.DELETE:
+	case event.MARK_FOR_DELETION:
 		// need to handle cases where:
 		// 1. no precondition, rkey does not exist (error)
 		// 2. no precondition, rkey exists (delete)
@@ -298,6 +306,10 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 			rKeys[rKey] = struct{}{}
 		}
 		// Existing resource just gets updated, no change to tracking state
+
+	case event.REMOVE:
+		// need to ensure the object being removed is already marked for deletion
+		// TODO remove tracking rKeys and iKeys here...
 	}
 
 	return nil

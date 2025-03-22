@@ -7,6 +7,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,14 +45,25 @@ type reconcileImpl struct {
 }
 
 func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
-	// frameID := util.UUID()
-	// logger = log.FromContext(ctx).WithValues("reconciler", r.Name, "frameID", frameID)
-	// ctx = replay.WithFrameID(ctx, frameID)
 	frameID := replay.FrameIDFromContext(ctx)
 
 	// insert a "frame" to hold the readset data ahead of the reconcile
-	r.InsertCacheFrame(frameID, r.toFrameData(observableState))
 	frameData := r.toFrameData(observableState)
+	r.InsertCacheFrame(frameID, frameData)
+	if r.Name == "CleanupReconciler" {
+		fmt.Printf("frame data for frameID: %s\n", frameID)
+		observableState.Summarize()
+		for kind, objs := range frameData {
+			for nn, obj := range objs {
+				fmt.Printf("\tkind: %s, nn: %s, deleteTS %v\n", kind, nn, obj.GetDeletionTimestamp())
+				if nn.Name == req.Name && nn.Namespace == req.Namespace {
+					fmt.Printf("\tfound matching object: %s/%s\n", kind, nn)
+					// insert the Kind into the context
+					ctx = context.WithValue(ctx, tag.CleanupKindKey{}, kind)
+				}
+			}
+		}
+	}
 
 	if logger.V(2).Enabled() {
 		logger.V(2).Info("frame data for frameID: %s\n", frameID)
@@ -77,7 +89,10 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 
 	// add the logger back to the context
 	ctx = log.IntoContext(ctx, logger)
-
+	kind, ok := ctx.Value(tag.CleanupKindKey{}).(string)
+	if ok {
+		fmt.Println("HEY reconciling for cleanup kind:", kind)
+	}
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
@@ -144,7 +159,6 @@ func (r *reconcileImpl) inferReconcileRequest(readset ObjectVersions) (reconcile
 
 func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
 	out := make(replay.CacheFrame)
-
 	for key, hash := range ov {
 		kind := key.IdentityKey.Kind
 		if _, ok := out[kind]; !ok {

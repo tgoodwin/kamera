@@ -8,6 +8,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+type CleanupKindKey struct{}
+
 const (
 	// set by the webhook only
 	TraceyWebhookLabel = "tracey-uid"

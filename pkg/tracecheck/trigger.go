@@ -6,6 +6,7 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -89,6 +90,22 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 		// check to ensure the object has a namespaced name
 		if nsName.Name == "" || nsName.Namespace == "" {
 			return nil, fmt.Errorf("resolved object %s has no namespaced name", objKey)
+		}
+
+		if effect.OpType == event.MARK_FOR_DELETION {
+			deletionTS := objectVal.GetDeletionTimestamp()
+			if deletionTS.IsZero() {
+				panic("found object marked for deletion but with no deletion timestamp")
+				return nil, fmt.Errorf("object %s marked for deletion but has no deletion timestamp", nsName)
+			}
+			// queue up the CleanupReconciler to handle the actual removal
+			reconcileKey := fmt.Sprintf("%s:%s:%s", CleanupReconcilerID, nsName.Namespace, nsName.Name)
+			uniqueReconciles[reconcileKey] = PendingReconcile{
+				ReconcilerID: CleanupReconcilerID,
+				Request: reconcile.Request{
+					NamespacedName: nsName,
+				},
+			}
 		}
 
 		// Add primary reconcilers if available

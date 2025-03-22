@@ -168,6 +168,7 @@ func getNext(stackQueue []StateNode, mode string) (StateNode, []StateNode) {
 }
 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
+	fmt.Println("starting!")
 	return e.exploreBFS(ctx, initialState)
 }
 
@@ -218,6 +219,10 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 				panic(fmt.Sprintf("error getting possible views: %s", err))
 			}
 			for _, possibleStateView := range possibleViews {
+				if pendingReconcile.ReconcilerID == "CleanupReconciler" {
+					fmt.Println("cleanup controller")
+					possibleStateView.Contents.Debug()
+				}
 				// for each view, create a new branch in exploration
 				newState, err := e.takeReconcileStep(ctx, possibleStateView, pendingReconcile)
 				if err != nil {
@@ -300,8 +305,10 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	maps.Copy(prevState, state.Objects())
 
 	changeOV := reconcileResult.Changes.ObjectVersions
+	newStateEvents := slices.Clone(state.Contents.stateEvents)
 	for _, effect := range effects {
-		if effect.OpType == event.CREATE {
+		switch effect.OpType {
+		case event.CREATE:
 			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); ok {
 				// the effect validation mechanism should prevent a create effect from going through
 				// if an object with the same kind/namespace/name already exists, so panic if it does happen
@@ -310,8 +317,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 				// key not in state as expected, add it
 				prevState[effect.Key] = changeOV[effect.Key]
 			}
-		}
-		if effect.OpType == event.UPDATE || effect.OpType == event.PATCH {
+		case event.UPDATE, event.PATCH:
 			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !ok {
 				// it is possible that a stale read will cause a controller to update an object
 				// that no longer exists in the global state. The effect validation mechanism
@@ -320,13 +326,13 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.Key))
 			}
 			prevState[effect.Key] = changeOV[effect.Key]
-		}
 
 		// need to determine how to update state based on preconditions
-		if effect.OpType == event.DELETE {
+		case event.MARK_FOR_DELETION:
 			if _, ok := prevState[effect.Key]; !ok {
-				_, rok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey)
-				if !rok {
+				if _, nsNameExists := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !nsNameExists {
+					// We should never get here (effect validation should fail if there is no object matching the namespace/name in the state)
+					// but if we do, we should panic because something is wrong.
 					fmt.Println("warning: deleted key absent in state - ", effect.Key)
 					fmt.Println("frameID: ", frameID)
 					fmt.Println("true state:")
@@ -340,6 +346,8 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 					panic("deleted key is not present in prev state. effect validation should have prevented this")
 				}
 			}
+			// the delete effect is valid, so we should add it to the state
+			prevState[effect.Key] = changeOV[effect.Key]
 			// TODO when properly implementing preconditions, test with this:
 			// "go run examples/zookeeper/cmd/main.go --search-depth 2"
 			// and then uncomment the code below
@@ -355,15 +363,23 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			// 	fmt.Println(k)
 			// }
 			// panic("deletion effect")
+			// delete(prevState, effect.Key)
+
+		case event.REMOVE:
+			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !ok {
+				fmt.Println("warning: removed key absent in state - ", effect.Key)
+				fmt.Println("frameID: ", frameID)
+				panic("removed key is not present in prev state. effect validation should have prevented this")
+				continue
+			}
+			fmt.Println("removing object from state", effect.Key)
 			delete(prevState, effect.Key)
+		default:
+			panic("unknown effect type")
 		}
 
 		// increment resourceversion for the kind
 		newSequences[effect.Key.IdentityKey.Kind] += 1
-	}
-
-	newStateEvents := slices.Clone(state.Contents.stateEvents)
-	for _, effect := range effects {
 		kind := effect.Key.IdentityKey.Kind
 		stateEvent := StateEvent{
 			ReconcileID: reconcileResult.FrameID,
@@ -374,6 +390,20 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		}
 		newStateEvents = append(newStateEvents, stateEvent)
 	}
+
+	// // newStateEvents := slices.Clone(state.Contents.stateEvents)
+	// for _, effect := range effects {
+	// 	kind := effect.Key.IdentityKey.Kind
+	// 	fmt.Println("kind:", kind)
+	// 	stateEvent := StateEvent{
+	// 		ReconcileID: reconcileResult.FrameID,
+	// 		Sequence:    newSequences[kind],
+	// 		Effect:      effect,
+	// 		// TODO handle time info
+	// 		Timestamp: "",
+	// 	}
+	// 	newStateEvents = append(newStateEvents, stateEvent)
+	// }
 
 	// get the controllers that depend on the objects that were changed
 	// and add them to the pending reconciles list. n.b. this may potentially
@@ -422,16 +452,6 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 }
 
 func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
-	// triggered := make(util.Set[string])
-	// for objKey := range changes {
-	// 	// get the controllers that depend on this object
-	// 	triggeredForKind := e.dependencies[objKey.Kind]
-	// 	triggered = triggered.Union(triggeredForKind)
-	// }
-	// // convert the set to a list that is sorted
-	// triggeredList := triggered.List()
-	// // sort the list so that we can explore the triggered controllers in a deterministic order
-	// sort.Strings(triggeredList)
 	return e.triggerManager.MustGetTriggered(changes)
 }
 

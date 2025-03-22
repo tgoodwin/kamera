@@ -35,7 +35,7 @@ func TestAssignResourceVersions(t *testing.T) {
 				},
 				{
 					Timestamp: "2023-01-01T00:00:03Z",
-					Effect:    effect{OpType: event.DELETE},
+					Effect:    effect{OpType: event.MARK_FOR_DELETION},
 				},
 			},
 			expected: []int64{2, 3, 4},

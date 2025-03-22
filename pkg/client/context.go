@@ -200,7 +200,7 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 		tag.AddSleeveObjectID(obj)
 	}
 
-	if op == event.DELETE {
+	if op == event.MARK_FOR_DELETION {
 		tag.AddDeletionID(obj)
 	}
 
