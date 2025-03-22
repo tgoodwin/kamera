@@ -37,11 +37,12 @@ type EffectContextManager interface {
 }
 
 type ExploreConfig struct {
-	MaxDepth       int
-	StalenessDepth int
+	MaxDepth     int
+	useStaleness int
 
 	mode string
 
+	// per-kind staleness config for each reconciler
 	KindBoundsPerReconciler map[string]KindBounds
 }
 
@@ -160,16 +161,17 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
-func getNext(stackQueue []StateNode, mode string) (StateNode, []StateNode) {
-	if mode == "stack" {
+func (e *Explorer) getNext(stackQueue []StateNode) (StateNode, []StateNode) {
+	if e.config.mode == "stack" {
 		return stackQueue[len(stackQueue)-1], stackQueue[:len(stackQueue)-1]
-	} else if mode == "queue" {
+	} else if e.config.mode == "queue" {
 		return stackQueue[0], stackQueue[1:]
 	}
 	panic("Invalid mode")
 }
 
-func addStateToExplore(stackQueue []StateNode, state StateNode, mode string) []StateNode {
+func (e *Explorer) addStateToExplore(stackQueue []StateNode, state StateNode) []StateNode {
+	mode := e.config.mode
 	if mode == "stack" {
 		// need to prepend to the front
 		return append([]StateNode{state}, stackQueue...)
@@ -184,10 +186,10 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	e.config.mode = "stack"
 
-	return e.explore(ctx, initialState, "stack")
+	return e.explore(ctx, initialState)
 }
 
-func (e *Explorer) explore(ctx context.Context, initialState StateNode, mode string) *Result {
+func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result {
 	if e.config.MaxDepth == 0 {
 		e.config.MaxDepth = DefaultMaxDepth
 	}
@@ -212,7 +214,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode, mode str
 	var currentState StateNode
 
 	for len(queue) > 0 {
-		currentState, queue = getNext(queue, mode)
+		currentState, queue = e.getNext(queue)
 		stateKey := serializeState(currentState)
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
@@ -226,13 +228,22 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode, mode str
 		if len(currentState.PendingReconciles) == 0 {
 			fmt.Println("DONE: converged state")
 			seenConvergedStates[stateKey] = currentState
-			// break
-			queue = []StateNode{}
+			continue
+		}
+
+		var toProcess []PendingReconcile
+		// if we are in stack mode, only process the first pending controller in the list
+		// as the rest of the pendingReconciles will be inherited by the child state
+		if e.config.mode == "stack" {
+			toProcess = currentState.PendingReconciles[:1]
+		} else {
+			// if we are in queue mode, process all pending reconciles before moving to the next level
+			toProcess = currentState.PendingReconciles
 		}
 
 		// Each controller in the pending reconciles list is a potential branch point
-		// from the current state. We explore each pending reconcile in a breadth-first manner.
-		for _, pendingReconcile := range currentState.PendingReconciles {
+		// from the current state.
+		for _, pendingReconcile := range toProcess {
 			possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID)
 			if err != nil {
 				panic(fmt.Sprintf("error getting possible views: %s", err))
@@ -256,7 +267,6 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode, mode str
 
 				newState.depth = currentState.depth + 1
 				if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
-					// logger.Info("\rexplore reached depth", "depth", newState.depth)
 					elapsed := time.Since(depthStart)
 					fmt.Printf("Explore reached depth %d, elapsed time: %s\n", newState.depth, elapsed)
 					depthStart = time.Now()
@@ -265,7 +275,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode, mode str
 				if newState.depth > e.config.MaxDepth {
 					result.AbortedPaths += 1
 				} else {
-					queue = addStateToExplore(queue, newState, mode)
+					queue = e.addStateToExplore(queue, newState)
 				}
 			}
 		}
@@ -395,7 +405,6 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 				fmt.Println("warning: removed key absent in state - ", effect.Key)
 				fmt.Println("frameID: ", frameID)
 				panic("removed key is not present in prev state. effect validation should have prevented this")
-				continue
 			}
 			fmt.Println("removing object from state", effect.Key)
 			delete(prevState, effect.Key)
@@ -415,20 +424,6 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		}
 		newStateEvents = append(newStateEvents, stateEvent)
 	}
-
-	// // newStateEvents := slices.Clone(state.Contents.stateEvents)
-	// for _, effect := range effects {
-	// 	kind := effect.Key.IdentityKey.Kind
-	// 	fmt.Println("kind:", kind)
-	// 	stateEvent := StateEvent{
-	// 		ReconcileID: reconcileResult.FrameID,
-	// 		Sequence:    newSequences[kind],
-	// 		Effect:      effect,
-	// 		// TODO handle time info
-	// 		Timestamp: "",
-	// 	}
-	// 	newStateEvents = append(newStateEvents, stateEvent)
-	// }
 
 	// get the controllers that depend on the objects that were changed
 	// and add them to the pending reconciles list. n.b. this may potentially
@@ -515,7 +510,7 @@ func serializeState(state StateNode) string {
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string) ([]StateNode, error) {
 	// TODO update to use some staleness depth configuration
-	if e.config.StalenessDepth == 0 {
+	if e.config.useStaleness == 0 {
 		return []StateNode{currState}, nil
 	}
 

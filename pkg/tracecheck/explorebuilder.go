@@ -331,7 +331,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 
 		config: &ExploreConfig{
 			MaxDepth:                b.maxDepth,
-			StalenessDepth:          b.exploreStaleStates,
+			useStaleness:            b.exploreStaleStates,
 			KindBoundsPerReconciler: b.kindBounds,
 		},
 
