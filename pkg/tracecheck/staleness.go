@@ -72,7 +72,7 @@ func (s *StateSnapshot) ObserveAt(ks KindSequences) ObjectVersions {
 func (s *StateSnapshot) Debug() {
 	fmt.Println("State events:")
 	for _, e := range s.stateEvents {
-		fmt.Printf("%s:%s %s %d, %s\n", e.ControllerID, e.Effect.OpType, e.Kind, e.Sequence, util.ShortenHash(e.Effect.Version.Value))
+		fmt.Printf("%s %s:%s %d, %s\n", e.Effect.OpType, e.Effect.Key.IdentityKey.Kind, e.Effect.Key.ResourceKey.Name, e.Sequence, util.ShortenHash(e.Effect.Version.Value))
 	}
 	fmt.Println("contents:")
 	for key, val := range s.contents {
@@ -372,6 +372,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	KindSequences := make(KindSequences)
 	stateEvents := make([]StateEvent, 0)
 
+	// track which objects were marked for deletion
 	deletions := make(map[snapshot.CompositeKey]bool)
 
 	for _, e := range events {
@@ -379,22 +380,37 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 		if !event.IsWriteOp(e.Effect.OpType) {
 			continue
 		}
-		if _, wasDeleted := deletions[e.Effect.Key]; wasDeleted {
-			// if the object was deleted, we don't need to apply any more changes
+		iKey := e.Effect.Key.IdentityKey
+		if _, wasMarkedForDeletion := deletions[e.Effect.Key]; wasMarkedForDeletion {
+			// if the object was deleted, don't need to apply any more changes.
 			// TODO its unclear what to do when we observe update events after
 			// a deletion event. For now, ignore them.
-			continue
+			if e.Effect.OpType != event.REMOVE {
+				if e.Effect.OpType == event.MARK_FOR_DELETION {
+					fmt.Println("object being marked for deletion again - maybe its not being REMOVED", iKey)
+					continue
+				}
+				fmt.Println("warning: encountered update after entity was marked for deletion (possibly finalizers, which are ok)", iKey)
+				continue
+			}
 		}
-		iKey := e.Effect.Key.IdentityKey
-		if e.Effect.OpType == event.DELETE {
-			delete(contents, e.Effect.Key)
+
+		switch e.Effect.OpType {
+		case event.MARK_FOR_DELETION:
 			deletions[e.Effect.Key] = true
-		} else {
+			version := e.Effect.Version
+			contents[e.Effect.Key] = version
+		case event.REMOVE:
+			if _, wasMarkedForDeletion := deletions[e.Effect.Key]; !wasMarkedForDeletion {
+				panic("attempting to remove an object that was not marked for deletion first")
+			}
+			delete(contents, e.Effect.Key)
+		case event.CREATE, event.UPDATE:
 			version := e.Effect.Version
 			contents[e.Effect.Key] = version
 		}
-		KindSequences[iKey.Kind] = e.Sequence
 
+		KindSequences[iKey.Kind] = e.Sequence
 		stateEvents = append(stateEvents, e)
 	}
 	out := NewStateSnapshot(contents, KindSequences, stateEvents)
