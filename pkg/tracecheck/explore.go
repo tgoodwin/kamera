@@ -200,28 +200,48 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 	depthStart := start
 
 	seenDepths := make(map[int]bool)
-	queue := []StateNode{initialState}
+
+	var queue []StateNode
 
 	// executionPathsToState is a map of stateKey -> ExecutionHistory
 	// because we want to track which states we've visited but
 	// also want to track all the ways a given state can be reached
 	executionPathsToState := make(map[string][]ExecutionHistory)
 
+	// we dont skip over seen states because we want to track all the ways a state can be reached
+	// but we do track the states we've seen
+	seenStates := make(map[string]bool)
+
+	// we do track the seen converged states so we can attribute multiple execution paths to them
 	seenConvergedStates := make(map[string]StateNode)
 
 	// var currentState StateNode
 	var currentState StateNode
 
+	// Expand the initial state if it has multiple pending reconciles
+	if len(initialState.PendingReconciles) > 1 {
+		initialStateKey := initialState.Hash()
+		seenStates[initialStateKey] = true
+
+		expandedStates := expandStateByReconcileOrder(initialState)
+		for _, expandedState := range expandedStates {
+			queue = e.addStateToExplore(queue, expandedState)
+		}
+	} else {
+		queue = append(queue, initialState)
+	}
+
 	for len(queue) > 0 {
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
+
+		seenStates[stateKey] = true
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
 			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 		} else {
 			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
-			// continue
 		}
 
 		if len(currentState.PendingReconciles) == 0 {
@@ -230,51 +250,78 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 			continue
 		}
 
-		var toProcess []PendingReconcile
-		// if we are in stack mode, only process the first pending controller in the list
-		// as the rest of the pendingReconciles will be inherited by the child state
-		if e.config.mode == "stack" {
-			toProcess = currentState.PendingReconciles[:1]
-		} else {
-			// if we are in queue mode, process all pending reconciles before moving to the next level
-			toProcess = currentState.PendingReconciles
-		}
+		// if len(currentState.PendingReconciles) > 1 {
+		// 	// multiple pending reconciles in the state. Each one is a potential branch point
+		// 	// from the current state so we need to explore each one.
+		// 	alternativeOrderings := expandStateByReconcileOrder(currentState)
+
+		// 	// for each view, create a new branch in exploration
+		// 	for _, altState := range alternativeOrderings {
+		// 		// adds to either front or back of queue based on search mode
+		// 		queue = e.addStateToExplore(queue, altState)
+		// 	}
+		// 	// if we've expanded the state
+		// }
+
+		// process the first one
+		pendingReconcile := currentState.PendingReconciles[0]
+
+		// var toProcess []PendingReconcile
+		// // if we are in stack mode, only process the first pending controller in the list
+		// // as the rest of the pendingReconciles will be inherited by the child state
+		// if e.config.mode == "stack" {
+		// 	toProcess = currentState.PendingReconciles[:1]
+		// } else {
+		// 	// if we are in queue mode, process all pending reconciles before moving to the next level
+		// 	toProcess = currentState.PendingReconciles
+		// }
 
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state.
-		for _, pendingReconcile := range toProcess {
-			possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID)
+		possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID)
+		if err != nil {
+			panic(fmt.Sprintf("error getting possible views: %s", err))
+		}
+		reconcilerID := pendingReconcile.ReconcilerID
+		for _, possibleStateView := range possibleViews {
+			fmt.Printf("### reconciling %s - BEFORE state (%s):\n", reconcilerID, possibleStateView.ID)
+			fmt.Println("reconcile request:", pendingReconcile.Request)
+			possibleStateView.Contents.DumpContents()
+			// for each view, create a new branch in exploration
+			newState, err := e.takeReconcileStep(ctx, possibleStateView, pendingReconcile)
 			if err != nil {
-				panic(fmt.Sprintf("error getting possible views: %s", err))
+				// if we encounter an error during reconciliation, just abandon this branch
+				fmt.Println("WARNING: error reconciling", err)
+				continue
 			}
-			reconcilerID := pendingReconcile.ReconcilerID
-			for _, possibleStateView := range possibleViews {
-				fmt.Printf("### reconciling %s - BEFORE state (%s):\n", reconcilerID, possibleStateView.ID)
-				fmt.Println("reconcile request:", pendingReconcile.Request)
-				possibleStateView.Contents.DumpContents()
-				// for each view, create a new branch in exploration
-				newState, err := e.takeReconcileStep(ctx, possibleStateView, pendingReconcile)
-				if err != nil {
-					// if we encounter an error during reconciliation, just abandon this branch
-					fmt.Println("WARNING: error reconciling", err)
-					continue
-				}
-				fmt.Printf("### reconciling %s - AFTER state (%s):\n", reconcilerID, newState.ID)
-				newState.Contents.DumpContents()
-				newState.DumpPending()
-				fmt.Println("")
+			fmt.Printf("### reconciling %s - AFTER state (%s):\n", reconcilerID, newState.ID)
+			newState.Contents.DumpContents()
+			newState.DumpPending()
+			fmt.Println("")
 
-				newState.depth = currentState.depth + 1
-				if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
-					elapsed := time.Since(depthStart)
-					fmt.Printf("Explore reached depth %d, elapsed time: %s\n", newState.depth, elapsed)
-					depthStart = time.Now()
-					seenDepths[newState.depth] = true
-				}
-				if newState.depth > e.config.MaxDepth {
-					result.AbortedPaths += 1
+			newState.depth = currentState.depth + 1
+			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
+				elapsed := time.Since(depthStart)
+				fmt.Printf("Explore reached depth %d, elapsed time: %s\n", newState.depth, elapsed)
+				depthStart = time.Now()
+				seenDepths[newState.depth] = true
+			}
+			if newState.depth > e.config.MaxDepth {
+				result.AbortedPaths += 1
+			} else {
+				// enqueue the new state to explore
+				if _, seen := seenStates[newState.Hash()]; !seen {
+					// if this is a new state with multiple pending reconciles, expand it
+					if len(newState.PendingReconciles) > 1 {
+						expandedStates := expandStateByReconcileOrder(newState)
+						for _, expandedState := range expandedStates {
+							queue = e.addStateToExplore(queue, expandedState)
+						}
+					} else {
+						queue = e.addStateToExplore(queue, newState)
+					}
 				} else {
-					queue = e.addStateToExplore(queue, newState)
+					fmt.Println("seen state", newState.ID)
 				}
 			}
 		}
@@ -449,17 +496,18 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 // TODO figure out if we need to append to the front if using DFS
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
 	// lo.Union does not change the order of elements relatively, but it does remove duplicates
-	if e.config.mode == "stack" {
+	switch e.config.mode {
+	case "stack":
 		// In DFS, we want to explore newly triggered reconciles first (depth-first)
 		// So we put triggered at the beginning of the list
 		// Remove duplicates while preserving order
-		result := lo.Union(triggered, currPending)
-		return result
-	} else { // BFS mode
+		return lo.Union(triggered, currPending)
+	case "queue":
 		// In BFS, we want to explore existing pending reconciles before newly triggered ones
 		// So we keep the original order - first finish currPending, then do triggered
-		result := lo.Union(currPending, triggered)
-		return result
+		return lo.Union(currPending, triggered)
+	default:
+		panic("invalid mode")
 	}
 }
 
