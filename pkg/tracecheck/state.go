@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -197,6 +198,19 @@ func (sn StateNode) SummarizeFromRoot() {
 	sn.Summarize()
 }
 
+func (sn StateNode) Clone() StateNode {
+	return StateNode{
+		ID:                sn.ID,
+		Contents:          sn.Contents, // assuming Contents is immutable or has copy-on-write semantics
+		PendingReconciles: slices.Clone(sn.PendingReconciles),
+		parent:            sn.parent,
+		action:            sn.action,
+		ExecutionHistory:  slices.Clone(sn.ExecutionHistory),
+		depth:             sn.depth,
+		DivergencePoint:   sn.DivergencePoint,
+	}
+}
+
 func (sn StateNode) Serialize() string {
 	var objectPairs = make([]string, len(sn.Objects()))
 	for objKey, version := range sn.Objects() {
@@ -221,4 +235,40 @@ func (sn StateNode) Serialize() string {
 func (sn StateNode) Hash() string {
 	s := sn.Serialize()
 	return util.ShortenHash(s)
+}
+
+// expandStateByReconcileOrder takes a StateNode and returns a slice of new StateNodes,
+// where each new StateNode is a clone of the input but with a different pending reconcile
+// as the first element in its PendingReconciles list.
+func expandStateByReconcileOrder(state StateNode) []StateNode {
+	// If there are no pending reconciles or just one, just return the original state
+	if len(state.PendingReconciles) <= 1 {
+		return []StateNode{state}
+	}
+
+	originalPending := state.PendingReconciles
+	result := make([]StateNode, len(originalPending))
+
+	// For each pending reconcile, create a new StateNode with that reconcile first
+	for i := 0; i < len(originalPending); i++ {
+		// Create a new ordering with this reconcile first
+		alternativeOrder := make([]PendingReconcile, len(originalPending))
+		alternativeOrder[0] = originalPending[i] // Put the ith reconcile first
+
+		// Add the rest in their original order, skipping the one we put first
+		j := 1
+		for k := 0; k < len(originalPending); k++ {
+			if k != i {
+				alternativeOrder[j] = originalPending[k]
+				j++
+			}
+		}
+
+		cloned := state.Clone()
+		cloned.PendingReconciles = alternativeOrder
+		cloned.ID = state.Hash() // Generate a new deterministic ID based on the new ordering
+		result[i] = cloned
+	}
+
+	return result
 }
