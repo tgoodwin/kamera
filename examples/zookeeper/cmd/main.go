@@ -204,6 +204,10 @@ func main() {
 		tracecheck.KindSequences{"ZookeeperCluster": 7},
 	)
 
+	topHash := initialState.Hash()
+	fmt.Println("initial state hash: ", topHash)
+	return
+
 	// Set up a test logger
 	// logger := zap.New(zap.UseDevMode(true))
 	// tracecheck.SetLogger(logger)

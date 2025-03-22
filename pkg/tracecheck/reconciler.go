@@ -50,15 +50,10 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 	// insert a "frame" to hold the readset data ahead of the reconcile
 	frameData := r.toFrameData(observableState)
 	r.InsertCacheFrame(frameID, frameData)
-	if r.Name == "CleanupReconciler" {
-		// fmt.Printf("frame data for frameID: %s\n", frameID)
-		// observableState.Summarize()
+	if r.Name == CleanupReconcilerID {
 		for kind, objs := range frameData {
 			for nn := range objs {
-				// fmt.Printf("\tkind: %s, nn: %s, deleteTS %v\n", kind, nn, obj.GetDeletionTimestamp())
 				if nn.Name == req.Name && nn.Namespace == req.Namespace {
-					// fmt.Printf("\tfound matching object: %s/%s\n", kind, nn)
-					// insert the Kind into the context
 					ctx = context.WithValue(ctx, tag.CleanupKindKey{}, kind)
 				}
 			}

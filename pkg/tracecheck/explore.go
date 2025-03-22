@@ -431,20 +431,20 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
 	newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
 	logger.V(2).WithValues("reconcilerID", pr.ReconcilerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
-	// fmt.Printf("len change effects: %d, new pending reconciles: %s\n", len(effects), newPendingReconciles)
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
 
-	return StateNode{
-		ID:                util.Shorter(util.UUID()),
+	sn := StateNode{
 		Contents:          NewStateSnapshot(prevState, newSequences, newStateEvents),
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,
 
 		ExecutionHistory: append(currHistory, reconcileResult),
-	}, nil
+	}
+	sn.ID = sn.Hash()
+	return sn, nil
 }
 
 // TODO figure out if we need to append to the front if using DFS

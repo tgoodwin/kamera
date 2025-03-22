@@ -129,3 +129,22 @@ func Test_GetUniquePaths(t *testing.T) {
 		t.Errorf("Expected %d, got %d", len(expected), len(unique))
 	}
 }
+
+func TestHash(t *testing.T) {
+	ov := ObjectVersions{
+		snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
+	}
+	sn := StateNode{
+		Contents: StateSnapshot{
+			contents: ov,
+		},
+		PendingReconciles: []PendingReconcile{
+			{ReconcilerID: "controller1"},
+		},
+	}
+	hash := sn.Hash()
+	hash2 := sn.Hash()
+	if hash != hash2 {
+		t.Errorf("Expected %s, got %s", hash, hash2)
+	}
+}

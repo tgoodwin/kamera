@@ -196,3 +196,29 @@ func (sn StateNode) SummarizeFromRoot() {
 	}
 	sn.Summarize()
 }
+
+func (sn StateNode) Serialize() string {
+	var objectPairs = make([]string, len(sn.Objects()))
+	for objKey, version := range sn.Objects() {
+		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objKey.ObjectID, version.Value))
+	}
+	sort.Strings(objectPairs)
+
+	prStrs := make([]string, 0, len(sn.PendingReconciles))
+	for _, pr := range sn.PendingReconciles {
+		prStrs = append(prStrs, pr.String())
+	}
+
+	if len(prStrs) > 1 {
+		sort.Strings(prStrs)
+	}
+
+	objectStr := strings.Join(objectPairs, ",")
+	prStr := strings.Join(prStrs, ",")
+	return fmt.Sprintf("%s|%s", objectStr, prStr)
+}
+
+func (sn StateNode) Hash() string {
+	s := sn.Serialize()
+	return util.ShortenHash(s)
+}
