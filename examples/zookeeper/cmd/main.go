@@ -206,7 +206,6 @@ func main() {
 
 	topHash := initialState.Hash()
 	fmt.Println("initial state hash: ", topHash)
-	return
 
 	// Set up a test logger
 	// logger := zap.New(zap.UseDevMode(true))

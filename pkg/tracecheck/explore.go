@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
@@ -215,7 +214,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 
 	for len(queue) > 0 {
 		currentState, queue = e.getNext(queue)
-		stateKey := serializeState(currentState)
+		stateKey := currentState.Hash()
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
@@ -485,27 +484,6 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 
 func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 	return e.triggerManager.MustGetTriggered(changes)
-}
-
-// serializeState converts a State to a unique string representation for deduplication
-func serializeState(state StateNode) string {
-	var objectPairs []string
-	for objKey, version := range state.Objects() {
-		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objKey.ObjectID, version.Value))
-	}
-	// Sort objectPairs to ensure deterministic order
-	sort.Strings(objectPairs)
-	objectsStr := strings.Join(objectPairs, ",")
-	sortedPendingReconciles := slices.Clone(state.PendingReconciles)
-	sort.Slice(sortedPendingReconciles, func(i, j int) bool {
-		return sortedPendingReconciles[i].ReconcilerID < sortedPendingReconciles[j].ReconcilerID
-	})
-	reconcileStr := lo.Map(sortedPendingReconciles, func(pr PendingReconcile, _ int) string {
-		return pr.ReconcilerID
-	})
-	reconcilesStr := strings.Join(reconcileStr, ",")
-
-	return fmt.Sprintf("Objects:{%s}|PendingReconciles:{%s}", objectsStr, reconcilesStr)
 }
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string) ([]StateNode, error) {
