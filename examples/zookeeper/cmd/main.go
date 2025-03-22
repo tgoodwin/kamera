@@ -128,7 +128,7 @@ func main() {
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-3", pvc3, event.CREATE, "ZookeeperReconciler")
 
 	// 3. First ZK is marked for deletion
-	deletionTime := metav1.NewTime(time.Now())
+	deletionTime := metav1.NewTime(time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC))
 	zk1WithDeletion := CreateZookeeperObject("zk-cluster", "default", "zk-old-uid", 3, &deletionTime)
 	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.MARK_FOR_DELETION, "ZookeeperReconciler")
 
