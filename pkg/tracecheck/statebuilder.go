@@ -86,6 +86,7 @@ func (b *StateEventBuilder) Build() StateNode {
 	snapshot := replayEventSequenceToState(b.events)
 	pending := []PendingReconcile{}
 	return StateNode{
+		ID:                "TOP",
 		Contents:          *snapshot,
 		PendingReconciles: pending,
 	}

@@ -172,9 +172,10 @@ func (e *Explorer) getNext(stackQueue []StateNode) (StateNode, []StateNode) {
 func (e *Explorer) addStateToExplore(stackQueue []StateNode, state StateNode) []StateNode {
 	mode := e.config.mode
 	if mode == "stack" {
-		// need to prepend to the front
-		return append([]StateNode{state}, stackQueue...)
+		// Add to the end for a stack (matching getNext's pop from end)
+		return append(stackQueue, state)
 	} else if mode == "queue" {
+		// Add to the end for a queue (matching getNext's pop from front)
 		return append(stackQueue, state)
 	}
 	return stackQueue
@@ -212,6 +213,8 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 	// but we do track the states we've seen
 	seenStates := make(map[string]bool)
 
+	seenStatesOrderSensitive := make(map[string]bool)
+
 	// we do track the seen converged states so we can attribute multiple execution paths to them
 	seenConvergedStates := make(map[string]StateNode)
 
@@ -224,6 +227,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 		seenStates[initialStateKey] = true
 
 		expandedStates := expandStateByReconcileOrder(initialState)
+		fmt.Printf("expanded into %d states\n", len(expandedStates))
 		for _, expandedState := range expandedStates {
 			queue = e.addStateToExplore(queue, expandedState)
 		}
@@ -232,14 +236,34 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 	}
 
 	for len(queue) > 0 {
+		fmt.Println("current queue: ", dumpQueue(queue))
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
+
+		// we're gonna proceed to reconcile on the first pending reconcile for this state,
+		// but if there are multiple pending reconciles, we want to see what happens
+		// if we reconciled on each of those first. So, we enqueue copies of this state
+		// with each pending reconcile as the first one before proceeding. We do this FIRST
+		// before taking the reconcile step so that we can explore a branch entirely in a DFS manner.
+		// if we wanted to explore in a BFS manner, we would do this after taking the reconcile step.
+		if !seenStates[stateKey] {
+			if len(currentState.PendingReconciles) > 1 {
+				expandedStates := expandStateByReconcileOrder(currentState)
+				fmt.Printf("expanded state with multiple pending reconciles into %d states\n", len(expandedStates))
+				for _, candidate := range expandedStates {
+					orderHash := candidate.OrderSensitiveHash()
+					if _, seenOrder := seenStatesOrderSensitive[orderHash]; !seenOrder {
+						queue = e.addStateToExplore(queue, candidate)
+						seenStatesOrderSensitive[orderHash] = true
+					}
+				}
+			}
+		}
 
 		seenStates[stateKey] = true
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
-			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
-			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
+			executionPathsToState[stateKey] = []ExecutionHistory{currentState.ExecutionHistory}
 		} else {
 			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 		}
@@ -249,19 +273,6 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 			seenConvergedStates[stateKey] = currentState
 			continue
 		}
-
-		// if len(currentState.PendingReconciles) > 1 {
-		// 	// multiple pending reconciles in the state. Each one is a potential branch point
-		// 	// from the current state so we need to explore each one.
-		// 	alternativeOrderings := expandStateByReconcileOrder(currentState)
-
-		// 	// for each view, create a new branch in exploration
-		// 	for _, altState := range alternativeOrderings {
-		// 		// adds to either front or back of queue based on search mode
-		// 		queue = e.addStateToExplore(queue, altState)
-		// 	}
-		// 	// if we've expanded the state
-		// }
 
 		// process the first one
 		pendingReconcile := currentState.PendingReconciles[0]
@@ -285,8 +296,11 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 		reconcilerID := pendingReconcile.ReconcilerID
 		for _, possibleStateView := range possibleViews {
 			fmt.Printf("### reconciling %s - BEFORE state (%s):\n", reconcilerID, possibleStateView.ID)
-			fmt.Println("reconcile request:", pendingReconcile.Request)
+			fmt.Println("\treconcile request:", pendingReconcile.Request)
+			fmt.Println("\tcurrent queue: ", dumpQueue(queue))
+
 			possibleStateView.Contents.DumpContents()
+			possibleStateView.DumpPending()
 			// for each view, create a new branch in exploration
 			newState, err := e.takeReconcileStep(ctx, possibleStateView, pendingReconcile)
 			if err != nil {
@@ -310,19 +324,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 				result.AbortedPaths += 1
 			} else {
 				// enqueue the new state to explore
-				if _, seen := seenStates[newState.Hash()]; !seen {
-					// if this is a new state with multiple pending reconciles, expand it
-					if len(newState.PendingReconciles) > 1 {
-						expandedStates := expandStateByReconcileOrder(newState)
-						for _, expandedState := range expandedStates {
-							queue = e.addStateToExplore(queue, expandedState)
-						}
-					} else {
-						queue = e.addStateToExplore(queue, newState)
-					}
-				} else {
-					fmt.Println("seen state", newState.ID)
-				}
+				queue = e.addStateToExplore(queue, newState)
 			}
 		}
 	}
@@ -562,4 +564,11 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	})
 
 	return asStateNodes, nil
+}
+
+func dumpQueue(queue []StateNode) []string {
+	queueStr := lo.Map(queue, func(sn StateNode, _ int) string {
+		return sn.ID
+	})
+	return queueStr
 }

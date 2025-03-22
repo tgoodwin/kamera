@@ -211,7 +211,7 @@ func (sn StateNode) Clone() StateNode {
 	}
 }
 
-func (sn StateNode) Serialize() string {
+func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 	var objectPairs = make([]string, len(sn.Objects()))
 	for objKey, version := range sn.Objects() {
 		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objKey.ObjectID, version.Value))
@@ -223,7 +223,8 @@ func (sn StateNode) Serialize() string {
 		prStrs = append(prStrs, pr.String())
 	}
 
-	if len(prStrs) > 1 {
+	// Sort the pending reconciles if we're not order sensitive
+	if !reconcileOrderSensitive && len(prStrs) > 1 {
 		sort.Strings(prStrs)
 	}
 
@@ -232,8 +233,17 @@ func (sn StateNode) Serialize() string {
 	return fmt.Sprintf("%s|%s", objectStr, prStr)
 }
 
+func (sn StateNode) Serialize() string {
+	return sn.serialize(false)
+}
+
 func (sn StateNode) Hash() string {
 	s := sn.Serialize()
+	return util.ShortenHash(s)
+}
+
+func (sn StateNode) OrderSensitiveHash() string {
+	s := sn.serialize(true)
 	return util.ShortenHash(s)
 }
 
@@ -266,7 +276,7 @@ func expandStateByReconcileOrder(state StateNode) []StateNode {
 
 		cloned := state.Clone()
 		cloned.PendingReconciles = alternativeOrder
-		cloned.ID = state.Hash() // Generate a new deterministic ID based on the new ordering
+		cloned.ID = cloned.OrderSensitiveHash() // Generate a new deterministic ID based on the new ordering
 		result[i] = cloned
 	}
 
