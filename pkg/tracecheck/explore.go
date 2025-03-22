@@ -40,6 +40,8 @@ type ExploreConfig struct {
 	MaxDepth       int
 	StalenessDepth int
 
+	mode string
+
 	KindBoundsPerReconciler map[string]KindBounds
 }
 
@@ -179,6 +181,9 @@ func addStateToExplore(stackQueue []StateNode, state StateNode, mode string) []S
 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
 	fmt.Println("starting!")
+
+	e.config.mode = "stack"
+
 	return e.explore(ctx, initialState, "stack")
 }
 
@@ -429,7 +434,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// and add them to the pending reconciles list. n.b. this may potentially
 	// include the controller that was just executed.
 	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
-	newPendingReconciles = getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
+	newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
 	logger.V(2).WithValues("reconcilerID", pr.ReconcilerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
 	// fmt.Printf("len change effects: %d, new pending reconciles: %s\n", len(effects), newPendingReconciles)
 
@@ -448,9 +453,20 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 }
 
 // TODO figure out if we need to append to the front if using DFS
-func getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
-	// Union does not change the order of elements relatively, but it does remove duplicates
-	return lo.Union(currPending, triggered)
+func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
+	// lo.Union does not change the order of elements relatively, but it does remove duplicates
+	if e.config.mode == "stack" {
+		// In DFS, we want to explore newly triggered reconciles first (depth-first)
+		// So we put triggered at the beginning of the list
+		// Remove duplicates while preserving order
+		result := lo.Union(triggered, currPending)
+		return result
+	} else { // BFS mode
+		// In BFS, we want to explore existing pending reconciles before newly triggered ones
+		// So we keep the original order - first finish currPending, then do triggered
+		result := lo.Union(currPending, triggered)
+		return result
+	}
 }
 
 func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions, pr PendingReconcile) (*ReconcileResult, error) {
