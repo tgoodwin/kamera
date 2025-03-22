@@ -75,15 +75,19 @@ func (s *StateSnapshot) FixAt(ks KindSequences) StateSnapshot {
 	return ss
 }
 
+func (s *StateSnapshot) DumpContents() {
+	for key, val := range s.contents {
+		fmt.Println(key, util.ShortenHash(val.Value))
+	}
+}
+
 func (s *StateSnapshot) Debug() {
 	fmt.Println("State events:")
 	for _, e := range s.stateEvents {
 		fmt.Printf("%s %s:%s %d, %s\n", e.Effect.OpType, e.Effect.Key.IdentityKey.Kind, e.Effect.Key.ResourceKey.Name, e.Sequence, util.ShortenHash(e.Effect.Version.Value))
 	}
 	fmt.Println("contents:")
-	for key, val := range s.contents {
-		fmt.Println(key, util.ShortenHash(val.Value))
-	}
+	s.DumpContents()
 	fmt.Println("KindSequences:")
 	for key, value := range s.KindSequences {
 		fmt.Println(key, value)

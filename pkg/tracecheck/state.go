@@ -141,6 +141,7 @@ type ObservableState interface {
 }
 
 type StateNode struct {
+	ID       string
 	Contents StateSnapshot
 	// PendingReconciles is a list of controller IDs that are pending reconciliation.
 	// In our "game tree", they represent branches that we can explore.

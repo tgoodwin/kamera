@@ -24,7 +24,6 @@ func (r *FinalizerReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 	obj := &unstructured.Unstructured{}
 	kind, ok := ctx.Value(tag.CleanupKindKey{}).(string)
 	if !ok {
-		fmt.Println("no kind in context, returning")
 		return reconcile.Result{}, errors.New("no kind in context")
 	}
 	obj.SetKind(kind)

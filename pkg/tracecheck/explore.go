@@ -167,12 +167,22 @@ func getNext(stackQueue []StateNode, mode string) (StateNode, []StateNode) {
 	panic("Invalid mode")
 }
 
-func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
-	fmt.Println("starting!")
-	return e.exploreBFS(ctx, initialState)
+func addStateToExplore(stackQueue []StateNode, state StateNode, mode string) []StateNode {
+	if mode == "stack" {
+		// need to prepend to the front
+		return append([]StateNode{state}, stackQueue...)
+	} else if mode == "queue" {
+		return append(stackQueue, state)
+	}
+	return stackQueue
 }
 
-func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Result {
+func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
+	fmt.Println("starting!")
+	return e.explore(ctx, initialState, "stack")
+}
+
+func (e *Explorer) explore(ctx context.Context, initialState StateNode, mode string) *Result {
 	if e.config.MaxDepth == 0 {
 		e.config.MaxDepth = DefaultMaxDepth
 	}
@@ -194,9 +204,10 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 	seenConvergedStates := make(map[string]StateNode)
 
 	// var currentState StateNode
+	var currentState StateNode
+
 	for len(queue) > 0 {
-		currentState := queue[0]
-		queue = queue[1:]
+		currentState, queue = getNext(queue, mode)
 		stateKey := serializeState(currentState)
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
@@ -208,7 +219,10 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 		}
 
 		if len(currentState.PendingReconciles) == 0 {
+			fmt.Println("DONE: converged state")
 			seenConvergedStates[stateKey] = currentState
+			// break
+			queue = []StateNode{}
 		}
 
 		// Each controller in the pending reconciles list is a potential branch point
@@ -220,14 +234,19 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 			}
 			for _, possibleStateView := range possibleViews {
 				if pendingReconcile.ReconcilerID == "CleanupReconciler" {
-					fmt.Println("cleanup controller")
-					possibleStateView.Contents.Debug()
+					fmt.Println("\nreconciling cleanup controller: before state\n", possibleStateView.ID)
+					possibleStateView.Contents.DumpContents()
 				}
 				// for each view, create a new branch in exploration
 				newState, err := e.takeReconcileStep(ctx, possibleStateView, pendingReconcile)
 				if err != nil {
 					// if we encounter an error during reconciliation, just abandon this branch
+					fmt.Println("WARNING: error reconciling", err)
 					continue
+				}
+				if pendingReconcile.ReconcilerID == "CleanupReconciler" {
+					fmt.Println("\nreconciling cleanup controller: after state\n", newState.ID)
+					newState.Contents.DumpContents()
 				}
 				newState.depth = currentState.depth + 1
 				if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
@@ -240,7 +259,7 @@ func (e *Explorer) exploreBFS(ctx context.Context, initialState StateNode) *Resu
 				if newState.depth > e.config.MaxDepth {
 					result.AbortedPaths += 1
 				} else {
-					queue = append(queue, newState)
+					queue = addStateToExplore(queue, newState, mode)
 				}
 			}
 		}
@@ -417,6 +436,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	currHistory := slices.Clone(state.ExecutionHistory)
 
 	return StateNode{
+		ID:                util.Shorter(util.UUID()),
 		Contents:          NewStateSnapshot(prevState, newSequences, newStateEvents),
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,

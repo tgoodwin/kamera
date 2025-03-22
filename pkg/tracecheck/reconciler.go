@@ -51,13 +51,13 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 	frameData := r.toFrameData(observableState)
 	r.InsertCacheFrame(frameID, frameData)
 	if r.Name == "CleanupReconciler" {
-		fmt.Printf("frame data for frameID: %s\n", frameID)
-		observableState.Summarize()
+		// fmt.Printf("frame data for frameID: %s\n", frameID)
+		// observableState.Summarize()
 		for kind, objs := range frameData {
-			for nn, obj := range objs {
-				fmt.Printf("\tkind: %s, nn: %s, deleteTS %v\n", kind, nn, obj.GetDeletionTimestamp())
+			for nn := range objs {
+				// fmt.Printf("\tkind: %s, nn: %s, deleteTS %v\n", kind, nn, obj.GetDeletionTimestamp())
 				if nn.Name == req.Name && nn.Namespace == req.Namespace {
-					fmt.Printf("\tfound matching object: %s/%s\n", kind, nn)
+					// fmt.Printf("\tfound matching object: %s/%s\n", kind, nn)
 					// insert the Kind into the context
 					ctx = context.WithValue(ctx, tag.CleanupKindKey{}, kind)
 				}
@@ -89,9 +89,9 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 
 	// add the logger back to the context
 	ctx = log.IntoContext(ctx, logger)
-	kind, ok := ctx.Value(tag.CleanupKindKey{}).(string)
+	cleanupKind, ok := ctx.Value(tag.CleanupKindKey{}).(string)
 	if ok {
-		fmt.Println("HEY reconciling for cleanup kind:", kind)
+		fmt.Println("HEY reconciling for cleanup - kind:", cleanupKind)
 	}
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
