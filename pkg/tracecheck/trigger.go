@@ -41,6 +41,10 @@ type PendingReconcile struct {
 	Request      reconcile.Request
 }
 
+func (pr PendingReconcile) String() string {
+	return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+}
+
 type hashResolver interface {
 	GetByHash(hash snapshot.VersionHash, strategy snapshot.HashStrategy) (*unstructured.Unstructured, bool)
 }

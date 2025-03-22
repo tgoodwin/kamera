@@ -232,11 +232,11 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode, mode str
 			if err != nil {
 				panic(fmt.Sprintf("error getting possible views: %s", err))
 			}
+			reconcilerID := pendingReconcile.ReconcilerID
 			for _, possibleStateView := range possibleViews {
-				if pendingReconcile.ReconcilerID == "CleanupReconciler" {
-					fmt.Println("\nreconciling cleanup controller: before state\n", possibleStateView.ID)
-					possibleStateView.Contents.DumpContents()
-				}
+				fmt.Printf("### reconciling %s - BEFORE state (%s):\n", reconcilerID, possibleStateView.ID)
+				fmt.Println("reconcile request:", pendingReconcile.Request)
+				possibleStateView.Contents.DumpContents()
 				// for each view, create a new branch in exploration
 				newState, err := e.takeReconcileStep(ctx, possibleStateView, pendingReconcile)
 				if err != nil {
@@ -244,10 +244,11 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode, mode str
 					fmt.Println("WARNING: error reconciling", err)
 					continue
 				}
-				if pendingReconcile.ReconcilerID == "CleanupReconciler" {
-					fmt.Println("\nreconciling cleanup controller: after state\n", newState.ID)
-					newState.Contents.DumpContents()
-				}
+				fmt.Printf("### reconciling %s - AFTER state (%s):\n", reconcilerID, newState.ID)
+				newState.Contents.DumpContents()
+				newState.DumpPending()
+				fmt.Println("")
+
 				newState.depth = currentState.depth + 1
 				if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
 					// logger.Info("\rexplore reached depth", "depth", newState.depth)
@@ -288,7 +289,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	logger = log.FromContext(ctx)
 	// remove the current controller from the pending reconciles list
 	newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
-		return pending.ReconcilerID != pr.ReconcilerID
+		return pending != pr
 	})
 
 	// defensive validation

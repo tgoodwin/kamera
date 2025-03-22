@@ -158,6 +158,13 @@ type StateNode struct {
 	DivergencePoint string // reconcileID of the first divergence
 }
 
+func (sn StateNode) DumpPending() {
+	fmt.Println("Pending Reconciles: ")
+	for _, pr := range sn.PendingReconciles {
+		fmt.Printf("\t%s\n", pr)
+	}
+}
+
 func (sn StateNode) IsConverged() bool {
 	return len(sn.PendingReconciles) == 0
 }
