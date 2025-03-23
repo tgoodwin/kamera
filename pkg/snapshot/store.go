@@ -3,7 +3,6 @@ package snapshot
 import (
 	"fmt"
 
-	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -42,6 +41,10 @@ func NewCompositeKey(kind, namespace, name, sleeveObjectID string) CompositeKey 
 	}
 }
 
+func (ck CompositeKey) String() string {
+	return fmt.Sprintf("{%s/%s/%s:%s}", ck.IdentityKey.Kind, ck.Namespace, ck.Name, util.Shorter(ck.ObjectID))
+}
+
 type Hasher interface {
 	Hash(obj *unstructured.Unstructured) (VersionHash, error)
 }
@@ -54,6 +57,9 @@ type Store struct {
 	// This allows reverse lookups and cross-referencing between hash strategies
 	objectHashes map[string]map[HashStrategy]VersionHash
 
+	// maps a raw hash value to a collection of all the hashes
+	rawHashesToCollection map[string]map[HashStrategy]VersionHash
+
 	// Hash generator functions
 	hashGenerators map[HashStrategy]Hasher
 }
@@ -63,6 +69,8 @@ func NewStore() *Store {
 		indices:        make(map[HashStrategy]map[VersionHash]*unstructured.Unstructured),
 		objectHashes:   make(map[string]map[HashStrategy]VersionHash),
 		hashGenerators: make(map[HashStrategy]Hasher),
+
+		rawHashesToCollection: make(map[string]map[HashStrategy]VersionHash),
 	}
 
 	// Initialize indices for each hash strategy
@@ -109,25 +117,34 @@ func getObjectKey(obj *unstructured.Unstructured) string {
 	return fmt.Sprintf("%s/%s/%s", kind, obj.GetNamespace(), obj.GetName())
 }
 
-func (s *Store) indexObject(obj *unstructured.Unstructured, strategies ...HashStrategy) error {
+func (s *Store) indexObject(obj *unstructured.Unstructured) error {
 	objKey := getObjectKey(obj)
 
 	if _, exists := s.objectHashes[objKey]; !exists {
 		s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
 	}
 
-	for _, strategy := range strategies {
-		hash, err := s.hashGenerators[strategy].Hash(obj)
+	// store all the hashes for this object in the same map
+	hashCollection := make(map[HashStrategy]VersionHash)
+
+	// allow for reverse lookups
+
+	for strategy, hasher := range s.hashGenerators {
+		hash, err := hasher.Hash(obj)
 		if err != nil {
 			return fmt.Errorf("failed to generate %s hash: %w", strategy, err)
 		}
 
+		// put every hash "kind" into the same collection
+		hashCollection[strategy] = hash
+		// point every raw hash value to the collection
+		s.rawHashesToCollection[hash.Value] = hashCollection
+
 		// Store in indices
 		s.indices[strategy][hash] = obj
 
-		// Record hash value for this object and strategy
-		// TODO this does not support multiple versions of the same objectKey!
-		// DO NOT USE THIS IT IS BROKEN
+		// this is used to look up the hash in PublishWithStrategy
+		// TODO refactor
 		s.objectHashes[objKey][strategy] = hash
 	}
 	return nil
@@ -135,67 +152,17 @@ func (s *Store) indexObject(obj *unstructured.Unstructured, strategies ...HashSt
 
 // Store an object with all registered hash strategies
 func (s *Store) StoreObject(obj *unstructured.Unstructured) error {
-	strategies := lo.Keys(s.hashGenerators)
-	return s.indexObject(obj, strategies...)
-	// objKey := getObjectKey(obj)
-
-	// rKey := getResourceKey(obj)
-	// s.resourceKeys[rKey] = struct{}{}
-	// fmt.Println("adding rkey", rKey)
-
-	// iKey := getIdentityKey(obj)
-	// s.idKeysToResourceKeys[iKey] = rKey
-
-	// // Initialize hash map for this object if it doesn't exist
-	// if _, exists := s.objectHashes[objKey]; !exists {
-	// 	s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
-	// }
-
-	// // Calculate and store all hash strategies for this object
-	// for strategy, generator := range s.hashGenerators {
-	// 	hash, err := generator.Hash(obj)
-	// 	if err != nil {
-	// 		return fmt.Errorf("failed to generate %s hash: %w", strategy, err)
-	// 	}
-
-	// 	// Store in indices
-	// 	s.indices[strategy][hash] = obj
-
-	// 	// Record hash value for this object and strategy
-	// 	s.objectHashes[objKey][strategy] = hash
-	// }
-	// return nil
+	return s.indexObject(obj)
 }
 
 func (s *Store) PublishWithStrategy(obj *unstructured.Unstructured, strategy HashStrategy) VersionHash {
-	if err := s.indexObject(obj, strategy); err != nil {
+	// internally, we hash with every registered strategy, so that we always have every hash type
+	// for a given object. This is useful for cross-referencing between hash strategies.
+	if err := s.indexObject(obj); err != nil {
 		panic(fmt.Sprintf("error storing object: %v", err))
 	}
 	objKey := getObjectKey(obj)
 	return s.objectHashes[objKey][strategy]
-
-	// // Calculate hash
-	// hash, err := s.hashGenerators[strategy].Hash(obj)
-	// if err != nil {
-	// 	panic(fmt.Sprintf("error hashing object: %v", err))
-	// }
-
-	// // Store in indices
-	// s.indices[strategy][hash] = obj
-
-	// // Record hash value for this object and strategy
-	// objKey := getObjectKey(obj)
-	// // Initialize hash map for this object if it doesn't exist
-	// if _, exists := s.objectHashes[objKey]; !exists {
-	// 	s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
-	// }
-
-	// rKey := getResourceKey(obj)
-	// s.resourceKeys[rKey] = struct{}{}
-
-	// s.objectHashes[objKey][strategy] = hash
-
-	// return hash
 }
 
 func (s *Store) ResolveWithStrategy(hash VersionHash, strategy HashStrategy) (*unstructured.Unstructured, bool) {
@@ -231,24 +198,25 @@ func (s *Store) GetByHash(hash VersionHash, strategy HashStrategy) (*unstructure
 	return nil, false
 }
 
+// Lookup a hash value by raw hash value and target hash strategy.
+// If the raw hash value was produced with a different strategy than the target strategy,
+// we translate the hash value to the target strategy.
+func (s *Store) Lookup(rawHash string, targetStrategy HashStrategy) (VersionHash, bool) {
+	if hashCollection, exists := s.rawHashesToCollection[rawHash]; exists {
+		if hash, exists := hashCollection[targetStrategy]; exists {
+			return hash, true
+		}
+	}
+	return VersionHash{}, false
+}
+
 // Convert between hash strategies
 func (s *Store) ConvertHash(hash VersionHash, fromStrategy, toStrategy HashStrategy) (VersionHash, bool) {
 	// First find the object using the source hash strategy
-	obj, found := s.GetByHash(hash, fromStrategy)
-	if !found {
-		return VersionHash{}, false
+	translated, ok := s.Lookup(hash.Value, toStrategy)
+	if ok {
+		return translated, true
 	}
-
-	// Find the object's key
-	objKey := getObjectKey(obj)
-
-	// Look up the target hash strategy
-	if hashes, exists := s.objectHashes[objKey]; exists {
-		if targetHash, hasTargetStrategy := hashes[toStrategy]; hasTargetStrategy {
-			return targetHash, true
-		}
-	}
-
 	return VersionHash{}, false
 }
 
