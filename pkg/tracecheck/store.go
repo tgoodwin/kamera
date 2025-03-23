@@ -8,24 +8,24 @@ import (
 )
 
 type versionStore struct {
-	snapStore *snapshot.Store
-	mu        sync.RWMutex
+	*snapshot.Store
+	mu sync.RWMutex
 }
 
 var _ VersionManager = (*versionStore)(nil)
 
 func newVersionStore(store *snapshot.Store) *versionStore {
 	return &versionStore{
-		snapStore: store,
+		Store: store,
 	}
 }
 
 func (vs *versionStore) DebugKey(key string) {
-	vs.snapStore.DebugKey(key)
+	vs.Store.DebugKey(key)
 }
 
 func (vs *versionStore) Resolve(hash snapshot.VersionHash) *unstructured.Unstructured {
-	res, ok := vs.snapStore.ResolveWithStrategy(hash, hash.Strategy)
+	res, ok := vs.ResolveWithStrategy(hash, hash.Strategy)
 	if !ok {
 		return nil
 	}
@@ -36,7 +36,7 @@ func (vs *versionStore) Publish(obj *unstructured.Unstructured) snapshot.Version
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 
-	return vs.snapStore.PublishWithStrategy(obj, snapshot.AnonymizedHash)
+	return vs.PublishWithStrategy(obj, snapshot.AnonymizedHash)
 }
 
 func (vs *versionStore) Diff(prev, curr *snapshot.VersionHash) string {

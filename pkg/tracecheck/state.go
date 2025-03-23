@@ -87,11 +87,11 @@ func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 			return err
 		}
 		for _, effect := range r.Changes.Effects {
-			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.Key.IdentityKey); err != nil {
+			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.Key); err != nil {
 				return err
 			}
 			if _, hasDelta := r.Deltas[effect.Key]; hasDelta {
-				_, err := fmt.Fprintf(file, "\t%s: %s\n", effect.Key.IdentityKey, r.Deltas[effect.Key])
+				_, err := fmt.Fprintf(file, "\t%s: %s\n", effect.Key, r.Deltas[effect.Key])
 				if err != nil {
 					return err
 				}
@@ -118,7 +118,18 @@ func (eh ExecutionHistory) FilterNoOps() ExecutionHistory {
 	return filtered
 }
 
+func DebugPaths(paths []ExecutionHistory) {
+	for i, path := range paths {
+		fmt.Printf("Path %d:\n", i+1)
+		pathParts := lo.Map(path, func(r *ReconcileResult, _ int) string {
+			return fmt.Sprintf("%s:%d", r.ControllerID, len(r.Changes.Effects))
+		})
+		fmt.Println("\t" + strings.Join(pathParts, " -> "))
+	}
+}
+
 func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
+	// DebugPaths(paths)
 	pathsWithoutNoOps := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
 		return path.FilterNoOps()
 	})

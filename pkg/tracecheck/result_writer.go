@@ -71,10 +71,10 @@ func (rw *ResultWriter) MaterializeClassified(results []ClassifiedState, outDir 
 	for _, result := range results {
 		var outFile, tracePrefix string
 		if result.Classification == "happy" {
-			outFile = fmt.Sprintf("%s/%s-summary.md", happyDir, result.ID)
+			outFile = fmt.Sprintf("%s/%s-%s-summary.md", happyDir, result.ID, result.Signature)
 			tracePrefix = fmt.Sprintf("%s/%s", happyTracesDir, result.ID)
 		} else if result.Classification == "bad" {
-			outFile = fmt.Sprintf("%s/%s-summary.md", badDir, result.ID)
+			outFile = fmt.Sprintf("%s/%s-%s-summary.md", badDir, result.ID, result.Signature)
 			tracePrefix = fmt.Sprintf("%s/%s", badTracesDir, result.ID)
 		} else {
 			log.Fatalf("unknown classification: %s", result.Classification)

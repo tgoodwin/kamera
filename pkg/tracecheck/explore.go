@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
@@ -186,10 +187,14 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	e.config.mode = "stack"
 
-	return e.explore(ctx, initialState)
+	res, err := e.explore(ctx, initialState)
+	if err != nil {
+		panic(err)
+	}
+	return res
 }
 
-func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result {
+func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result, error) {
 	if e.config.MaxDepth == 0 {
 		e.config.MaxDepth = DefaultMaxDepth
 	}
@@ -265,12 +270,10 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = []ExecutionHistory{currentState.ExecutionHistory}
 		} else {
-			fmt.Println("seen this state before, adding to execution paths")
 			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 		}
 
 		if len(currentState.PendingReconciles) == 0 {
-			fmt.Println("DONE: converged state")
 			seenConvergedStates[stateKey] = currentState
 			continue
 		}
@@ -278,21 +281,11 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 		// process the first one
 		pendingReconcile := currentState.PendingReconciles[0]
 
-		// var toProcess []PendingReconcile
-		// // if we are in stack mode, only process the first pending controller in the list
-		// // as the rest of the pendingReconciles will be inherited by the child state
-		// if e.config.mode == "stack" {
-		// 	toProcess = currentState.PendingReconciles[:1]
-		// } else {
-		// 	// if we are in queue mode, process all pending reconciles before moving to the next level
-		// 	toProcess = currentState.PendingReconciles
-		// }
-
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state.
 		possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID)
 		if err != nil {
-			panic(fmt.Sprintf("error getting possible views: %s", err))
+			return nil, errors.Wrap(err, "getting possible views")
 		}
 		reconcilerID := pendingReconcile.ReconcilerID
 		for _, possibleStateView := range possibleViews {
@@ -345,7 +338,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
 	}
 
-	return result
+	return result, nil
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
@@ -538,7 +531,6 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 }
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string) ([]StateNode, error) {
-	// TODO update to use some staleness depth configuration
 	if e.config.useStaleness == 0 {
 		return []StateNode{currState}, nil
 	}
@@ -553,15 +545,19 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	if err != nil {
 		return nil, err
 	}
+	fmt.Println("bounds for reconciler", reconcilerID, ":", bounds)
+	fmt.Println("number of possible views for controller", reconcilerID, ":", len(all))
 
 	asStateNodes := lo.Map(all, func(snapshot *StateSnapshot, _ int) StateNode {
-		return StateNode{
+		sn := StateNode{
 			Contents:          *snapshot,
 			PendingReconciles: slices.Clone(currState.PendingReconciles),
 			parent:            currState.parent,
 			action:            currState.action,
 			ExecutionHistory:  slices.Clone(currState.ExecutionHistory),
 		}
+		sn.ID = sn.Hash()
+		return sn
 	})
 
 	return asStateNodes, nil

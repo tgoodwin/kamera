@@ -24,6 +24,7 @@ type VersionManager interface {
 	Resolve(key snapshot.VersionHash) *unstructured.Unstructured
 	Publish(obj *unstructured.Unstructured) snapshot.VersionHash
 	Diff(prev, curr *snapshot.VersionHash) string
+	Lookup(rawHash string, targetStrategy snapshot.HashStrategy) (snapshot.VersionHash, bool)
 	DebugKey(key string)
 }
 
@@ -82,7 +83,7 @@ type manager struct {
 }
 
 func (m *manager) Summary() {
-	store := m.versionStore.snapStore.GetVersionMap(snapshot.AnonymizedHash)
+	store := m.versionStore.GetVersionMap(snapshot.AnonymizedHash)
 	for k, v := range store {
 		fmt.Printf("Key: %s, Value: %s\n", k, v)
 	}

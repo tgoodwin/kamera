@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/samber/lo"
@@ -170,8 +171,11 @@ func main() {
 	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef}, nil)
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
 
-	// eb.ExploreStaleStates() // Enable staleness exploration
-	// eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{"ZookeeperCluster": *stalenessDepth})
+	eb.ExploreStaleStates() // Enable staleness exploration
+	eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{
+		"ZookeeperCluster":      *stalenessDepth,
+		"PersistentVolumeClaim": 1,
+	})
 	eb.WithMaxDepth(*searchDepth) // tuned this experimentally
 
 	explorer, err := eb.Build("standalone")
@@ -183,11 +187,6 @@ func main() {
 	initialState := stateBuilder.Build()
 	initialState.Contents.Debug()
 
-	debugState := initialState.Contents.ObserveAt(
-		tracecheck.KindSequences{"ZookeeperCluster": 7},
-	)
-	fmt.Println("debug state:")
-	debugState.Summarize()
 	initialState.PendingReconciles = []tracecheck.PendingReconcile{
 		{
 			ReconcilerID: "ZookeeperReconciler",
@@ -223,15 +222,45 @@ func main() {
 		predicateBuilder.ObjectsCountOfKind("ZookeeperCluster", 1),
 		predicateBuilder.ObjectsCountOfKind("PersistentVolumeClaim", 3),
 	)
+
+	// groups them by "shape"
+	groupedBySignature := classifier.GroupBySignature(result.ConvergedStates)
+	historiesBySignature := make(map[string][]tracecheck.ExecutionHistory)
+	for sig, states := range groupedBySignature {
+		fmt.Printf("signature: %s, number of states: %d\n", sig, len(states))
+		historiesForSignature := make([]tracecheck.ExecutionHistory, 0)
+		for _, state := range states {
+			executions := state.State.ExecutionHistory
+			historiesForSignature = append(historiesForSignature, executions)
+		}
+		historiesBySignature[sig] = historiesForSignature
+	}
+
+	for sig, histories := range historiesBySignature {
+		fmt.Println("signature: ", sig)
+		fmt.Println("number of histories: ", len(histories))
+	}
+
 	classified := classifier.ClassifyResults(result.ConvergedStates, pred)
-	happy := lo.Filter(classified, func(s tracecheck.ClassifiedState, _ int) bool {
-		return s.Classification == "happy"
+
+	byClassificaition := lo.GroupBy(classified, func(c tracecheck.ClassifiedState) string {
+		return c.Classification
 	})
-	sad := lo.Filter(classified, func(s tracecheck.ClassifiedState, _ int) bool {
-		return s.Classification == "bad"
-	})
-	fmt.Println("number of happy states: ", len(happy))
-	fmt.Println("number of sad states: ", len(sad))
+
+	for classification, states := range byClassificaition {
+		signatures := lo.Map(states, func(c tracecheck.ClassifiedState, _ int) string {
+			return c.Signature
+		})
+		uniqueSignatures := lo.Uniq(signatures)
+		fmt.Printf("%s: %v\n", classification, uniqueSignatures)
+	}
+
+	for _, state := range classified {
+		if strings.HasPrefix(state.Signature, "8meo") {
+			fmt.Println("State Signature: ", state.Signature)
+			fmt.Printf("%v\n", state.State.State.Contents.All())
+		}
+	}
 
 	resultWriter := tracecheck.NewResultWriter(emitter)
 	resultWriter.MaterializeClassified(classified, *outDir)
