@@ -42,12 +42,12 @@ func (r Record) GetID() string {
 }
 
 var toMask = map[string]struct{}{
-	"UID":               {},
-	"ResourceVersion":   {},
-	"Generation":        {},
-	"CreationTimestamp": {},
+	"uid":               {},
+	"resourceVersion":   {},
+	"generation":        {},
+	"creationTimestamp": {},
 	// TODO just distinguish between nil and not-nil for purposes of comparison
-	"DeletionTimestamp": {},
+	"deletionTimestamp": {},
 }
 
 func serialize(obj interface{}) map[string]interface{} {
@@ -63,7 +63,7 @@ func serialize(obj interface{}) map[string]interface{} {
 	return resultMap
 }
 
-func maskFields(in map[string]string) map[string]interface{} {
+func maskFields(in map[string]interface{}) map[string]interface{} {
 	masked := make(map[string]interface{})
 	for k := range in {
 		if _, ok := toMask[k]; ok {

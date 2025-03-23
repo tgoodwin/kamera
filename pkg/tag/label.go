@@ -112,6 +112,10 @@ func SanityCheckLabels(obj client.Object) error {
 	return nil
 }
 
+func IsSleeveLabel(key string) bool {
+	return key == TraceyWebhookLabel || key == TraceyRootID || key == TraceyReconcileID || key == TraceyCreatorID || key == TraceyObjectID
+}
+
 func GetSleeveLabels(obj client.Object) map[string]string {
 	labels := obj.GetLabels()
 	filteredLabels := make(map[string]string)

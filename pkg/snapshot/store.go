@@ -11,7 +11,8 @@ type HashStrategy string
 
 const (
 	DefaultHash    HashStrategy = "default"
-	AnonymizedHash HashStrategy = "anonymized"
+	AnonymizedHash HashStrategy = "anonymized" // removes sleeve UID info
+	ShapeHash      HashStrategy = "shape"      // stronger than anonymized, removes all nondeterministic info
 )
 
 // ResourceKey represents the granularity at which
@@ -42,7 +43,7 @@ func NewCompositeKey(kind, namespace, name, sleeveObjectID string) CompositeKey 
 }
 
 func (ck CompositeKey) String() string {
-	return fmt.Sprintf("{%s/%s/%s:%s}", ck.IdentityKey.Kind, ck.Namespace, ck.Name, util.Shorter(ck.ObjectID))
+	return fmt.Sprintf("{%s/%s/%s:%s}", ck.IdentityKey.Kind, ck.Namespace, ck.Name, ck.ObjectID)
 }
 
 type Hasher interface {
@@ -58,7 +59,7 @@ type Store struct {
 	objectHashes map[string]map[HashStrategy]VersionHash
 
 	// maps a raw hash value to a collection of all the hashes
-	rawHashesToCollection map[string]map[HashStrategy]VersionHash
+	crossRefIndex map[string]map[HashStrategy]VersionHash
 
 	// Hash generator functions
 	hashGenerators map[HashStrategy]Hasher
@@ -70,12 +71,9 @@ func NewStore() *Store {
 		objectHashes:   make(map[string]map[HashStrategy]VersionHash),
 		hashGenerators: make(map[HashStrategy]Hasher),
 
-		rawHashesToCollection: make(map[string]map[HashStrategy]VersionHash),
+		// maps raw hash value to a collection of all the hashes by strategy
+		crossRefIndex: make(map[string]map[HashStrategy]VersionHash),
 	}
-
-	// Initialize indices for each hash strategy
-	store.indices[DefaultHash] = make(map[VersionHash]*unstructured.Unstructured)
-	store.indices[AnonymizedHash] = make(map[VersionHash]*unstructured.Unstructured)
 
 	// Register hash generators
 	store.RegisterHashGenerator(DefaultHash, NewDefaultHasher())
@@ -90,6 +88,8 @@ func (s *Store) GetVersionMap(strategy HashStrategy) map[VersionHash]*unstructur
 
 func (s *Store) RegisterHashGenerator(strategy HashStrategy, generator Hasher) {
 	s.hashGenerators[strategy] = generator
+	// initialize the index for this strategy
+	s.indices[strategy] = make(map[VersionHash]*unstructured.Unstructured)
 }
 
 func (s *Store) DebugKey(key string) {
@@ -138,7 +138,7 @@ func (s *Store) indexObject(obj *unstructured.Unstructured) error {
 		// put every hash "kind" into the same collection
 		hashCollection[strategy] = hash
 		// point every raw hash value to the collection
-		s.rawHashesToCollection[hash.Value] = hashCollection
+		s.crossRefIndex[hash.Value] = hashCollection
 
 		// Store in indices
 		s.indices[strategy][hash] = obj
@@ -202,7 +202,7 @@ func (s *Store) GetByHash(hash VersionHash, strategy HashStrategy) (*unstructure
 // If the raw hash value was produced with a different strategy than the target strategy,
 // we translate the hash value to the target strategy.
 func (s *Store) Lookup(rawHash string, targetStrategy HashStrategy) (VersionHash, bool) {
-	if hashCollection, exists := s.rawHashesToCollection[rawHash]; exists {
+	if hashCollection, exists := s.crossRefIndex[rawHash]; exists {
 		if hash, exists := hashCollection[targetStrategy]; exists {
 			return hash, true
 		}
