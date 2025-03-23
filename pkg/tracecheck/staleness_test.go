@@ -1016,148 +1016,188 @@ func TestReplayEventsAtSequence(t *testing.T) {
 	}
 }
 
-func TestGetAllPossibleStaleViews(t *testing.T) {
-	events := []StateEvent{
-		{
-			ReconcileID: "r1",
-			Timestamp:   "2024-02-21T10:00:01Z",
+func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
+	// Helper to create state events
+	var reconcileInt int = 1
+	newStateEvent := func(kind, name, version string, op event.OperationType) StateEvent {
+		s := StateEvent{
+			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
+			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
 			Effect: effect{
-				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
-				Version: snapshot.NewDefaultHash("v1"),
-				OpType:  event.CREATE,
+				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
+				Version: snapshot.NewDefaultHash(version),
+				OpType:  op,
 			},
-			Sequence: 1,
-		},
-		{
-			ReconcileID: "r2",
-			Timestamp:   "2024-02-21T10:00:02Z",
-			Effect: effect{
-				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
-				Version: snapshot.NewDefaultHash("v2"),
-				OpType:  event.UPDATE,
-			},
-			Sequence: 2,
-		},
-		{
-			ReconcileID: "r3",
-			Timestamp:   "2024-02-21T10:00:03Z",
-			Effect: effect{
-				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
-				Version: snapshot.NewDefaultHash("v1"),
-				OpType:  event.CREATE,
-			},
-			Sequence: 3,
-		},
-		{
-			ReconcileID: "r4",
-			Timestamp:   "2024-02-21T10:00:04Z",
-			Effect: effect{
-				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
-				Version: snapshot.NewDefaultHash("v2"),
-				OpType:  event.UPDATE,
-			},
-			Sequence: 4,
-		},
+			Sequence: int64(reconcileInt),
+		}
+		reconcileInt++
+		return s
 	}
 
+	// Define reusable keys and values
+	pod1Key := snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1")
+	pod2Key := snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2")
+	svc1Key := snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1")
+	svc2Key := snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2")
+	v1 := snapshot.NewDefaultHash("v1")
+	v2 := snapshot.NewDefaultHash("v2")
+
+	// Create events
+	events := []StateEvent{
+		newStateEvent("Pod", "pod-1", "v1", event.CREATE),
+		newStateEvent("Pod", "pod-1", "v2", event.UPDATE),
+		newStateEvent("Pod", "pod-2", "v1", event.CREATE),
+		newStateEvent("Pod", "pod-2", "v2", event.UPDATE),
+		newStateEvent("Service", "svc-1", "v1", event.CREATE),
+		newStateEvent("Service", "svc-1", "v2", event.UPDATE),
+		newStateEvent("Service", "svc-2", "v1", event.CREATE),
+		newStateEvent("Service", "svc-2", "v2", event.UPDATE),
+	}
+
+	// Initial state
 	state := &StateSnapshot{
 		contents: ObjectVersions{
-			snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
-			snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
+			pod1Key: v2, pod2Key: v2,
+			svc1Key: v2, svc2Key: v2,
 		},
 		KindSequences: KindSequences{
-			"Pod":     2,
-			"Service": 4,
+			"Pod": 4, "Service": 8,
 		},
 		stateEvents: events,
 	}
 
-	expectedStaleViews := []*StateSnapshot{
-		{
-			contents: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
-				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v1"),
-			},
-			KindSequences: KindSequences{
-				"Pod":     1,
-				"Service": 3,
-			},
-			stateEvents: events,
-		},
-		{
-			contents: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
-				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
-			},
-			KindSequences: KindSequences{
-				"Pod":     1,
-				"Service": 4,
-			},
-			stateEvents: events,
-		},
-		{
-			contents: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
-				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v1"),
-			},
-			KindSequences: KindSequences{
-				"Pod":     2,
-				"Service": 3,
-			},
-			stateEvents: events,
-		},
-		{
-			contents: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
-				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
-			},
-			KindSequences: KindSequences{
-				"Pod":     2,
-				"Service": 4,
-			},
-			stateEvents: events,
-		},
-	}
-
-	staleViews := getAllPossibleViews(state, []string{"Pod", "Service"}, nil)
-
-	assert.Equal(t, len(expectedStaleViews), len(staleViews))
-
-	expectedMap := make(map[string]*StateSnapshot)
-	for _, expected := range expectedStaleViews {
-		key := fmt.Sprintf("%v", expected.KindSequences)
-		expectedMap[key] = expected
-	}
-
-	for _, staleView := range staleViews {
-		key := fmt.Sprintf("%v", staleView.KindSequences)
-		expected, exists := expectedMap[key]
-		if !exists {
-			t.Errorf("Unexpected stale view with KindSequences %v", staleView.KindSequences)
-			continue
+	tests := []struct {
+		name           string
+		kindBounds     KindBounds
+		expectedStates []struct {
+			versions ObjectVersions
+			seqs     KindSequences
 		}
+	}{
+		{
+			name:       "no bounds",
+			kindBounds: nil,
+			expectedStates: []struct {
+				versions ObjectVersions
+				seqs     KindSequences
+			}{
+				{
+					versions: ObjectVersions{pod1Key: v1, svc1Key: v1},
+					seqs:     KindSequences{"Pod": 1, "Service": 5},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v1, svc1Key: v2},
+					seqs:     KindSequences{"Pod": 1, "Service": 6},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v1, svc1Key: v2, svc2Key: v1},
+					seqs:     KindSequences{"Pod": 1, "Service": 7},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v1, svc1Key: v2, svc2Key: v2},
+					seqs:     KindSequences{"Pod": 1, "Service": 8},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, svc1Key: v1},
+					seqs:     KindSequences{"Pod": 2, "Service": 5},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, svc1Key: v2},
+					seqs:     KindSequences{"Pod": 2, "Service": 6},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, svc1Key: v2, svc2Key: v1},
+					seqs:     KindSequences{"Pod": 2, "Service": 7},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, svc1Key: v2, svc2Key: v2},
+					seqs:     KindSequences{"Pod": 2, "Service": 8},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v1},
+					seqs:     KindSequences{"Pod": 3, "Service": 5},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2},
+					seqs:     KindSequences{"Pod": 3, "Service": 6},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2, svc2Key: v1},
+					seqs:     KindSequences{"Pod": 3, "Service": 7},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2, svc2Key: v2},
+					seqs:     KindSequences{"Pod": 3, "Service": 8},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v1},
+					seqs:     KindSequences{"Pod": 4, "Service": 5},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2},
+					seqs:     KindSequences{"Pod": 4, "Service": 6},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2, svc2Key: v1},
+					seqs:     KindSequences{"Pod": 4, "Service": 7},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2, svc2Key: v2},
+					seqs:     KindSequences{"Pod": 4, "Service": 8},
+				},
+			},
+		},
+		{
+			name: "limit = 2 for Pods and Services",
+			kindBounds: KindBounds{
+				"Pod":     2,
+				"Service": 2,
+			},
+			expectedStates: []struct {
+				versions ObjectVersions
+				seqs     KindSequences
+			}{
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2, svc2Key: v1},
+					seqs:     KindSequences{"Pod": 3, "Service": 7},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2, svc2Key: v2},
+					seqs:     KindSequences{"Pod": 3, "Service": 8},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2, svc2Key: v1},
+					seqs:     KindSequences{"Pod": 4, "Service": 7},
+				},
+				{
+					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2, svc2Key: v2},
+					seqs:     KindSequences{"Pod": 4, "Service": 8},
+				},
+			},
+		},
+	}
 
-		// check that the stale view has the expected "ground truth" objects
-		assert.Equal(t, state.All(), staleView.All())
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			staleViews := getAllPossibleViews(state, []string{"Pod", "Service"}, tt.kindBounds)
 
-		expectedObjects := expected.All()
-		staleViewObjects := staleView.Observable()
-
-		assert.Equal(t, len(expectedObjects), len(staleViewObjects))
-		for key, expectedVersion := range expectedObjects {
-			staleVersion, exists := staleViewObjects[key]
-			if !exists {
-				t.Errorf("Expected %s in stale view", key)
+			assert.Equal(t, len(tt.expectedStates), len(staleViews))
+			for _, expected := range tt.expectedStates {
+				found := false
+				for _, view := range staleViews {
+					if assert.ObjectsAreEqual(expected.versions, view.Observable()) &&
+						assert.ObjectsAreEqual(expected.seqs, view.KindSequences) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("Expected state %+v not found in stale views", expected)
+				}
 			}
-			assert.Equal(t, expectedVersion, staleVersion)
-		}
-		assert.Equal(t, len(expected.KindSequences), len(staleView.KindSequences))
-		for kind, seq := range expected.KindSequences {
-			assert.Equal(t, seq, staleView.KindSequences[kind])
-		}
+		})
 	}
 }
-
 func Test_getAllCombos(t *testing.T) {
 	values := map[string][]int64{
 		"a": {1, 2, 3},

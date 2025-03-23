@@ -265,6 +265,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) *Result 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = []ExecutionHistory{currentState.ExecutionHistory}
 		} else {
+			fmt.Println("seen this state before, adding to execution paths")
 			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 		}
 
