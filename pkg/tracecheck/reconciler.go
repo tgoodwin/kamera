@@ -69,25 +69,8 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 		}
 	}
 
-	compare := false
-	if compare {
-		inferredReq, err := r.inferReconcileRequest(observableState)
-		if err != nil {
-			return nil, errors.Wrap(err, fmt.Sprintf("inferring reconcile request, frameID: %s", frameID))
-		}
-
-		if inferredReq != req {
-			logger.V(2).Info("MISMATCH")
-			logger.V(2).Info("inferred: %v, passed: %v\n", inferredReq, req)
-		}
-	}
-
 	// add the logger back to the context
 	ctx = log.IntoContext(ctx, logger)
-	cleanupKind, ok := ctx.Value(tag.CleanupKindKey{}).(string)
-	if ok {
-		fmt.Println("HEY reconciling for cleanup - kind:", cleanupKind)
-	}
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}

@@ -26,7 +26,7 @@ type ExplorerBuilder struct {
 	scheme             *runtime.Scheme
 	maxDepth           int
 	exploreStaleStates int
-	kindBounds         map[string]KindBounds
+	reconcilerConfig   map[string]ReconcilerConfig
 	emitter            testEmitter
 	snapStore          *snapshot.Store
 	reconcilerToKind   map[string]string
@@ -72,11 +72,11 @@ func (b *ExplorerBuilder) ExploreStaleStates() *ExplorerBuilder {
 	return b
 }
 
-func (b *ExplorerBuilder) WithKindBounds(reconcilerID string, kb KindBounds) *ExplorerBuilder {
-	if b.kindBounds == nil {
-		b.kindBounds = make(map[string]KindBounds)
+func (b *ExplorerBuilder) WithKindBounds(reconcilerID string, rc ReconcilerConfig) *ExplorerBuilder {
+	if b.reconcilerConfig == nil {
+		b.reconcilerConfig = make(map[string]ReconcilerConfig)
 	}
-	b.kindBounds[reconcilerID] = kb
+	b.reconcilerConfig[reconcilerID] = rc
 	return b
 }
 
@@ -242,7 +242,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 
 	return StateNode{
-		Contents: NewStateSnapshot(
+		Contents: newStateSnapshot(
 			ObjectVersions{key: vHash},
 			KindSequences{
 				ikey.Kind: 1,
@@ -332,7 +332,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		config: &ExploreConfig{
 			MaxDepth:                b.maxDepth,
 			useStaleness:            b.exploreStaleStates,
-			KindBoundsPerReconciler: b.kindBounds,
+			KindBoundsPerReconciler: b.reconcilerConfig,
 		},
 
 		effectContextManager: mgr,

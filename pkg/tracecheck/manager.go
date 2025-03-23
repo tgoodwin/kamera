@@ -127,14 +127,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 	// publish the object versionHash
 	versionHash := m.Publish(u)
-	if opType == event.MARK_FOR_DELETION {
-		// inspect the object to see if it has a deletion timestamp
-		deletionTS := u.GetDeletionTimestamp()
-		shortHash := util.ShortenHash(versionHash.Value)
-		fmt.Printf("recording mark for deletion effect: name=%s, hash=%s, deletionTS=%v\n", obj.GetName(), shortHash, deletionTS)
-	}
 
-	// now manifest an event and record it as an effect
 	reffects, ok := m.effects[frameID]
 	if !ok {
 		reffects = reconcileEffects{

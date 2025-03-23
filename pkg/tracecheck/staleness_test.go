@@ -1068,7 +1068,7 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 
 	tests := []struct {
 		name           string
-		kindBounds     KindBounds
+		kindBounds     LookbackLimits
 		expectedStates []struct {
 			versions ObjectVersions
 			seqs     KindSequences
@@ -1149,7 +1149,7 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 		},
 		{
 			name: "limit = 2 for Pods and Services",
-			kindBounds: KindBounds{
+			kindBounds: LookbackLimits{
 				"Pod":     2,
 				"Service": 2,
 			},
@@ -1219,7 +1219,7 @@ func TestLimitEventHistory(t *testing.T) {
 	tests := []struct {
 		name           string
 		seqByKind      map[string][]int64
-		limit          KindBounds
+		limit          LookbackLimits
 		expectedResult map[string][]int64
 	}{
 		{
@@ -1240,7 +1240,7 @@ func TestLimitEventHistory(t *testing.T) {
 				"Pod":     {1, 2, 3, 4},
 				"Service": {1, 2, 3},
 			},
-			limit: KindBounds{
+			limit: LookbackLimits{
 				"Pod": 2,
 			},
 			expectedResult: map[string][]int64{
@@ -1254,7 +1254,7 @@ func TestLimitEventHistory(t *testing.T) {
 				"Pod":     {1, 2, 3, 4},
 				"Service": {1, 2, 3},
 			},
-			limit: KindBounds{
+			limit: LookbackLimits{
 				"Pod":     2,
 				"Service": 1,
 			},
@@ -1269,7 +1269,7 @@ func TestLimitEventHistory(t *testing.T) {
 				"Pod":     {1, 2},
 				"Service": {1},
 			},
-			limit: KindBounds{
+			limit: LookbackLimits{
 				"Pod":     5,
 				"Service": 3,
 			},
@@ -1284,7 +1284,7 @@ func TestLimitEventHistory(t *testing.T) {
 				"Pod":     {1, 2},
 				"Service": {1},
 			},
-			limit: KindBounds{
+			limit: LookbackLimits{
 				"Pod":     0,
 				"Service": 0,
 			},
@@ -1299,7 +1299,7 @@ func TestLimitEventHistory(t *testing.T) {
 				"Pod":     {},
 				"Service": {},
 			},
-			limit: KindBounds{
+			limit: LookbackLimits{
 				"Pod":     2,
 				"Service": 1,
 			},

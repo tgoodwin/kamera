@@ -25,7 +25,7 @@ type StateSnapshot struct {
 	stateEvents []StateEvent // the changes that led to the current objectVersions
 }
 
-func NewStateSnapshot(contents ObjectVersions, kindSequences KindSequences, stateEvents []StateEvent) StateSnapshot {
+func newStateSnapshot(contents ObjectVersions, kindSequences KindSequences, stateEvents []StateEvent) StateSnapshot {
 	if len(contents) > 0 && len(kindSequences) == 0 {
 		panic("kind sequences must be non-empty if contents are non-empty")
 	}
@@ -71,7 +71,7 @@ func (s *StateSnapshot) ObserveAt(ks KindSequences) ObjectVersions {
 
 func (s *StateSnapshot) FixAt(ks KindSequences) StateSnapshot {
 	fixedView := s.ObserveAt(ks)
-	ss := NewStateSnapshot(fixedView, ks, s.stateEvents)
+	ss := newStateSnapshot(fixedView, ks, s.stateEvents)
 	return ss
 }
 
@@ -397,7 +397,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 			// a deletion event. For now, ignore them.
 			if e.Effect.OpType != event.REMOVE {
 				if e.Effect.OpType == event.MARK_FOR_DELETION {
-					fmt.Println("object being marked for deletion again - maybe its not being REMOVED", iKey)
+					logger.V(2).Info("object being marked for deletion again", "Key", iKey)
 					continue
 				}
 				fmt.Println("warning: encountered update after entity was marked for deletion (possibly finalizers, which are ok)", iKey)
@@ -412,7 +412,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 			contents[e.Effect.Key] = version
 		case event.REMOVE:
 			if _, wasMarkedForDeletion := deletions[e.Effect.Key]; !wasMarkedForDeletion {
-				panic("attempting to remove an object that was not marked for deletion first")
+				fmt.Println("WARNING: attempting to remove an object that was not marked for deletion first", iKey)
 			}
 			delete(contents, e.Effect.Key)
 		case event.CREATE, event.UPDATE:
@@ -423,7 +423,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 		KindSequences[iKey.Kind] = e.Sequence
 		stateEvents = append(stateEvents, e)
 	}
-	out := NewStateSnapshot(contents, KindSequences, stateEvents)
+	out := newStateSnapshot(contents, KindSequences, stateEvents)
 	return &out
 }
 
@@ -452,7 +452,7 @@ func replayEventsAtSequence(events []StateEvent, sequencesByKind KindSequences) 
 	return replayEventSequenceToState(toReplay)
 }
 
-func limitEventHistory(seqByKind map[string][]int64, kindBounds KindBounds) map[string][]int64 {
+func limitEventHistory(seqByKind map[string][]int64, kindBounds LookbackLimits) map[string][]int64 {
 	if kindBounds == nil {
 		return seqByKind
 	}
@@ -474,11 +474,11 @@ func limitEventHistory(seqByKind map[string][]int64, kindBounds KindBounds) map[
 	return out
 }
 
-// KindBounds is a map of kind to the number of RVs to consider in the history
+// LookbackLimits is a map of kind to the number of preceding RVs to consider in the history
 // when producing stale views. A value of 0 means no bound (all RVs considered).
-type KindBounds map[string]int
+type LookbackLimits map[string]int
 
-func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBounds KindBounds) []*StateSnapshot {
+func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBounds LookbackLimits) []*StateSnapshot {
 	var staleViews []*StateSnapshot
 
 	staleViews = append(staleViews, snapshot)
@@ -521,14 +521,14 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBo
 		// we preserve the original state but adjust the sequence numbers
 		// to reflect the new view among all possible stale views.
 		// the stale view must be "observed" via the Observe() method
-		out := NewStateSnapshot(snapshot.contents, staleSequences, snapshot.stateEvents)
+		out := newStateSnapshot(snapshot.contents, staleSequences, snapshot.stateEvents)
 		staleViews = append(staleViews, &out)
 	}
 
 	return staleViews
 }
 
-func getAllViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps, kindBounds KindBounds) ([]*StateSnapshot, error) {
+func getAllViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps, kindBounds LookbackLimits) ([]*StateSnapshot, error) {
 	controllerDeps, err := deps.ForReconciler(reconcilerID)
 	if err != nil {
 		return nil, err

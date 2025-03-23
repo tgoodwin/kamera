@@ -10,12 +10,16 @@ type ExploreStats struct {
 	endTime      *time.Time
 	AbortedPaths int
 	NodeVisits   int
+
+	RestartsPerReconciler map[string]int
 }
 
 func NewExploreStats() *ExploreStats {
 	return &ExploreStats{
 		startTime:    nil,
 		AbortedPaths: 0,
+
+		RestartsPerReconciler: make(map[string]int),
 	}
 }
 

@@ -45,6 +45,12 @@ func (ov ObjectVersions) Objects() ObjectVersions {
 	return ov
 }
 
+func (ov ObjectVersions) DumpContents() {
+	for key, value := range ov {
+		fmt.Printf("\t%s:%s\n", key, util.ShortenHash(value.Value))
+	}
+}
+
 func (ov ObjectVersions) Summarize() {
 	// sort by key first
 	keys := lo.Keys(ov)
@@ -171,7 +177,6 @@ type StateNode struct {
 }
 
 func (sn StateNode) DumpPending() {
-	fmt.Println("Pending Reconciles: ")
 	for _, pr := range sn.PendingReconciles {
 		fmt.Printf("\t%s\n", pr)
 	}

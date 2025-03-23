@@ -6,7 +6,6 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
@@ -36,14 +35,21 @@ type EffectContextManager interface {
 	CleanupEffectContext(ctx context.Context)
 }
 
+type ReconcilerConfig struct {
+	Bounds      LookbackLimits
+	MaxRestarts int
+}
+
 type ExploreConfig struct {
 	MaxDepth     int
 	useStaleness int
 
 	mode string
 
+	debug bool
+
 	// per-kind staleness config for each reconciler
-	KindBoundsPerReconciler map[string]KindBounds
+	KindBoundsPerReconciler map[string]ReconcilerConfig
 }
 
 type Explorer struct {
@@ -59,6 +65,8 @@ type Explorer struct {
 	effectContextManager EffectContextManager
 
 	config *ExploreConfig
+
+	stats *ExploreStats
 }
 
 type ConvergedState struct {
@@ -69,7 +77,6 @@ type ConvergedState struct {
 
 type Result struct {
 	ConvergedStates []ConvergedState
-	Duration        time.Duration
 }
 
 func (e *Explorer) shouldExploreDownstream(frameID string) bool {
@@ -93,10 +100,10 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		}
 		// this just contains the traced reconcile.Request object
 		frame := reconcile.Frame
-		fmt.Println("\nReplaying ReconcileID", frame.ID, "for reconciler", reconcilerID)
+		logger.Info("\nReplaying ReconcileID", frame.ID, "for reconciler", reconcilerID)
 
 		rebuiltState = e.knowledgeManager.GetStateAtReconcileID(reconcile.ReconcileID)
-		fmt.Printf("rebuilt state ahead of reconcile:%s - # objects: %d\n", util.Shorter(reconcile.ReconcileID), len(rebuiltState.contents))
+		logger.Info("rebuilt state ahead of reconcile", "ReconcileID", util.Shorter(reconcile.ReconcileID), "objects", len(rebuiltState.contents))
 		rebuiltState.contents.Summarize()
 
 		reconciler := e.reconcilers[reconcilerID]
@@ -111,21 +118,18 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		// TODO this is not working due to anonymization
 		res.Deltas = reconciler.computeDeltas(rebuiltState.contents, changes.ObjectVersions)
 
-		fmt.Println("Reconcile result - # changes:", len(changes.ObjectVersions))
+		logger.Info("Reconcile result - # changes:", len(changes.ObjectVersions))
 		changes.ObjectVersions.Summarize()
-		for _, eff := range changes.Effects {
-			fmt.Printf("\top: %s, ikey: %s\n", eff.OpType, eff.Key.IdentityKey)
-		}
 
 		resultingState := e.knowledgeManager.GetStateAfterReconcileID(reconcile.ReconcileID)
-		fmt.Printf("resulting state after reconcile:%s - # objects: %d\n", util.Shorter(reconcile.ReconcileID), len(resultingState.contents))
+		logger.Info("resulting state after reconcile", "ReconcileID", util.Shorter(reconcile.ReconcileID), "objects", len(resultingState.contents))
 		resultingState.contents.Summarize()
 
 		currExecutionHistory = append(currExecutionHistory, res)
 
 		// breaking off to explore to find alternative outcomes of the reconcile we just replayed.
 		if e.shouldExploreDownstream(reconcile.ReconcileID) {
-			fmt.Println("exploring downstream from reconcileID", reconcile.ReconcileID)
+			logger.Info("exploring downstream from reconcileID", reconcile.ReconcileID)
 
 			// TODO have the list of effects by the input to getTriggeredReconcilers
 			// to properly handle deletes
@@ -137,11 +141,10 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 				PendingReconciles: triggeredByLastChange,
 				ExecutionHistory:  slices.Clone(currExecutionHistory),
 			}
-			fmt.Println("exploring state space at reconcileID", reconcile.ReconcileID)
-			fmt.Printf("pending reconciles for frame %s: %v\n", res.FrameID, triggeredByLastChange)
+			logger.Info("exploring state space at reconcileID", reconcile.ReconcileID)
 			subRes := e.Explore(context.Background(), sn)
 			result.ConvergedStates = append(result.ConvergedStates, subRes.ConvergedStates...)
-			fmt.Println("explored state space, found", len(subRes.ConvergedStates), "converged states")
+			logger.Info("explored state space", "# converged states", len(subRes.ConvergedStates))
 		}
 	}
 
@@ -153,7 +156,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 		Paths: []ExecutionHistory{currExecutionHistory},
 	}
 	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
-	fmt.Println("len curr execution history", len(currExecutionHistory))
+	logger.Info("len curr execution history", len(currExecutionHistory))
 
 	return result
 }
@@ -182,7 +185,7 @@ func (e *Explorer) addStateToExplore(stackQueue []StateNode, state StateNode) []
 }
 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
-	fmt.Println("starting!")
+	logger.Info("starting!")
 
 	e.config.mode = "stack"
 
@@ -201,11 +204,10 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 	result := &Result{
 		ConvergedStates: make([]ConvergedState, 0),
 	}
-	start := time.Now()
-	depthStart := start
 
 	stats := NewExploreStats()
 	stats.Start()
+	e.stats = stats
 
 	seenDepths := make(map[int]bool)
 
@@ -234,7 +236,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		seenStates[initialStateKey] = true
 
 		expandedStates := expandStateByReconcileOrder(initialState)
-		fmt.Printf("expanded into %d states\n", len(expandedStates))
+		logger.Info("branching initial state pending reconcile ordering", "branchCount", len(expandedStates))
 		for _, expandedState := range expandedStates {
 			queue = e.addStateToExplore(queue, expandedState)
 		}
@@ -243,7 +245,6 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 	}
 
 	for len(queue) > 0 {
-		fmt.Println("current queue: ", dumpQueue(queue))
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
 
@@ -258,7 +259,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		if !seenStates[stateKey] {
 			if len(currentState.PendingReconciles) > 1 {
 				expandedStates := expandStateByReconcileOrder(currentState)
-				fmt.Printf("expanded state with multiple pending reconciles into %d states\n", len(expandedStates))
+				logger.Info("branching for pending reconcile ordering", "branchCount", len(expandedStates))
 				for _, candidate := range expandedStates {
 					orderHash := candidate.OrderSensitiveHash()
 					if _, seenOrder := seenStatesOrderSensitive[orderHash]; !seenOrder {
@@ -287,35 +288,33 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state.
-		possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID)
+		possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID, currentState.depth)
 		if err != nil {
 			return nil, errors.Wrap(err, "getting possible views")
 		}
 		reconcilerID := pendingReconcile.ReconcilerID
-		for _, possibleStateView := range possibleViews {
-			fmt.Printf("### reconciling %s - BEFORE state (%s):\n", reconcilerID, possibleStateView.ID)
-			fmt.Println("\treconcile request:", pendingReconcile.Request)
-			fmt.Println("\tcurrent queue: ", dumpQueue(queue))
-
-			possibleStateView.Contents.DumpContents()
-			possibleStateView.DumpPending()
+		for _, stateView := range possibleViews {
+			if e.config.debug {
+				logger.WithValues("Reconciler", reconcilerID, "StateID", stateView.ID, "Request", pendingReconcile.Request).Info("BEFORE")
+				stateView.Contents.DumpContents()
+				stateView.DumpPending()
+			}
 			// for each view, create a new branch in exploration
-			newState, err := e.takeReconcileStep(ctx, possibleStateView, pendingReconcile)
+			newState, err := e.takeReconcileStep(ctx, stateView, pendingReconcile)
 			if err != nil {
 				// if we encounter an error during reconciliation, just abandon this branch
-				fmt.Println("WARNING: error reconciling", err)
+				logger.Error(err, "WARNING: error reconciling")
 				continue
 			}
-			fmt.Printf("### reconciling %s - AFTER state (%s):\n", reconcilerID, newState.ID)
-			newState.Contents.DumpContents()
-			newState.DumpPending()
-			fmt.Println("")
+			if e.config.debug {
+				fmt.Printf("### reconciling %s - AFTER state (%s):\n", reconcilerID, newState.ID)
+				logger.WithValues("Reconciler", reconcilerID, "StateID", newState.ID, "Request", pendingReconcile.Request).Info("AFTER")
+				newState.Contents.DumpContents()
+				newState.DumpPending()
+			}
 
 			newState.depth = currentState.depth + 1
 			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
-				elapsed := time.Since(depthStart)
-				fmt.Printf("Explore reached depth %d, elapsed time: %s\n", newState.depth, elapsed)
-				depthStart = time.Now()
 				seenDepths[newState.depth] = true
 			}
 			if newState.depth > e.config.MaxDepth {
@@ -328,7 +327,6 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 	}
 
 	// Graph search has ended, summarize the results
-	result.Duration = time.Since(start)
 	for i, stateKey := range lo.Keys(seenConvergedStates) {
 		state := seenConvergedStates[stateKey]
 		paths := executionPathsToState[stateKey]
@@ -394,7 +392,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); ok {
 				// the effect validation mechanism should prevent a create effect from going through
 				// if an object with the same kind/namespace/name already exists, so panic if it does happen
-				panic("create effect object already exists in prev state: " + fmt.Sprintf("%s", effect.Key))
+				panic("create effect object already exists in prev state: " + effect.Key.String())
 			} else {
 				// key not in state as expected, add it
 				prevState[effect.Key] = changeOV[effect.Key]
@@ -405,7 +403,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 				// that no longer exists in the global state. The effect validation mechanism
 				// should cause the client operation to 404 and prevent the update effect from
 				// going through. If it does go through, we should panic cause something broke.
-				panic("update effect object not found in prev state: " + fmt.Sprintf("%s", effect.Key))
+				panic("update effect object not found in prev state: " + effect.Key.String())
 			}
 			prevState[effect.Key] = changeOV[effect.Key]
 
@@ -415,16 +413,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 				if _, nsNameExists := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !nsNameExists {
 					// We should never get here (effect validation should fail if there is no object matching the namespace/name in the state)
 					// but if we do, we should panic because something is wrong.
-					fmt.Println("warning: deleted key absent in state - ", effect.Key)
-					fmt.Println("frameID: ", frameID)
-					fmt.Println("true state:")
-					for k := range state.Objects() {
-						fmt.Println(k)
-					}
-					fmt.Println("observed state")
-					for k := range observableState {
-						fmt.Println(k)
-					}
+					logger.Info("warning: deleted key absent in state", "effectKey", effect.Key, "frameID", frameID)
 					panic("deleted key is not present in prev state. effect validation should have prevented this")
 				}
 			}
@@ -434,26 +423,25 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			// "go run examples/zookeeper/cmd/main.go --search-depth 2"
 			// and then uncomment the code below
 
-			// fmt.Println("warning: deleted key absent in state - ", effect.Key)
-			// fmt.Println("frameID: ", frameID)
-			// fmt.Println("true state:")
+			// logger.Info("warning: deleted key absent in state - ", effect.Key)
+			// logger.Info("frameID: ", frameID)
+			// logger.Info("true state:")
 			// for k := range state.Objects() {
-			// 	fmt.Println(k)
+			// 	logger.Info(k)
 			// }
-			// fmt.Println("observed state")
+			// logger.Info("observed state")
 			// for k := range observableState {
-			// 	fmt.Println(k)
+			// 	logger.Info(k)
 			// }
 			// panic("deletion effect")
 			// delete(prevState, effect.Key)
 
 		case event.REMOVE:
 			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !ok {
-				fmt.Println("warning: removed key absent in state - ", effect.Key)
-				fmt.Println("frameID: ", frameID)
+				logger.Info("warning: removed key absent in state - ", "effectKey", effect.Key, "frameID", frameID)
 				panic("removed key is not present in prev state. effect validation should have prevented this")
 			}
-			fmt.Println("removing object from state", effect.Key)
+			logger.Info("removing object from state", "key", effect.Key)
 			delete(prevState, effect.Key)
 		default:
 			panic("unknown effect type")
@@ -477,13 +465,12 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// include the controller that was just executed.
 	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
 	newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
-	logger.V(2).WithValues("reconcilerID", pr.ReconcilerID, "pending", newPendingReconciles).Info("--Finished Reconcile--")
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
 
 	sn := StateNode{
-		Contents:          NewStateSnapshot(prevState, newSequences, newStateEvents),
+		Contents:          newStateSnapshot(prevState, newSequences, newStateEvents),
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,
@@ -535,23 +522,35 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 	return e.triggerManager.MustGetTriggered(changes)
 }
 
-func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string) ([]StateNode, error) {
+func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string, currDepth int) ([]StateNode, error) {
 	if e.config.useStaleness == 0 {
 		return []StateNode{currState}, nil
 	}
 
+	// TODO explore restarting at every depth
+	reconcilerConfig, ok := e.config.KindBoundsPerReconciler[reconcilerID]
+	if !ok {
+		return []StateNode{currState}, nil
+	}
+	maxRestarts := reconcilerConfig.MaxRestarts
+	currRestarts := e.stats.RestartsPerReconciler[reconcilerID]
+
+	if currRestarts >= maxRestarts {
+		return []StateNode{currState}, nil
+	}
+
 	currSnapshot := currState.Contents
-	bounds, ok := e.config.KindBoundsPerReconciler[reconcilerID]
+	config, ok := e.config.KindBoundsPerReconciler[reconcilerID]
 	if !ok {
 		// no staleness bounds configured for this reconciler, so dont compute stale states
 		return []StateNode{currState}, nil
 	}
-	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, bounds)
+	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.Bounds)
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println("bounds for reconciler", reconcilerID, ":", bounds)
-	fmt.Println("number of possible views for controller", reconcilerID, ":", len(all))
+	logger.Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(all))
+	e.stats.RestartsPerReconciler[reconcilerID]++
 
 	asStateNodes := lo.Map(all, func(snapshot *StateSnapshot, _ int) StateNode {
 		sn := StateNode{

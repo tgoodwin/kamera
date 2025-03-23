@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -171,9 +172,12 @@ func main() {
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
 
 	eb.ExploreStaleStates() // Enable staleness exploration
-	eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{
-		"ZookeeperCluster":      *stalenessDepth,
-		"PersistentVolumeClaim": 1,
+	eb.WithKindBounds("ZookeeperReconciler", tracecheck.ReconcilerConfig{
+		Bounds: tracecheck.LookbackLimits{
+			"ZookeeperCluster":      *stalenessDepth,
+			"PersistentVolumeClaim": 1,
+		},
+		MaxRestarts: 1,
 	})
 	eb.WithMaxDepth(*searchDepth) // tuned this experimentally
 
@@ -206,8 +210,8 @@ func main() {
 	fmt.Println("initial state hash: ", topHash)
 
 	// Set up a test logger
-	// logger := zap.New(zap.UseDevMode(true))
-	// tracecheck.SetLogger(logger)
+	logger := zap.New(zap.UseDevMode(true))
+	tracecheck.SetLogger(logger)
 	// log.SetLogger(logger)
 
 	// Explore all possible execution paths

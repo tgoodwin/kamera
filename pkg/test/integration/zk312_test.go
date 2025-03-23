@@ -182,8 +182,11 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	t.Run("Bug manifests under stale reads", func(t *testing.T) {
 		eb.WithMaxDepth(2)
 		eb.ExploreStaleStates() // Enable staleness exploration
-		eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{
-			"ZookeeperCluster": 3,
+		eb.WithKindBounds("ZookeeperReconciler", tracecheck.ReconcilerConfig{
+			Bounds: tracecheck.LookbackLimits{
+				"ZookeeperCluster": 2, // using staleness to go back to the previous version
+			},
+			MaxRestarts: 1,
 		})
 
 		explorer, err := eb.Build("standalone")
@@ -217,8 +220,11 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	})
 	t.Run("Bug does not manifest if staleness doesnt go back far enough", func(t *testing.T) {
 		eb.ExploreStaleStates() // default
-		eb.WithKindBounds("ZookeeperReconciler", tracecheck.KindBounds{
-			"ZookeeperCluster": 1, // using staleness but not going back far enough (showing only most recent version)
+		eb.WithKindBounds("ZookeeperReconciler", tracecheck.ReconcilerConfig{
+			Bounds: tracecheck.LookbackLimits{
+				"ZookeeperCluster": 2, // using staleness to go back to the previous version
+			},
+			MaxRestarts: 1,
 		})
 
 		explorer, err := eb.Build("standalone")
