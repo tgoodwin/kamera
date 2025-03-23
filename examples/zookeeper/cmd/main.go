@@ -174,8 +174,8 @@ func main() {
 	eb.ExploreStaleStates() // Enable staleness exploration
 	eb.WithKindBounds("ZookeeperReconciler", tracecheck.ReconcilerConfig{
 		Bounds: tracecheck.LookbackLimits{
-			"ZookeeperCluster":      *stalenessDepth,
-			"PersistentVolumeClaim": 1,
+			"ZookeeperCluster": *stalenessDepth,
+			// "PersistentVolumeClaim": 1,
 		},
 		MaxRestarts: 1,
 	})
@@ -201,10 +201,6 @@ func main() {
 			},
 		},
 	}
-
-	initialState.Contents = initialState.Contents.FixAt(
-		tracecheck.KindSequences{"ZookeeperCluster": 7},
-	)
 
 	topHash := initialState.Hash()
 	fmt.Println("initial state hash: ", topHash)
