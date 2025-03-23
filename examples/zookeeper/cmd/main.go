@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/samber/lo"
@@ -226,21 +225,23 @@ func main() {
 	// groups them by "shape"
 	groupedBySignature := classifier.GroupBySignature(result.ConvergedStates)
 	historiesBySignature := make(map[string][]tracecheck.ExecutionHistory)
-	for sig, states := range groupedBySignature {
-		fmt.Printf("signature: %s, number of states: %d\n", sig, len(states))
-		historiesForSignature := make([]tracecheck.ExecutionHistory, 0)
-		for _, state := range states {
-			executions := state.State.ExecutionHistory
-			historiesForSignature = append(historiesForSignature, executions)
+	var debug = false
+	if debug {
+		for sig, states := range groupedBySignature {
+			fmt.Printf("signature: %s, number of states: %d\n", sig, len(states))
+			historiesForSignature := make([]tracecheck.ExecutionHistory, 0)
+			for _, state := range states {
+				executions := state.State.ExecutionHistory
+				historiesForSignature = append(historiesForSignature, executions)
+			}
+			historiesBySignature[sig] = historiesForSignature
 		}
-		historiesBySignature[sig] = historiesForSignature
-	}
 
-	for sig, histories := range historiesBySignature {
-		fmt.Println("signature: ", sig)
-		fmt.Println("number of histories: ", len(histories))
+		for sig, histories := range historiesBySignature {
+			fmt.Println("signature: ", sig)
+			fmt.Println("number of histories: ", len(histories))
+		}
 	}
-
 	classified := classifier.ClassifyResults(result.ConvergedStates, pred)
 
 	byClassificaition := lo.GroupBy(classified, func(c tracecheck.ClassifiedState) string {
@@ -253,13 +254,6 @@ func main() {
 		})
 		uniqueSignatures := lo.Uniq(signatures)
 		fmt.Printf("%s: %v\n", classification, uniqueSignatures)
-	}
-
-	for _, state := range classified {
-		if strings.HasPrefix(state.Signature, "8meo") {
-			fmt.Println("State Signature: ", state.Signature)
-			fmt.Printf("%v\n", state.State.State.Contents.All())
-		}
 	}
 
 	resultWriter := tracecheck.NewResultWriter(emitter)

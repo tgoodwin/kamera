@@ -70,7 +70,6 @@ type ConvergedState struct {
 type Result struct {
 	ConvergedStates []ConvergedState
 	Duration        time.Duration
-	AbortedPaths    int
 }
 
 func (e *Explorer) shouldExploreDownstream(frameID string) bool {
@@ -205,6 +204,9 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 	start := time.Now()
 	depthStart := start
 
+	stats := NewExploreStats()
+	stats.Start()
+
 	seenDepths := make(map[int]bool)
 
 	var queue []StateNode
@@ -244,6 +246,8 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		fmt.Println("current queue: ", dumpQueue(queue))
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
+
+		stats.NodeVisits++
 
 		// we're gonna proceed to reconcile on the first pending reconcile for this state,
 		// but if there are multiple pending reconciles, we want to see what happens
@@ -315,7 +319,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				seenDepths[newState.depth] = true
 			}
 			if newState.depth > e.config.MaxDepth {
-				result.AbortedPaths += 1
+				stats.AbortedPaths++
 			} else {
 				// enqueue the new state to explore
 				queue = e.addStateToExplore(queue, newState)
@@ -338,6 +342,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
 	}
 
+	stats.Print()
 	return result, nil
 }
 

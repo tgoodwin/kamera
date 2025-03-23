@@ -248,11 +248,13 @@ func (sn StateNode) Serialize() string {
 	return sn.serialize(false)
 }
 
+// Hash returns a hash of the state node, unaffected by the order of pending reconciles.
 func (sn StateNode) Hash() string {
 	s := sn.Serialize()
 	return util.ShortenHash(s)
 }
 
+// OrderSensitiveHash returns a hash of the state node and the order of pending reconciles.
 func (sn StateNode) OrderSensitiveHash() string {
 	s := sn.serialize(true)
 	return util.ShortenHash(s)
