@@ -1,8 +1,6 @@
 package tracecheck
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -10,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/samber/lo"
+	"github.com/tgoodwin/sleeve/pkg/util"
 )
 
 type ResultWriter struct {
@@ -20,15 +19,6 @@ func NewResultWriter(emitter testEmitter) *ResultWriter {
 	return &ResultWriter{
 		emitter: emitter,
 	}
-}
-
-func prettyPrintJSON(jsonStr string) (string, error) {
-	var prettyJSON bytes.Buffer
-	err := json.Indent(&prettyJSON, []byte(jsonStr), "", "  ")
-	if err != nil {
-		return "", err
-	}
-	return prettyJSON.String(), nil
 }
 
 func sanitizePath(outDir string) string {
@@ -134,7 +124,7 @@ func (rw *ResultWriter) writeStateSummary(state ConvergedState, outPath string) 
 
 	for _, key := range objectKeys {
 		version := state.State.Objects()[key]
-		prettyVersion, err := prettyPrintJSON(string(version.Value))
+		prettyVersion, err := util.PrettyPrintJSON(string(version.Value))
 		if err != nil {
 			log.Fatalf("failed to pretty print version: %v", err)
 		}

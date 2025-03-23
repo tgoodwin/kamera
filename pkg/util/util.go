@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -126,4 +127,13 @@ func GetNext[T any](slice []T, mode string) (T, []T, error) {
 	default:
 		return zeroValue, slice, fmt.Errorf("invalid mode: %s", mode)
 	}
+}
+
+func PrettyPrintJSON(jsonStr string) (string, error) {
+	var prettyJSON bytes.Buffer
+	err := json.Indent(&prettyJSON, []byte(jsonStr), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return prettyJSON.String(), nil
 }

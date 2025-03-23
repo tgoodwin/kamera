@@ -21,15 +21,14 @@ import (
 var CleanupReconcilerID = "CleanupReconciler"
 
 type ExplorerBuilder struct {
-	reconcilers        map[string]ReconcilerConstructor
-	resourceDeps       ResourceDeps
-	scheme             *runtime.Scheme
-	maxDepth           int
-	exploreStaleStates int
-	reconcilerConfig   map[string]ReconcilerConfig
-	emitter            testEmitter
-	snapStore          *snapshot.Store
-	reconcilerToKind   map[string]string
+	reconcilers      map[string]ReconcilerConstructor
+	resourceDeps     ResourceDeps
+	scheme           *runtime.Scheme
+	emitter          testEmitter
+	snapStore        *snapshot.Store
+	reconcilerToKind map[string]string
+
+	config *ExploreConfig
 
 	// for replay mode
 	builder *replay.Builder
@@ -37,19 +36,26 @@ type ExplorerBuilder struct {
 
 func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	return &ExplorerBuilder{
-		reconcilers:        make(map[string]ReconcilerConstructor),
-		resourceDeps:       make(ResourceDeps),
-		scheme:             scheme,
-		snapStore:          snapshot.NewStore(),
-		maxDepth:           10, // Default value
-		exploreStaleStates: 0,  // Default value
-		reconcilerToKind:   make(map[string]string),
+		reconcilers:      make(map[string]ReconcilerConstructor),
+		resourceDeps:     make(ResourceDeps),
+		scheme:           scheme,
+		snapStore:        snapshot.NewStore(),
+		reconcilerToKind: make(map[string]string),
+
+		config: &ExploreConfig{
+			MaxDepth:                10,
+			KindBoundsPerReconciler: make(map[string]ReconcilerConfig),
+		},
 	}
 }
 
 func (b *ExplorerBuilder) WithReconciler(id string, constructor ReconcilerConstructor) *ExplorerBuilder {
 	b.reconcilers[id] = constructor
 	return b
+}
+
+func (b *ExplorerBuilder) WithDebug() {
+	b.config.debug = true
 }
 
 func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) *ExplorerBuilder {
@@ -63,20 +69,17 @@ func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) 
 }
 
 func (b *ExplorerBuilder) WithMaxDepth(depth int) *ExplorerBuilder {
-	b.maxDepth = depth
+	b.config.MaxDepth = depth
 	return b
 }
 
 func (b *ExplorerBuilder) ExploreStaleStates() *ExplorerBuilder {
-	b.exploreStaleStates = 1
+	b.config.useStaleness = 1
 	return b
 }
 
 func (b *ExplorerBuilder) WithKindBounds(reconcilerID string, rc ReconcilerConfig) *ExplorerBuilder {
-	if b.reconcilerConfig == nil {
-		b.reconcilerConfig = make(map[string]ReconcilerConfig)
-	}
-	b.reconcilerConfig[reconcilerID] = rc
+	b.config.KindBoundsPerReconciler[reconcilerID] = rc
 	return b
 }
 
@@ -324,17 +327,11 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 
 	// Construct the Explorer
 	explorer := &Explorer{
-		reconcilers:      reconcilers,
-		dependencies:     b.resourceDeps,
-		triggerManager:   triggerManager,
-		knowledgeManager: knowledgeManager,
-
-		config: &ExploreConfig{
-			MaxDepth:                b.maxDepth,
-			useStaleness:            b.exploreStaleStates,
-			KindBoundsPerReconciler: b.reconcilerConfig,
-		},
-
+		reconcilers:          reconcilers,
+		dependencies:         b.resourceDeps,
+		triggerManager:       triggerManager,
+		knowledgeManager:     knowledgeManager,
+		config:               b.config,
 		effectContextManager: mgr,
 	}
 

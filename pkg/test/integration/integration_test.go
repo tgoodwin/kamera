@@ -14,6 +14,8 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var scheme = runtime.NewScheme()
@@ -31,8 +33,15 @@ func formatResults(paths []tracecheck.ExecutionHistory) [][]string {
 }
 
 func TestExhaustiveInterleavings(t *testing.T) {
+	opts := zap.Options{
+		Development: true,
+	}
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	tracecheck.SetLogger(ctrl.Log.WithName("tracecheck").V(2))
+
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
+	// eb.WithDebug()
 	eb.WithEmitter(event.NewInMemoryEmitter())
 	eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
@@ -85,6 +94,9 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	result := explorer.Explore(context.Background(), initialState)
 
 	if len(result.ConvergedStates) != 1 {
+		for _, state := range result.ConvergedStates {
+			fmt.Println(state.State.Objects())
+		}
 		t.Fatalf("expected 1 result, got %d", len(result.ConvergedStates))
 	}
 	convergedState := result.ConvergedStates[0]
