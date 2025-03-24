@@ -413,6 +413,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 		case event.REMOVE:
 			if _, wasMarkedForDeletion := deletions[e.Effect.Key]; !wasMarkedForDeletion {
 				fmt.Println("WARNING: attempting to remove an object that was not marked for deletion first", iKey)
+				panic("removing object that was not marked for deletion")
 			}
 			delete(contents, e.Effect.Key)
 		case event.CREATE, event.UPDATE:

@@ -222,7 +222,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 	// but we do track the states we've seen
 	seenStates := make(map[string]bool)
 
-	seenStatesOrderSensitive := make(map[string]bool)
+	seenStatesPendingOrderSensitive := make(map[string]bool)
 
 	// we do track the seen converged states so we can attribute multiple execution paths to them
 	seenConvergedStates := make(map[string]StateNode)
@@ -238,7 +238,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		orderKey := currentState.OrderSensitiveHash()
 		lineageKey := currentState.LineageHash()
 
-		stats.NodeVisits++
+		logger.V(1).Info("visiting node", "Lineage", lineageKey, "depth", currentState.depth)
 
 		// we reconcile on the first pending reconcile for this state,
 		// but if there are multiple pending reconciles, we want to explore what would happen
@@ -256,12 +256,12 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				for _, candidate := range expandedStates {
 					// orderHash := candidate.OrderSensitiveHash()
 					lineageHash := candidate.LineageHash()
-					if _, seenOrder := seenStatesOrderSensitive[lineageHash]; !seenOrder {
+					if _, seenOrder := seenStatesPendingOrderSensitive[lineageHash]; !seenOrder {
 						if lineageHash != lineageKey {
 							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", lineageHash)
 							queue = e.addStateToExplore(queue, candidate)
 						}
-						seenStatesOrderSensitive[lineageHash] = true
+						seenStatesPendingOrderSensitive[lineageHash] = true
 					} else {
 						logger.V(2).Info("already seen branch, not queueing", "OrderKey", lineageHash)
 					}
@@ -342,6 +342,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
 	}
 
+	fmt.Println("seen states", len(seenStatesPendingOrderSensitive))
 	stats.Print()
 	return result, nil
 }
@@ -379,7 +380,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	maps.Copy(newSequences, state.Contents.KindSequences)
 
 	effects := reconcileResult.Changes.Effects
-	logger.Info("completed step", "frameID", frameID, "controller", pr.ReconcilerID, "numEffects", len(effects))
+	logger.V(2).Info("completed step", "frameID", frameID, "controller", pr.ReconcilerID, "numEffects", len(effects))
 
 	// update the state with the new object versions.
 	// note that we are updating the "global state" here,
@@ -552,7 +553,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	if err != nil {
 		return nil, err
 	}
-	logger.Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(all))
+	logger.V(1).Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(all))
 	e.stats.RestartsPerReconciler[reconcilerID]++
 
 	asStateNodes := lo.Map(all, func(snapshot *StateSnapshot, _ int) StateNode {
