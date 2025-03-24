@@ -144,7 +144,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		reffects.writes = append(reffects.writes, eff)
 	}
 	m.effects[frameID] = reffects
-	logger.V(2).Info("recorded effects", "frameID", frameID, "reads", reffects.reads, "writes", reffects.writes)
+	logger.V(2).Info("recorded effects", "frameID", frameID, "numReads", len(reffects.reads), "numWrites", len(reffects.writes))
 
 	return nil
 }

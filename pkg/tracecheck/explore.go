@@ -238,7 +238,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		orderKey := currentState.OrderSensitiveHash()
 		lineageKey := currentState.LineageHash()
 
-		logger.V(1).Info("visiting node", "Lineage", lineageKey, "depth", currentState.depth)
+		logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", lineageKey)
 
 		// we reconcile on the first pending reconcile for this state,
 		// but if there are multiple pending reconciles, we want to explore what would happen
