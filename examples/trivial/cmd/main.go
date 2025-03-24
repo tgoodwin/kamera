@@ -8,11 +8,10 @@ import (
 	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
-	"go.uber.org/zap/zapcore"
+	sleevelog "github.com/tgoodwin/sleeve/pkg/util/logger"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var scheme = runtime.NewScheme()
@@ -30,16 +29,13 @@ func formatResults(paths []tracecheck.ExecutionHistory) [][]string {
 }
 
 func main() {
-	opts := zap.Options{
-		Development: true,
-		Level:       zapcore.Level(-2),
-	}
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-	tracecheck.SetLogger(ctrl.Log.WithName("tracecheck").V(0))
+	log := sleevelog.GetLogger(sleevelog.Debug)
+	ctrl.SetLogger(log)
+	tracecheck.SetLogger(ctrl.Log.WithName("tracecheck"))
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
-	eb.WithDebug()
+	// eb.WithDebug()
 	eb.WithEmitter(event.NewInMemoryEmitter())
 	eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
