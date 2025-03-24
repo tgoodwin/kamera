@@ -254,6 +254,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
+		lineageKey := currentState.LineageHash()
 
 		stats.NodeVisits++
 
@@ -267,24 +268,25 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 			if !seenStates[orderKey] || true {
 				expandedStates := expandStateByReconcileOrder(currentState)
 				branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
-					return sn.OrderSensitiveHash()
+					return sn.LineageHash()
 				})
 				// nodeKey := fmt.Sprintf("%s->%s", parentHash, orderKey)
 				logger.Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
 				for _, candidate := range expandedStates {
-					orderHash := candidate.OrderSensitiveHash()
-					if _, seenOrder := seenStatesOrderSensitive[orderHash]; !seenOrder {
-						if orderHash != orderKey {
-							logger.Info("adding new branch to explore", "TakenKey", orderKey, "EnqueuedKey", orderHash)
+					// orderHash := candidate.OrderSensitiveHash()
+					lineageHash := candidate.LineageHash()
+					if _, seenOrder := seenStatesOrderSensitive[lineageHash]; !seenOrder {
+						if lineageHash != lineageKey {
+							logger.Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", lineageHash)
 							queue = e.addStateToExplore(queue, candidate)
 						}
-						seenStatesOrderSensitive[orderHash] = true
+						seenStatesOrderSensitive[lineageHash] = true
 					} else {
-						logger.Info("already seen branch, not queueing", "OrderKey", orderHash)
+						logger.Info("already seen branch, not queueing", "OrderKey", lineageHash)
 					}
 				}
 			} else {
-				logger.WithValues("StateKey", stateKey, "OrderKey", orderKey).Info("already seen, not expanding")
+				logger.WithValues("StateKey", stateKey, "OrderKey", lineageKey).Info("already seen, not expanding")
 			}
 		}
 

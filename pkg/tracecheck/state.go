@@ -267,9 +267,9 @@ func (sn StateNode) OrderSensitiveHash() string {
 
 func (sn StateNode) LineageHash() string {
 	if sn.parent == nil {
-		return sn.Hash()
+		return sn.OrderSensitiveHash()
 	}
-	return fmt.Sprintf("%s-%s", sn.Hash(), sn.parent.LineageHash())
+	return fmt.Sprintf("%s->%s", sn.parent.LineageHash(), sn.OrderSensitiveHash())
 }
 
 // expandStateByReconcileOrder takes a StateNode and returns a slice of new StateNodes,
