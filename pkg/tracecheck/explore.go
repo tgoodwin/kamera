@@ -230,24 +230,6 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 	// var currentState StateNode
 	var currentState StateNode
 
-	// Expand the initial state if it has multiple pending reconciles
-	// if len(initialState.PendingReconciles) > 1 {
-	// 	initialStateKey := initialState.OrderSensitiveHash()
-	// 	seenStates[initialStateKey] = true
-
-	// 	expandedStates := expandStateByReconcileOrder(initialState)
-	// 	newHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
-	// 		return sn.OrderSensitiveHash()
-	// 	})
-	// 	for _, expandedState := range expandedStates {
-	// 		queue = e.addStateToExplore(queue, expandedState)
-	// 	}
-	// 	logger.WithValues("StateKey", initialStateKey, "branchCount", len(expandedStates), "OrderKeys", newHashes).
-	// 		Info("branching initial state")
-	// } else {
-	// 	queue = append(queue, initialState)
-	// }
-
 	queue = append(queue, initialState)
 
 	for len(queue) > 0 {
@@ -258,9 +240,9 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 
 		stats.NodeVisits++
 
-		// we're gonna proceed to reconcile on the first pending reconcile for this state,
-		// but if there are multiple pending reconciles, we want to see what happens
-		// if we reconciled on each of those first. So, we enqueue copies of this state
+		// we reconcile on the first pending reconcile for this state,
+		// but if there are multiple pending reconciles, we want to explore what would happen
+		// if each pending reconcile had gone first. So, we enqueue copies of this state
 		// with each pending reconcile as the first one before proceeding. We do this FIRST
 		// before taking the reconcile step so that we can explore a branch entirely in a DFS manner.
 		// if we wanted to explore in a BFS manner, we would do this after taking the reconcile step.
@@ -270,19 +252,18 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
 					return sn.LineageHash()
 				})
-				// nodeKey := fmt.Sprintf("%s->%s", parentHash, orderKey)
-				logger.Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
+				logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
 				for _, candidate := range expandedStates {
 					// orderHash := candidate.OrderSensitiveHash()
 					lineageHash := candidate.LineageHash()
 					if _, seenOrder := seenStatesOrderSensitive[lineageHash]; !seenOrder {
 						if lineageHash != lineageKey {
-							logger.Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", lineageHash)
+							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", lineageHash)
 							queue = e.addStateToExplore(queue, candidate)
 						}
 						seenStatesOrderSensitive[lineageHash] = true
 					} else {
-						logger.Info("already seen branch, not queueing", "OrderKey", lineageHash)
+						logger.V(2).Info("already seen branch, not queueing", "OrderKey", lineageHash)
 					}
 				}
 			} else {

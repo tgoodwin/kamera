@@ -15,7 +15,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var log = logf.Log.WithName(tag.LoggerName)
+var log = logf.Log.WithName("tracegen")
 
 type Client struct {
 	// this syntax is "embedding" the client.Client interface in the Client struct

@@ -73,7 +73,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 
 	frameID := FrameIDFromContext(ctx)
 	kind := util.GetKind(obj)
-	logger.V(2).Info("client:requesting key %s, inferred kind: %s\n", key, kind)
+	logger.V(2).Info("client:get", "Key", key, "Kind", kind)
 	if frame, err := c.GetCacheFrame(frameID); err == nil {
 		if frozenObj, ok := frame[kind][key]; ok {
 			// fmt.Printf("frame: %s - got object: %s/%s timestamp %v\n", frameID, kind, key, frozenObj.GetDeletionTimestamp())
@@ -94,7 +94,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 			return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
 		}
 	} else {
-		fmt.Println("frame NOT found!", frameID)
+		logger.V(2).Info("frame NOT found!", "FrameID", frameID)
 		return fmt.Errorf("frame %s not found", frameID)
 	}
 	return nil

@@ -61,10 +61,9 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 	}
 
 	if logger.V(2).Enabled() {
-		logger.V(2).Info("frame data for frameID: %s\n", frameID)
 		for kind, objs := range frameData {
-			for nn, obj := range objs {
-				logger.V(2).Info("kind: %s, nn: %s, obj: %v\n", kind, nn, obj)
+			for nn := range objs {
+				logger.V(2).WithValues("FrameID", frameID, "Kind", kind, "nn", nn).Info("frame data")
 			}
 		}
 	}
@@ -79,7 +78,6 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
 	deltas := r.computeDeltas(observableState, effects.ObjectVersions)
-	logger.V(2).Info("reconcile complete")
 
 	return &ReconcileResult{
 		ControllerID: r.Name,

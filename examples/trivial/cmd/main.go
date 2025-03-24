@@ -8,6 +8,7 @@ import (
 	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
+	"go.uber.org/zap/zapcore"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -31,6 +32,7 @@ func formatResults(paths []tracecheck.ExecutionHistory) [][]string {
 func main() {
 	opts := zap.Options{
 		Development: true,
+		Level:       zapcore.Level(-2),
 	}
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	tracecheck.SetLogger(ctrl.Log.WithName("tracecheck").V(0))
