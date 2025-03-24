@@ -178,7 +178,7 @@ type StateNode struct {
 
 func (sn StateNode) DumpPending() {
 	for _, pr := range sn.PendingReconciles {
-		fmt.Printf("\t%s\n", pr)
+		fmt.Printf("\tpending:%s\n", pr)
 	}
 }
 
@@ -263,6 +263,13 @@ func (sn StateNode) Hash() string {
 func (sn StateNode) OrderSensitiveHash() string {
 	s := sn.serialize(true)
 	return util.ShortenHash(s)
+}
+
+func (sn StateNode) LineageHash() string {
+	if sn.parent == nil {
+		return sn.Hash()
+	}
+	return fmt.Sprintf("%s-%s", sn.Hash(), sn.parent.LineageHash())
 }
 
 // expandStateByReconcileOrder takes a StateNode and returns a slice of new StateNodes,

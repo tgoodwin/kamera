@@ -231,22 +231,29 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 	var currentState StateNode
 
 	// Expand the initial state if it has multiple pending reconciles
-	if len(initialState.PendingReconciles) > 1 {
-		initialStateKey := initialState.Hash()
-		seenStates[initialStateKey] = true
+	// if len(initialState.PendingReconciles) > 1 {
+	// 	initialStateKey := initialState.OrderSensitiveHash()
+	// 	seenStates[initialStateKey] = true
 
-		expandedStates := expandStateByReconcileOrder(initialState)
-		logger.Info("branching initial state pending reconcile ordering", "branchCount", len(expandedStates))
-		for _, expandedState := range expandedStates {
-			queue = e.addStateToExplore(queue, expandedState)
-		}
-	} else {
-		queue = append(queue, initialState)
-	}
+	// 	expandedStates := expandStateByReconcileOrder(initialState)
+	// 	newHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
+	// 		return sn.OrderSensitiveHash()
+	// 	})
+	// 	for _, expandedState := range expandedStates {
+	// 		queue = e.addStateToExplore(queue, expandedState)
+	// 	}
+	// 	logger.WithValues("StateKey", initialStateKey, "branchCount", len(expandedStates), "OrderKeys", newHashes).
+	// 		Info("branching initial state")
+	// } else {
+	// 	queue = append(queue, initialState)
+	// }
+
+	queue = append(queue, initialState)
 
 	for len(queue) > 0 {
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
+		orderKey := currentState.OrderSensitiveHash()
 
 		stats.NodeVisits++
 
@@ -256,21 +263,32 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		// with each pending reconcile as the first one before proceeding. We do this FIRST
 		// before taking the reconcile step so that we can explore a branch entirely in a DFS manner.
 		// if we wanted to explore in a BFS manner, we would do this after taking the reconcile step.
-		if !seenStates[stateKey] {
-			if len(currentState.PendingReconciles) > 1 {
+		if len(currentState.PendingReconciles) > 1 {
+			if !seenStates[orderKey] || true {
 				expandedStates := expandStateByReconcileOrder(currentState)
-				logger.Info("branching for pending reconcile ordering", "branchCount", len(expandedStates))
+				branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
+					return sn.OrderSensitiveHash()
+				})
+				// nodeKey := fmt.Sprintf("%s->%s", parentHash, orderKey)
+				logger.Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
 				for _, candidate := range expandedStates {
 					orderHash := candidate.OrderSensitiveHash()
 					if _, seenOrder := seenStatesOrderSensitive[orderHash]; !seenOrder {
-						queue = e.addStateToExplore(queue, candidate)
+						if orderHash != orderKey {
+							logger.Info("adding new branch to explore", "TakenKey", orderKey, "EnqueuedKey", orderHash)
+							queue = e.addStateToExplore(queue, candidate)
+						}
 						seenStatesOrderSensitive[orderHash] = true
+					} else {
+						logger.Info("already seen branch, not queueing", "OrderKey", orderHash)
 					}
 				}
+			} else {
+				logger.WithValues("StateKey", stateKey, "OrderKey", orderKey).Info("already seen, not expanding")
 			}
 		}
 
-		seenStates[stateKey] = true
+		seenStates[orderKey] = true
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = []ExecutionHistory{currentState.ExecutionHistory}
@@ -295,7 +313,8 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		reconcilerID := pendingReconcile.ReconcilerID
 		for _, stateView := range possibleViews {
 			if e.config.debug {
-				logger.WithValues("Reconciler", reconcilerID, "StateID", stateView.ID, "Request", pendingReconcile.Request).Info("BEFORE")
+				logger.WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderSensitiveHash(), "Request", pendingReconcile.Request).Info("BEFORE")
+				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
 				stateView.Contents.DumpContents()
 				stateView.DumpPending()
 			}
@@ -307,8 +326,8 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				continue
 			}
 			if e.config.debug {
-				fmt.Printf("### reconciling %s - AFTER state (%s):\n", reconcilerID, newState.ID)
-				logger.WithValues("Reconciler", reconcilerID, "StateID", newState.ID, "Request", pendingReconcile.Request).Info("AFTER")
+				logger.WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
+				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
 				newState.Contents.DumpContents()
 				newState.DumpPending()
 			}
@@ -377,6 +396,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	maps.Copy(newSequences, state.Contents.KindSequences)
 
 	effects := reconcileResult.Changes.Effects
+	logger.Info("completed step", "frameID", frameID, "controller", pr.ReconcilerID, "numEffects", len(effects))
 
 	// update the state with the new object versions.
 	// note that we are updating the "global state" here,
@@ -569,7 +589,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 
 func dumpQueue(queue []StateNode) []string {
 	queueStr := lo.Map(queue, func(sn StateNode, _ int) string {
-		return sn.ID
+		return sn.OrderSensitiveHash()
 	})
 	return queueStr
 }
