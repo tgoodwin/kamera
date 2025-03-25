@@ -400,7 +400,6 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 					logger.V(2).Info("object being marked for deletion again", "Key", iKey)
 					continue
 				}
-				fmt.Println("warning: encountered update after entity was marked for deletion (possibly finalizers, which are ok)", iKey)
 				continue
 			}
 		}
@@ -412,8 +411,12 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 			contents[e.Effect.Key] = version
 		case event.REMOVE:
 			if _, wasMarkedForDeletion := deletions[e.Effect.Key]; !wasMarkedForDeletion {
-				fmt.Println("WARNING: attempting to remove an object that was not marked for deletion first", iKey)
-				panic("removing object that was not marked for deletion")
+				// special case, we treat GarbageCollector REMOVEs as a DELETE + REMOVE
+				// since it cleans up things that nobody explicitly marked for deletion
+				if e.Event != nil && e.Event.ControllerID != util.GarbageCollectorName {
+					fmt.Println("WARNING: attempting to remove an object that was not marked for deletion first", e.Effect.Key.ResourceKey)
+					panic("removing object that was not marked for deletion")
+				}
 			}
 			delete(contents, e.Effect.Key)
 		case event.CREATE, event.UPDATE:

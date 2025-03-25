@@ -2,11 +2,14 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"sort"
 
 	"github.com/samber/lo"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -40,7 +43,10 @@ func main() {
 	}
 
 	for _, trace := range traces {
-		log.Printf("RootEventID: %s, Kind: %s, ObjectID: %s, OpType: %s", trace.RootEventID, trace.Kind, trace.ObjectID, trace.OpType)
+		if !event.IsWriteOp(event.OperationType(trace.OpType)) {
+			continue
+		}
+		fmt.Printf("Timestamp: %s, Kind: %s, ObjectID: %s, %s:%s\n", trace.Timestamp, trace.Kind, util.Shorter(trace.ObjectID), trace.ControllerID, trace.OpType)
 	}
 
 	topState := tracecheck.Rollup(traces)
