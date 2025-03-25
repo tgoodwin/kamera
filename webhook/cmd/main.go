@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 
 	"github.com/tgoodwin/sleeve/pkg/event"
@@ -212,8 +211,9 @@ func (s *Handler) ServeTagResource(w http.ResponseWriter, r *http.Request) {
 
 func canByPassvalidation(userInfo authenticationv1.UserInfo) bool {
 	validSubstrings := []string{
-		"system:node",       // kubelet
-		"garbage-collector", // default garbage collector
+		"system:node",               // kubelet
+		"garbage-collector",         // default garbage collector
+		"pvc-protection-controller", // removes finalizers from PVCs
 	}
 	for _, s := range validSubstrings {
 		if strings.Contains(userInfo.Username, s) {
@@ -253,7 +253,13 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 	// Ensure we capture delete events in the traces
 	isGarbageCollector := strings.Contains(in.Request.UserInfo.Username, "garbage-collector")
 	if isGarbageCollector {
+		// this is not complete - garbage collector only handles objects that are being cleaned
+		// up through owner references.
 		h.emitGarbageCollectionEvent(in.Request)
+	}
+
+	if err := h.captureObjectRemovalEvent(in.Request); err != nil {
+		logger.Error(err)
 	}
 
 	// this requires explicitly impersonating the sleeve controller user
@@ -428,10 +434,15 @@ func (h *Handler) emitGarbageCollectionEvent(req *admissionv1.AdmissionRequest) 
 	if err != nil {
 		return fmt.Errorf("could not marshal object: %v", err)
 	}
+
+	// garbage collector does not actually purge data,
+	// it uses the DELETE API like everything
+	opType := event.MARK_FOR_DELETION
+
 	baseEvent := event.Event{
 		ID:           uuid.New().String(),
 		Timestamp:    event.FormatTimeStr(time.Now()),
-		OpType:       string(op),
+		OpType:       string(opType),
 		Kind:         kind,
 		ObjectID:     string(obj.GetUID()),
 		ReconcileID:  "EXTERNAL",
@@ -445,7 +456,7 @@ func (h *Handler) emitGarbageCollectionEvent(req *admissionv1.AdmissionRequest) 
 		ObjectID:      string(obj.GetUID()),
 		ReconcileID:   "EXTERNAL",
 		OperationID:   baseEvent.ID,
-		OperationType: string(op),
+		OperationType: string(opType),
 		Kind:          kind,
 		Version:       obj.GetResourceVersion(),
 		Value:         string(recordJSON),
@@ -460,11 +471,58 @@ func (h *Handler) emitGarbageCollectionEvent(req *admissionv1.AdmissionRequest) 
 	return nil
 }
 
+func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) error {
+	// case 1: the operation is an UPDATE, and the update is removing the last finalizer
+	// case 2: the operation is a DELETE and there are no finalizers
+	logger := logrus.WithField("user", req.UserInfo.Username)
+	switch req.Operation {
+	case admissionv1.Update:
+		// case 1: UPDATE operation removing the last finalizer from an object with deletion timestamp
+		var oldObj, newObj unstructured.Unstructured
+		if err := json.Unmarshal(req.OldObject.Raw, &oldObj.Object); err != nil {
+			return fmt.Errorf("could not unmarshal old object: %v", err)
+		}
+		if err := json.Unmarshal(req.Object.Raw, &newObj.Object); err != nil {
+			return fmt.Errorf("could not unmarshal new object: %v", err)
+		}
+		// check if the object has a deletion timestamp
+		if newObj.GetDeletionTimestamp() != nil {
+
+			// check if we're removing the last finalizer
+			oldFinalizers := oldObj.GetFinalizers()
+			newFinalizers := newObj.GetFinalizers()
+			if len(oldFinalizers) > 0 && len(newFinalizers) == 0 {
+				logger.WithFields(logrus.Fields{
+					"GVK":           newObj.GroupVersionKind(),
+					"ObjectID":      newObj.GetUID(),
+					"oldFinalizers": oldFinalizers,
+					"newFinalizers": newFinalizers,
+				}).Debug("finalizer change detected")
+				logger.WithField("requestOperation", req.Operation).Debug("emitting REMOVE event (last finalizer being removed)")
+				h.emitEvent(&newObj, "APIServerPurge", event.REMOVE)
+				return nil
+			}
+		}
+
+	case admissionv1.Delete:
+		// case 2: DELETE operation with no finalizers
+		var obj unstructured.Unstructured
+		if err := json.Unmarshal(req.Object.Raw, &obj.Object); err != nil {
+			return fmt.Errorf("could not unmarshal object: %v", err)
+		}
+
+		if len(obj.GetFinalizers()) == 0 {
+			logger.WithField("requestOperation", req.Operation).Debug("emitting REMOVE event (delete op with no finalizers)")
+			h.emitEvent(&obj, "APIServerPurge", event.REMOVE)
+			return nil
+		}
+	}
+	return nil
+}
+
 func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error {
 	op := req.Operation
 	kind := req.Kind.Kind
-	// namespace := req.Namespace
-	// name := req.Name
 
 	logrus.WithFields(logrus.Fields{
 		"kind": kind,
@@ -472,15 +530,15 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 	// Temp hack: hard-code the CRDs being declared externally via kubectl.
 	// This is necessary because external requests cannot be reliably
 	// distinguished when controllers are run locally using the same
-	// client configuration as the kubectl CLI tool.
+	// client configuration as the kubectl CLI tool, unless they are impersonating.
 	// TODO
-	externalKinds := []string{
-		"CassandraDatacenter",
-	}
-	if !lo.Contains(externalKinds, kind) {
-		// return early if the kind is not in the list of external kinds
-		return nil
-	}
+	// externalKinds := []string{
+	// 	"CassandraDatacenter",
+	// }
+	// if !lo.Contains(externalKinds, kind) {
+	// 	// return early if the kind is not in the list of external kinds
+	// 	return nil
+	// }
 
 	obj, err := parseObject(req)
 	if err != nil {
@@ -506,10 +564,14 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 	if err != nil {
 		return fmt.Errorf("could not get root ID: %v", err)
 	}
+	sleeveOp, ok := admissionV1ToSleeveOp[op]
+	if !ok {
+		return fmt.Errorf("could not map admission v1 operation to sleeve operation")
+	}
 	baseEvent := event.Event{
 		ID:           uuid.New().String(),
 		Timestamp:    event.FormatTimeStr(time.Now()),
-		OpType:       string(op),
+		OpType:       string(sleeveOp),
 		Kind:         kind,
 		ObjectID:     string(obj.GetUID()),
 		ReconcileID:  "EXTERNAL",
@@ -523,7 +585,7 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 		ObjectID:      string(obj.GetUID()),
 		ReconcileID:   "EXTERNAL",
 		OperationID:   baseEvent.ID,
-		OperationType: string(op),
+		OperationType: string(sleeveOp),
 		Kind:          kind,
 		Version:       obj.GetResourceVersion(),
 		Value:         string(recordJSON),
@@ -535,4 +597,53 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 	logger := logrus.WithField("event", baseEvent)
 	logger.Debug("emitting event")
 	return nil
+}
+
+func (h *Handler) emitEvent(obj *unstructured.Unstructured, ControllerID string, op event.OperationType) error {
+	rootEventID, err := tag.GetRootID(obj)
+	if err != nil {
+		logrus.Error(err)
+		return err
+	}
+	recordJSON, err := json.Marshal(obj.Object)
+	if err != nil {
+		logrus.Error(err)
+		return err
+	}
+	baseEvent := event.Event{
+		ID:           uuid.New().String(),
+		Timestamp:    event.FormatTimeStr(time.Now()),
+		OpType:       string(op),
+		Kind:         obj.GetKind(),
+		ObjectID:     string(obj.GetUID()),
+		ReconcileID:  "EXTERNAL",
+		ControllerID: ControllerID,
+		RootEventID:  rootEventID,
+		Version:      obj.GetResourceVersion(),
+		Labels:       tag.GetSleeveLabels(obj),
+	}
+
+	record := snapshot.Record{
+		ObjectID:      string(obj.GetUID()),
+		ReconcileID:   "EXTERNAL",
+		OperationID:   baseEvent.ID,
+		OperationType: string(op),
+		Kind:          obj.GetKind(),
+		Version:       obj.GetResourceVersion(),
+		Value:         string(recordJSON),
+	}
+
+	h.emitter.LogOperation(context.TODO(), &baseEvent)
+	h.emitter.LogObjectVersion(context.TODO(), record)
+
+	logger := logrus.WithField("event", baseEvent)
+	logger.Debug("emitting event")
+
+	return nil
+}
+
+var admissionV1ToSleeveOp = map[admissionv1.Operation]event.OperationType{
+	admissionv1.Create: event.CREATE,
+	admissionv1.Update: event.UPDATE,
+	admissionv1.Delete: event.MARK_FOR_DELETION,
 }
