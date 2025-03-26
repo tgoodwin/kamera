@@ -13,19 +13,18 @@ import (
 
 // Record represents a snapshot of a Kubernetes object as it appears in a Sleeve log
 type Record struct {
-	ObjectID      string `json:"object_id"`
-	ReconcileID   string `json:"reconcile_id"`
-	OperationID   string `json:"operation_id"` // the operation (event) that produced this record
-	OperationType string `json:"op_type"`      // the operation type that produced this record
-	Kind          string `json:"kind"`
-	Version       string `json:"version"` // resource version
-	// TODO change this to an interface that just requires the object is Marhsalable
-	Value string `json:"value"` // full object value (snapshot.VersionHash)
+	ObjectID      string          `json:"object_id"`
+	ReconcileID   string          `json:"reconcile_id"`
+	OperationID   string          `json:"operation_id"` // the operation (event) that produced this record
+	OperationType string          `json:"op_type"`      // the operation type that produced this record
+	Kind          string          `json:"kind"`
+	Version       string          `json:"version"` // resource version
+	Value         json.RawMessage `json:"value"`   // full object value (snapshot.VersionHash)
 }
 
 func (r Record) ToUnstructured() *unstructured.Unstructured {
 	u := &unstructured.Unstructured{}
-	if err := json.Unmarshal([]byte(r.Value), u); err != nil {
+	if err := json.Unmarshal(r.Value, u); err != nil {
 		log.Fatalf("Error unmarshaling JSON to unstructured: record operationID: %v, err: %v", r.OperationID, err)
 	}
 	return u
@@ -97,14 +96,17 @@ func AsRecord(obj client.Object, frameID string) (*Record, error) {
 		return nil, fmt.Errorf("APIVersion not set on object: %v", obj)
 	}
 
-	asJSON, _ := json.Marshal(unstructuredObj)
+	valueJSON, err := json.Marshal(unstructuredObj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal object to JSON: %w", err)
+	}
 	r := &Record{
 		// TODO use sleeve-object-id instead of the API-assigned ID
 		ObjectID:    string(obj.GetUID()),
 		ReconcileID: frameID,
 		Kind:        util.GetKind(obj),
 		Version:     obj.GetResourceVersion(),
-		Value:       string(asJSON),
+		Value:       valueJSON,
 	}
 	return r, nil
 }
