@@ -20,6 +20,7 @@ type Record struct {
 	Kind          string          `json:"kind"`
 	Version       string          `json:"version"` // resource version
 	Value         json.RawMessage `json:"value"`   // full object value (snapshot.VersionHash)
+	Hash          string          `json:"hash"`    // hash of the object value
 }
 
 func (r Record) ToUnstructured() (*unstructured.Unstructured, error) {
@@ -100,6 +101,7 @@ func AsRecord(obj client.Object, frameID string) (*Record, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal object to JSON: %w", err)
 	}
+	hash := util.ShortenHash(string(valueJSON))
 	r := &Record{
 		// TODO use sleeve-object-id instead of the API-assigned ID
 		ObjectID:    string(obj.GetUID()),
@@ -107,6 +109,7 @@ func AsRecord(obj client.Object, frameID string) (*Record, error) {
 		Kind:        util.GetKind(obj),
 		Version:     obj.GetResourceVersion(),
 		Value:       valueJSON,
+		Hash:        hash,
 	}
 	return r, nil
 }

@@ -542,6 +542,7 @@ func (h *Handler) emitEvent(id types.UID, obj *unstructured.Unstructured, Contro
 		return err
 	}
 	eventID := uuid.New().String()
+	hash := util.ShortenHash(string(recordJSON))
 	baseEvent := event.Event{
 		ID:           eventID,
 		Timestamp:    event.FormatTimeStr(time.Now()),
@@ -563,6 +564,7 @@ func (h *Handler) emitEvent(id types.UID, obj *unstructured.Unstructured, Contro
 		Kind:          obj.GetKind(),
 		Version:       obj.GetResourceVersion(),
 		Value:         recordJSON,
+		Hash:          hash,
 	}
 
 	h.emitter.LogOperation(context.TODO(), &baseEvent)
