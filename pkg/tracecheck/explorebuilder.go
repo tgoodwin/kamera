@@ -225,7 +225,10 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	if err != nil {
 		panic("converting to unstructured: " + err.Error())
 	}
-	u := r.ToUnstructured()
+	u, err := r.ToUnstructured()
+	if err != nil {
+		panic("converting to unstructured: " + err.Error())
+	}
 	vHash := b.snapStore.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}

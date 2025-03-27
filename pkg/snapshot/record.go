@@ -22,12 +22,12 @@ type Record struct {
 	Value         json.RawMessage `json:"value"`   // full object value (snapshot.VersionHash)
 }
 
-func (r Record) ToUnstructured() *unstructured.Unstructured {
+func (r Record) ToUnstructured() (*unstructured.Unstructured, error) {
 	u := &unstructured.Unstructured{}
 	if err := json.Unmarshal(r.Value, u); err != nil {
-		log.Fatalf("Error unmarshaling JSON to unstructured: record operationID: %v, err: %v", r.OperationID, err)
+		return nil, fmt.Errorf("error unmarshaling JSON to unstructured: record operationID: %v, err: %w", r.OperationID, err)
 	}
-	return u
+	return u, nil
 }
 
 func (r Record) GetID() string {

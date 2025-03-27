@@ -12,6 +12,7 @@ import (
 
 	"slices"
 
+	"github.com/pkg/errors"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
@@ -37,11 +38,12 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 		var record snapshot.Record
 		if err := json.Unmarshal([]byte(line), &record); err == nil &&
 			// heuristic for identifying JSON lines that fit the snapshot.Record schema
-			record.OperationID != "" && record.Value != "" {
+			record.OperationID != "" && len(record.Value) > 0 {
 			// extract the object
-			obj := record.ToUnstructured()
-			if obj == nil {
-				return nil, fmt.Errorf("failed to unmarshal object from record %s", record.OperationID)
+			obj, err := record.ToUnstructured()
+			if err != nil {
+				fmt.Println("record.Value:", string(record.Value))
+				return nil, errors.Wrap(err, "failed to unmarshal record to unstructured")
 			}
 
 			// do some validation on the object labels
@@ -86,7 +88,10 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 			fmt.Printf("event %s has no associated record\n", id)
 			continue
 		}
-		obj := record.ToUnstructured()
+		obj, err := record.ToUnstructured()
+		if err != nil {
+			return nil, fmt.Errorf("error unmarshaling JSON to unstructured: record operationID: %v, err: %w", record.OperationID, err)
+		}
 		ns := obj.GetNamespace()
 		name := obj.GetName()
 		sleeveObjectID := tag.GetSleeveObjectID(obj)
@@ -96,7 +101,7 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 			Timestamp:   evt.Timestamp,
 			Effect: newEffect(
 				snapshot.NewCompositeKey(obj.GetKind(), ns, name, sleeveObjectID),
-				snapshot.NewDefaultHash(record.Value),
+				snapshot.NewDefaultHash(string(record.Value)),
 				event.OperationType(evt.OpType),
 			),
 		}
