@@ -21,6 +21,7 @@ import (
 	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 var KUBECTL_USERNAME = "kubernetes-admin"
@@ -441,7 +442,7 @@ func (h *Handler) emitGarbageCollectionEvent(req *admissionv1.AdmissionRequest) 
 	// However, its DELETE operation does not
 	opType := event.REMOVE
 
-	return h.emitEvent(obj, util.GarbageCollectorName, opType)
+	return h.emitEvent(req.UID, obj, util.GarbageCollectorName, opType)
 }
 
 func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) error {
@@ -461,6 +462,8 @@ func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) e
 		// check if the object has a deletion timestamp
 		if newObj.GetDeletionTimestamp() != nil {
 
+			h.emitEvent(req.UID, &newObj, "sleeve:api-server", event.MARK_FOR_DELETION)
+
 			// check if we're removing the last finalizer
 			oldFinalizers := oldObj.GetFinalizers()
 			newFinalizers := newObj.GetFinalizers()
@@ -474,7 +477,7 @@ func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) e
 					"oldFinalizers": oldFinalizers,
 					"newFinalizers": newFinalizers,
 				}).Debug("finalizer change detected, emitting REMOVE event")
-				h.emitEvent(&newObj, util.APIServerPurgeName, event.REMOVE)
+				h.emitEvent(req.UID, &newObj, util.APIServerPurgeName, event.REMOVE)
 				return nil
 			}
 		}
@@ -486,6 +489,10 @@ func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) e
 			return fmt.Errorf("could not unmarshal object: %v", err)
 		}
 
+		if obj.GetDeletionTimestamp() != nil {
+			h.emitEvent(req.UID, &obj, "sleeve:api-server", event.MARK_FOR_DELETION)
+		}
+
 		if len(obj.GetFinalizers()) == 0 {
 			logger.WithFields(logrus.Fields{
 				"requestID": req.UID,
@@ -494,7 +501,7 @@ func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) e
 				"kind":      req.Kind.Kind,
 				"ObjectID":  obj.GetUID(),
 			}).Debug("no finalizers on deleted object, emitting REMOVE event")
-			h.emitEvent(&obj, util.APIServerPurgeName, event.REMOVE)
+			h.emitEvent(req.UID, &obj, util.APIServerPurgeName, event.REMOVE)
 			return nil
 		}
 	}
@@ -520,10 +527,10 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 	if !ok {
 		return fmt.Errorf("could not map admission v1 operation to sleeve operation")
 	}
-	return h.emitEvent(obj, "TraceyWebhook", sleeveOp)
+	return h.emitEvent(req.UID, obj, "TraceyWebhook", sleeveOp)
 }
 
-func (h *Handler) emitEvent(obj *unstructured.Unstructured, ControllerID string, op event.OperationType) error {
+func (h *Handler) emitEvent(id types.UID, obj *unstructured.Unstructured, ControllerID string, op event.OperationType) error {
 	rootEventID, err := tag.GetRootID(obj)
 	if err != nil {
 		logrus.Error(err)
@@ -541,7 +548,7 @@ func (h *Handler) emitEvent(obj *unstructured.Unstructured, ControllerID string,
 		OpType:       string(op),
 		Kind:         obj.GetKind(),
 		ObjectID:     string(obj.GetUID()),
-		ReconcileID:  "EXTERNAL",
+		ReconcileID:  string(id),
 		ControllerID: ControllerID,
 		RootEventID:  rootEventID,
 		Version:      obj.GetResourceVersion(),
@@ -550,12 +557,12 @@ func (h *Handler) emitEvent(obj *unstructured.Unstructured, ControllerID string,
 
 	record := snapshot.Record{
 		ObjectID:      string(obj.GetUID()),
-		ReconcileID:   "EXTERNAL",
+		ReconcileID:   string(id),
 		OperationID:   baseEvent.ID,
 		OperationType: string(op),
 		Kind:          obj.GetKind(),
 		Version:       obj.GetResourceVersion(),
-		Value:         string(recordJSON),
+		Value:         recordJSON,
 	}
 
 	h.emitter.LogOperation(context.TODO(), &baseEvent)
