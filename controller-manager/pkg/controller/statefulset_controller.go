@@ -65,7 +65,7 @@ type StatefulSetReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// loggr := logf.FromContext(ctx)
+	loggr := logf.FromContext(ctx)
 
 	// Fetch the StatefulSet instance
 	statefulSet := &appsv1.StatefulSet{}
@@ -150,7 +150,10 @@ func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		podMap[ordinal] = pod
 	}
 
-	loggr.WithValues("podMap", len(podMap)).Info("podMap")
+	loggr.WithValues(
+		"currPods", len(podMap),
+		"spec.Replicas", int(*statefulSet.Spec.Replicas),
+	).Info("Reconciling StatefulSet")
 
 	// Create/update pods as needed
 	currentReplicas := int(*statefulSet.Spec.Replicas)
@@ -288,6 +291,14 @@ func createPodForStatefulSet(statefulSet *appsv1.StatefulSet, ordinal int) (*cor
 	podSpec := statefulSet.Spec.Template.Spec.DeepCopy()
 
 	labels := statefulSet.GetLabels()
+	// get non-sleeve labels
+	out := make(map[string]string)
+	for k, v := range labels {
+		if k == tag.TraceyObjectID {
+			continue
+		}
+		out[k] = v
+	}
 
 	// For each volumeClaimTemplate, add a corresponding volume to the pod
 	for _, template := range statefulSet.Spec.VolumeClaimTemplates {
@@ -313,7 +324,7 @@ func createPodForStatefulSet(statefulSet *appsv1.StatefulSet, ordinal int) (*cor
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-%d", statefulSet.Name, ordinal),
 			Namespace: statefulSet.Namespace,
-			Labels:    labels,
+			Labels:    out,
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(statefulSet, appsv1.SchemeGroupVersion.WithKind("StatefulSet")),
 			},
