@@ -76,7 +76,12 @@ func (s *StateSnapshot) FixAt(ks KindSequences) StateSnapshot {
 }
 
 func (s *StateSnapshot) DumpContents() {
-	for key, val := range s.contents {
+	keys := lo.Keys(s.contents)
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i].IdentityKey.Kind < keys[j].IdentityKey.Kind
+	})
+	for _, key := range keys {
+		val := s.contents[key]
 		fmt.Println(key, util.ShortenHash(val.Value))
 	}
 }
@@ -84,7 +89,8 @@ func (s *StateSnapshot) DumpContents() {
 func (s *StateSnapshot) Debug() {
 	fmt.Println("State events:")
 	for _, e := range s.stateEvents {
-		fmt.Printf("%s %s:%s %d, %s\n", e.Effect.OpType, e.Effect.Key.IdentityKey.Kind, e.Effect.Key.ResourceKey.Name, e.Sequence, util.ShortenHash(e.Effect.Version.Value))
+		sleeveObjectID := e.Effect.Key.IdentityKey.ObjectID
+		fmt.Printf("ts:%s (%d) frameID:%s controller=%s op=%s item=%s:%s %s\n", e.Timestamp, e.Sequence, util.Shorter(e.ReconcileID), e.ControllerID, e.OpType, e.Kind, util.Shorter(sleeveObjectID), util.ShortenHash(e.Effect.Version.Value))
 	}
 	fmt.Println("contents:")
 	s.DumpContents()
@@ -92,6 +98,7 @@ func (s *StateSnapshot) Debug() {
 	for key, value := range s.KindSequences {
 		fmt.Println(key, value)
 	}
+
 }
 
 // generateCombos recursively generates all possible combinations
@@ -373,7 +380,7 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 }
 
 func Rollup(events []StateEvent) *StateSnapshot {
-	sequencedEvents := assignResourceVersions(events)
+	sequencedEvents := AssignResourceVersions(events)
 	return replayEventSequenceToState(sequencedEvents)
 }
 
@@ -385,31 +392,23 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	// track which objects were marked for deletion
 	deletions := make(map[snapshot.CompositeKey]bool)
 
-	for _, e := range events {
-		// ensure that we are only applying write ops
-		if !event.IsWriteOp(e.Effect.OpType) {
-			continue
-		}
-		iKey := e.Effect.Key.IdentityKey
-		if _, wasMarkedForDeletion := deletions[e.Effect.Key]; wasMarkedForDeletion {
-			// if the object was deleted, don't need to apply any more changes.
-			// TODO its unclear what to do when we observe update events after
-			// a deletion event. For now, ignore them.
-			if e.Effect.OpType != event.REMOVE {
-				if e.Effect.OpType == event.MARK_FOR_DELETION {
-					logger.V(2).Info("object being marked for deletion again", "Key", iKey)
-					continue
-				}
-				continue
-			}
-		}
+	// track which objects were actually deleted
+	removals := make(map[snapshot.CompositeKey]bool)
 
+	removalChangeIDs := make(map[event.ChangeID]bool)
+
+	// ordered by physical timestamp
+	for _, e := range events {
+		iKey := e.Effect.Key.IdentityKey
 		switch e.Effect.OpType {
 		case event.MARK_FOR_DELETION:
 			deletions[e.Effect.Key] = true
 			version := e.Effect.Version
 			contents[e.Effect.Key] = version
 		case event.REMOVE:
+			// try and get the sleeve changeID label off the event
+			changeID := e.ChangeID()
+			removalChangeIDs[changeID] = true
 			if _, wasMarkedForDeletion := deletions[e.Effect.Key]; !wasMarkedForDeletion {
 				// special case, we treat GarbageCollector REMOVEs as a DELETE + REMOVE
 				// since it cleans up things that nobody explicitly marked for deletion
@@ -419,9 +418,26 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 				}
 			}
 			delete(contents, e.Effect.Key)
-		case event.CREATE, event.UPDATE:
+			removals[e.Effect.Key] = true
+		case event.CREATE, event.UPDATE, event.PATCH:
+			if _, wasRemoved := removals[e.Effect.Key]; wasRemoved {
+				if _, haveremovalChangeID := removalChangeIDs[e.ChangeID()]; haveremovalChangeID {
+					fmt.Println("Saw a 'REMOVE' event for this key already but now encountering an update that causally precedes the removal")
+					fmt.Printf("event: %v\n", e.Effect.Key)
+				} else {
+					fmt.Print("WARNING: encountered a write after an object was removed (staleness)")
+					fmt.Printf("event: %v\n", e.Event)
+					continue
+				}
+			}
 			version := e.Effect.Version
 			contents[e.Effect.Key] = version
+
+		case event.GET, event.LIST:
+			// do not apply read events to the state
+			continue
+		default:
+			panic(fmt.Sprintf("unknown op type: %s", e.Effect.OpType))
 		}
 
 		KindSequences[iKey.Kind] = e.Sequence
