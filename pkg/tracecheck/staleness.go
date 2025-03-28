@@ -37,8 +37,20 @@ func newStateSnapshot(contents ObjectVersions, kindSequences KindSequences, stat
 	stateKindSet := util.NewSet(stateKinds...)
 	seqKinds := lo.Keys(kindSequences)
 	if len(stateKindSet) != len(seqKinds) {
-		fmt.Println("stateKinds", stateKindSet.List(), "seqKinds", seqKinds)
-		panic(fmt.Sprintf("expected a sequence # for every kind in contents! content keys: %v, sequence keys: %v", stateKindSet.List(), seqKinds))
+		logger.WithValues(
+			"contentKeys", stateKindSet.List(),
+			"sequenceKeys", seqKinds,
+		).Error(nil, "expected a sequence # for every kind in contents")
+	}
+
+	// assert that the sequence numbers on each state event are increasing monotonically
+	for i := 1; i < len(stateEvents); i++ {
+		if stateEvents[i].Sequence <= stateEvents[i-1].Sequence {
+			logger.WithValues(
+				"currentSequence", stateEvents[i].Sequence,
+				"previousSequence", stateEvents[i-1].Sequence,
+			).Error(nil, "sequence numbers must be increasing monotonically")
+		}
 	}
 
 	return StateSnapshot{
@@ -257,15 +269,15 @@ func (k *KindKnowledge) AddEvent(e event.Event, eff effect, rv ResourceVersion) 
 	k.resourceVersions = append(k.resourceVersions, rv)
 	k.changeEventByResourceVersion[rv] = stateEvent
 
-	if _, ok := k.ChangeIDIndex[e.ChangeID()]; ok && !event.IsTopLevel(e) {
+	if _, ok := k.ChangeIDIndex[e.MustGetChangeID()]; ok && !event.IsTopLevel(e) {
 		logger.WithValues(
-			"changeID", e.ChangeID(),
+			"changeID", e.MustGetChangeID(),
 			"eventID", e.ID,
-			"existingEventID", k.ChangeIDIndex[e.ChangeID()].ID,
+			"existingEventID", k.ChangeIDIndex[e.MustGetChangeID()].ID,
 		).Error(nil, "duplicate change ID")
 		panic("duplicate change ID for state change event")
 	}
-	k.ChangeIDIndex[e.ChangeID()] = stateEvent
+	k.ChangeIDIndex[e.MustGetChangeID()] = stateEvent
 
 	k.ReconcileIndex[e.ReconcileID] = append(k.ReconcileIndex[e.ReconcileID], stateEvent)
 
@@ -445,68 +457,89 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	KindSequences := make(KindSequences)
 	stateEvents := make([]StateEvent, 0)
 
+	var globalRV int64 = 0
+
 	// track which objects were marked for deletion
+	// TODO this is unused
 	deletions := make(map[snapshot.CompositeKey]bool)
 
 	// track which objects were actually deleted
+	// TODO this is unused
 	removals := make(map[snapshot.CompositeKey]bool)
 
 	removalChangeIDs := make(map[event.ChangeID]StateEvent)
 
 	seenUpdateDeleteChangeIDs := make(map[event.ChangeID]StateEvent)
 
+	seenChangeIDs := make(map[event.ChangeID]string)
+
+	seenDeletionIDs := make(map[string]string)
+
+	appliedReads := make(map[string]struct{})
+
 	// ordered by physical timestamp
 	for _, e := range events {
 		iKey := e.Effect.Key.IdentityKey
 		switch e.Effect.OpType {
 		case event.MARK_FOR_DELETION:
+			globalRV++
 			deletions[e.Effect.Key] = true
 
 			changeID := e.Event.Labels[tag.ChangeID]
 			seenUpdateDeleteChangeIDs[event.ChangeID(changeID)] = e
+			seenDeletionIDs[changeID] = e.Effect.Version.Value
 			contents[e.Effect.Key] = e.Effect.Version
 
+			e.Sequence = globalRV
 			KindSequences[iKey.Kind] = e.Sequence
 			stateEvents = append(stateEvents, e)
 
-			if record, ok := removalChangeIDs[event.ChangeID(changeID)]; ok {
-				fmt.Println("applying saved remove event following delete event", e.Effect.Key)
+			if correspondingRemoveEvt, ok := removalChangeIDs[event.ChangeID(changeID)]; ok {
+				logger.WithValues(
+					"Key", e.Effect.Key,
+				).V(1).Info("applying saved remove event following delete event")
 				// we want to apply the change to state, append the event to the sequence,
 				// and then apply the removal event and add it to the sequence after.
 				delete(contents, e.Effect.Key)
 				removals[e.Effect.Key] = true
-				KindSequences[iKey.Kind] = e.Sequence + 1
-				stateEvents = append(stateEvents, record)
+				globalRV++
+				KindSequences[iKey.Kind] = globalRV
+				correspondingRemoveEvt.Sequence = globalRV
+				stateEvents = append(stateEvents, correspondingRemoveEvt)
 			}
 
 		case event.REMOVE:
+			if _, removed := removals[e.Effect.Key]; removed {
+				// we've already seen this removal event
+				// there can be duplicate garbage collection REMOVEs + apiserver purge removes
+				continue
+			}
 			// try and get the sleeve changeID label off the event
-			changeID := e.ChangeID()
-			fmt.Println("processing remove event", e.Effect.Key)
-			// if _, wasMarkedForDeletion := deletions[e.Effect.Key]; !wasMarkedForDeletion {
-			// 	// special case, we treat GarbageCollector REMOVEs as a DELETE + REMOVE
-			// 	// since it cleans up things that nobody explicitly marked for deletion
-			// 	if e.Event != nil && e.Event.ControllerID != util.GarbageCollectorName {
-			// 		fmt.Println("WARNING: attempting to remove an object that was not marked for deletion first", e.Effect.Key.ResourceKey)
-			// 		panic("removing object that was not marked for deletion")
-			// 	}
-			// }
+			changeID := e.MustGetChangeID()
 			if _, seenPrecedingUpdate := seenUpdateDeleteChangeIDs[changeID]; seenPrecedingUpdate {
 				// happy case - we've already seen the causally preceding update/delete event
 				// we want to apply the change to state, append the event to the sequence,
+				globalRV++
 				delete(contents, e.Effect.Key)
 				removals[e.Effect.Key] = true
+				e.Sequence = globalRV
 				KindSequences[iKey.Kind] = e.Sequence
 				stateEvents = append(stateEvents, e)
 			} else if e.Event != nil && e.Event.ControllerID == util.GarbageCollectorName {
 				// garbage collection is a special case where there are no causally preceding
-				// DELETE events. So no need to wait for a preceding event.
+				// DELETE events (it cleans up things that nobody explicitly marked for deletion).
+				// So, no need to wait for a preceding DELETE event.
 				delete(contents, e.Effect.Key)
+				globalRV++
+				e.Sequence = globalRV
 				removals[e.Effect.Key] = true
 				KindSequences[iKey.Kind] = e.Sequence
 				stateEvents = append(stateEvents, e)
 			} else {
-				fmt.Printf("saving remove event for later: key=%v, changeID=%v\n", e.Effect.Key, e.ChangeID())
+				logger.WithValues(
+					"Key", e.Effect.Key,
+					"changeID", e.MustGetChangeID(),
+				).V(1).Info("saving remove event for later")
 				removalChangeIDs[changeID] = e
 				// we need to wait for the causally preceding update/delete event
 				// to arrive before we can apply this removal
@@ -514,24 +547,33 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 			}
 
 		case event.CREATE:
+			globalRV++
+			e.Sequence = globalRV
 			contents[e.Effect.Key] = e.Effect.Version
 			KindSequences[iKey.Kind] = e.Sequence
+
+			seenChangeIDs[e.MustGetChangeID()] = e.Effect.Version.Value
 			stateEvents = append(stateEvents, e)
 
 		case event.UPDATE, event.PATCH:
-			changeID := e.ChangeID()
+			changeID := e.MustGetChangeID()
 			seenUpdateDeleteChangeIDs[changeID] = e
+			seenChangeIDs[changeID] = e.Effect.Version.Value
+
 			if _, sawRemovalForChange := removalChangeIDs[changeID]; sawRemovalForChange {
 				// we want to apply the change to state, append the event to the sequence,
 				// and then apply the removal event and add it to the sequence after.
 				contents[e.Effect.Key] = e.Effect.Version
+				globalRV++
+				e.Sequence = globalRV
 				KindSequences[iKey.Kind] = e.Sequence
 				stateEvents = append(stateEvents, e)
 
 				// we need to increment the sequence number for the removal event
 				removalEvent := removalChangeIDs[changeID]
-				removalEvent.Sequence = e.Sequence + 1
 				delete(contents, removalEvent.Effect.Key)
+				globalRV++
+				removalEvent.Sequence = globalRV
 				removals[removalEvent.Effect.Key] = true
 				KindSequences[removalEvent.Effect.Key.IdentityKey.Kind] = removalEvent.Sequence
 				stateEvents = append(stateEvents, removalEvent)
@@ -539,6 +581,8 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 				// happy case - we've already seen the causally preceding update/delete event
 				// we want to apply the change to state, append the event to the sequence,
 				contents[e.Effect.Key] = e.Effect.Version
+				globalRV++
+				e.Sequence = globalRV
 				KindSequences[iKey.Kind] = e.Sequence
 				stateEvents = append(stateEvents, e)
 			}
@@ -553,12 +597,28 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 			// 		continue
 			// 	}
 			// }
-			// version := e.Effect.Version
-			// contents[e.Effect.Key] = version
 
 		case event.GET, event.LIST:
-			// do not apply read events to the state
-			continue
+			prevValue, seen := seenChangeIDs[e.MustGetChangeID()]
+			if seen {
+				currValue := e.Effect.Version.Value
+				_, applied := appliedReads[currValue]
+				if prevValue != currValue && !applied {
+					// we're reading back the effects of a previous write,
+					// but the version has changed. This means the API server has added some
+					// new state that we haven't seen yet, so let's add it.
+					logger.WithValues(
+						"Key", e.Effect.Key,
+						"changeID", e.MustGetChangeID(),
+					).V(1).Info("Applying effects of a prior write that have not been seen yet")
+					contents[e.Effect.Key] = e.Effect.Version
+					globalRV++
+					e.Sequence = globalRV
+					KindSequences[iKey.Kind] = e.Sequence
+					stateEvents = append(stateEvents, e)
+					appliedReads[currValue] = struct{}{}
+				}
+			}
 		default:
 			panic(fmt.Sprintf("unknown op type: %s", e.Effect.OpType))
 		}
