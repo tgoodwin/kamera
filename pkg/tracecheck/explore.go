@@ -40,11 +40,18 @@ type ReconcilerConfig struct {
 	MaxRestarts int
 }
 
+type ExploreMode string
+
+const (
+	DepthFirst   ExploreMode = "stack"
+	BreadthFirst ExploreMode = "queue"
+)
+
 type ExploreConfig struct {
 	MaxDepth     int
 	useStaleness int
 
-	mode string
+	mode ExploreMode
 
 	debug bool
 
@@ -164,9 +171,9 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
 func (e *Explorer) getNext(stackQueue []StateNode) (StateNode, []StateNode) {
-	if e.config.mode == "stack" {
+	if e.config.mode == DepthFirst {
 		return stackQueue[len(stackQueue)-1], stackQueue[:len(stackQueue)-1]
-	} else if e.config.mode == "queue" {
+	} else if e.config.mode == BreadthFirst {
 		return stackQueue[0], stackQueue[1:]
 	}
 	panic("Invalid mode")
@@ -174,10 +181,10 @@ func (e *Explorer) getNext(stackQueue []StateNode) (StateNode, []StateNode) {
 
 func (e *Explorer) addStateToExplore(stackQueue []StateNode, state StateNode) []StateNode {
 	mode := e.config.mode
-	if mode == "stack" {
+	if mode == DepthFirst {
 		// Add to the end for a stack (matching getNext's pop from end)
 		return append(stackQueue, state)
-	} else if mode == "queue" {
+	} else if mode == BreadthFirst {
 		// Add to the end for a queue (matching getNext's pop from front)
 		return append(stackQueue, state)
 	}
@@ -187,7 +194,7 @@ func (e *Explorer) addStateToExplore(stackQueue []StateNode, state StateNode) []
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
 	logger.Info("starting!")
 
-	e.config.mode = "stack"
+	e.config.mode = DepthFirst
 
 	res, err := e.explore(ctx, initialState)
 	if err != nil {
@@ -439,7 +446,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 					panic("deleted key is not present in prev state. effect validation should have prevented this")
 				}
 			}
-			stepLog.WithValues("Key", effect.Key).Info("DELETED OBJECT")
+			stepLog.WithValues("Key", effect.Key).V(2).Info("marked object for deletion")
 			// the delete effect is valid, so we should add it to the state
 			prevState[effect.Key] = changeOV[effect.Key]
 			// TODO when properly implementing preconditions, test with this:
@@ -468,7 +475,9 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			delete(prevState, effect.Key)
 		default:
 			// at this part of the code we are only working with write effects
-			panic("unknown effect type")
+			err := fmt.Errorf("unknown effect type: %s", effect.OpType)
+			logger.Error(err, "effect", effect)
+			return StateNode{}, err
 		}
 
 		// Find the highest Sequence value globally for newStateEvents
@@ -519,12 +528,12 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
 	// lo.Union does not change the order of elements relatively, but it does remove duplicates
 	switch e.config.mode {
-	case "stack":
+	case DepthFirst:
 		// In DFS, we want to explore newly triggered reconciles first (depth-first)
 		// So we put triggered at the beginning of the list
 		// Remove duplicates while preserving order
 		return lo.Union(triggered, currPending)
-	case "queue":
+	case BreadthFirst:
 		// In BFS, we want to explore existing pending reconciles before newly triggered ones
 		// So we keep the original order - first finish currPending, then do triggered
 		return lo.Union(currPending, triggered)
