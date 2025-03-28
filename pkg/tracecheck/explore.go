@@ -456,12 +456,22 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			panic("unknown effect type")
 		}
 
+		// Find the highest Sequence value globally for newStateEvents
+		// TODO just store this in the state snapshot
+		var highestSequence int64 = 0
+		for _, event := range newStateEvents {
+			if event.Sequence > highestSequence {
+				highestSequence = event.Sequence
+			}
+		}
+
+		newRV := highestSequence + 1
+
 		// increment resourceversion for the kind
-		newSequences[effect.Key.IdentityKey.Kind] += 1
-		kind := effect.Key.IdentityKey.Kind
+		newSequences[effect.Key.IdentityKey.Kind] = newRV
 		stateEvent := StateEvent{
 			ReconcileID: reconcileResult.FrameID,
-			Sequence:    newSequences[kind],
+			Sequence:    newRV,
 			Effect:      effect,
 			// TODO handle time info
 			Timestamp: "",
