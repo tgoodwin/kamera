@@ -49,6 +49,16 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 
 	// insert a "frame" to hold the readset data ahead of the reconcile
 	frameData := r.toFrameData(observableState)
+	cassDCData := frameData["CassandraDatacenter"]
+	if cassDCData != nil {
+		for nn := range cassDCData {
+			deletionTS := cassDCData[nn].GetDeletionTimestamp()
+			fmt.Printf("CassandraDatacenter: %s, deletionTS: %s\n", nn.Name, deletionTS)
+		}
+	} else {
+		fmt.Println("no cassandra datacenter data")
+	}
+
 	r.InsertCacheFrame(frameID, frameData)
 	if r.Name == CleanupReconcilerID {
 		for kind, objs := range frameData {

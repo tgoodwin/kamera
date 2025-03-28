@@ -63,10 +63,11 @@ func (e *Event) CausalKey() CausalKey {
 
 func (e *Event) ChangeID() ChangeID {
 	// special deletion case
-	if e.OpType == "DELETE" {
+	if e.OpType == string(MARK_FOR_DELETION) {
 		if deleteID, ok := e.Labels[tag.DeletionID]; ok {
 			return ChangeID(deleteID)
 		}
+		fmt.Println("WARNING: DELETE event does not have a deletion ID", fmt.Sprintf("%+v", e))
 		panic("DELETE event does not have a deletion ID")
 	}
 	if changeID, ok := e.Labels[tag.ChangeID]; ok {

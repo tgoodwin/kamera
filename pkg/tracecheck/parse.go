@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"slices"
 
@@ -62,6 +63,9 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 
 		var evt event.Event
 		if err := json.Unmarshal([]byte(line), &evt); err == nil && evt.ID != "" {
+			if strings.HasPrefix(evt.ReconcileID, "cd135") {
+				fmt.Println("evt:", evt)
+			}
 			eventsByID[evt.ID] = &evt
 			entriesParsed++
 			continue
@@ -81,17 +85,26 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 
 	stateEvents := make([]StateEvent, 0)
 
+	SkippedEventIDs := make(map[string]struct{})
+
 	for id, evt := range eventsByID {
 		record, ok := recordsByOperationID[id]
 		if !ok {
 			// return nil, fmt.Errorf("event %s has no associated record", id)
 			fmt.Printf("event %s has no associated record\n", id)
+			fmt.Println("event:", evt)
+			SkippedEventIDs[id] = struct{}{}
 			continue
 		}
 		obj, err := record.ToUnstructured()
 		if err != nil {
 			return nil, fmt.Errorf("error unmarshaling JSON to unstructured: record operationID: %v, err: %w", record.OperationID, err)
 		}
+
+		// if strings.HasPrefix(evt.ID, "bb8858") {
+		// 	fmt.Println("evt:", evt)
+		// 	panic("found it")
+		// }
 		ns := obj.GetNamespace()
 		name := obj.GetName()
 		sleeveObjectID := tag.GetSleeveObjectID(obj)
@@ -108,10 +121,14 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 		stateEvents = append(stateEvents, stateEvent)
 	}
 
+	for id := range SkippedEventIDs {
+		fmt.Println("WARNING: skipped this event: ", id)
+	}
+
 	return stateEvents, nil
 }
 
-func assignResourceVersions(in []StateEvent) []StateEvent {
+func AssignResourceVersions(in []StateEvent) []StateEvent {
 	stateEvents := slices.Clone(in)
 	sort.Slice(stateEvents, func(i, j int) bool {
 		return stateEvents[i].Timestamp < stateEvents[j].Timestamp

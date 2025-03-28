@@ -439,7 +439,8 @@ func (h *Handler) emitGarbageCollectionEvent(req *admissionv1.AdmissionRequest) 
 
 	// garbage collector does not actually purge data,
 	// it uses the DELETE API like everything else.
-	// However, its DELETE operation does not
+	// However, its DELETE operation does not return here to this webhook endpoint,
+	// so lets just emit a REMOVE event here.
 	opType := event.REMOVE
 
 	return h.emitEvent(req.UID, obj, util.GarbageCollectorName, opType)

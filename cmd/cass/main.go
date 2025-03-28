@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -29,6 +28,18 @@ func main() {
 		return traces[i].Timestamp < traces[j].Timestamp
 	})
 
+	fmt.Println("===before rollup===")
+	for _, e := range traces {
+		sleeveObjectID := e.Effect.Key.IdentityKey.ObjectID
+		fmt.Printf("ts:%s (%d) frameID:%s controller=%s op=%s item=%s:%s %s\n", e.Timestamp, e.Sequence, util.Shorter(e.ReconcileID), e.ControllerID, e.OpType, e.Kind, util.Shorter(sleeveObjectID), util.ShortenHash(e.Effect.Version.Value))
+	}
+	fmt.Println("===before rollup===")
+	// for _, t := range traces {
+	// 	if strings.HasPrefix(t.Event.ID, "bb8858") {
+	// 		panic("found it outside")
+	// 	}
+	// }
+
 	byKind := lo.GroupBy(traces, func(t tracecheck.StateEvent) string {
 		return t.Kind
 	})
@@ -42,27 +53,13 @@ func main() {
 		}
 	}
 
-	for _, trace := range traces {
-		if !event.IsWriteOp(event.OperationType(trace.OpType)) {
-			continue
-		}
-		fmt.Printf("Timestamp: %s, Kind: %s, ObjectID: %s, %s:%s\n", trace.Timestamp, trace.Kind, util.Shorter(trace.ObjectID), trace.ControllerID, trace.OpType)
-	}
-
+	traces = tracecheck.AssignResourceVersions(traces)
 	topState := tracecheck.Rollup(traces)
-	log.Print("state keys in rollup:")
-	allKeys := lo.Keys(topState.All())
-	sort.Slice(allKeys, func(i, j int) bool {
-		return allKeys[i].IdentityKey.Kind < allKeys[j].IdentityKey.Kind
-	})
-	for _, key := range allKeys {
-		log.Printf("  %s", key)
-	}
-
-	log.Printf("kind sequences")
-	for kind, seq := range topState.KindSequences {
-		log.Printf("  %s: %d", kind, seq)
-	}
+	topState.Debug()
+	// fixed := topState.FixAt(tracecheck.KindSequences{
+	// 	"CassandraDatacenter": 27,
+	// })
+	// fixed.Debug()
 
 	log.Println("Traces sorted by timestamp")
 }
