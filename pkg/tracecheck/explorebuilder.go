@@ -6,7 +6,7 @@ import (
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/controller-manager/pkg/controller"
-	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
+	tracegen "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -128,11 +128,11 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 		)
 
 		// Create wrapped client
-		wrappedClient := sleeveclient.New(
+		wrappedClient := tracegen.New(
 			replayClient,
 			reconcilerID,
 			b.emitter,
-			sleeveclient.NewContextTracker(
+			tracegen.NewContextTracker(
 				reconcilerID,
 				b.emitter,
 				replay.FrameIDFromContext,
@@ -182,11 +182,11 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) ReconcilerC
 		fm,
 		mgr,
 	)
-	wrappedClient := sleeveclient.New(
+	wrappedClient := tracegen.New(
 		replayClient,
 		CleanupReconcilerID,
 		b.emitter,
-		sleeveclient.NewContextTracker(
+		tracegen.NewContextTracker(
 			CleanupReconcilerID,
 			b.emitter,
 			replay.FrameIDFromContext,
