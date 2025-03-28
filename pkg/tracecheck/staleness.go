@@ -397,61 +397,6 @@ func Rollup(events []StateEvent) *StateSnapshot {
 	return replayEventSequenceToState(sequencedEvents)
 }
 
-// func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
-// 	contents := make(ObjectVersions)
-// 	kindSequences := make(KindSequences)
-// 	stateEvents := make([]StateEvent, 0)
-
-// 	// Track objects marked for deletion
-// 	deletions := make(map[snapshot.CompositeKey]bool)
-
-// 	// Track objects that were removed
-// 	removals := make(map[snapshot.CompositeKey]bool)
-
-// 	// Track change IDs for correlation
-// 	removalsByChangeID := make(map[event.ChangeID]snapshot.CompositeKey)
-// 	pendingRemovals := make(map[snapshot.CompositeKey]StateEvent)
-
-// 	// first pass: process all events except REMOVEs to build up base state
-// 	for _, e := range events {
-// 		iKey := e.Effect.Key.IdentityKey
-// 		if e.Effect.OpType == event.REMOVE {
-// 			pendingRemovals[e.Effect.Key] = e
-// 			removalsByChangeID[e.ChangeID()] = e.Effect.Key
-// 			continue
-// 		}
-
-// 		// process all other event types
-// 		switch e.Effect.OpType {
-// 		case event.MARK_FOR_DELETION:
-// 			deletions[e.Effect.Key] = true
-// 			contents[e.Effect.Key] = e.Effect.Version
-// 		case event.CREATE, event.UPDATE, event.PATCH:
-// 			contents[e.Effect.Key] = e.Effect.Version
-// 		case event.GET, event.LIST:
-// 			// skip read events
-// 			continue
-// 		}
-
-// 		kindSequences[iKey.Kind] = e.Sequence
-// 		stateEvents = append(stateEvents, e)
-// 	}
-
-// 	// second pass: process REMOVE events now that we have context
-// 	for key, removeEvent := range pendingRemovals {
-// 		iKey := removeEvent.Effect.Key.IdentityKey
-// 		changeID := removeEvent.ChangeID()
-
-// 		if _, wasMarkedForDeletion := deletions[key]; wasMarkedForDeletion {
-// 			// normal case - object was marked for deletion first
-// 			delete(contents, key)
-// 			removals[key] = true
-// 			stateEvents = append(stateEvents, removeEvent)
-// 			kindSequences[iKey.Kind] = removeEvent.Sequence
-
-// 		}
-// }
-
 func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	contents := make(ObjectVersions)
 	KindSequences := make(KindSequences)

@@ -35,7 +35,7 @@ func main() {
 	}
 	fmt.Println("===before rollup===")
 	// for _, t := range traces {
-	// 	if strings.HasPrefix(t.Event.ID, "bb8858") {
+	// 	if strings.HasPrefix(t.Event.ID, "09f8") {
 	// 		panic("found it outside")
 	// 	}
 	// }
@@ -53,7 +53,11 @@ func main() {
 		}
 	}
 
-	traces = tracecheck.AssignResourceVersions(traces)
+	preroll := tracecheck.AssignResourceVersions(traces)
+	for _, e := range preroll {
+		sleeveObjectID := e.Effect.Key.IdentityKey.ObjectID
+		fmt.Printf("ts:%s (%d) frameID:%s controller=%s op=%s item=%s:%s %s\n", e.Timestamp, e.Sequence, util.Shorter(e.ReconcileID), e.ControllerID, e.OpType, e.Kind, util.Shorter(sleeveObjectID), util.ShortenHash(e.Effect.Version.Value))
+	}
 	topState := tracecheck.Rollup(traces)
 	topState.Debug()
 	// fixed := topState.FixAt(tracecheck.KindSequences{
