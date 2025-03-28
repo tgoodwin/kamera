@@ -65,7 +65,7 @@ type StatefulSetReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	loggr := logf.FromContext(ctx)
+	loggr := logf.FromContext(ctx).WithName("sleeve:statefulset-controller")
 
 	// Fetch the StatefulSet instance
 	statefulSet := &appsv1.StatefulSet{}
@@ -91,6 +91,7 @@ func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 				},
 			}
 
+			loggr.V(1).Info("statefulset-controller: deleting pod", "pod", pod.Name)
 			if err := r.Client.Delete(ctx, pod); err != nil {
 				loggr.Error(err, "Failed to delete the pod")
 				return ctrl.Result{}, err

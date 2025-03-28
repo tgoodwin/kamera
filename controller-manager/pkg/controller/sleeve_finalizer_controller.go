@@ -44,10 +44,10 @@ func (r *FinalizerReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 		// in simulation/replay, need to remove the object from state
 		if r.Recorder != nil {
 			// simulation mode
-			logger.V(2).Info("recording REMOVE effect")
+			logger.V(1).Info("recording REMOVE effect")
 			if err := r.Recorder.RecordEffect(ctx, obj, event.REMOVE, nil); err != nil {
-				fmt.Printf("failed to record effect: %v\n", err)
-				return reconcile.Result{}, fmt.Errorf("failed to record effect: %w", err)
+				logger.Error(err, "recording effect")
+				return reconcile.Result{}, fmt.Errorf("recording effect: %w", err)
 			}
 			return reconcile.Result{}, nil
 		}

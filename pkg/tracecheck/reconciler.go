@@ -11,7 +11,6 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -49,16 +48,6 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 
 	// insert a "frame" to hold the readset data ahead of the reconcile
 	frameData := r.toFrameData(observableState)
-	cassDCData := frameData["CassandraDatacenter"]
-	if cassDCData != nil {
-		for nn := range cassDCData {
-			deletionTS := cassDCData[nn].GetDeletionTimestamp()
-			fmt.Printf("CassandraDatacenter: %s, deletionTS: %s\n", nn.Name, deletionTS)
-		}
-	} else {
-		fmt.Println("no cassandra datacenter data")
-	}
-
 	r.InsertCacheFrame(frameID, frameData)
 	if r.Name == CleanupReconcilerID {
 		for kind, objs := range frameData {
@@ -78,8 +67,6 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 		}
 	}
 
-	// add the logger back to the context
-	ctx = log.IntoContext(ctx, logger)
 	if _, err := r.Reconcile(ctx, req); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
@@ -121,26 +108,6 @@ func Wrap(name string, r reconcile.Reconciler) reconciler {
 		Name:       name,
 		Reconciler: r,
 	}
-}
-
-func (r *reconcileImpl) inferReconcileRequest(readset ObjectVersions) (reconcile.Request, error) {
-	for key, version := range readset {
-		if key.IdentityKey.Kind == r.For {
-			obj := r.versionManager.Resolve(version)
-			if obj == nil {
-				fmt.Printf("missing full object for hash %s\n", version)
-				return reconcile.Request{}, errors.Errorf("no object found for key %s", key)
-			}
-			req := reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Name:      obj.GetName(),
-					Namespace: obj.GetNamespace(),
-				},
-			}
-			return req, nil
-		}
-	}
-	return reconcile.Request{}, errors.New(fmt.Sprintf("no object of kind %s in readset", r.For))
 }
 
 func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {

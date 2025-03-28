@@ -12,6 +12,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/util"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -200,6 +201,15 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		e.config.MaxDepth = DefaultMaxDepth
 	}
 
+	if e.config.debug {
+		fmt.Println("initial state")
+		initialState.Contents.contents.DumpContents()
+		fmt.Println("kind sequences")
+		for k, v := range initialState.Contents.KindSequences {
+			fmt.Println(k, v)
+		}
+	}
+
 	result := &Result{
 		ConvergedStates: make([]ConvergedState, 0),
 	}
@@ -237,7 +247,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		orderKey := currentState.OrderSensitiveHash()
 		lineageKey := currentState.LineageHash()
 
-		logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", lineageKey)
+		logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", currentState.DetailedLineage())
 
 		// we reconcile on the first pending reconcile for this state,
 		// but if there are multiple pending reconciles, we want to explore what would happen
@@ -266,7 +276,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 					}
 				}
 			} else {
-				logger.WithValues("StateKey", stateKey, "OrderKey", lineageKey).Info("already seen, not expanding")
+				logger.WithValues("StateKey", stateKey, "OrderKey", lineageKey).V(2).Info("already seen, not expanding")
 			}
 		}
 
@@ -280,6 +290,8 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 
 		if len(currentState.PendingReconciles) == 0 {
 			seenConvergedStates[stateKey] = currentState
+			// break
+			queue = []StateNode{}
 			continue
 		}
 
@@ -300,8 +312,11 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				stateView.Contents.DumpContents()
 				stateView.DumpPending()
 			}
+
+			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
+			stepCtx := log.IntoContext(ctx, stepLogger)
 			// for each view, create a new branch in exploration
-			newState, err := e.takeReconcileStep(ctx, stateView, pendingReconcile)
+			newState, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
 			if err != nil {
 				// if we encounter an error during reconciliation, just abandon this branch
 				continue
@@ -349,7 +364,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
 func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (StateNode, error) {
-	// logger = log.FromContext(ctx)
+	stepLog := log.FromContext(ctx)
 	// remove the current controller from the pending reconciles list
 	newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
 		return pending != pr
@@ -370,20 +385,20 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// invoke the controller at its observed state of the world
 	observableState := state.Contents.Observable()
-	fmt.Println("about to reconcile")
+	stepLog.Info("about to reconcile")
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil {
-		logger.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")
+		stepLog.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")
 		// return the pre-reconcile state if the controller errored
 		return state, err
 	}
-	logger.Info("finished reconcile")
+	stepLog.Info("finished reconcile")
 
 	newSequences := make(KindSequences)
 	maps.Copy(newSequences, state.Contents.KindSequences)
 
 	effects := reconcileResult.Changes.Effects
-	logger.V(1).Info("completed step", "frameID", frameID, "controller", pr.ReconcilerID, "numEffects", len(effects))
+	stepLog.V(1).Info("completed step", "frameID", frameID, "controller", pr.ReconcilerID, "numEffects", len(effects))
 
 	// update the state with the new object versions.
 	// note that we are updating the "global state" here,
@@ -424,8 +439,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 					panic("deleted key is not present in prev state. effect validation should have prevented this")
 				}
 			}
-			logger.WithValues("Key", effect.Key).Info("DELETED OBJECT")
-			panic("mark for deletion")
+			stepLog.WithValues("Key", effect.Key).Info("DELETED OBJECT")
 			// the delete effect is valid, so we should add it to the state
 			prevState[effect.Key] = changeOV[effect.Key]
 			// TODO when properly implementing preconditions, test with this:
@@ -447,12 +461,13 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 		case event.REMOVE:
 			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !ok {
-				logger.Info("warning: removed key absent in state - ", "effectKey", effect.Key, "frameID", frameID)
+				stepLog.Error(nil, "warning: removed key absent in state", "effectKey", effect.Key, "frameID", frameID)
 				panic("removed key is not present in prev state. effect validation should have prevented this")
 			}
-			logger.Info("removing object from state", "key", effect.Key)
+			stepLog.V(2).Info("removing object from state", "key", effect.Key)
 			delete(prevState, effect.Key)
 		default:
+			// at this part of the code we are only working with write effects
 			panic("unknown effect type")
 		}
 
