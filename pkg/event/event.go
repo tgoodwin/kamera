@@ -2,6 +2,7 @@ package event
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -46,7 +47,7 @@ func NewOperation(obj client.Object, reconcileID, controllerID, rootEventID stri
 		Version:  obj.GetResourceVersion(),
 		Labels:   tag.GetSleeveLabels(obj),
 	}
-	changeID := e.ChangeID()
+	changeID := e.MustGetChangeID()
 	if changeID == "" {
 		return nil, fmt.Errorf("event does not have a change ID: %v", e)
 	}
@@ -57,34 +58,43 @@ func (e *Event) CausalKey() CausalKey {
 	return CausalKey{
 		Kind:     e.Kind,
 		ObjectID: e.ObjectID,
-		ChangeID: e.ChangeID(),
+		ChangeID: e.MustGetChangeID(),
 	}
 }
 
-func (e *Event) ChangeID() ChangeID {
-	// special deletion case
+func (e *Event) GetChangeID() (ChangeID, error) {
 	if e.OpType == string(MARK_FOR_DELETION) {
 		if deleteID, ok := e.Labels[tag.DeletionID]; ok {
-			return ChangeID(deleteID)
+			return ChangeID(deleteID), nil
 		}
-		fmt.Println("WARNING: DELETE event does not have a deletion ID", fmt.Sprintf("%+v", e))
-		panic("DELETE event does not have a deletion ID")
+		return ChangeID(""), errors.New("DELETE event does not have a deletion ID")
 	}
 	if changeID, ok := e.Labels[tag.ChangeID]; ok {
-		return ChangeID(changeID)
+		return ChangeID(changeID), nil
 	}
 
 	// when there has not been a change yet, only reads
 	if rootID, ok := e.Labels[tag.TraceyRootID]; ok {
-		return ChangeID(rootID)
+		return ChangeID(rootID), nil
 	}
 	// case where its a top-level GET event from a declared resource that has only
 	// been tagged by the webhook with a tracey-uid and has not been processed by a sleeve reconciler
 	if rootID, ok := e.Labels[tag.TraceyWebhookLabel]; ok {
-		return ChangeID(rootID)
+		return ChangeID(rootID), nil
 	}
-	fmt.Println("WARNING: Event does not have a change ID", fmt.Sprintf("%+v", e))
-	return ChangeID("")
+	return ChangeID(""), errors.New("Event does not have a change ID")
+}
+
+func (e *Event) MustGetChangeID() ChangeID {
+	if e == nil {
+		panic("event is nil")
+	}
+	changeID, err := e.GetChangeID()
+	if err != nil {
+		fmt.Printf("event with no change ID: %+v\n", e)
+		panic(err)
+	}
+	return changeID
 }
 
 func (e *Event) UnmarshalJSON(data []byte) error {
@@ -158,7 +168,7 @@ func (e Event) VersionKey() snapshot.VersionKey {
 	return snapshot.VersionKey{
 		Kind:     e.Kind,
 		ObjectID: e.ObjectID,
-		Version:  string(e.ChangeID()),
+		Version:  string(e.MustGetChangeID()),
 	}
 }
 

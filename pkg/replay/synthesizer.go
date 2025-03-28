@@ -42,7 +42,7 @@ func (b *Builder) FindMissedObservations(controllerID string) (map[string]util.S
 
 			if e.Kind == "FakePodAutoscaler" {
 				k := e.VersionKey()
-				cid := e.ChangeID()
+				cid := e.MustGetChangeID()
 				str := fmt.Sprintf("read %s:%s:%s@%s", k.Kind, k.ObjectID, k.Version, cid)
 				paStates[str] = struct{}{}
 			}
@@ -54,7 +54,7 @@ func (b *Builder) FindMissedObservations(controllerID string) (map[string]util.S
 			}
 			if e.Kind == "FakePodAutoscaler" {
 				k := e.VersionKey()
-				cid := e.ChangeID()
+				cid := e.MustGetChangeID()
 				str := fmt.Sprintf("wrote %s:%s:%s@%s", k.Kind, k.ObjectID, k.Version, cid)
 				paStates[str] = struct{}{}
 			}
@@ -176,7 +176,7 @@ func (b *Builder) InterpolateFrames(controllerID string, missedKnowledge util.Se
 
 func (b *Builder) getEarlistTimestampForKey(key event.CausalKey) (string, error) {
 	for _, event := range b.events {
-		if event.ChangeID() == key.ChangeID {
+		if event.MustGetChangeID() == key.ChangeID {
 			if event.OpType == "GET" || event.OpType == "LIST" {
 				return event.Timestamp, nil
 			}
