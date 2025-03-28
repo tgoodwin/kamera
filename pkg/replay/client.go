@@ -62,21 +62,12 @@ func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType eve
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	logger = log.FromContext(ctx)
 	gvk := obj.GetObjectKind().GroupVersionKind()
-	// gvkToTypes := c.scheme.AllKnownTypes()
-	// if targetType, ok := gvkToTypes[gvk]; ok {
-	// 	// create a new object of the same type as obj
-	// 	newObj := reflect.New(targetType).Interface().(client.Object)
-	// 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.(*unstructured.Unstructured).Object, newObj); err != nil {
-	// 		return err
-	// 	}
-	// }
 
 	frameID := FrameIDFromContext(ctx)
 	kind := util.GetKind(obj)
 	logger.V(2).Info("client:get", "Key", key, "Kind", kind)
 	if frame, err := c.GetCacheFrame(frameID); err == nil {
 		if frozenObj, ok := frame[kind][key]; ok {
-			// fmt.Printf("frame: %s - got object: %s/%s timestamp %v\n", frameID, kind, key, frozenObj.GetDeletionTimestamp())
 			if err := c.handleEffect(ctx, frozenObj, event.GET, nil); err != nil {
 				return err
 			}
