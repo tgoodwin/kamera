@@ -236,13 +236,15 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	logger.WithFields(logrus.Fields{
+	logger = logger.WithFields(logrus.Fields{
+		"requestID":       in.Request.UID,
 		"kind":            in.Request.Kind,
 		"subResource":     in.Request.SubResource,
 		"requestKind":     in.Request.RequestKind,
 		"requestResource": in.Request.RequestResource,
 		"user":            in.Request.UserInfo.Username,
-	}).Debug("received validate resource request")
+	})
+	logger.Debug("received validate resource request")
 
 	// let kubelet operations through
 	cameFromOutside := cameFromTheOutside(in)
@@ -259,11 +261,13 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 	if isGarbageCollector {
 		// this is not complete - garbage collector only handles objects that are being cleaned
 		// up through owner references.
-		h.emitGarbageCollectionEvent(in.Request)
+		if err := h.emitGarbageCollectionEvent(in.Request); err != nil {
+			logger.Error(err, "emitting garbage collection event")
+		}
 	}
 
 	if err := h.captureObjectRemovalEvent(in.Request); err != nil {
-		logger.Error(err)
+		logger.Error(err, "capturing object removal event")
 	}
 
 	// this requires explicitly impersonating the sleeve controller user
@@ -449,7 +453,11 @@ func (h *Handler) emitGarbageCollectionEvent(req *admissionv1.AdmissionRequest) 
 func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) error {
 	// case 1: the operation is an UPDATE, and the update is removing the last finalizer
 	// case 2: the operation is a DELETE and there are no finalizers
-	logger := logrus.WithField("user", req.UserInfo.Username)
+	logger := logrus.WithFields(
+		logrus.Fields{
+			"user":    req.UserInfo.Username,
+			"req.UID": req.UID,
+		})
 	switch req.Operation {
 	case admissionv1.Update:
 		// case 1: UPDATE operation removing the last finalizer from an object with deletion timestamp
@@ -463,8 +471,6 @@ func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) e
 		// check if the object has a deletion timestamp
 		if newObj.GetDeletionTimestamp() != nil {
 
-			h.emitEvent(req.UID, &newObj, "sleeve:api-server", event.MARK_FOR_DELETION)
-
 			// check if we're removing the last finalizer
 			oldFinalizers := oldObj.GetFinalizers()
 			newFinalizers := newObj.GetFinalizers()
@@ -477,7 +483,7 @@ func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) e
 					"ObjectID":      newObj.GetUID(),
 					"oldFinalizers": oldFinalizers,
 					"newFinalizers": newFinalizers,
-				}).Debug("finalizer change detected, emitting REMOVE event")
+				}).Debug("finalizer change detected, emitting REMOVE event for UPDATE operation")
 				h.emitEvent(req.UID, &newObj, util.APIServerPurgeName, event.REMOVE)
 				return nil
 			}
@@ -486,12 +492,8 @@ func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) e
 	case admissionv1.Delete:
 		// case 2: DELETE operation with no finalizers
 		var obj unstructured.Unstructured
-		if err := json.Unmarshal(req.Object.Raw, &obj.Object); err != nil {
+		if err := json.Unmarshal(req.OldObject.Raw, &obj.Object); err != nil {
 			return fmt.Errorf("could not unmarshal object: %v", err)
-		}
-
-		if obj.GetDeletionTimestamp() != nil {
-			h.emitEvent(req.UID, &obj, "sleeve:api-server", event.MARK_FOR_DELETION)
 		}
 
 		if len(obj.GetFinalizers()) == 0 {
@@ -501,7 +503,7 @@ func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) e
 				"opType":    req.Operation,
 				"kind":      req.Kind.Kind,
 				"ObjectID":  obj.GetUID(),
-			}).Debug("no finalizers on deleted object, emitting REMOVE event")
+			}).Debug("no finalizers on deleted object, emitting REMOVE event for DELETE operation")
 			h.emitEvent(req.UID, &obj, util.APIServerPurgeName, event.REMOVE)
 			return nil
 		}
