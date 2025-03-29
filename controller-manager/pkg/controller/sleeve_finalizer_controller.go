@@ -23,6 +23,7 @@ type FinalizerReconciler struct {
 // Reconcile handler for tracked objects
 func (r *FinalizerReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	logger := log.FromContext(ctx)
+	logger.V(2).Info("FinalizerReconciler Reconcile", "request", req)
 	obj := &unstructured.Unstructured{}
 	kind, ok := ctx.Value(tag.CleanupKindKey{}).(string)
 	if !ok {

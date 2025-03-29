@@ -20,7 +20,13 @@ type StateSnapshot struct {
 	mode string // original or adjusted
 
 	// per-kind sequence info for computing relative states
+	// possibly stale with respect to the contents of stateEvents
+	// but represents the contents of ObjectVersions
 	KindSequences KindSequences
+
+	// TODO populate -- used to quickly tell whether a snapshot is stale or not
+	// but this could be computed from stateEvents at any time.
+	TrueSequences KindSequences
 
 	stateEvents []StateEvent // the changes that led to the current objectVersions
 }
@@ -486,10 +492,10 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBo
 		}
 	}
 
-	combos := getAllCombos(filtered)
-	for _, combo := range combos {
+	allPossibleKindSequences := getAllCombos(filtered)
+	for _, possibleCombo := range allPossibleKindSequences {
 		// there may be duplicates in the generated kind sequences
-		if maps.Equal(combo, snapshot.KindSequences) {
+		if maps.Equal(possibleCombo, snapshot.KindSequences) {
 			continue
 		}
 
@@ -497,7 +503,7 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBo
 		maps.Copy(staleSequences, snapshot.KindSequences)
 		// State for kinds outside of relevantKinds is included at the latest sequence.
 		// Only the relevant kinds are adjusted to the stale sequence.
-		for k, v := range combo {
+		for k, v := range possibleCombo {
 			staleSequences[k] = v
 		}
 
@@ -506,6 +512,10 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBo
 		// the stale view must be "observed" via the Observe() method
 		out := newStateSnapshot(snapshot.contents, staleSequences, snapshot.stateEvents)
 		staleViews = append(staleViews, &out)
+		logger.V(2).WithValues(
+			"lookbackLimits", kindBounds,
+			"staleSequences", staleSequences,
+		).Info("adding stale view")
 	}
 
 	return staleViews

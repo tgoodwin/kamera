@@ -49,20 +49,15 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 	// insert a "frame" to hold the readset data ahead of the reconcile
 	frameData := r.toFrameData(observableState)
 	r.InsertCacheFrame(frameID, frameData)
+
+	// our cleanup reconciler implementation needs to know what kind of object it is reconciling
+	// as reconcile.Request is only namespace/name. so we inject it through the context.
 	if r.Name == CleanupReconcilerID {
 		for kind, objs := range frameData {
 			for nn := range objs {
 				if nn.Name == req.Name && nn.Namespace == req.Namespace {
 					ctx = context.WithValue(ctx, tag.CleanupKindKey{}, kind)
 				}
-			}
-		}
-	}
-
-	if logger.V(2).Enabled() {
-		for kind, objs := range frameData {
-			for nn := range objs {
-				logger.V(2).WithValues("FrameID", frameID, "Kind", kind, "nn", nn).Info("frame data")
 			}
 		}
 	}
@@ -119,7 +114,7 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
 		}
 		obj := r.versionManager.Resolve(hash)
 		if obj == nil {
-			fmt.Printf("hash that missed:\n%v\n", util.ShortenHash(hash.Value))
+			logger.Error(nil, "unable to resolve object hash", "key", key, "hash", util.ShortenHash(hash.Value))
 			panic(fmt.Sprintf("unable to resolve object hash for key: %s stragegy %s", key, hash.Strategy))
 		}
 		namespacedName := types.NamespacedName{
@@ -127,6 +122,10 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
 			Namespace: obj.GetNamespace(),
 		}
 		out[kind][namespacedName] = obj
+		logger.V(2).WithValues(
+			"key", key,
+			"hash", util.ShortenHash(hash.Value),
+		).Info("resolved frame data item")
 	}
 
 	return out

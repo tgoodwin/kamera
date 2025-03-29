@@ -11,6 +11,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
+	sleevelog "github.com/tgoodwin/sleeve/pkg/util/logger"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,7 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -116,7 +116,7 @@ func main() {
 		Name:       "zk-cluster",
 		UID:        zk1.GetUID(),
 	}
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.CREATE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1, event.CREATE, "TraceyWebhook")
 
 	// 2. PVCs are created for the first ZK
 	pvc1 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-1", "zk-cluster", []metav1.OwnerReference{zk1OwnerRef}, nil)
@@ -131,7 +131,7 @@ func main() {
 	// 3. First ZK is marked for deletion
 	deletionTime := metav1.NewTime(time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC))
 	zk1WithDeletion := CreateZookeeperObject("zk-cluster", "default", "zk-old-uid", 3, &deletionTime)
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.MARK_FOR_DELETION, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-old-uid", zk1WithDeletion, event.MARK_FOR_DELETION, "TraceyWebhook")
 
 	// 4. As a result, PVCs are marked for deletion
 	deletionTime = metav1.NewTime(time.Now())
@@ -159,7 +159,7 @@ func main() {
 		Name:       "zk-cluster",
 		UID:        zk2.GetUID(),
 	}
-	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-new-uid", zk2, event.CREATE, "ZookeeperReconciler")
+	stateBuilder.AddStateEvent("ZookeeperCluster", "zk-new-uid", zk2, event.CREATE, "TraceyWebhook")
 
 	// 7. New PVCs are created for the new ZK
 	pvc4 := CreatePVCObject("zk-cluster-pvc-0", "default", "pvc-uid-4", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef}, nil)
@@ -174,8 +174,8 @@ func main() {
 	eb.ExploreStaleStates() // Enable staleness exploration
 	eb.WithKindBounds("ZookeeperReconciler", tracecheck.ReconcilerConfig{
 		Bounds: tracecheck.LookbackLimits{
-			"ZookeeperCluster": *stalenessDepth,
-			// "PersistentVolumeClaim": 1,
+			"ZookeeperCluster":      3,
+			"PersistentVolumeClaim": 1,
 		},
 		MaxRestarts: 1,
 	})
@@ -206,7 +206,8 @@ func main() {
 	fmt.Println("initial state hash: ", topHash)
 
 	// Set up a test logger
-	logger := zap.New(zap.UseDevMode(true))
+	logger := sleevelog.GetLogger(sleevelog.Trace)
+	// so we need to check if the reconcile is stale
 	tracecheck.SetLogger(logger)
 	// log.SetLogger(logger)
 

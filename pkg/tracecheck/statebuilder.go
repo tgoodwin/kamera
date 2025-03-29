@@ -72,11 +72,23 @@ func (b *StateEventBuilder) AddStateEvent(kind, sleeveObjectID string, obj *unst
 
 	// Create state event
 	stateEvent := StateEvent{
+		// TODO refactor
+		Event: &event.Event{
+			ID:           fmt.Sprintf("%s-%d", kind, b.sequence),
+			ReconcileID:  reconcileID,
+			ControllerID: controllerID,
+			RootEventID:  "",
+			OpType:       string(opType),
+			Kind:         kind,
+			ObjectID:     sleeveObjectID,
+			Version:      obj.GetResourceVersion(),
+			Labels:       tag.GetSleeveLabels(obj),
+			Timestamp:    timeStr,
+		},
 		ReconcileID: reconcileID,
-		// ControllerID: controllerID,
-		Timestamp: timeStr,
-		Effect:    effect,
-		Sequence:  b.sequence,
+		Timestamp:   timeStr,
+		Effect:      effect,
+		Sequence:    b.sequence,
 	}
 
 	b.events = append(b.events, stateEvent)

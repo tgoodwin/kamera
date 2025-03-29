@@ -1,8 +1,6 @@
 package tracecheck
 
 import (
-	"fmt"
-
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
@@ -65,7 +63,6 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 		KindSequences[iKey.Kind] = e.Sequence
 		stateEvents = append(stateEvents, e)
 	}
-	fmt.Printf("# events in, # events out: %d, %d\n", len(events), len(stateEvents))
 	out := newStateSnapshot(contents, KindSequences, stateEvents)
 	return &out
 }

@@ -174,6 +174,21 @@ type StateNode struct {
 	depth int
 
 	DivergencePoint string // reconcileID of the first divergence
+
+	// tracks what KindSequences a controller may be "stuck" on
+	// e.g. if a controller's watches are connected to a partitioned APIServer
+	stuckReconcilerPositions map[string]KindSequences
+}
+
+func (sn StateNode) ObserveAs(reconcilerID string) ObjectVersions {
+	if sn.stuckReconcilerPositions == nil {
+		return sn.Contents.All()
+	}
+	// return the objects that this reconciler can see
+	if _, ok := sn.stuckReconcilerPositions[reconcilerID]; ok {
+		return sn.Contents.Observable()
+	}
+	return sn.Contents.All()
 }
 
 func (sn StateNode) DumpPending() {

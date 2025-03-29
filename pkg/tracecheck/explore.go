@@ -297,8 +297,6 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 
 		if len(currentState.PendingReconciles) == 0 {
 			seenConvergedStates[stateKey] = currentState
-			// break
-			queue = []StateNode{}
 			continue
 		}
 
@@ -322,6 +320,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 
 			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
 			stepCtx := log.IntoContext(ctx, stepLogger)
+
 			// for each view, create a new branch in exploration
 			newState, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
 			if err != nil {
@@ -329,7 +328,10 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				continue
 
 			}
-			logger.V(1).WithValues("NewPendingReconciles", newState.PendingReconciles).Info("reconcile step completed")
+			logger.V(1).WithValues(
+				"Depth", currentState.depth,
+				"NewPendingReconciles", newState.PendingReconciles,
+			).Info("reconcile step completed")
 			if e.config.debug {
 				logger.WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
 				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
@@ -342,6 +344,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				seenDepths[newState.depth] = true
 			}
 			if newState.depth > e.config.MaxDepth {
+				logger.V(1).Info("aborting path due to max depth", "maxDepth", e.config.MaxDepth, "currentDepth", newState.depth)
 				stats.AbortedPaths++
 			} else {
 				// enqueue the new state to explore
@@ -386,12 +389,13 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	frameID := util.UUID()
 	ctx = replay.WithFrameID(ctx, frameID)
 
-	// prepare the "true state of the world" for the controller
+	// prepare the "true state of the world" for the controller's potential actions
+	// to be validated against. (e.g. create error: thing of name X already exists)
 	e.effectContextManager.PrepareEffectContext(ctx, state.Contents.All())
 	defer e.effectContextManager.CleanupEffectContext(ctx)
 
 	// invoke the controller at its observed state of the world
-	observableState := state.Contents.Observable()
+	observableState := state.ObserveAs(pr.ReconcilerID)
 	stepLog.Info("about to reconcile")
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil {
@@ -503,11 +507,27 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		newStateEvents = append(newStateEvents, stateEvent)
 	}
 
-	// get the controllers that depend on the objects that were changed
-	// and add them to the pending reconciles list. n.b. this may potentially
-	// include the controller that was just executed.
+	// get the controllers that depend on the objects that were changed and add them
+	// to the pending reconciles list. n.b. this can include the controller that just executed.
 	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
-	newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
+
+	// For controllers whose watch streams are connected to a network-partitioned APIServer shard,
+	// they cannot get triggered by the changes in the state as their watch streams are "stuck".
+	// Even if they performed the reconcile, they would not be able to see the changes.
+	if len(triggeredReconcilers) > 0 {
+		filtered := lo.Filter(triggeredReconcilers, func(pr PendingReconcile, _ int) bool {
+			if state.stuckReconcilerPositions == nil {
+				return true
+			}
+			// if the reconciler is in the staleness map, it is stuck
+			_, stuck := state.stuckReconcilerPositions[pr.ReconcilerID]
+			return !stuck
+		})
+		logger.V(2).Info("filtered triggered reconciles based on who's stuck",
+			"triggeredReconcilers", triggeredReconcilers, "filtered", filtered, "stuckPositions", state.stuckReconcilerPositions)
+		triggeredReconcilers = filtered
+		newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
+	}
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
@@ -517,6 +537,8 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,
+
+		stuckReconcilerPositions: maps.Clone(state.stuckReconcilerPositions),
 
 		ExecutionHistory: append(currHistory, reconcileResult),
 	}
@@ -566,42 +588,49 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 }
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string, currDepth int) ([]StateNode, error) {
-	if e.config.useStaleness == 0 || true {
-		return []StateNode{currState}, nil
-	}
-
-	// TODO explore restarting at every depth
-	reconcilerConfig, ok := e.config.KindBoundsPerReconciler[reconcilerID]
-	if !ok {
-		return []StateNode{currState}, nil
-	}
-	maxRestarts := reconcilerConfig.MaxRestarts
-	currRestarts := e.stats.RestartsPerReconciler[reconcilerID]
-
-	if currRestarts >= maxRestarts {
-		return []StateNode{currState}, nil
-	}
-
 	currSnapshot := currState.Contents
 	config, ok := e.config.KindBoundsPerReconciler[reconcilerID]
 	if !ok {
+		logger.V(2).Info("no staleness bounds configured for reconciler", "ReconcilerID", reconcilerID)
 		// no staleness bounds configured for this reconciler, so dont compute stale states
 		return []StateNode{currState}, nil
 	}
-	all, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.Bounds)
-	if err != nil {
-		return nil, err
+	maxRestarts := config.MaxRestarts
+	currRestarts := e.stats.RestartsPerReconciler[reconcilerID]
+	if currRestarts >= maxRestarts {
+		logger.V(2).Info("max restarts reached for reconciler", "ReconcilerID", reconcilerID, "CurrRestarts", currRestarts, "MaxRestarts", maxRestarts)
+		return []StateNode{currState}, nil
 	}
-	logger.V(1).Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(all))
-	e.stats.RestartsPerReconciler[reconcilerID]++
 
-	asStateNodes := lo.Map(all, func(snapshot *StateSnapshot, _ int) StateNode {
+	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.config.MaxDepth)
+	possiblePastViews, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.Bounds)
+	if err != nil {
+		return nil, errors.Wrap(err, "getting possible views")
+	}
+
+	// When we generate possible stale views for a controller at a certain depth in the execution,
+	// we're modeling a controller restarting and reconnecting to a network-partitioned APIServer.
+	e.stats.RestartsPerReconciler[reconcilerID]++
+	logger.V(1).Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(possiblePastViews))
+
+	asStateNodes := lo.Map(possiblePastViews, func(staleState *StateSnapshot, _ int) StateNode {
+		var stuckPositions map[string]KindSequences
+		if currState.stuckReconcilerPositions == nil {
+			stuckPositions = make(map[string]KindSequences)
+		} else {
+			stuckPositions = maps.Clone(currState.stuckReconcilerPositions)
+		}
+		stuckPositions[reconcilerID] = staleState.KindSequences
+
 		sn := StateNode{
-			Contents:          *snapshot,
+			Contents:          *staleState,
+			depth:             currDepth,
 			PendingReconciles: slices.Clone(currState.PendingReconciles),
 			parent:            currState.parent,
 			action:            currState.action,
 			ExecutionHistory:  slices.Clone(currState.ExecutionHistory),
+
+			stuckReconcilerPositions: stuckPositions,
 		}
 		sn.ID = sn.Hash()
 		return sn
