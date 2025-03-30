@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"encoding/json"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -120,6 +121,7 @@ func TestAsRecord_Serialization(t *testing.T) {
 		"reconcile_id": "test-frame-id",
 		"operation_id": "",
 		"op_type": "",
+		"hash": "SOME_HASH",
 		"kind": "Foo",
 		"version": "",
 		"value": {
@@ -143,5 +145,6 @@ func TestAsRecord_Serialization(t *testing.T) {
 	}`
 	recordJSON, err := json.Marshal(record)
 	require.NoError(t, err)
+	recordJSON = []byte(regexp.MustCompile(`"hash":\s*".*?"`).ReplaceAllString(string(recordJSON), `"hash": "SOME_HASH"`))
 	assert.JSONEq(t, expectedRecordJSON, string(recordJSON))
 }

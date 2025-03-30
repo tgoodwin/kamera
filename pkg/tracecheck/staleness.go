@@ -450,12 +450,12 @@ func limitEventHistory(seqByKind map[string][]int64, kindBounds LookbackLimits) 
 	for k, v := range out {
 		kindBound, ok := kindBounds[k]
 		if ok {
-			// define zero as no bound
-			if kindBound == 0 {
+			// define zero as no bounds
+			if kindBound == NoLimit {
 				continue
 			}
-			if len(v) > kindBound {
-				out[k] = v[len(v)-kindBound:]
+			if len(v) > int(kindBound) {
+				out[k] = v[len(v)-int(kindBound):]
 			}
 		}
 	}
@@ -463,9 +463,13 @@ func limitEventHistory(seqByKind map[string][]int64, kindBounds LookbackLimits) 
 	return out
 }
 
+type LookbackLimit int
+
+const NoLimit LookbackLimit = 0
+
 // LookbackLimits is a map of kind to the number of preceding RVs to consider in the history
 // when producing stale views. A value of 0 means no bound (all RVs considered).
-type LookbackLimits map[string]int
+type LookbackLimits map[string]LookbackLimit
 
 func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBounds LookbackLimits) []*StateSnapshot {
 	var staleViews []*StateSnapshot
@@ -487,7 +491,10 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBo
 
 	filtered := make(map[string][]int64)
 	for k, v := range seqByKind {
-		if lo.Contains(relevantKinds, k) {
+		// since the number of stale states can explode so quickly, we require users
+		// to explicitly include the dimensions (kinds) they want to consider.
+		_, kindConfiguredForStaleness := kindBounds[k]
+		if lo.Contains(relevantKinds, k) && kindConfiguredForStaleness {
 			filtered[k] = v
 		}
 	}

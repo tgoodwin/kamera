@@ -42,7 +42,8 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 			if _, wasMarkedForDeletion := deletions[e.Effect.Key]; !wasMarkedForDeletion {
 				// special case, we treat GarbageCollector REMOVEs as a DELETE + REMOVE
 				// since it cleans up things that nobody explicitly marked for deletion
-				if e.Event != nil && e.Event.ControllerID != util.GarbageCollectorName {
+				isGarbageCollector := e.Event != nil && e.Event.ControllerID == util.GarbageCollectorName
+				if !isGarbageCollector {
 					logger.WithValues(
 						"Key", e.Effect.Key.ResourceKey,
 					).Error(nil, "attempting to remove an object that was not marked for deletion first")
