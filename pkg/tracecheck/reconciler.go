@@ -123,8 +123,8 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
 		}
 		out[kind][namespacedName] = obj
 		logger.V(2).WithValues(
-			"key", key,
-			"hash", util.ShortenHash(hash.Value),
+			"Key", key,
+			"Hash", util.ShortenHash(hash.Value),
 		).Info("resolved frame data item")
 	}
 

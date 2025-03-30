@@ -396,7 +396,10 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// invoke the controller at its observed state of the world
 	observableState := state.ObserveAs(pr.ReconcilerID)
-	stepLog.Info("about to reconcile")
+	stepLog.WithValues(
+		"ReconcilerID", pr.ReconcilerID,
+		"FrameID", frameID,
+	).V(2).Info("about to reconcile")
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil {
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")

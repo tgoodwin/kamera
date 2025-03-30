@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"sort"
@@ -239,6 +240,8 @@ func (sn StateNode) Clone() StateNode {
 		ExecutionHistory:  slices.Clone(sn.ExecutionHistory),
 		depth:             sn.depth,
 		DivergencePoint:   sn.DivergencePoint,
+
+		stuckReconcilerPositions: maps.Clone(sn.stuckReconcilerPositions),
 	}
 }
 
