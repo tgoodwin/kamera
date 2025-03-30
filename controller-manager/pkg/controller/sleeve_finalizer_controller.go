@@ -35,8 +35,10 @@ func (r *FinalizerReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 		return reconcile.Result{}, fmt.Errorf("failed to get object: %w", err)
 	}
 
-	logger.WithValues("kind", kind, "namespaceName", req.NamespacedName, "deletionTimestamp", obj.GetDeletionTimestamp()).
-		Info("got deleted object")
+	logger.WithValues(
+		"kind", kind,
+		"namespaceName", req.NamespacedName,
+	).V(1).Info("processing object marked for deletion")
 
 	// get the Kind out of the context
 	if obj.GetDeletionTimestamp() != nil {
