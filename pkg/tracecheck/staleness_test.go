@@ -1321,3 +1321,103 @@ func TestLimitEventHistory(t *testing.T) {
 		})
 	}
 }
+func TestFilterEventsAtSequence(t *testing.T) {
+	// Helper to create state events
+	var reconcileInt int = 1
+	newStateEvent := func(kind, name, version string, op event.OperationType, sequence int64) StateEvent {
+		s := StateEvent{
+			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
+			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
+			Effect: effect{
+				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
+				Version: snapshot.NewDefaultHash(version),
+				OpType:  op,
+			},
+			Sequence: sequence,
+		}
+		reconcileInt++
+		return s
+	}
+
+	events := []StateEvent{
+		newStateEvent("Pod", "pod-1", "v1", event.CREATE, 1),
+		newStateEvent("Pod", "pod-1", "v2", event.UPDATE, 2),
+		newStateEvent("Pod", "pod-2", "v1", event.CREATE, 3),
+		newStateEvent("Service", "svc-1", "v1", event.CREATE, 4),
+		newStateEvent("Service", "svc-1", "v2", event.UPDATE, 5),
+		newStateEvent("Service", "svc-2", "v1", event.CREATE, 6),
+	}
+
+	tests := []struct {
+		name            string
+		sequencesByKind KindSequences
+		expectedEvents  []StateEvent
+		expectPanic     bool
+	}{
+		{
+			name: "filter events for Pod up to sequence 2",
+			sequencesByKind: KindSequences{
+				"Pod":     2,
+				"Service": 6,
+			},
+			expectedEvents: []StateEvent{
+				events[0],
+				events[1],
+				events[3],
+				events[4],
+				events[5],
+			},
+		},
+		{
+			name: "filter events for Service up to sequence 5",
+			sequencesByKind: KindSequences{
+				"Pod":     3,
+				"Service": 5,
+			},
+			expectedEvents: []StateEvent{
+				events[0],
+				events[1],
+				events[2],
+				events[3],
+				events[4],
+			},
+		},
+		{
+			name: "filter events for both Pod and Service",
+			sequencesByKind: KindSequences{
+				"Pod":     2,
+				"Service": 5,
+			},
+			expectedEvents: []StateEvent{
+				events[0],
+				events[1],
+				events[3],
+				events[4],
+			},
+		},
+		{
+			name: "no sequence for a kind",
+			sequencesByKind: KindSequences{
+				"Pod": 2,
+			},
+			expectPanic: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != nil {
+					if !tt.expectPanic {
+						t.Errorf("Unexpected panic: %v", r)
+					}
+				} else if tt.expectPanic {
+					t.Error("Expected a panic but did not get one")
+				}
+			}()
+
+			filteredEvents := filterEventsAtSequence(events, tt.sequencesByKind)
+			assert.Equal(t, tt.expectedEvents, filteredEvents)
+		})
+	}
+}
