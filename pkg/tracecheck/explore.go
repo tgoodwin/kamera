@@ -51,6 +51,8 @@ type ExploreConfig struct {
 	MaxDepth     int
 	useStaleness int
 
+	breakEarly bool
+
 	mode ExploreMode
 
 	debug bool
@@ -296,7 +298,15 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		}
 
 		if len(currentState.PendingReconciles) == 0 {
+			logger.WithValues(
+				"Depth", currentState.depth,
+				"ReconcileLineage", currentState.ReconcileLineage(),
+				"StateKey", currentState.Hash(),
+			).V(1).Info("arrived at converged state")
 			seenConvergedStates[stateKey] = currentState
+			if e.config.breakEarly {
+				queue = []StateNode{}
+			}
 			continue
 		}
 
@@ -344,7 +354,11 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				seenDepths[newState.depth] = true
 			}
 			if newState.depth > e.config.MaxDepth {
-				logger.V(1).Info("aborting path due to max depth", "maxDepth", e.config.MaxDepth, "currentDepth", newState.depth)
+				logger.WithValues(
+					"maxDepth", e.config.MaxDepth,
+					"currentDepth", newState.depth,
+					"Lineage", newState.ReconcileLineage(),
+				).V(1).Info("aborting path due to max depth")
 				stats.AbortedPaths++
 			} else {
 				// enqueue the new state to explore

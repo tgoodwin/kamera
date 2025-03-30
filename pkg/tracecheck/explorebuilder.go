@@ -58,6 +58,10 @@ func (b *ExplorerBuilder) WithDebug() {
 	b.config.debug = true
 }
 
+func (b *ExplorerBuilder) BreakEarly() {
+	b.config.breakEarly = true
+}
+
 func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) *ExplorerBuilder {
 	if _, ok := b.resourceDeps[kind]; !ok {
 		b.resourceDeps[kind] = util.NewSet[string]()

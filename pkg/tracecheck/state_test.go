@@ -268,3 +268,55 @@ func TestExpandStateByReconcileOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestReconcileLineage(t *testing.T) {
+	// Create test StateNodes to form a lineage
+	rootNode := &StateNode{
+		ID: "root",
+	}
+
+	childNode := &StateNode{
+		ID:     "child",
+		parent: rootNode,
+		action: &ReconcileResult{
+			ControllerID: "Foo",
+			FrameID:      "1",
+			Changes: Changes{ObjectVersions: ObjectVersions{
+				snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
+				snapshot.NewCompositeKey("Pod", "default", "pod2", "2"): snapshot.NewDefaultHash("Hash"),
+				snapshot.NewCompositeKey("Pod", "default", "pod3", "3"): snapshot.NewDefaultHash("Hash"),
+			}},
+		},
+	}
+
+	grandChildNode := &StateNode{
+		ID:     "grandchild",
+		parent: childNode,
+		action: &ReconcileResult{
+			ControllerID: "Bar",
+			FrameID:      "2",
+			Changes:      Changes{ObjectVersions: ObjectVersions{}},
+		},
+	}
+
+	greatGrandChildNode := &StateNode{
+		ID:     "greatgrandchild",
+		parent: grandChildNode,
+		action: &ReconcileResult{
+			ControllerID: "Baz",
+			FrameID:      "3",
+			Changes:      Changes{ObjectVersions: ObjectVersions{}},
+		},
+	}
+
+	// Call ReconcileLineage on the great-grandchild node
+	lineage := greatGrandChildNode.ReconcileLineage()
+
+	// Expected lineage string
+	expectedLineage := "root=>Foo:1[3]=>Bar:2[0]=>Baz:3[0]"
+
+	// Assert the lineage matches the expected value
+	if lineage != expectedLineage {
+		t.Errorf("Expected lineage %s, got %s", expectedLineage, lineage)
+	}
+}

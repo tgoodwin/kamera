@@ -305,6 +305,27 @@ func (sn StateNode) DetailedLineage() string {
 	return fmt.Sprintf("%s->%s:%s@%d", sn.parent.DetailedLineage(), id, sn.OrderSensitiveHash(), numChanges)
 }
 
+func (sn StateNode) ReconcileLineage() string {
+	var id string
+	var frameID string
+	var numChanges int = 0
+
+	if sn.action != nil {
+		id = sn.action.ControllerID
+		frameID = util.Shorter(sn.action.FrameID)
+		numChanges = len(sn.action.Changes.ObjectVersions)
+	} else {
+		id = "root"
+		frameID = ""
+	}
+
+	if sn.parent == nil {
+		return id
+	}
+
+	return fmt.Sprintf("%s=>%s:%s[%d]", sn.parent.ReconcileLineage(), id, frameID, numChanges)
+}
+
 // expandStateByReconcileOrder takes a StateNode and returns a slice of new StateNodes,
 // where each new StateNode is a clone of the input but with a different pending reconcile
 // as the first element in its PendingReconciles list.

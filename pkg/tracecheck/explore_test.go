@@ -22,7 +22,7 @@ func Test_getNewPendingReconciles(t *testing.T) {
 	}
 	tests := []struct {
 		name     string
-		mode     string
+		mode     ExploreMode
 		curr     []PendingReconcile
 		new      []PendingReconcile
 		expected []PendingReconcile
