@@ -196,7 +196,7 @@ type StateEvent struct {
 	*event.Event
 	ReconcileID string
 	Timestamp   string
-	Effect      effect
+	Effect      Effect
 	Sequence    int64 // the sequence within the kind
 
 	rv ResourceVersion // model etcd resource version

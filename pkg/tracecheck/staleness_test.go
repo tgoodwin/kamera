@@ -612,7 +612,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					Effect: effect{
+					Effect: Effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -633,7 +633,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					Effect: effect{
+					Effect: Effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -643,7 +643,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
-					Effect: effect{
+					Effect: Effect{
 						Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						OpType: event.MARK_FOR_DELETION,
 					},
@@ -652,7 +652,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r3",
 					Timestamp:   "2024-02-21T10:00:03Z",
-					Effect: effect{
+					Effect: Effect{
 						Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						OpType: event.REMOVE,
 					},
@@ -670,7 +670,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					Effect: effect{
+					Effect: Effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -680,7 +680,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
-					Effect: effect{
+					Effect: Effect{
 						Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
 						Version: snapshot.NewDefaultHash("v2"),
 						OpType:  event.CREATE,
@@ -703,7 +703,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
-					Effect: effect{
+					Effect: Effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
@@ -713,7 +713,7 @@ func TestReplayEventsToState(t *testing.T) {
 				{
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
-					Effect: effect{
+					Effect: Effect{
 						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v2"),
 						OpType:  event.UPDATE,
@@ -748,7 +748,7 @@ func TestReplyaEventsAtSequence_DeletionSemantics(t *testing.T) {
 		s := StateEvent{
 			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
 			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
-			Effect: effect{
+			Effect: Effect{
 				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
 				Version: snapshot.NewDefaultHash(version),
 				OpType:  op,
@@ -819,7 +819,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		s := StateEvent{
 			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
 			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
-			Effect: effect{
+			Effect: Effect{
 				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
 				Version: snapshot.NewDefaultHash(version),
 				OpType:  op,
@@ -1024,7 +1024,7 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 		s := StateEvent{
 			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
 			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
-			Effect: effect{
+			Effect: Effect{
 				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
 				Version: snapshot.NewDefaultHash(version),
 				OpType:  op,
@@ -1328,7 +1328,7 @@ func TestFilterEventsAtSequence(t *testing.T) {
 		s := StateEvent{
 			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
 			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
-			Effect: effect{
+			Effect: Effect{
 				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
 				Version: snapshot.NewDefaultHash(version),
 				OpType:  op,

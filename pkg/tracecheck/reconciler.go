@@ -62,9 +62,11 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 		}
 	}
 
-	if _, err := r.Reconcile(ctx, req); err != nil {
+	res, err := r.Reconcile(ctx, req)
+	if err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
+	logger.V(2).Info("reconcile complete", "result", res)
 	effects, err := r.retrieveEffects(frameID)
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
@@ -77,6 +79,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 		FrameType:    FrameTypeExplore,
 		Changes:      effects,
 		Deltas:       deltas,
+		ctrlRes:      res,
 	}, nil
 }
 

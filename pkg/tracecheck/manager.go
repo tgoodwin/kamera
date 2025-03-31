@@ -28,7 +28,7 @@ type VersionManager interface {
 	DebugKey(key string)
 }
 
-type effect struct {
+type Effect struct {
 	OpType  event.OperationType
 	Key     snapshot.CompositeKey
 	Version snapshot.VersionHash
@@ -38,12 +38,12 @@ type effect struct {
 }
 
 type reconcileEffects struct {
-	reads  []effect
-	writes []effect
+	reads  []Effect
+	writes []Effect
 }
 
-func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType) effect {
-	return effect{
+func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType) Effect {
+	return Effect{
 		OpType:  op,
 		Key:     key,
 		Version: version,
@@ -51,8 +51,8 @@ func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event
 	}
 }
 
-func newEffectWithPrecondition(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType, precondition *replay.PreconditionInfo) effect {
-	return effect{
+func newEffectWithPrecondition(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType, precondition *replay.PreconditionInfo) Effect {
+	return Effect{
 		OpType:       op,
 		Key:          key,
 		Version:      version,
@@ -131,8 +131,8 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	reffects, ok := m.effects[frameID]
 	if !ok {
 		reffects = reconcileEffects{
-			reads:  make([]effect, 0),
-			writes: make([]effect, 0),
+			reads:  make([]Effect, 0),
+			writes: make([]Effect, 0),
 		}
 	}
 

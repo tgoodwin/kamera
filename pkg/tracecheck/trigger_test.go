@@ -83,7 +83,7 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 	}
 
 	changes := Changes{
-		Effects: []effect{
+		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
 				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
@@ -162,7 +162,7 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 
 	// Test Case 1: Pod with ReplicaSet owner
 	changes := Changes{
-		Effects: []effect{
+		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
 				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
@@ -196,7 +196,7 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 
 	// Test Case 2: ReplicaSet with Deployment owner
 	changes = Changes{
-		Effects: []effect{
+		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
 				Key:     snapshot.NewCompositeKey("ReplicaSet", "default", "test-rs", "test-rs"),
@@ -266,7 +266,7 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 	}
 
 	changes := Changes{
-		Effects: []effect{
+		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
 				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
@@ -347,7 +347,7 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 	tm := &TriggerManager{deps, owners, resolver}
 
 	changes := Changes{
-		Effects: []effect{
+		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
 				Key:     snapshot.NewCompositeKey("RouteConfig", "default", "route-config-1", "route-config-1"),
@@ -406,7 +406,7 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 
 	// Create test change set
 	changes := Changes{
-		Effects: []effect{
+		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
 				Key:     snapshot.NewCompositeKey("Job", "default", "test-job", "test-job"),
@@ -468,7 +468,7 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 
 	// Create test change set
 	changes := Changes{
-		Effects: []effect{
+		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
 				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
@@ -514,7 +514,7 @@ func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 
 	// Create test change set with a hash that doesn't exist
 	changes := Changes{
-		Effects: []effect{
+		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
 				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
