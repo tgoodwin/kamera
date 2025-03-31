@@ -58,12 +58,12 @@ func main() {
 		sleeveObjectID := e.Effect.Key.IdentityKey.ObjectID
 		fmt.Printf("ts:%s (%d) frameID:%s controller=%s op=%s item=%s:%s %s\n", e.Timestamp, e.Sequence, util.Shorter(e.ReconcileID), e.ControllerID, e.OpType, e.Kind, util.Shorter(sleeveObjectID), util.ShortenHash(e.Effect.Version.Value))
 	}
-	topState := tracecheck.Rollup(traces)
+	topState := tracecheck.CausalRollup(traces)
 	topState.Debug()
-	// fixed := topState.FixAt(tracecheck.KindSequences{
-	// 	"CassandraDatacenter": 27,
-	// })
-	// fixed.Debug()
+	fixed := topState.FixAt(tracecheck.KindSequences{
+		"CassandraDatacenter": 40,
+	})
+	fixed.Debug()
 
 	log.Println("Traces sorted by timestamp")
 }
