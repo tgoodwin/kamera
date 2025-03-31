@@ -47,3 +47,18 @@ func (mr *MockTriggerHandlerMockRecorder) GetTriggered(arg0 interface{}) *gomock
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTriggered", reflect.TypeOf((*MockTriggerHandler)(nil).GetTriggered), arg0)
 }
+
+// KindDepsForReconciler mocks base method.
+func (m *MockTriggerHandler) KindDepsForReconciler(arg0 string) ([]string, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "KindDepsForReconciler", arg0)
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// KindDepsForReconciler indicates an expected call of KindDepsForReconciler.
+func (mr *MockTriggerHandlerMockRecorder) KindDepsForReconciler(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "KindDepsForReconciler", reflect.TypeOf((*MockTriggerHandler)(nil).KindDepsForReconciler), arg0)
+}

@@ -6,10 +6,11 @@ import (
 )
 
 type ExploreStats struct {
-	startTime    *time.Time
-	endTime      *time.Time
-	AbortedPaths int
-	NodeVisits   int
+	startTime        *time.Time
+	endTime          *time.Time
+	AbortedPaths     int
+	UniqueNodeVisits int
+	TotalNodeVisits  int
 
 	RestartsPerReconciler map[string]int
 }
@@ -38,6 +39,7 @@ func (s *ExploreStats) Print() {
 		s.Finish()
 	}
 	fmt.Printf("Total time: %v\n", s.endTime.Sub(*s.startTime))
-	fmt.Printf("Total node visits: %d\n", s.NodeVisits)
+	fmt.Printf("Total node visits: %d\n", s.TotalNodeVisits)
+	fmt.Printf("Unique node visits: %d\n", s.UniqueNodeVisits)
 	fmt.Printf("Aborted paths: %d\n", s.AbortedPaths)
 }
