@@ -14,8 +14,18 @@ import (
 
 type KindSequences map[string]int64
 
+type Priority int
+
+const (
+	Default Priority = 0
+	Skip    Priority = -1
+	High    Priority = 100
+)
+
 type StateSnapshot struct {
 	contents ObjectVersions
+
+	priority Priority
 
 	mode string // original or adjusted
 
@@ -469,12 +479,8 @@ const NoLimit LookbackLimit = 0
 // when producing stale views. A value of 0 means no bound (all RVs considered).
 type LookbackLimits map[string]LookbackLimit
 
-func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBounds LookbackLimits) []*StateSnapshot {
-	var staleViews []*StateSnapshot
-
-	staleViews = append(staleViews, snapshot)
-
-	eventsByKind := lo.GroupBy(snapshot.stateEvents, func(e StateEvent) string {
+func getAllPossibleViews(baseState *StateSnapshot, relevantKinds []string, kindBounds LookbackLimits) []*StateSnapshot {
+	eventsByKind := lo.GroupBy(baseState.stateEvents, func(e StateEvent) string {
 		return e.Effect.Key.IdentityKey.Kind
 	})
 	seqByKind := lo.MapValues(eventsByKind, func(events []StateEvent, key string) []int64 {
@@ -498,14 +504,15 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBo
 	}
 
 	allPossibleKindSequences := getAllCombos(filtered)
+	var staleViews []*StateSnapshot
 	for _, possibleCombo := range allPossibleKindSequences {
 		// there may be duplicates in the generated kind sequences
-		if maps.Equal(possibleCombo, snapshot.KindSequences) {
+		if maps.Equal(possibleCombo, baseState.KindSequences) {
 			continue
 		}
 
 		staleSequences := make(KindSequences)
-		maps.Copy(staleSequences, snapshot.KindSequences)
+		maps.Copy(staleSequences, baseState.KindSequences)
 		// State for kinds outside of relevantKinds is included at the latest sequence.
 		// Only the relevant kinds are adjusted to the stale sequence.
 		for k, v := range possibleCombo {
@@ -515,7 +522,13 @@ func getAllPossibleViews(snapshot *StateSnapshot, relevantKinds []string, kindBo
 		// we preserve the original state but adjust the sequence numbers
 		// to reflect the new view among all possible stale views.
 		// the stale view must be "observed" via the Observe() method
-		out := newStateSnapshot(snapshot.contents, staleSequences, snapshot.stateEvents)
+		out := newStateSnapshot(baseState.contents, staleSequences, baseState.stateEvents)
+		out.priority = Skip
+		for _, v := range out.Observable() {
+			if util.ShortenHash(v.Value) == "2hquvmr5" {
+				out.priority = High
+			}
+		}
 		staleViews = append(staleViews, &out)
 		logger.V(2).WithValues(
 			"lookbackLimits", kindBounds,
