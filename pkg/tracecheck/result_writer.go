@@ -59,13 +59,14 @@ func (rw *ResultWriter) MaterializeClassified(results []ClassifiedState, outDir 
 	}
 
 	for _, result := range results {
+		hash := result.State.State.Hash()
 		var outFile, tracePrefix string
 		if result.Classification == "happy" {
-			outFile = fmt.Sprintf("%s/%s-%s-summary.md", happyDir, result.ID, result.Signature)
+			outFile = fmt.Sprintf("%s/%s-%s-summary.md", happyDir, hash, result.Signature)
 			tracePrefix = fmt.Sprintf("%s/%s", happyTracesDir, result.ID)
 		} else if result.Classification == "bad" {
-			outFile = fmt.Sprintf("%s/%s-%s-summary.md", badDir, result.ID, result.Signature)
-			tracePrefix = fmt.Sprintf("%s/%s", badTracesDir, result.ID)
+			outFile = fmt.Sprintf("%s/%s-%s-summary.md", badDir, hash, result.Signature)
+			tracePrefix = fmt.Sprintf("%s/%s", badTracesDir, hash)
 		} else {
 			log.Fatalf("unknown classification: %s", result.Classification)
 		}
@@ -85,9 +86,10 @@ func (rw *ResultWriter) MaterializeResults(result *Result, outDir string) {
 		log.Fatalf("failed to create traces directory: %v", err)
 	}
 
-	for i, convergedState := range result.ConvergedStates {
-		outFile := fmt.Sprintf("%s/state-%d-summary.md", sanitizedOutDir, i)
-		tracePrefix := fmt.Sprintf("%s/state-%d", tracesDir, i)
+	for _, convergedState := range result.ConvergedStates {
+		hash := convergedState.State.Hash()
+		outFile := fmt.Sprintf("%s/state-%s-summary.md", sanitizedOutDir, hash)
+		tracePrefix := fmt.Sprintf("%s/state-%s", tracesDir, hash)
 		rw.writeStateSummary(convergedState, outFile)
 		rw.materializeTraces(convergedState, tracePrefix)
 	}
@@ -109,10 +111,10 @@ func (rw *ResultWriter) writeStateSummary(state ConvergedState, outPath string) 
 		return keys[i].ObjectID < keys[j].ObjectID
 	})
 	for _, k := range keys {
-		file.WriteString(fmt.Sprintf("\t%s\n", k))
+		file.WriteString(fmt.Sprintf("\t%s:%s\n", k, util.ShortenHash(state.State.Objects()[k].Value)))
 	}
 	file.WriteString("\n")
-	file.WriteString("## Converged Objects:\n")
+	// file.WriteString("## Converged Objects:\n")
 	objectKeys := lo.Keys(state.State.Objects())
 	sort.Slice(objectKeys, func(i, j int) bool {
 		// first sort by kind, then by objectID
@@ -122,17 +124,6 @@ func (rw *ResultWriter) writeStateSummary(state ConvergedState, outPath string) 
 		return objectKeys[i].ObjectID < objectKeys[j].ObjectID
 	})
 
-	for _, key := range objectKeys {
-		version := state.State.Objects()[key]
-		prettyVersion, err := util.PrettyPrintJSON(string(version.Value))
-		if err != nil {
-			log.Fatalf("failed to pretty print version: %v", err)
-		}
-		file.WriteString(fmt.Sprintf("Key: %s\n", key))
-		if _, err := file.WriteString(fmt.Sprintf("```\n%s\n```\n", prettyVersion)); err != nil {
-			log.Fatalf("failed to write state summary: %v", err)
-		}
-	}
 	uniquePaths := GetUniquePaths(state.Paths)
 	file.WriteString(fmt.Sprintf("\n## Unique Paths: %d\n", len(uniquePaths)))
 	for i, path := range uniquePaths {

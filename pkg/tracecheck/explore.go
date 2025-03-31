@@ -61,6 +61,12 @@ type ExploreConfig struct {
 	KindBoundsPerReconciler map[string]ReconcilerConfig
 }
 
+//go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
+type TriggerHandler interface {
+	GetTriggered(changes Changes) ([]PendingReconcile, error)
+	KindDepsForReconciler(reconcilerID string) ([]string, error)
+}
+
 type Explorer struct {
 	// reconciler implementations keyed by ID
 	reconcilers map[string]ReconcilerContainer
@@ -69,7 +75,7 @@ type Explorer struct {
 
 	knowledgeManager *EventKnowledge
 
-	triggerManager *TriggerManager
+	triggerManager TriggerHandler
 
 	effectContextManager EffectContextManager
 
@@ -82,10 +88,6 @@ type ConvergedState struct {
 	ID    string
 	State StateNode
 	Paths []ExecutionHistory
-}
-
-type Result struct {
-	ConvergedStates []ConvergedState
 }
 
 func (e *Explorer) shouldExploreDownstream(frameID string) bool {
@@ -223,9 +225,8 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		ConvergedStates: make([]ConvergedState, 0),
 	}
 
-	stats := NewExploreStats()
-	stats.Start()
-	e.stats = stats
+	e.stats = NewExploreStats()
+	e.stats.Start()
 
 	seenDepths := make(map[int]bool)
 
@@ -290,9 +291,11 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		}
 
 		seenStates[orderKey] = true
+		e.stats.TotalNodeVisits++
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = []ExecutionHistory{currentState.ExecutionHistory}
+			e.stats.UniqueNodeVisits++
 		} else {
 			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 		}
@@ -300,9 +303,9 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		if len(currentState.PendingReconciles) == 0 {
 			logger.WithValues(
 				"Depth", currentState.depth,
-				"ReconcileLineage", currentState.ReconcileLineage(),
 				"StateKey", currentState.Hash(),
-			).V(1).Info("arrived at converged state")
+			).Info("arrived at converged state")
+			logger.V(2).Info("lineage", currentState.DetailedLineage())
 			seenConvergedStates[stateKey] = currentState
 			if e.config.breakEarly {
 				queue = []StateNode{}
@@ -359,7 +362,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 					"currentDepth", newState.depth,
 					"Lineage", newState.ReconcileLineage(),
 				).V(1).Info("aborting path due to max depth")
-				stats.AbortedPaths++
+				e.stats.AbortedPaths++
 			} else {
 				// enqueue the new state to explore
 				queue = e.addStateToExplore(queue, newState)
@@ -381,15 +384,16 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
 	}
 
-	fmt.Println("seen states", len(seenStatesPendingOrderSensitive))
-	stats.Print()
+	e.stats.Print()
+	result.Summarize()
 	return result, nil
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
 func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (StateNode, error) {
 	stepLog := log.FromContext(ctx)
-	// remove the current controller from the pending reconciles list
+
+	// // remove the current controller from the pending reconciles list
 	newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
 		return pending != pr
 	})
@@ -404,27 +408,26 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	ctx = replay.WithFrameID(ctx, frameID)
 
 	// prepare the "true state of the world" for the controller's potential actions
-	// to be validated against. (e.g. create error: thing of name X already exists)
+	// to be validated against. (e.g. "create error: thing of name X already exists")
 	e.effectContextManager.PrepareEffectContext(ctx, state.Contents.All())
 	defer e.effectContextManager.CleanupEffectContext(ctx)
 
 	// invoke the controller at its observed state of the world
 	observableState := state.ObserveAs(pr.ReconcilerID)
-	stepLog.WithValues(
-		"ReconcilerID", pr.ReconcilerID,
-		"FrameID", frameID,
-	).V(2).Info("about to reconcile")
+	stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "FrameID", frameID).V(2).Info("about to reconcile")
+
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil {
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")
 		// return the pre-reconcile state if the controller errored
 		return state, err
 	}
-	stepLog.Info("finished reconcile")
+	stepLog.V(1).WithValues(
+		"Result", reconcileResult.ctrlRes,
+	).Info("finished reconcile")
 
 	newSequences := make(KindSequences)
 	maps.Copy(newSequences, state.Contents.KindSequences)
-
 	effects := reconcileResult.Changes.Effects
 	stepLog.V(1).Info("completed step", "frameID", frameID, "controller", pr.ReconcilerID, "numEffects", len(effects))
 
@@ -526,25 +529,37 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// get the controllers that depend on the objects that were changed and add them
 	// to the pending reconciles list. n.b. this can include the controller that just executed.
-	triggeredReconcilers := e.getTriggeredReconcilers(reconcileResult.Changes)
+	reconcilesToEnqueue := e.getTriggeredReconcilers(reconcileResult.Changes)
+	// if requeue is true, we also need to append the same pendingReconcile back to the list
+	// requeue := reconcileResult.ctrlRes.Requeue
 
 	// For controllers whose watch streams are connected to a network-partitioned APIServer shard,
 	// they cannot get triggered by the changes in the state as their watch streams are "stuck".
 	// Even if they performed the reconcile, they would not be able to see the changes.
-	if len(triggeredReconcilers) > 0 {
-		filtered := lo.Filter(triggeredReconcilers, func(pr PendingReconcile, _ int) bool {
+	if len(reconcilesToEnqueue) > 0 {
+		filtered := lo.Filter(reconcilesToEnqueue, func(pending PendingReconcile, _ int) bool {
 			if state.stuckReconcilerPositions == nil {
 				return true
 			}
 			// if the reconciler is in the staleness map, it is stuck
-			_, stuck := state.stuckReconcilerPositions[pr.ReconcilerID]
+			_, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]
 			return !stuck
 		})
+
 		logger.V(2).Info("filtered triggered reconciles based on who's stuck",
-			"triggeredReconcilers", triggeredReconcilers, "filtered", filtered, "stuckPositions", state.stuckReconcilerPositions)
-		triggeredReconcilers = filtered
-		newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, triggeredReconcilers)
+			"triggeredReconcilers", reconcilesToEnqueue, "filtered", filtered, "stuckPositions", state.stuckReconcilerPositions)
+		reconcilesToEnqueue = filtered
 	}
+	// if the controller returned a response with Requeue = true,
+	// we need to requeue the original request, which is contained in the
+	// top level pendingReconcile this function was called with.
+	if reconcileResult.ctrlRes.Requeue {
+		logger.V(1).Info("requeueing original reconcile request", "ReconcileResult", reconcileResult.ctrlRes, "RequeueRequest", pr.Request)
+		// panic("?")
+		reconcilesToEnqueue = append(reconcilesToEnqueue, pr)
+	}
+	newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, reconcilesToEnqueue)
+	// newPendingReconciles := e.determineNewPendingReconciles(state, pr, reconcileResult)
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
@@ -601,7 +616,12 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 }
 
 func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
-	return e.triggerManager.MustGetTriggered(changes)
+	res, err := e.triggerManager.GetTriggered(changes)
+	if err != nil {
+		logger.Error(err, "getting triggered reconciles")
+		panic("getting triggered reconciles")
+	}
+	return res
 }
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string, currDepth int) ([]StateNode, error) {
@@ -637,7 +657,17 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		} else {
 			stuckPositions = maps.Clone(currState.stuckReconcilerPositions)
 		}
-		stuckPositions[reconcilerID] = staleState.KindSequences
+
+		// after a restart / reconnect, the controller will be stuck at this position
+		// in the stale state, but only for the resource types it has staleness configuration
+		// for.
+		stuckPositionsForReconciler := make(KindSequences)
+		for k, v := range staleState.KindSequences {
+			if _, exists := config.Bounds[k]; exists {
+				stuckPositionsForReconciler[k] = v
+			}
+		}
+		stuckPositions[reconcilerID] = stuckPositionsForReconciler
 
 		sn := StateNode{
 			Contents:          *staleState,
@@ -650,6 +680,11 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 			stuckReconcilerPositions: stuckPositions,
 		}
 		sn.ID = sn.Hash()
+
+		if logger.V(2).Enabled() {
+			logger.WithValues("StateKey", sn.ID, "OrderKey").V(2).Info("produced stale view")
+			sn.Contents.DumpContents()
+		}
 		return sn
 	})
 
@@ -680,14 +715,20 @@ func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput
 	if state.stuckReconcilerPositions != nil {
 		filtered := lo.Filter(triggeredByChanges, func(pending PendingReconcile, _ int) bool {
 			if stuckKinds, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]; stuck {
+				resourceDeps, _ := e.triggerManager.KindDepsForReconciler(pending.ReconcilerID)
 				couldSeeChange := false
 				for changeKey := range result.Changes.ObjectVersions {
-					if _, inStuck := stuckKinds[changeKey.ResourceKey.Kind]; !inStuck {
-						couldSeeChange = true
+					if _, ok := stuckKinds[changeKey.ResourceKey.Kind]; !ok {
+						// if the reconciler subscribes to the change's kind and the kind
+						// is not in the stuck set, it could see the change
+						if subscribes := lo.Contains(resourceDeps, changeKey.ResourceKey.Kind); subscribes {
+							couldSeeChange = true
+						}
 					}
 				}
 				return couldSeeChange
 			} else {
+				// if not stuck on anything, pass it through the filter!
 				return true
 			}
 		})

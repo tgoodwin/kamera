@@ -125,6 +125,7 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 		curr                     []PendingReconcile
 		pendingReconcile         PendingReconcile
 		triggered                []PendingReconcile
+		reconcilerKindDeps       map[string][]string
 		stuckReconcilerPositions map[string]KindSequences
 		result                   *ReconcileResult
 		expected                 []PendingReconcile
@@ -134,8 +135,11 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			curr: []PendingReconcile{
 				newPr("controllerA", "namespace1", "name1"),
 			},
-			pendingReconcile:         newPr("controllerA", "namespace1", "name1"),
-			triggered:                nil,
+			pendingReconcile: newPr("controllerA", "namespace1", "name1"),
+			triggered:        nil,
+			reconcilerKindDeps: map[string][]string{
+				"controllerA": {"Kind1", "Kind2"},
+			},
 			stuckReconcilerPositions: nil,
 			result: &ReconcileResult{
 				ctrlRes: reconcile.Result{},
@@ -151,6 +155,11 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			},
 			pendingReconcile: newPr("controllerA", "namespace1", "name1"),
 			triggered:        []PendingReconcile{newPr("controllerB", "namespace1", "name2")},
+			reconcilerKindDeps: map[string][]string{
+				"controllerA": {"Kind1", "Kind2"},
+				"controllerB": {"Kind1", "Kind2"},
+				"controllerC": {"Kind1", "Kind2"},
+			},
 			stuckReconcilerPositions: map[string]KindSequences{
 				"controllerB": {
 					"Kind1": 1,
@@ -177,6 +186,11 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			triggered: []PendingReconcile{
 				newPr("controllerB", "namespace1", "name2"),
 			},
+			reconcilerKindDeps: map[string][]string{
+				"controllerA": {"Kind1", "Kind2"},
+				"controllerB": {"Kind1", "Kind2"},
+				"controllerC": {"Kind1", "Kind2"},
+			},
 			stuckReconcilerPositions: nil,
 			result: &ReconcileResult{
 				ctrlRes: reconcile.Result{},
@@ -195,8 +209,13 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			curr: []PendingReconcile{
 				newPr("controllerA", "namespace1", "name1"),
 			},
-			pendingReconcile:         newPr("controllerA", "namespace1", "name1"),
-			triggered:                nil,
+			pendingReconcile: newPr("controllerA", "namespace1", "name1"),
+			triggered:        nil,
+			reconcilerKindDeps: map[string][]string{
+				"controllerA": {"Kind1", "Kind2"},
+				"controllerB": {"Kind1", "Kind2"},
+				"controllerC": {"Kind1", "Kind2"},
+			},
 			stuckReconcilerPositions: nil,
 			result: &ReconcileResult{
 				ctrlRes: reconcile.Result{Requeue: true},
@@ -204,6 +223,39 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			},
 			expected: []PendingReconcile{
 				newPr("controllerA", "namespace1", "name1"),
+			},
+		},
+		{
+			name: "controller triggered by change it subscribes to and is not stuck on",
+			curr: []PendingReconcile{
+				newPr("controllerA", "namespace1", "name1"),
+				newPr("controllerB", "namespace1", "name2"),
+			},
+			pendingReconcile: newPr("controllerA", "namespace1", "name1"),
+			triggered: []PendingReconcile{
+				newPr("controllerB", "namespace1", "name2"),
+			},
+			reconcilerKindDeps: map[string][]string{
+				"controllerA": {"Kind1", "Kind2"},
+				"controllerB": {"Kind1", "Kind2"},
+				"controllerC": {"Kind1", "Kind2"},
+			},
+			stuckReconcilerPositions: map[string]KindSequences{
+				"controllerB": {
+					"Kind1": 1,
+				},
+			},
+			result: &ReconcileResult{
+				ctrlRes: reconcile.Result{},
+				Changes: Changes{
+					ObjectVersions: ObjectVersions{
+						newCompositeKey("Kind1", "namespace1", "name2"): {},
+						newCompositeKey("Kind2", "namespace1", "name2"): {},
+					},
+				},
+			},
+			expected: []PendingReconcile{
+				newPr("controllerB", "namespace1", "name2"),
 			},
 		},
 	}
@@ -215,6 +267,13 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 
 			mockTriggered := NewMockTriggerHandler(ctrl)
 			mockTriggered.EXPECT().GetTriggered(tt.result.Changes).Return(tt.triggered, nil).Times(1)
+			// TODO stop re-implementing the function under test...
+			for _, trig := range tt.triggered {
+				kindDeps := tt.reconcilerKindDeps[trig.ReconcilerID]
+				if _, stuck := tt.stuckReconcilerPositions[trig.ReconcilerID]; stuck {
+					mockTriggered.EXPECT().KindDepsForReconciler(trig.ReconcilerID).Return(kindDeps, nil).Times(1)
+				}
+			}
 			e := &Explorer{
 				triggerManager: mockTriggered,
 				config: &ExploreConfig{

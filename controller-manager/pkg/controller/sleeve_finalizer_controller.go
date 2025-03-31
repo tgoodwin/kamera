@@ -52,18 +52,25 @@ func (r *FinalizerReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 				logger.Error(err, "recording effect")
 				return reconcile.Result{}, fmt.Errorf("recording effect: %w", err)
 			}
+			// emit the event
+			r.LogOperation(ctx, obj, event.REMOVE)
 			return reconcile.Result{}, nil
 		}
 
-		// Only emit REMOVE event if this is our last finalizer
+		// in production mode, we use a custom finalizer to ensure the below LogOperation
+		// event runs as close to the actual deletion as possible.
 		if len(obj.GetFinalizers()) == 1 && obj.GetFinalizers()[0] == tag.SleeveFinalizer {
+			// Remove our finalizer to allow actual deletion by the APIServer
+			obj.SetFinalizers(lo.Without(obj.GetFinalizers(), tag.SleeveFinalizer))
+			// Update object to remove finalizer and trigger removal
+			if err := r.Update(ctx, obj); err != nil {
+				logger.Error(err, "failed to update object")
+				return reconcile.Result{}, fmt.Errorf("failed to update object: %w", err)
+			}
 			logger.V(2).Info("Emitting REMOVE event")
-			r.Client.LogOperation(ctx, obj, event.REMOVE) // Your event logging mechanism
+			r.Client.LogOperation(ctx, obj, event.REMOVE)
+			logger.V(1).Info("Finalizer removed")
 		}
-
-		// Remove our finalizer to allow actual deletion
-		obj.SetFinalizers(lo.Without(obj.GetFinalizers(), tag.SleeveFinalizer))
-		// Update object to remove finalizer
 	}
 
 	return reconcile.Result{}, nil

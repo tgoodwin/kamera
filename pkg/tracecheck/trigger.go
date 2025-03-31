@@ -58,7 +58,7 @@ type TriggerManager struct {
 }
 
 // NewTriggerManager creates a new instance of TriggerManager
-func NewTriggerManager(deps ResourceDeps, reconcilerToPrimaryKind map[string]string, resolver hashResolver) *TriggerManager {
+func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPrimaryKind map[string]string, resolver hashResolver) *TriggerManager {
 
 	primariesByKind := make(PrimariesByKind)
 	for reconcilerID, kind := range reconcilerToPrimaryKind {
@@ -68,10 +68,14 @@ func NewTriggerManager(deps ResourceDeps, reconcilerToPrimaryKind map[string]str
 		primariesByKind[kind].Add(reconcilerID)
 	}
 	return &TriggerManager{
-		deps:     deps,
+		deps:     subscribingReconcilersByKind,
 		owners:   primariesByKind,
 		resolver: resolver,
 	}
+}
+
+func (tm *TriggerManager) KindDepsForReconciler(reconcilerID string) ([]string, error) {
+	return tm.deps.ForReconciler(reconcilerID)
 }
 
 // getTriggered returns a list of PendingReconcile items based on the provided changes
@@ -173,12 +177,12 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 
 // Convenience method that delegates to getTriggered but panics on errors
 // This maintains backwards compatibility with existing code
-func (tm *TriggerManager) MustGetTriggered(changes Changes) []PendingReconcile {
+func (tm *TriggerManager) GetTriggered(changes Changes) ([]PendingReconcile, error) {
 	result, err := tm.getTriggered(changes)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
-	return result
+	return result, nil
 }
 
 func NewPendingReconciles(nsName types.NamespacedName, dependentControllers ...string) []PendingReconcile {

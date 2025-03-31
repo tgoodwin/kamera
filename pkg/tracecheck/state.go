@@ -11,6 +11,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 type HashInfo struct {
@@ -83,6 +84,8 @@ type ReconcileResult struct {
 	FrameType    FrameType
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
 	Deltas       map[snapshot.CompositeKey]Delta
+
+	ctrlRes reconcile.Result
 }
 
 type ExecutionHistory []*ReconcileResult
@@ -187,7 +190,11 @@ func (sn StateNode) ObserveAs(reconcilerID string) ObjectVersions {
 	}
 	// return the objects that this reconciler can see
 	if _, ok := sn.stuckReconcilerPositions[reconcilerID]; ok {
-		return sn.Contents.Observable()
+		kindSequences := maps.Clone(sn.Contents.KindSequences)
+		for k, stuckSeq := range sn.stuckReconcilerPositions[reconcilerID] {
+			kindSequences[k] = stuckSeq
+		}
+		return sn.Contents.ObserveAt(kindSequences)
 	}
 	return sn.Contents.All()
 }

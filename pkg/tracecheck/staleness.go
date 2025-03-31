@@ -77,22 +77,30 @@ func (s *StateSnapshot) Observable() ObjectVersions {
 	return ss.contents
 }
 
-func (s *StateSnapshot) ObserveAt(ks KindSequences) ObjectVersions {
-	// merge the others
+func (s *StateSnapshot) ObserveAt(staleSequences KindSequences) ObjectVersions {
+	// for kinds not specified in staleSequences, we use the latest sequence number
+	// this models how controllers can be up to date on some kinds but not others
+	for k, v := range s.KindSequences {
+		if _, exists := staleSequences[k]; !exists {
+			staleSequences[k] = v
+		}
+	}
+	filteredEvents := filterEventsAtSequence(s.stateEvents, staleSequences)
+	rollup := replayEventSequenceToState(filteredEvents)
+	return rollup.contents
+}
+
+func (s *StateSnapshot) FixAt(ks KindSequences) StateSnapshot {
 	for k, v := range s.KindSequences {
 		if _, exists := ks[k]; !exists {
 			ks[k] = v
 		}
 	}
-	filteredEvents := filterEventsAtSequence(s.stateEvents, ks)
-	causalState := replayCausalEventSequenceToState(filteredEvents)
-	// ss := replayEventsAtSequence(s.stateEvents, ks)
-	return causalState.contents
-}
-
-func (s *StateSnapshot) FixAt(ks KindSequences) StateSnapshot {
-	fixedView := s.ObserveAt(ks)
-	ss := newStateSnapshot(fixedView, ks, s.stateEvents)
+	filtered := filterEventsAtSequence(s.stateEvents, ks)
+	// using causal cause 'FixAt' is usually used when parsing traces.
+	// TODO refactor to better encapusalte the causal OOO / regular replay logic
+	fixedView := replayCausalEventSequenceToState(filtered)
+	ss := newStateSnapshot(fixedView.contents, ks, s.stateEvents)
 	return ss
 }
 
@@ -253,7 +261,7 @@ func (k *KindKnowledge) Summarize() {
 	// }
 }
 
-func (k *KindKnowledge) AddEvent(e event.Event, eff effect, rv ResourceVersion) StateEvent {
+func (k *KindKnowledge) AddEvent(e event.Event, eff Effect, rv ResourceVersion) StateEvent {
 	// Increment sequence
 	k.CurrentSequence++
 
@@ -391,7 +399,7 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 	return nil
 }
 
-func Rollup(events []StateEvent) *StateSnapshot {
+func CausalRollup(events []StateEvent) *StateSnapshot {
 	for _, e := range events {
 		if e.Event == nil {
 			panic("event.Event is nil, causal rollup wont work")
@@ -401,28 +409,18 @@ func Rollup(events []StateEvent) *StateSnapshot {
 	return replayCausalEventSequenceToState(sequencedEvents)
 }
 
-func filterEventsAtSequence(events []StateEvent, sequencesByKind KindSequences) []StateEvent {
+func filterEventsAtSequence(events []StateEvent, sequencesForEachKind KindSequences) []StateEvent {
 	eventsByKind := lo.GroupBy(events, func(e StateEvent) string {
 		return e.Effect.Key.IdentityKey.Kind
 	})
 	for kind := range eventsByKind {
-		// sort by sequence. TODO verify if this is necessary
-		// sort.Slice(kindEvents, func(i, j int) bool {
-		// 	return kindEvents[i].Sequence < kindEvents[j].Sequence
-		// })
-
-		_, exists := sequencesByKind[kind]
+		_, exists := sequencesForEachKind[kind]
 		if !exists {
-			panic(fmt.Sprintf("no sequence found for kind: %s, %v", kind, sequencesByKind))
+			panic(fmt.Sprintf("no sequence found for kind: %s, %v", kind, sequencesForEachKind))
 		}
-		// filter out events that are beyond the target sequence
-		// kindEventsAtSequence := lo.Filter(kindEvents, func(e StateEvent, _ int) bool {
-		// 	return e.Sequence <= kindSeq
-		// })
-		// toReplay = append(toReplay, kindEventsAtSequence...)
 	}
 	toReplay := lo.Filter(events, func(e StateEvent, _ int) bool {
-		kindLimit := sequencesByKind[e.Effect.Key.IdentityKey.Kind]
+		kindLimit := sequencesForEachKind[e.Effect.Key.IdentityKey.Kind]
 		keep := e.Sequence <= kindLimit
 		if !keep {
 			logger.V(2).WithValues(
