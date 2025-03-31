@@ -305,7 +305,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				"Depth", currentState.depth,
 				"StateKey", currentState.Hash(),
 			).Info("arrived at converged state")
-			logger.V(2).Info("lineage", currentState.DetailedLineage())
+			logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
 			seenConvergedStates[stateKey] = currentState
 			if e.config.breakEarly {
 				queue = []StateNode{}
@@ -322,8 +322,17 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		if err != nil {
 			return nil, errors.Wrap(err, "getting possible views")
 		}
+
+		prioritizedViews := lo.Filter(possibleViews, func(s StateNode, _ int) bool {
+			return s.Contents.priority != Skip
+		})
+		logger.V(2).WithValues(
+			"PreFilteredCount", len(possibleViews),
+			"FilteredCount", len(prioritizedViews),
+		).Info("filtered possible views based on priority")
+
 		reconcilerID := pendingReconcile.ReconcilerID
-		for _, stateView := range possibleViews {
+		for _, stateView := range prioritizedViews {
 			if e.config.debug {
 				logger.WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderSensitiveHash(), "Request", pendingReconcile.Request).Info("BEFORE")
 				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
@@ -341,10 +350,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				continue
 
 			}
-			logger.V(1).WithValues(
-				"Depth", currentState.depth,
-				"NewPendingReconciles", newState.PendingReconciles,
-			).Info("reconcile step completed")
+			logger.V(1).WithValues("Depth", currentState.depth, "NewPendingReconciles", newState.PendingReconciles).Info("reconcile step completed")
 			if e.config.debug {
 				logger.WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
 				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
@@ -385,6 +391,9 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 	}
 
 	e.stats.Print()
+	if e.config.breakEarly {
+		fmt.Println("Stopped on first convergence (breakEarly=True)")
+	}
 	result.Summarize()
 	return result, nil
 }
@@ -555,7 +564,6 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// top level pendingReconcile this function was called with.
 	if reconcileResult.ctrlRes.Requeue {
 		logger.V(1).Info("requeueing original reconcile request", "ReconcileResult", reconcileResult.ctrlRes, "RequeueRequest", pr.Request)
-		// panic("?")
 		reconcilesToEnqueue = append(reconcilesToEnqueue, pr)
 	}
 	newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, reconcilesToEnqueue)
@@ -644,6 +652,12 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	if err != nil {
 		return nil, errors.Wrap(err, "getting possible views")
 	}
+
+	filtered := lo.Filter(possiblePastViews, func(staleState *StateSnapshot, _ int) bool {
+		// filter out states that are not in the staleness bounds
+		return staleState.priority != Skip
+	})
+	fmt.Println("# filtered views", len(filtered))
 
 	// When we generate possible stale views for a controller at a certain depth in the execution,
 	// we're modeling a controller restarting and reconnecting to a network-partitioned APIServer.
