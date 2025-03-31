@@ -662,3 +662,43 @@ func dumpQueue(queue []StateNode) []string {
 	})
 	return queueStr
 }
+
+func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput PendingReconcile, result *ReconcileResult) []PendingReconcile {
+	// by default, we want to remove the current reconcile from the pending reconciles list
+	// to represent that it has been processed
+	stillPending := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
+		return pending != reconcileInput
+	})
+
+	// after processing the reconcile, we need to determine which controllers
+	// were triggered by the changes in the state.
+	triggeredByChanges := e.getTriggeredReconcilers(result.Changes)
+
+	// for those that would have been triggered but have been configured as "stuck",
+	// filter them out of the triggered list if the changes are contained within the
+	// kinds their watch streams are "stuck" on.
+	if state.stuckReconcilerPositions != nil {
+		filtered := lo.Filter(triggeredByChanges, func(pending PendingReconcile, _ int) bool {
+			if stuckKinds, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]; stuck {
+				couldSeeChange := false
+				for changeKey := range result.Changes.ObjectVersions {
+					if _, inStuck := stuckKinds[changeKey.ResourceKey.Kind]; !inStuck {
+						couldSeeChange = true
+					}
+				}
+				return couldSeeChange
+			} else {
+				return true
+			}
+		})
+		triggeredByChanges = filtered
+	}
+
+	// if the controller returned a response with Requeue = true,
+	// we need to requeue the original request, no matter what.
+	if result.ctrlRes.Requeue {
+		triggeredByChanges = append(triggeredByChanges, reconcileInput)
+	}
+
+	return e.getNewPendingReconciles(stillPending, triggeredByChanges)
+}
