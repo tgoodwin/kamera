@@ -184,6 +184,13 @@ type ObservableState interface {
 	Objects() ObjectVersions
 }
 
+type NodeMode string
+
+const (
+	NodeModeNatural      NodeMode = "natural"
+	NodeModeHypothetical NodeMode = "hypothetical"
+)
+
 type StateNode struct {
 	ID       string
 	Contents StateSnapshot
@@ -196,6 +203,11 @@ type StateNode struct {
 
 	// ExecutionHistory tracks the sequence of reconciles that led to this state
 	ExecutionHistory ExecutionHistory
+
+	mode NodeMode // used to track if we are in a natural or hypothetical state
+
+	// used to track children of a divergence point of interest
+	divergenceKey StateHash
 
 	depth int
 
@@ -268,7 +280,10 @@ func (sn StateNode) Clone() StateNode {
 		action:            sn.action,
 		ExecutionHistory:  slices.Clone(sn.ExecutionHistory),
 		depth:             sn.depth,
-		DivergencePoint:   sn.DivergencePoint,
+		DivergencePoint:   sn.DivergencePoint, // TODO deprecate
+
+		mode:          sn.mode,
+		divergenceKey: sn.divergenceKey,
 
 		stuckReconcilerPositions: maps.Clone(sn.stuckReconcilerPositions),
 	}
@@ -300,21 +315,27 @@ func (sn StateNode) Serialize() string {
 	return sn.serialize(false)
 }
 
+// StateHash represents the contents of the state node and the pending reconciles, unaffected by the order of pending reconciles.
+type StateHash string
+
 // Hash returns a hash of the state node, unaffected by the order of pending reconciles.
-func (sn StateNode) Hash() string {
+func (sn StateNode) Hash() StateHash {
 	s := sn.Serialize()
-	return util.ShortenHash(s)
+	return StateHash(util.ShortenHash(s))
 }
 
+// OrderHash represents the contents of the state node and the order of pending reconciles.
+type OrderHash string
+
 // OrderSensitiveHash returns a hash of the state node and the order of pending reconciles.
-func (sn StateNode) OrderSensitiveHash() string {
+func (sn StateNode) OrderSensitiveHash() OrderHash {
 	s := sn.serialize(true)
-	return util.ShortenHash(s)
+	return OrderHash(util.ShortenHash(s))
 }
 
 func (sn StateNode) LineageHash() string {
 	if sn.parent == nil {
-		return sn.OrderSensitiveHash()
+		return string(sn.OrderSensitiveHash())
 	}
 	return fmt.Sprintf("%s->%s", sn.parent.LineageHash(), sn.OrderSensitiveHash())
 }
@@ -384,7 +405,7 @@ func expandStateByReconcileOrder(state StateNode) []StateNode {
 
 		cloned := state.Clone()
 		cloned.PendingReconciles = alternativeOrder
-		cloned.ID = cloned.OrderSensitiveHash() // Generate a new deterministic ID based on the new ordering
+		cloned.ID = string(cloned.OrderSensitiveHash()) // Generate a new deterministic ID based on the new ordering
 		result[i] = cloned
 	}
 

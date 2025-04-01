@@ -137,3 +137,27 @@ func PrettyPrintJSON(jsonStr string) (string, error) {
 	}
 	return prettyJSON.String(), nil
 }
+
+func MostCommonElementCount[T comparable](items []T) int {
+	if len(items) == 0 {
+		return 0
+	}
+
+	// Create a map to count occurrences
+	counts := make(map[T]int)
+
+	// Count occurrences of each element
+	for _, item := range items {
+		counts[item]++
+	}
+
+	// Find the maximum count
+	maxCount := 0
+	for _, count := range counts {
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+
+	return maxCount
+}

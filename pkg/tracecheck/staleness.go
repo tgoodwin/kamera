@@ -19,8 +19,6 @@ type StateSnapshot struct {
 
 	priority Priority
 
-	mode string // original or adjusted
-
 	// per-kind sequence info for computing relative states
 	// possibly stale with respect to the contents of stateEvents
 	// but represents the contents of ObjectVersions
@@ -195,7 +193,6 @@ func (s *StateSnapshot) Adjust(kind string, steps int64) (*StateSnapshot, error)
 
 	adjusted := replayEventsAtSequence(s.stateEvents, currSequences)
 	return &StateSnapshot{
-		mode:          "adjusted",
 		contents:      adjusted.contents,
 		KindSequences: currSequences,
 		stateEvents:   s.stateEvents,

@@ -45,3 +45,30 @@ func TestShortenHash(t *testing.T) {
 	assert.Equal(t, "pp1cx731", ShortenHash("1a2b3c4d5e6f7g8h9i0j"))
 	assert.Equal(t, "pp1cx731", ShortenHash("1a2b3c4d5e6f7g8h9i0j"))
 }
+func TestMostCommonElementCount(t *testing.T) {
+	// Test case 1: Empty slice
+	assert.Equal(t, 0, MostCommonElementCount([]int{}))
+
+	// Test case 2: Slice with one element
+	assert.Equal(t, 1, MostCommonElementCount([]int{42}))
+
+	// Test case 3: Slice with all unique elements
+	assert.Equal(t, 1, MostCommonElementCount([]int{1, 2, 3, 4, 5}))
+
+	// Test case 4: Slice with multiple occurrences of the most common element
+	assert.Equal(t, 3, MostCommonElementCount([]int{1, 2, 2, 3, 2, 4, 5}))
+
+	// Test case 5: Slice with multiple elements having the same maximum count
+	assert.Equal(t, 2, MostCommonElementCount([]int{1, 1, 2, 2, 3, 4}))
+
+	// Test case 6: Slice with strings
+	assert.Equal(t, 2, MostCommonElementCount([]string{"apple", "banana", "apple", "cherry"}))
+
+	// Test case 7: Slice with custom comparable type
+	type customType struct {
+		ID int
+	}
+	assert.Equal(t, 2, MostCommonElementCount([]customType{
+		{ID: 1}, {ID: 2}, {ID: 1}, {ID: 3},
+	}))
+}

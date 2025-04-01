@@ -213,8 +213,8 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	doneChan := make(chan struct{}, 1)
 	errChan := make(chan error, 1)
 
-	seenConvergedStates := make(map[string]StateNode)
-	executionPathsToState := make(map[string][]ExecutionHistory)
+	seenConvergedStates := make(map[StateHash]StateNode)
+	executionPathsToState := make(map[StateHash][]ExecutionHistory)
 
 	e.stats = NewExploreStats()
 	e.stats.Start()
@@ -320,16 +320,18 @@ func (e *Explorer) explore(
 	// executionPathsToState is a map of stateKey -> ExecutionHistory
 	// because we want to track which states we've visited but
 	// also want to track all the ways a given state can be reached
-	executionPathsToState := make(map[string][]ExecutionHistory)
+	executionPathsToState := make(map[StateHash][]ExecutionHistory)
 
 	// we dont skip over seen states because we want to track all the ways a state can be reached
 	// but we do track the states we've seen
-	seenStates := make(map[string]bool)
+	seenStates := make(map[OrderHash]bool)
 
 	seenStatesPendingOrderSensitive := make(map[string]bool)
 
 	// we do track the seen converged states so we can attribute multiple execution paths to them
-	seenConvergedStates := make(map[string]StateNode)
+	seenConvergedStates := make(map[StateHash]StateNode)
+
+	convergencesByDivergenceKey := make(map[StateHash][]StateHash)
 
 	// var currentState StateNode
 	var currentState StateNode
@@ -391,11 +393,28 @@ func (e *Explorer) explore(
 			).Info("arrived at converged state")
 			logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
 			seenConvergedStates[stateKey] = currentState
-			convergedStatesCh <- currentState
-			if e.config.breakEarly {
-				queue = []StateNode{}
+
+			// track how many times we've arrived at this state from some common ancestor
+			if currentState.divergenceKey != "" {
+				if _, seen := convergencesByDivergenceKey[currentState.divergenceKey]; !seen {
+					convergencesByDivergenceKey[currentState.divergenceKey] = make([]StateHash, 0)
+				}
+				convergencesByDivergenceKey[currentState.divergenceKey] = append(convergencesByDivergenceKey[currentState.divergenceKey], stateKey)
 			}
+
+			convergedStatesCh <- currentState
 			continue
+		}
+
+		// Subtree Circuit-Breaker
+		moveOnThreshold := 20
+		if currentState.divergenceKey != "" {
+			convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
+			repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
+			if repeatedCount > moveOnThreshold {
+				logger.Info("skipping state with too many convergences", "StateKey", stateKey, "ConvergencesUnderKey", len(convergencesUnderKey))
+				continue
+			}
 		}
 
 		// process the first one
@@ -654,18 +673,24 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
 
-	sn := StateNode{
+	child := StateNode{
 		Contents:          newStateSnapshot(prevState, newSequences, newStateEvents),
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,
 
+		// inherit the mode from the parent
+		mode: state.mode,
+
+		// inherit divergence point from the parent
+		divergenceKey: state.divergenceKey,
+
 		stuckReconcilerPositions: maps.Clone(state.stuckReconcilerPositions),
 
 		ExecutionHistory: append(currHistory, reconcileResult),
 	}
-	sn.ID = sn.Hash()
-	return sn, nil
+	child.ID = string(child.Hash())
+	return child, nil
 }
 
 // TODO figure out if we need to append to the front if using DFS
@@ -743,6 +768,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	e.stats.RestartsPerReconciler[reconcilerID]++
 	logger.V(1).Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(possiblePastViews))
 
+	divergenceHash := currState.Hash()
 	asStateNodes := lo.Map(possiblePastViews, func(staleState *StateSnapshot, _ int) StateNode {
 		var stuckPositions map[string]KindSequences
 		if currState.stuckReconcilerPositions == nil {
@@ -770,9 +796,13 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 			action:            currState.action,
 			ExecutionHistory:  slices.Clone(currState.ExecutionHistory),
 
+			// identify the produced node as a "hypothetical" state
+			mode:          NodeModeHypothetical,
+			divergenceKey: divergenceHash,
+
 			stuckReconcilerPositions: stuckPositions,
 		}
-		sn.ID = sn.Hash()
+		sn.ID = string(sn.Hash())
 
 		if logger.V(2).Enabled() {
 			logger.WithValues("StateKey", sn.ID, "OrderKey").V(2).Info("produced stale view")
@@ -786,7 +816,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 
 func dumpQueue(queue []StateNode) []string {
 	queueStr := lo.Map(queue, func(sn StateNode, _ int) string {
-		return sn.OrderSensitiveHash()
+		return string(sn.OrderSensitiveHash())
 	})
 	return queueStr
 }
