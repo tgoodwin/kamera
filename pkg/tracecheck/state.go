@@ -90,6 +90,17 @@ type ReconcileResult struct {
 
 type ExecutionHistory []*ReconcileResult
 
+func (eh ExecutionHistory) UniqueKey() string {
+	// first filter out no-ops
+	filterNoOps := lo.Filter(eh, func(r *ReconcileResult, _ int) bool {
+		return len(r.Changes.ObjectVersions) > 0
+	})
+	strComponents := lo.Map(filterNoOps, func(r *ReconcileResult, _ int) string {
+		return fmt.Sprintf("%s@%d", r.ControllerID, len(r.Changes.Effects))
+	})
+	return strings.Join(strComponents, ",")
+}
+
 func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 	for _, r := range eh {
 		_, err := fmt.Fprintf(file, "\t%s:%s (%s) - #changes=%d\n", r.ControllerID, util.Shorter(r.FrameID), r.FrameType, len(r.Changes.ObjectVersions))
@@ -139,31 +150,17 @@ func DebugPaths(paths []ExecutionHistory) {
 }
 
 func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
-	pathsWithoutNoOps := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
-		return path.FilterNoOps()
+	unique := lo.UniqBy(paths, func(path ExecutionHistory) string {
+		return path.UniqueKey()
 	})
-	// filter out empty paths
-	pathsWithoutNoOps = lo.Filter(pathsWithoutNoOps, func(path ExecutionHistory, _ int) bool {
-		return len(path) > 0
-	})
-	pathsByKey := make(map[string][]ExecutionHistory)
-	for _, path := range pathsWithoutNoOps {
-		pathKey := strings.Join(lo.Map(path, func(r *ReconcileResult, _ int) string {
-			return fmt.Sprintf("%s@%d", r.ControllerID, len(r.Changes.Effects))
-		}), ",")
-		if _, exists := pathsByKey[pathKey]; !exists {
-			pathsByKey[pathKey] = []ExecutionHistory{}
-		}
-		pathsByKey[pathKey] = append(pathsByKey[pathKey], path)
+	for _, path := range unique {
+		key := path.UniqueKey()
+		fmt.Println("Unique Key: ", key)
 	}
-	for key, paths := range pathsByKey {
-		fmt.Println("Key:", key, "#paths:", len(paths))
-	}
-	return nil
+	return unique
 }
 
 func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
-	// DebugPaths(paths)
 	getUniquePaths(paths)
 	pathsWithoutNoOps := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
 		return path.FilterNoOps()
