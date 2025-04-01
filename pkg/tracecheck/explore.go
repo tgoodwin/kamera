@@ -82,6 +82,8 @@ type Explorer struct {
 
 	effectContextManager EffectContextManager
 
+	priorityHandler PriorityHandler // prioritize possible views to explore
+
 	config *ExploreConfig
 
 	stats *ExploreStats
@@ -733,11 +735,8 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return nil, errors.Wrap(err, "getting possible views")
 	}
 
-	filtered := lo.Filter(possiblePastViews, func(staleState *StateSnapshot, _ int) bool {
-		// filter out states that are not in the staleness bounds
-		return staleState.priority != Skip
-	})
-	fmt.Println("# filtered views", len(filtered))
+	possiblePastViews = e.priorityHandler.ApplyPriorities(possiblePastViews)
+	possiblePastViews = e.priorityHandler.PrioritizeViews(possiblePastViews)
 
 	// When we generate possible stale views for a controller at a certain depth in the execution,
 	// we're modeling a controller restarting and reconnecting to a network-partitioned APIServer.

@@ -14,14 +14,6 @@ import (
 
 type KindSequences map[string]int64
 
-type Priority int
-
-const (
-	Default Priority = 0
-	Skip    Priority = -1
-	High    Priority = 100
-)
-
 type StateSnapshot struct {
 	contents ObjectVersions
 
@@ -506,11 +498,6 @@ func getAllPossibleViews(baseState *StateSnapshot, relevantKinds []string, kindB
 	allPossibleKindSequences := getAllCombos(filtered)
 	var staleViews []*StateSnapshot
 	for _, possibleCombo := range allPossibleKindSequences {
-		// there may be duplicates in the generated kind sequences
-		if maps.Equal(possibleCombo, baseState.KindSequences) {
-			continue
-		}
-
 		staleSequences := make(KindSequences)
 		maps.Copy(staleSequences, baseState.KindSequences)
 		// State for kinds outside of relevantKinds is included at the latest sequence.
@@ -523,19 +510,12 @@ func getAllPossibleViews(baseState *StateSnapshot, relevantKinds []string, kindB
 		// to reflect the new view among all possible stale views.
 		// the stale view must be "observed" via the Observe() method
 		out := newStateSnapshot(baseState.contents, staleSequences, baseState.stateEvents)
-		out.priority = Skip
-		for _, v := range out.Observable() {
-			if util.ShortenHash(v.Value) == "2hquvmr5" {
-				out.priority = High
-			}
-		}
 		staleViews = append(staleViews, &out)
 		logger.V(2).WithValues(
 			"lookbackLimits", kindBounds,
 			"staleSequences", staleSequences,
 		).Info("adding stale view")
 	}
-
 	return staleViews
 }
 

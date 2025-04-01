@@ -28,6 +28,8 @@ type ExplorerBuilder struct {
 	snapStore        *snapshot.Store
 	reconcilerToKind map[string]string
 
+	perturbationManager *PerturbationManager
+
 	config *ExploreConfig
 
 	// for replay mode
@@ -69,6 +71,11 @@ func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) 
 	for _, id := range reconcilerIDs {
 		b.resourceDeps[kind].Add(id)
 	}
+	return b
+}
+
+func (b *ExplorerBuilder) WithPerturbationManager(pm *PerturbationManager) *ExplorerBuilder {
+	b.perturbationManager = pm
 	return b
 }
 
@@ -325,6 +332,10 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		}
 	}
 
+	if b.perturbationManager == nil {
+		b.perturbationManager = NewPerturbationManager(b.snapStore)
+	}
+
 	// Create trigger manager
 	triggerManager := NewTriggerManager(
 		b.resourceDeps,
@@ -340,6 +351,8 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		knowledgeManager:     knowledgeManager,
 		config:               b.config,
 		effectContextManager: mgr,
+
+		priorityHandler: b.perturbationManager,
 	}
 
 	return explorer, nil
