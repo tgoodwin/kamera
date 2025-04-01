@@ -138,8 +138,33 @@ func DebugPaths(paths []ExecutionHistory) {
 	}
 }
 
+func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
+	pathsWithoutNoOps := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
+		return path.FilterNoOps()
+	})
+	// filter out empty paths
+	pathsWithoutNoOps = lo.Filter(pathsWithoutNoOps, func(path ExecutionHistory, _ int) bool {
+		return len(path) > 0
+	})
+	pathsByKey := make(map[string][]ExecutionHistory)
+	for _, path := range pathsWithoutNoOps {
+		pathKey := strings.Join(lo.Map(path, func(r *ReconcileResult, _ int) string {
+			return fmt.Sprintf("%s@%d", r.ControllerID, len(r.Changes.Effects))
+		}), ",")
+		if _, exists := pathsByKey[pathKey]; !exists {
+			pathsByKey[pathKey] = []ExecutionHistory{}
+		}
+		pathsByKey[pathKey] = append(pathsByKey[pathKey], path)
+	}
+	for key, paths := range pathsByKey {
+		fmt.Println("Key:", key, "#paths:", len(paths))
+	}
+	return nil
+}
+
 func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 	// DebugPaths(paths)
+	getUniquePaths(paths)
 	pathsWithoutNoOps := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
 		return path.FilterNoOps()
 	})

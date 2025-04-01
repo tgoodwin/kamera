@@ -8,9 +8,10 @@ type Result struct {
 
 func (r *Result) Summarize() {
 
-	for _, c := range r.ConvergedStates {
+	for i, c := range r.ConvergedStates {
 		hash := c.State.Hash()
 		numPaths := len(c.Paths)
-		fmt.Printf("Converged state hash: %s, Number of paths to state: %d\n", hash, numPaths)
+		uniquePaths := GetUniquePaths(c.Paths)
+		fmt.Printf("Converged state %d - hash: %s, total paths: %d, unique paths: %d\n", i, hash, numPaths, len(uniquePaths))
 	}
 }

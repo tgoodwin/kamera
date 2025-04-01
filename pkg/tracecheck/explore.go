@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"os"
+	"os/signal"
 	"slices"
 	"strings"
+	"syscall"
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
@@ -200,14 +203,97 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	e.config.mode = DepthFirst
 
-	res, err := e.explore(ctx, initialState)
-	if err != nil {
-		panic(err)
+	exploreCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	convergedStateChan := make(chan StateNode, 100)
+	executionHistoryChan := make(chan StateNode, 100)
+	doneChan := make(chan struct{}, 1)
+	errChan := make(chan error, 1)
+
+	seenConvergedStates := make(map[string]StateNode)
+	executionPathsToState := make(map[string][]ExecutionHistory)
+
+	e.stats = NewExploreStats()
+	e.stats.Start()
+
+	go func() {
+		defer close(convergedStateChan)
+		defer close(executionHistoryChan)
+		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, doneChan)
+		if err != nil {
+			errChan <- err
+		}
+	}()
+
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+
+	summarize := func(res *Result) {
+		fmt.Println("### Summary ###")
+		e.stats.Print()
+		res.Summarize()
 	}
-	return res
+
+	processingComplete := false
+	for !processingComplete {
+		select {
+		case convergedState, ok := <-convergedStateChan:
+			if !ok {
+				continue // channel closed
+			}
+			stateKey := convergedState.Hash()
+			if _, seen := seenConvergedStates[stateKey]; !seen {
+				seenConvergedStates[stateKey] = convergedState
+			}
+		case state, ok := <-executionHistoryChan:
+			if !ok {
+				continue // channel closed
+			}
+			stateKey := state.Hash()
+			if _, seen := executionPathsToState[stateKey]; !seen {
+				executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
+			}
+			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], state.ExecutionHistory)
+
+		// explore finished entirely
+		case _, ok := <-doneChan:
+			if !ok {
+				continue
+			}
+			processingComplete = true
+
+		case <-sigs:
+			logger.Info("received signal, stopping exploration")
+			processingComplete = true
+			cancel()
+		}
+	}
+
+	// if we broke out early, collect partial results, summarize them, and return
+	result := &Result{ConvergedStates: make([]ConvergedState, 0)}
+	for i, stateKey := range lo.Keys(seenConvergedStates) {
+		state := seenConvergedStates[stateKey]
+		paths := executionPathsToState[stateKey]
+		state.DivergencePoint = initialState.DivergencePoint
+		convergedState := ConvergedState{
+			ID:    fmt.Sprintf("state-%d", i),
+			State: state,
+			Paths: paths,
+		}
+		result.ConvergedStates = append(result.ConvergedStates, convergedState)
+	}
+	summarize(result)
+	return result
 }
 
-func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result, error) {
+func (e *Explorer) explore(
+	ctx context.Context,
+	initialState StateNode,
+	convergedStatesCh chan<- StateNode,
+	executionPathsCh chan<- StateNode,
+	doneCh chan<- struct{},
+) error {
 	if e.config.MaxDepth == 0 {
 		e.config.MaxDepth = DefaultMaxDepth
 	}
@@ -224,9 +310,6 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 	result := &Result{
 		ConvergedStates: make([]ConvergedState, 0),
 	}
-
-	e.stats = NewExploreStats()
-	e.stats.Start()
 
 	seenDepths := make(map[int]bool)
 
@@ -273,7 +356,6 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 				})
 				logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
 				for _, candidate := range expandedStates {
-					// orderHash := candidate.OrderSensitiveHash()
 					lineageHash := candidate.LineageHash()
 					if _, seenOrder := seenStatesPendingOrderSensitive[lineageHash]; !seenOrder {
 						if lineageHash != lineageKey {
@@ -294,11 +376,11 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		e.stats.TotalNodeVisits++
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
-			executionPathsToState[stateKey] = []ExecutionHistory{currentState.ExecutionHistory}
+			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
 			e.stats.UniqueNodeVisits++
-		} else {
-			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 		}
+		executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
+		executionPathsCh <- currentState
 
 		if len(currentState.PendingReconciles) == 0 {
 			logger.WithValues(
@@ -307,6 +389,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 			).Info("arrived at converged state")
 			logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
 			seenConvergedStates[stateKey] = currentState
+			convergedStatesCh <- currentState
 			if e.config.breakEarly {
 				queue = []StateNode{}
 			}
@@ -320,7 +403,7 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		// from the current state.
 		possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID, currentState.depth)
 		if err != nil {
-			return nil, errors.Wrap(err, "getting possible views")
+			return errors.Wrap(err, "getting possible views")
 		}
 
 		prioritizedViews := lo.Filter(possibleViews, func(s StateNode, _ int) bool {
@@ -330,9 +413,10 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 			"PreFilteredCount", len(possibleViews),
 			"FilteredCount", len(prioritizedViews),
 		).Info("filtered possible views based on priority")
+		possibleViews = prioritizedViews
 
 		reconcilerID := pendingReconcile.ReconcilerID
-		for _, stateView := range prioritizedViews {
+		for _, stateView := range possibleViews {
 			if e.config.debug {
 				logger.WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderSensitiveHash(), "Request", pendingReconcile.Request).Info("BEFORE")
 				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
@@ -390,12 +474,8 @@ func (e *Explorer) explore(ctx context.Context, initialState StateNode) (*Result
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
 	}
 
-	e.stats.Print()
-	if e.config.breakEarly {
-		fmt.Println("Stopped on first convergence (breakEarly=True)")
-	}
-	result.Summarize()
-	return result, nil
+	doneCh <- struct{}{}
+	return nil
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
@@ -403,9 +483,9 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	stepLog := log.FromContext(ctx)
 
 	// // remove the current controller from the pending reconciles list
-	newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
-		return pending != pr
-	})
+	// newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
+	// 	return pending != pr
+	// })
 
 	// defensive validation
 	if len(state.Contents.KindSequences) == 0 {
@@ -538,36 +618,36 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// get the controllers that depend on the objects that were changed and add them
 	// to the pending reconciles list. n.b. this can include the controller that just executed.
-	reconcilesToEnqueue := e.getTriggeredReconcilers(reconcileResult.Changes)
+	// reconcilesToEnqueue := e.getTriggeredReconcilers(reconcileResult.Changes)
 	// if requeue is true, we also need to append the same pendingReconcile back to the list
 	// requeue := reconcileResult.ctrlRes.Requeue
 
 	// For controllers whose watch streams are connected to a network-partitioned APIServer shard,
 	// they cannot get triggered by the changes in the state as their watch streams are "stuck".
 	// Even if they performed the reconcile, they would not be able to see the changes.
-	if len(reconcilesToEnqueue) > 0 {
-		filtered := lo.Filter(reconcilesToEnqueue, func(pending PendingReconcile, _ int) bool {
-			if state.stuckReconcilerPositions == nil {
-				return true
-			}
-			// if the reconciler is in the staleness map, it is stuck
-			_, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]
-			return !stuck
-		})
+	// if len(reconcilesToEnqueue) > 0 {
+	// 	filtered := lo.Filter(reconcilesToEnqueue, func(pending PendingReconcile, _ int) bool {
+	// 		if state.stuckReconcilerPositions == nil {
+	// 			return true
+	// 		}
+	// 		// if the reconciler is in the staleness map, it is stuck
+	// 		_, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]
+	// 		return !stuck
+	// 	})
 
-		logger.V(2).Info("filtered triggered reconciles based on who's stuck",
-			"triggeredReconcilers", reconcilesToEnqueue, "filtered", filtered, "stuckPositions", state.stuckReconcilerPositions)
-		reconcilesToEnqueue = filtered
-	}
-	// if the controller returned a response with Requeue = true,
-	// we need to requeue the original request, which is contained in the
-	// top level pendingReconcile this function was called with.
-	if reconcileResult.ctrlRes.Requeue {
-		logger.V(1).Info("requeueing original reconcile request", "ReconcileResult", reconcileResult.ctrlRes, "RequeueRequest", pr.Request)
-		reconcilesToEnqueue = append(reconcilesToEnqueue, pr)
-	}
-	newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, reconcilesToEnqueue)
-	// newPendingReconciles := e.determineNewPendingReconciles(state, pr, reconcileResult)
+	// 	logger.V(2).Info("filtered triggered reconciles based on who's stuck",
+	// 		"triggeredReconcilers", reconcilesToEnqueue, "filtered", filtered, "stuckPositions", state.stuckReconcilerPositions)
+	// 	reconcilesToEnqueue = filtered
+	// }
+	// // if the controller returned a response with Requeue = true,
+	// // we need to requeue the original request, which is contained in the
+	// // top level pendingReconcile this function was called with.
+	// if reconcileResult.ctrlRes.Requeue {
+	// 	logger.V(1).Info("requeueing original reconcile request", "ReconcileResult", reconcileResult.ctrlRes, "RequeueRequest", pr.Request)
+	// 	reconcilesToEnqueue = append(reconcilesToEnqueue, pr)
+	// }
+	// newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, reconcilesToEnqueue)
+	newPendingReconciles := e.determineNewPendingReconciles(state, pr, reconcileResult)
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
@@ -713,8 +793,7 @@ func dumpQueue(queue []StateNode) []string {
 }
 
 func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput PendingReconcile, result *ReconcileResult) []PendingReconcile {
-	// by default, we want to remove the current reconcile from the pending reconciles list
-	// to represent that it has been processed
+	//  remove the current reconcile from the pending reconciles list because it has just been processed
 	stillPending := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
 		return pending != reconcileInput
 	})
