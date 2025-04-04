@@ -15,7 +15,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var log = logf.Log.WithName(tag.LoggerName)
+var log = logf.Log.WithName("tracegen")
 
 type Client struct {
 	// this syntax is "embedding" the client.Client interface in the Client struct
@@ -96,7 +96,7 @@ func (c *Client) WithEnvConfig() *Client {
 	return c
 }
 
-func (c *Client) logOperation(ctx context.Context, obj client.Object, op event.OperationType) {
+func (c *Client) LogOperation(ctx context.Context, obj client.Object, op event.OperationType) {
 	if c.config.disableLogging {
 		return
 	}
@@ -128,6 +128,7 @@ func (c *Client) logOperation(ctx context.Context, obj client.Object, op event.O
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	currLabels := obj.GetLabels()
 	tag.AddSleeveObjectID(obj)
+	// tag.EnsureSleeveFinalizer(obj)
 	tag.LabelChange(obj)
 	c.tracker.propagateLabels(obj)
 
@@ -139,7 +140,7 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 
 	// this is the *first* time the object is being updated (definition of create)
 	// so we don't need to worry about logging before propagating labels here
-	c.logOperation(ctx, obj, event.CREATE)
+	c.LogOperation(ctx, obj, event.CREATE)
 	return nil
 }
 
@@ -152,7 +153,7 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 		obj.SetLabels(origLabels)
 		return err
 	}
-	c.logOperation(ctx, obj, event.DELETE)
+	c.LogOperation(ctx, obj, event.MARK_FOR_DELETION)
 	return nil
 }
 
@@ -165,7 +166,7 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 		obj.SetLabels(origLabels)
 		return err
 	}
-	c.logOperation(ctx, obj, event.DELETE)
+	c.LogOperation(ctx, obj, event.MARK_FOR_DELETION)
 	return nil
 }
 
@@ -174,7 +175,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return err
 	}
 	c.tracker.TrackOperation(ctx, obj, event.GET)
-	c.logOperation(ctx, obj, event.GET)
+	c.LogOperation(ctx, obj, event.GET)
 	return nil
 }
 
@@ -198,7 +199,7 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		// instead of treating the LIST operation as a singular observation event,
 		// we treat each item in the list as a separate event
 		c.tracker.TrackOperation(ctx, item, event.LIST)
-		c.logOperation(ctx, item, event.LIST)
+		c.LogOperation(ctx, item, event.LIST)
 		out = reflect.Append(out, itemsValue.Index(i))
 	}
 
@@ -214,7 +215,6 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	currLabels := obj.GetLabels()
-
 	// generate a label to the object to associate it with the change event
 	tag.LabelChange(obj)
 	// make a copy of the object before we propagate labels
@@ -229,7 +229,7 @@ func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.U
 	}
 
 	// happy path! the update went through successfully - let's record that!
-	c.logOperation(ctx, objPrePropagation, event.UPDATE)
+	c.LogOperation(ctx, objPrePropagation, event.UPDATE)
 	return nil
 }
 
@@ -249,6 +249,6 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 		return err
 	}
 
-	c.logOperation(ctx, objPrePropagation, event.PATCH)
+	c.LogOperation(ctx, objPrePropagation, event.PATCH)
 	return nil
 }

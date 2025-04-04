@@ -2,11 +2,13 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"sort"
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -26,6 +28,18 @@ func main() {
 		return traces[i].Timestamp < traces[j].Timestamp
 	})
 
+	fmt.Println("===before rollup===")
+	for _, e := range traces {
+		sleeveObjectID := e.Effect.Key.IdentityKey.ObjectID
+		fmt.Printf("ts:%s (%d) frameID:%s controller=%s op=%s item=%s:%s %s\n", e.Timestamp, e.Sequence, util.Shorter(e.ReconcileID), e.ControllerID, e.OpType, e.Kind, util.Shorter(sleeveObjectID), util.ShortenHash(e.Effect.Version.Value))
+	}
+	fmt.Println("===before rollup===")
+	// for _, t := range traces {
+	// 	if strings.HasPrefix(t.Event.ID, "09f8") {
+	// 		panic("found it outside")
+	// 	}
+	// }
+
 	byKind := lo.GroupBy(traces, func(t tracecheck.StateEvent) string {
 		return t.Kind
 	})
@@ -39,24 +53,17 @@ func main() {
 		}
 	}
 
-	for _, trace := range traces {
-		log.Printf("RootEventID: %s, Kind: %s, ObjectID: %s, OpType: %s", trace.RootEventID, trace.Kind, trace.ObjectID, trace.OpType)
+	preroll := tracecheck.AssignResourceVersions(traces)
+	for _, e := range preroll {
+		sleeveObjectID := e.Effect.Key.IdentityKey.ObjectID
+		fmt.Printf("ts:%s (%d) frameID:%s controller=%s op=%s item=%s:%s %s\n", e.Timestamp, e.Sequence, util.Shorter(e.ReconcileID), e.ControllerID, e.OpType, e.Kind, util.Shorter(sleeveObjectID), util.ShortenHash(e.Effect.Version.Value))
 	}
-
-	topState := tracecheck.Rollup(traces)
-	log.Print("state keys in rollup:")
-	allKeys := lo.Keys(topState.All())
-	sort.Slice(allKeys, func(i, j int) bool {
-		return allKeys[i].IdentityKey.Kind < allKeys[j].IdentityKey.Kind
+	topState := tracecheck.CausalRollup(traces)
+	topState.Debug()
+	fixed := topState.FixAt(tracecheck.KindSequences{
+		"CassandraDatacenter": 40,
 	})
-	for _, key := range allKeys {
-		log.Printf("  %s", key)
-	}
-
-	log.Printf("kind sequences")
-	for kind, seq := range topState.KindSequences {
-		log.Printf("  %s: %d", kind, seq)
-	}
+	fixed.Debug()
 
 	log.Println("Traces sorted by timestamp")
 }

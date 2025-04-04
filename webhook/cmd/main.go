@@ -11,19 +11,26 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/samber/lo"
 	"github.com/sirupsen/logrus"
 
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	admissionv1 "k8s.io/api/admission/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 var KUBECTL_USERNAME = "kubernetes-admin"
+
+var UsernameSubstringValidationWhitelist = []string{
+	"system:node",               // kubelet
+	"garbage-collector",         // default garbage collector
+	"pvc-protection-controller", // removes finalizers from PVCs
+}
 
 func main() {
 	setLogger()
@@ -211,11 +218,7 @@ func (s *Handler) ServeTagResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func canByPassvalidation(userInfo authenticationv1.UserInfo) bool {
-	validSubstrings := []string{
-		"system:node",       // kubelet
-		"garbage-collector", // default garbage collector
-	}
-	for _, s := range validSubstrings {
+	for _, s := range UsernameSubstringValidationWhitelist {
 		if strings.Contains(userInfo.Username, s) {
 			return true
 		}
@@ -233,13 +236,15 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	logger.WithFields(logrus.Fields{
+	logger = logger.WithFields(logrus.Fields{
+		"requestID":       in.Request.UID,
 		"kind":            in.Request.Kind,
 		"subResource":     in.Request.SubResource,
 		"requestKind":     in.Request.RequestKind,
 		"requestResource": in.Request.RequestResource,
 		"user":            in.Request.UserInfo.Username,
-	}).Debug("received validate resource request")
+	})
+	logger.Debug("received validate resource request")
 
 	// let kubelet operations through
 	cameFromOutside := cameFromTheOutside(in)
@@ -251,9 +256,18 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 	canBypass := canByPassvalidation(in.Request.UserInfo)
 
 	// Ensure we capture delete events in the traces
+	// the Username is 'system:serviceaccount:kube-system:generic-garbage-collector'
 	isGarbageCollector := strings.Contains(in.Request.UserInfo.Username, "garbage-collector")
 	if isGarbageCollector {
-		h.emitGarbageCollectionEvent(in.Request)
+		// this is not complete - garbage collector only handles objects that are being cleaned
+		// up through owner references.
+		if err := h.emitGarbageCollectionEvent(in.Request); err != nil {
+			logger.Error(err, "emitting garbage collection event")
+		}
+	}
+
+	if err := h.captureObjectRemovalEvent(in.Request); err != nil {
+		logger.Error(err, "capturing object removal event")
 	}
 
 	// this requires explicitly impersonating the sleeve controller user
@@ -264,10 +278,8 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 	// 	Groups:   []string{"system:masters"},
 	// }
 	// mgr, err := ctrl.NewManager(cfg, options)
-	// if err != nil {
-	// 	setupLog.Error(err, "unable to start manager")
 
-	isSleeve := in.Request.UserInfo.Username == "sleeve:controller-user"
+	isSleeve := in.Request.UserInfo.Username == util.SleeveControllerUsername
 
 	if cameFromOutside {
 		logger.WithField("userinfo", in.Request.UserInfo).Debug("logging external declaration event")
@@ -308,6 +320,7 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 	}
 
 	logger.WithFields(logrus.Fields{
+		"requestID":       in.Request.UID,
 		"user":            in.Request.UserInfo.Username,
 		"allowed":         allowed,
 		"message":         message,
@@ -412,7 +425,6 @@ func parseObject(req *admissionv1.AdmissionRequest) (*unstructured.Unstructured,
 
 func (h *Handler) emitGarbageCollectionEvent(req *admissionv1.AdmissionRequest) error {
 	op := req.Operation
-	kind := req.Kind.Kind
 	if op != admissionv1.Delete {
 		return nil
 	}
@@ -420,100 +432,128 @@ func (h *Handler) emitGarbageCollectionEvent(req *admissionv1.AdmissionRequest) 
 	if err != nil {
 		return fmt.Errorf("could not parse object: %v", err)
 	}
-	rootEventID, err := tag.GetRootID(obj)
-	if err != nil {
-		return fmt.Errorf("could not get root ID: %v", err)
-	}
-	recordJSON, err := json.Marshal(obj.Object)
-	if err != nil {
-		return fmt.Errorf("could not marshal object: %v", err)
-	}
-	baseEvent := event.Event{
-		ID:           uuid.New().String(),
-		Timestamp:    event.FormatTimeStr(time.Now()),
-		OpType:       string(op),
-		Kind:         kind,
-		ObjectID:     string(obj.GetUID()),
-		ReconcileID:  "EXTERNAL",
-		ControllerID: "GarbageCollector",
-		RootEventID:  rootEventID,
-		Version:      obj.GetResourceVersion(),
-		Labels:       tag.GetSleeveLabels(obj),
-	}
 
-	record := snapshot.Record{
-		ObjectID:      string(obj.GetUID()),
-		ReconcileID:   "EXTERNAL",
-		OperationID:   baseEvent.ID,
-		OperationType: string(op),
-		Kind:          kind,
-		Version:       obj.GetResourceVersion(),
-		Value:         string(recordJSON),
+	logrus.WithFields(logrus.Fields{
+		"requestID": req.UID,
+		"user":      req.UserInfo.Username,
+		"opType":    req.Operation,
+		"kind":      req.Kind.Kind,
+		"ObjectID":  obj.GetUID(),
+	}).Debug("emitting garbage collection event")
+
+	// garbage collector does not actually purge data,
+	// it uses the DELETE API like everything else.
+	// However, its DELETE operation does not return here to this webhook endpoint,
+	// so lets just emit a REMOVE event here.
+	opType := event.REMOVE
+
+	return h.emitEvent(req.UID, obj, util.GarbageCollectorName, opType)
+}
+
+func (h *Handler) captureObjectRemovalEvent(req *admissionv1.AdmissionRequest) error {
+	// case 1: the operation is an UPDATE, and the update is removing the last finalizer
+	// case 2: the operation is a DELETE and there are no finalizers
+	logger := logrus.WithFields(
+		logrus.Fields{
+			"user":    req.UserInfo.Username,
+			"req.UID": req.UID,
+		})
+	switch req.Operation {
+	case admissionv1.Update:
+		// case 1: UPDATE operation removing the last finalizer from an object with deletion timestamp
+		var oldObj, newObj unstructured.Unstructured
+		if err := json.Unmarshal(req.OldObject.Raw, &oldObj.Object); err != nil {
+			return fmt.Errorf("could not unmarshal old object: %v", err)
+		}
+		if err := json.Unmarshal(req.Object.Raw, &newObj.Object); err != nil {
+			return fmt.Errorf("could not unmarshal new object: %v", err)
+		}
+		// check if the object has a deletion timestamp
+		if newObj.GetDeletionTimestamp() != nil {
+
+			// check if we're removing the last finalizer
+			oldFinalizers := oldObj.GetFinalizers()
+			newFinalizers := newObj.GetFinalizers()
+			if len(oldFinalizers) > 0 && len(newFinalizers) == 0 {
+				logger.WithFields(logrus.Fields{
+					"requestID":     req.UID,
+					"user":          req.UserInfo.Username,
+					"opType":        req.Operation,
+					"kind":          req.Kind.Kind,
+					"ObjectID":      newObj.GetUID(),
+					"oldFinalizers": oldFinalizers,
+					"newFinalizers": newFinalizers,
+				}).Debug("finalizer change detected, emitting REMOVE event for UPDATE operation")
+				h.emitEvent(req.UID, &newObj, util.APIServerPurgeName, event.REMOVE)
+				return nil
+			}
+		}
+
+	case admissionv1.Delete:
+		// case 2: DELETE operation with no finalizers
+		var obj unstructured.Unstructured
+		if err := json.Unmarshal(req.OldObject.Raw, &obj.Object); err != nil {
+			return fmt.Errorf("could not unmarshal object: %v", err)
+		}
+
+		if len(obj.GetFinalizers()) == 0 {
+			logger.WithFields(logrus.Fields{
+				"requestID": req.UID,
+				"user":      req.UserInfo.Username,
+				"opType":    req.Operation,
+				"kind":      req.Kind.Kind,
+				"ObjectID":  obj.GetUID(),
+			}).Debug("no finalizers on deleted object, emitting REMOVE event for DELETE operation")
+			h.emitEvent(req.UID, &obj, util.APIServerPurgeName, event.REMOVE)
+			return nil
+		}
 	}
-
-	h.emitter.LogOperation(context.TODO(), &baseEvent)
-	h.emitter.LogObjectVersion(context.TODO(), record)
-
-	logger := logrus.WithField("event", baseEvent)
-	logger.Debug("emitting event")
-
 	return nil
 }
 
 func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error {
 	op := req.Operation
 	kind := req.Kind.Kind
-	// namespace := req.Namespace
-	// name := req.Name
 
 	logrus.WithFields(logrus.Fields{
-		"kind": kind,
+		"kind":     kind,
+		"Username": req.UserInfo.Username,
+		"opType":   op,
 	}).Debug("emitting declarative event")
-	// Temp hack: hard-code the CRDs being declared externally via kubectl.
-	// This is necessary because external requests cannot be reliably
-	// distinguished when controllers are run locally using the same
-	// client configuration as the kubectl CLI tool.
-	// TODO
-	externalKinds := []string{
-		"CassandraDatacenter",
-	}
-	if !lo.Contains(externalKinds, kind) {
-		// return early if the kind is not in the list of external kinds
-		return nil
-	}
 
 	obj, err := parseObject(req)
 	if err != nil {
 		return fmt.Errorf("could not parse object: %v", err)
 	}
-	// get it serialized again, but as JSON
-	recordJSON, err := json.Marshal(obj.Object)
-	if err != nil {
-		return fmt.Errorf("could not marshal object: %v", err)
-	}
-	logrus.WithFields(logrus.Fields{
-		"kind": kind,
-		"op":   op,
-		// Kubelet -> APIServer -> Mutation -> Validation
-		"object": string(recordJSON), //already has UID by the time it gets here
-	}).Debug("found object on request")
 
-	logrus.WithFields(logrus.Fields{
-		"kind": kind,
-		"op":   op,
-	}).Debug("emitting event")
+	sleeveOp, ok := admissionV1ToSleeveOp[op]
+	if !ok {
+		return fmt.Errorf("could not map admission v1 operation to sleeve operation")
+	}
+	return h.emitEvent(req.UID, obj, "TraceyWebhook", sleeveOp)
+}
+
+func (h *Handler) emitEvent(id types.UID, obj *unstructured.Unstructured, ControllerID string, op event.OperationType) error {
 	rootEventID, err := tag.GetRootID(obj)
 	if err != nil {
-		return fmt.Errorf("could not get root ID: %v", err)
+		logrus.Error(err)
+		return err
 	}
+	recordJSON, err := json.Marshal(obj.Object)
+	if err != nil {
+		logrus.Error(err)
+		return err
+	}
+	eventID := uuid.New().String()
+	hash := util.ShortenHash(string(recordJSON))
 	baseEvent := event.Event{
-		ID:           uuid.New().String(),
+		ID:           eventID,
 		Timestamp:    event.FormatTimeStr(time.Now()),
 		OpType:       string(op),
-		Kind:         kind,
+		Kind:         obj.GetKind(),
 		ObjectID:     string(obj.GetUID()),
-		ReconcileID:  "EXTERNAL",
-		ControllerID: "TraceyWebhook",
+		ReconcileID:  string(id),
+		ControllerID: ControllerID,
 		RootEventID:  rootEventID,
 		Version:      obj.GetResourceVersion(),
 		Labels:       tag.GetSleeveLabels(obj),
@@ -521,18 +561,33 @@ func (h *Handler) emitDeclarativeEvent(req *admissionv1.AdmissionRequest) error 
 
 	record := snapshot.Record{
 		ObjectID:      string(obj.GetUID()),
-		ReconcileID:   "EXTERNAL",
+		ReconcileID:   string(id),
 		OperationID:   baseEvent.ID,
 		OperationType: string(op),
-		Kind:          kind,
+		Kind:          obj.GetKind(),
 		Version:       obj.GetResourceVersion(),
-		Value:         string(recordJSON),
+		Value:         recordJSON,
+		Hash:          hash,
 	}
 
 	h.emitter.LogOperation(context.TODO(), &baseEvent)
 	h.emitter.LogObjectVersion(context.TODO(), record)
 
-	logger := logrus.WithField("event", baseEvent)
-	logger.Debug("emitting event")
+	logrus.WithFields(logrus.Fields{
+		"eventID":      eventID,
+		"opType":       op,
+		"kind":         obj.GetKind(),
+		"objectID":     obj.GetUID(),
+		"controllerID": ControllerID,
+		"rootEventID":  rootEventID,
+		"Record":       string(recordJSON),
+	}).Debug("emitted event")
+
 	return nil
+}
+
+var admissionV1ToSleeveOp = map[admissionv1.Operation]event.OperationType{
+	admissionv1.Create: event.CREATE,
+	admissionv1.Update: event.UPDATE,
+	admissionv1.Delete: event.MARK_FOR_DELETION,
 }

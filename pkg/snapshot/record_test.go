@@ -2,6 +2,7 @@ package snapshot
 
 import (
 	"encoding/json"
+	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -96,4 +97,54 @@ func TestAsRecord_setKindNoTypeMeta(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "v1", valueMap["apiVersion"])
+}
+
+func TestAsRecord_Serialization(t *testing.T) {
+	topLevelObj := &appsv1.Foo{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foo",
+			Namespace: "default",
+			UID:       "foo-uid",
+			Labels: map[string]string{
+				"tracey-uid":                       "foo",
+				"discrete.events/sleeve-object-id": "foo-123",
+			},
+		},
+		Spec: appsv1.FooSpec{
+			Mode: "A",
+		},
+	}
+	record, err := AsRecord(topLevelObj, "test-frame-id")
+	require.NoError(t, err)
+	expectedRecordJSON := `{
+		"object_id": "foo-uid",
+		"reconcile_id": "test-frame-id",
+		"operation_id": "",
+		"op_type": "",
+		"hash": "SOME_HASH",
+		"kind": "Foo",
+		"version": "",
+		"value": {
+			"apiVersion": "v1",
+			"kind": "Foo",
+			"metadata": {
+				"creationTimestamp": null,
+				"labels": {
+					"discrete.events/sleeve-object-id": "foo-123",
+					"tracey-uid": "foo"
+				},
+				"name": "foo",
+				"namespace": "default",
+				"uid": "foo-uid"
+			},
+			"spec": {
+				"mode": "A"
+			},
+			"status": {}
+		}
+	}`
+	recordJSON, err := json.Marshal(record)
+	require.NoError(t, err)
+	recordJSON = []byte(regexp.MustCompile(`"hash":\s*".*?"`).ReplaceAllString(string(recordJSON), `"hash": "SOME_HASH"`))
+	assert.JSONEq(t, expectedRecordJSON, string(recordJSON))
 }

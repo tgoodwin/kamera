@@ -69,7 +69,7 @@ func ValidateAgainstKeys(op event.OperationType, obj client.Object, keys map[sna
 		}
 		// No need to change tracking state for UPDATE/PATCH
 
-	case event.DELETE:
+	case event.MARK_FOR_DELETION:
 		if !exists {
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},

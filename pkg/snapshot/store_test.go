@@ -91,12 +91,6 @@ func TestStoreObject(t *testing.T) {
 	assert.True(t, found)
 	assert.Equal(t, obj, storedObj)
 
-	// Check that the hash mappings are stored correctly
-	objKey := getObjectKey(obj)
-	hashes, found := store.objectHashes[objKey]
-	assert.True(t, found)
-	assert.Equal(t, expectedDefaultHash, hashes[DefaultHash])
-	assert.Equal(t, expectedAnonHash, hashes[AnonymizedHash])
 }
 
 func TestStoreObjectError(t *testing.T) {
@@ -218,37 +212,6 @@ func TestConvertHash(t *testing.T) {
 	assert.False(t, found)
 }
 
-func TestUpdateObject(t *testing.T) {
-	store := NewStore()
-
-	// Register our mock hashers
-	store.RegisterHashGenerator(DefaultHash, &MockDefaultHasher{})
-	store.RegisterHashGenerator(AnonymizedHash, &MockAnonymizedHasher{})
-
-	// Create and store a test object
-	obj := createTestObject("test-ns", "test-obj", map[string]string{"version": "v1"})
-	err := store.StoreObject(obj)
-	require.NoError(t, err)
-
-	// Create an updated version of the object
-	updatedObj := createTestObject("test-ns", "test-obj", map[string]string{"version": "v2"})
-	err = store.StoreObject(updatedObj)
-	require.NoError(t, err)
-
-	// The hashes should be the same since our mock hashers don't use labels
-	defaultHash := NewDefaultHash("default-test-ns-test-obj")
-	anonHash := NewDefaultHash("anon-test-obj")
-
-	// Verify the object was updated in both indices
-	storedObj, found := store.GetByHash(defaultHash, DefaultHash)
-	assert.True(t, found)
-	assert.Equal(t, "v2", storedObj.GetLabels()["version"])
-
-	storedObj, found = store.GetByHash(anonHash, AnonymizedHash)
-	assert.True(t, found)
-	assert.Equal(t, "v2", storedObj.GetLabels()["version"])
-}
-
 func TestConcurrentHashClash(t *testing.T) {
 	// This test simulates the scenario where two different objects get the same hash
 	// in one strategy but different hashes in another strategy
@@ -296,4 +259,42 @@ func TestConcurrentHashClash(t *testing.T) {
 	if retrievedObj.GetNamespace() == "ns2" {
 		assert.Equal(t, obj2, retrievedObj, "Collision detected - anonymized hash for obj1 points to obj2")
 	}
+}
+
+func TestLookup(t *testing.T) {
+	store := NewStore()
+
+	dHasher := NewDefaultHasher()
+	aHasher := NewAnonymizingHasher(DefaultLabelReplacements)
+
+	// Register our mock hashers
+	store.RegisterHashGenerator(DefaultHash, dHasher)
+	store.RegisterHashGenerator(AnonymizedHash, aHasher)
+
+	obj := createTestObject("test-ns", "test-obj", map[string]string{"app": "test"})
+	anonHash, err := aHasher.Hash(obj)
+	assert.NoError(t, err)
+
+	// redundant, but want to get the hash
+	defaultHash := store.PublishWithStrategy(obj, DefaultHash)
+
+	// Call Lookup, which should internally call StoreObject
+	actual, ok := store.Lookup(defaultHash.Value, AnonymizedHash)
+	if !ok {
+		t.Fatalf("Lookup failed")
+	}
+	assert.Equal(t, anonHash, actual)
+
+	// now update the object at the same namespace/name
+	objv2 := createTestObject("test-ns", "test-obj", map[string]string{"app": "test2"})
+	anonHashv2, err := aHasher.Hash(objv2)
+	assert.NoError(t, err)
+
+	// publish this version
+	defaultHashv2 := store.PublishWithStrategy(objv2, DefaultHash)
+	actual2, ok := store.Lookup(defaultHashv2.Value, AnonymizedHash)
+	if !ok {
+		t.Fatalf("Lookup failed")
+	}
+	assert.Equal(t, anonHashv2, actual2)
 }

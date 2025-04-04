@@ -1,6 +1,7 @@
 package util
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
@@ -106,4 +107,57 @@ func ConvertToUnstructured(obj client.Object) (*unstructured.Unstructured, error
 	// Convert map to *unstructured.Unstructured
 	unstructuredObj := &unstructured.Unstructured{Object: objMap}
 	return unstructuredObj, nil
+}
+
+func GetNext[T any](slice []T, mode string) (T, []T, error) {
+	var zeroValue T
+	if len(slice) == 0 {
+		return zeroValue, slice, fmt.Errorf("slice is empty")
+	}
+
+	switch mode {
+	case "stack":
+		// LIFO: Pop the last element
+		element := slice[len(slice)-1]
+		return element, slice[:len(slice)-1], nil
+	case "queue":
+		// FIFO: Pop the first element
+		element := slice[0]
+		return element, slice[1:], nil
+	default:
+		return zeroValue, slice, fmt.Errorf("invalid mode: %s", mode)
+	}
+}
+
+func PrettyPrintJSON(jsonStr string) (string, error) {
+	var prettyJSON bytes.Buffer
+	err := json.Indent(&prettyJSON, []byte(jsonStr), "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return prettyJSON.String(), nil
+}
+
+func MostCommonElementCount[T comparable](items []T) int {
+	if len(items) == 0 {
+		return 0
+	}
+
+	// Create a map to count occurrences
+	counts := make(map[T]int)
+
+	// Count occurrences of each element
+	for _, item := range items {
+		counts[item]++
+	}
+
+	// Find the maximum count
+	maxCount := 0
+	for _, count := range counts {
+		if count > maxCount {
+			maxCount = count
+		}
+	}
+
+	return maxCount
 }

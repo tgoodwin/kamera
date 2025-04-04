@@ -22,6 +22,7 @@ import (
 	"math/rand"
 	"sort"
 
+	"github.com/tgoodwin/sleeve/pkg/tag"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -156,6 +157,14 @@ func (r *ReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 func (r *ReplicaSetReconciler) createPodFromTemplate(rs *appsv1.ReplicaSet) (*corev1.Pod, error) {
 	// Generate a unique name for the pod
 	podName := fmt.Sprintf("%s-%s", rs.Name, generateRandomSuffix(5))
+
+	outLabels := make(map[string]string)
+	for k, v := range rs.Spec.Template.Labels {
+		if k == tag.TraceyObjectID {
+			continue
+		}
+		outLabels[k] = v
+	}
 
 	if r.KWOKMode {
 		pod, err := createDummyPod(podName, rs.Namespace, nil)

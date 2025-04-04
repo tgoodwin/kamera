@@ -51,7 +51,10 @@ func (r *replayStore) DumpKeys() {
 func (f *replayStore) Add(r snapshot.Record) error {
 	// Unmarshal the value into an unstructured object
 	// key := snapshot.VersionKey{Kind: r.Kind, ObjectID: r.ObjectID, Version: r.Version}
-	obj := r.ToUnstructured()
+	obj, err := r.ToUnstructured()
+	if err != nil {
+		return err
+	}
 	key, err := event.GetCausalKey(obj)
 	if err != nil {
 		return errors.Wrap(err, "inserting object into replay store")
@@ -82,7 +85,10 @@ func (f *replayStore) HydrateFromTrace(traceData []byte) error {
 	seenKeys := make(util.Set[event.CausalKey])
 
 	for _, r := range records {
-		obj := r.ToUnstructured()
+		obj, err := r.ToUnstructured()
+		if err != nil {
+			return err
+		}
 		key, err := event.GetCausalKey(obj)
 		if err != nil {
 			fmt.Printf("error getting causal key: %v\n", err)

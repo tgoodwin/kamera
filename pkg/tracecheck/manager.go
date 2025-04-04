@@ -24,10 +24,11 @@ type VersionManager interface {
 	Resolve(key snapshot.VersionHash) *unstructured.Unstructured
 	Publish(obj *unstructured.Unstructured) snapshot.VersionHash
 	Diff(prev, curr *snapshot.VersionHash) string
+	Lookup(rawHash string, targetStrategy snapshot.HashStrategy) (snapshot.VersionHash, bool)
 	DebugKey(key string)
 }
 
-type effect struct {
+type Effect struct {
 	OpType  event.OperationType
 	Key     snapshot.CompositeKey
 	Version snapshot.VersionHash
@@ -37,12 +38,12 @@ type effect struct {
 }
 
 type reconcileEffects struct {
-	reads  []effect
-	writes []effect
+	reads  []Effect
+	writes []Effect
 }
 
-func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType) effect {
-	return effect{
+func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType) Effect {
+	return Effect{
 		OpType:  op,
 		Key:     key,
 		Version: version,
@@ -50,8 +51,8 @@ func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event
 	}
 }
 
-func newEffectWithPrecondition(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType, precondition *replay.PreconditionInfo) effect {
-	return effect{
+func newEffectWithPrecondition(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType, precondition *replay.PreconditionInfo) Effect {
+	return Effect{
 		OpType:       op,
 		Key:          key,
 		Version:      version,
@@ -76,11 +77,13 @@ type manager struct {
 	effectRKeys map[string]util.Set[snapshot.ResourceKey]
 	effectIKeys map[string]util.Set[snapshot.IdentityKey]
 
+	keysMarkedForDeletion map[string]util.Set[snapshot.IdentityKey]
+
 	mu sync.RWMutex
 }
 
 func (m *manager) Summary() {
-	store := m.versionStore.snapStore.GetVersionMap(snapshot.AnonymizedHash)
+	store := m.versionStore.GetVersionMap(snapshot.AnonymizedHash)
 	for k, v := range store {
 		fmt.Printf("Key: %s, Value: %s\n", k, v)
 	}
@@ -125,12 +128,11 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	// publish the object versionHash
 	versionHash := m.Publish(u)
 
-	// now manifest an event and record it as an effect
 	reffects, ok := m.effects[frameID]
 	if !ok {
 		reffects = reconcileEffects{
-			reads:  make([]effect, 0),
-			writes: make([]effect, 0),
+			reads:  make([]Effect, 0),
+			writes: make([]Effect, 0),
 		}
 	}
 
@@ -142,7 +144,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		reffects.writes = append(reffects.writes, eff)
 	}
 	m.effects[frameID] = reffects
-	logger.V(2).Info("recorded effects", "frameID", frameID, "reads", reffects.reads, "writes", reffects.writes)
+	logger.V(2).Info("recorded effects", "frameID", frameID, "numReads", len(reffects.reads), "numWrites", len(reffects.writes))
 
 	return nil
 }
@@ -250,7 +252,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		}
 		// No need to change tracking state for UPDATE/PATCH
 
-	case event.DELETE:
+	case event.MARK_FOR_DELETION:
 		// need to handle cases where:
 		// 1. no precondition, rkey does not exist (error)
 		// 2. no precondition, rkey exists (delete)
@@ -298,6 +300,10 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 			rKeys[rKey] = struct{}{}
 		}
 		// Existing resource just gets updated, no change to tracking state
+
+	case event.REMOVE:
+		// need to ensure the object being removed is already marked for deletion
+		// TODO remove tracking rKeys and iKeys here...
 	}
 
 	return nil

@@ -39,6 +39,7 @@ import (
 
 	"github.com/tgoodwin/sleeve"
 	"github.com/tgoodwin/sleeve/controller-manager/pkg/controller"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -104,7 +105,7 @@ func main() {
 
 	cfg := ctrl.GetConfigOrDie()
 	cfg.Impersonate = rest.ImpersonationConfig{
-		UserName: "sleeve:controller-user",
+		UserName: util.SleeveControllerUsername,
 		Groups:   []string{"system:masters"},
 	}
 
@@ -180,9 +181,8 @@ func main() {
 		os.Exit(1)
 	}
 	if err = (&controller.ReplicaSetReconciler{
-		Client:   sleeve.Wrap(mgr.GetClient(), "ReplicaSetReconciler"),
-		Scheme:   mgr.GetScheme(),
-		KWOKMode: true,
+		Client: sleeve.Wrap(mgr.GetClient(), "ReplicaSetReconciler"),
+		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ReplicaSet")
 		os.Exit(1)

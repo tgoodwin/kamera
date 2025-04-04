@@ -3,9 +3,11 @@ package tracecheck
 import (
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -20,11 +22,48 @@ func NewStateClassifier(resolver VersionManager) *StateClassifier {
 	}
 }
 
+func (s *StateClassifier) computeSignature(contents ObjectVersions) string {
+	anonHashes := []string{}
+
+	// Collect anonymized hashes for the state
+	for key, vHash := range contents {
+		anonHash, ok := s.resolver.Lookup(vHash.Value, snapshot.AnonymizedHash)
+		if !ok {
+			panic(fmt.Sprintf("Failed to lookup anonymized hash %s", vHash))
+		}
+		anonHashes = append(anonHashes, fmt.Sprintf("%s:%s", key.ResourceKey, anonHash))
+	}
+
+	// Sort the anonymized hashes to ensure order does not affect the signature
+	sort.Strings(anonHashes)
+
+	// Create a unique signature for the state
+	return util.ShortenHash(strings.Join(anonHashes, "|"))
+}
+
+func (s *StateClassifier) GroupBySignature(states []ConvergedState) map[string][]ConvergedState {
+	statesBySignature := make(map[string][]ConvergedState)
+	for _, converged := range states {
+		contents := converged.State.Contents.All()
+		signature := s.computeSignature(contents)
+		if _, ok := statesBySignature[signature]; !ok {
+			statesBySignature[signature] = []ConvergedState{}
+		}
+		statesBySignature[signature] = append(statesBySignature[signature], converged)
+	}
+
+	return statesBySignature
+}
+
 func (s *StateClassifier) ClassifyResults(states []ConvergedState, predicate StatePredicate) []ClassifiedState {
+	happyCount := 0
+	badCount := 0
 	classified := []ClassifiedState{}
 	for i, state := range states {
+		signature := s.computeSignature(state.State.Contents.All())
 		classifiedState := ClassifiedState{
 			ID:             fmt.Sprintf("state-%02d", i),
+			Signature:      signature,
 			State:          state,
 			PassedChecks:   []string{},
 			FailureReasons: []string{},
@@ -35,26 +74,17 @@ func (s *StateClassifier) ClassifyResults(states []ConvergedState, predicate Sta
 		passed, reason := predicate(state.State)
 		if passed {
 			classifiedState.Classification = "happy"
+			happyCount++
 		} else {
 			classifiedState.Classification = "bad"
+			badCount++
 			classifiedState.FailureReasons = append(classifiedState.FailureReasons, reason)
 		}
-		// if passed {
-		// 	classifiedState.PassedChecks = append(classifiedState.PassedChecks)
-		// } else {
-		// 	classifiedState.FailureReasons = append(classifiedState.FailureReasons,
-		// 		fmt.Sprintf("%s: %s", name, reason))
-		// }
-		// }
-
-		// Classify the state
-		// if len(classifiedState.FailureReasons) == 0 {
-		// 	classifiedState.Classification = "happy"
-		// } else {
-		// 	classifiedState.Classification = "bad"
-		// }
 		classified = append(classified, classifiedState)
 	}
+
+	fmt.Printf("# happy states: %d\n", happyCount)
+	fmt.Printf("# bad states: %d\n", badCount)
 
 	return classified
 }
@@ -81,6 +111,7 @@ type ClassifiedResult struct {
 // ClassifiedState holds a state with its classification information
 type ClassifiedState struct {
 	State          ConvergedState
+	Signature      string   // a hash representing the state "shape"
 	ID             string   // something we produce to facilitate bookkeeping during analysis
 	Classification string   // "happy" or "bad"
 	FailureReasons []string // Empty for happy paths

@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"slices"
 
+	"github.com/pkg/errors"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
@@ -37,11 +39,12 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 		var record snapshot.Record
 		if err := json.Unmarshal([]byte(line), &record); err == nil &&
 			// heuristic for identifying JSON lines that fit the snapshot.Record schema
-			record.OperationID != "" && record.Value != "" {
+			record.OperationID != "" && len(record.Value) > 0 {
 			// extract the object
-			obj := record.ToUnstructured()
-			if obj == nil {
-				return nil, fmt.Errorf("failed to unmarshal object from record %s", record.OperationID)
+			obj, err := record.ToUnstructured()
+			if err != nil {
+				fmt.Println("record.Value:", string(record.Value))
+				return nil, errors.Wrap(err, "failed to unmarshal record to unstructured")
 			}
 
 			// do some validation on the object labels
@@ -60,6 +63,9 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 
 		var evt event.Event
 		if err := json.Unmarshal([]byte(line), &evt); err == nil && evt.ID != "" {
+			if strings.HasPrefix(evt.ReconcileID, "cd135") {
+				fmt.Println("evt:", evt)
+			}
 			eventsByID[evt.ID] = &evt
 			entriesParsed++
 			continue
@@ -79,14 +85,26 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 
 	stateEvents := make([]StateEvent, 0)
 
+	SkippedEventIDs := make(map[string]struct{})
+
 	for id, evt := range eventsByID {
 		record, ok := recordsByOperationID[id]
 		if !ok {
 			// return nil, fmt.Errorf("event %s has no associated record", id)
 			fmt.Printf("event %s has no associated record\n", id)
+			fmt.Println("event:", evt)
+			SkippedEventIDs[id] = struct{}{}
 			continue
 		}
-		obj := record.ToUnstructured()
+		obj, err := record.ToUnstructured()
+		if err != nil {
+			return nil, fmt.Errorf("error unmarshaling JSON to unstructured: record operationID: %v, err: %w", record.OperationID, err)
+		}
+
+		// if strings.HasPrefix(evt.ID, "bb8858") {
+		// 	fmt.Println("evt:", evt)
+		// 	panic("found it")
+		// }
 		ns := obj.GetNamespace()
 		name := obj.GetName()
 		sleeveObjectID := tag.GetSleeveObjectID(obj)
@@ -96,17 +114,21 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 			Timestamp:   evt.Timestamp,
 			Effect: newEffect(
 				snapshot.NewCompositeKey(obj.GetKind(), ns, name, sleeveObjectID),
-				snapshot.NewDefaultHash(record.Value),
+				snapshot.NewDefaultHash(string(record.Value)),
 				event.OperationType(evt.OpType),
 			),
 		}
 		stateEvents = append(stateEvents, stateEvent)
 	}
 
+	for id := range SkippedEventIDs {
+		fmt.Println("WARNING: skipped this event: ", id)
+	}
+
 	return stateEvents, nil
 }
 
-func assignResourceVersions(in []StateEvent) []StateEvent {
+func AssignResourceVersions(in []StateEvent) []StateEvent {
 	stateEvents := slices.Clone(in)
 	sort.Slice(stateEvents, func(i, j int) bool {
 		return stateEvents[i].Timestamp < stateEvents[j].Timestamp

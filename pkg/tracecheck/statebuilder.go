@@ -72,6 +72,19 @@ func (b *StateEventBuilder) AddStateEvent(kind, sleeveObjectID string, obj *unst
 
 	// Create state event
 	stateEvent := StateEvent{
+		// TODO refactor
+		Event: &event.Event{
+			ID:           fmt.Sprintf("%s-%d", kind, b.sequence),
+			ReconcileID:  reconcileID,
+			ControllerID: controllerID,
+			RootEventID:  "",
+			OpType:       string(opType),
+			Kind:         kind,
+			ObjectID:     sleeveObjectID,
+			Version:      obj.GetResourceVersion(),
+			Labels:       tag.GetSleeveLabels(obj),
+			Timestamp:    timeStr,
+		},
 		ReconcileID: reconcileID,
 		Timestamp:   timeStr,
 		Effect:      effect,
@@ -85,6 +98,7 @@ func (b *StateEventBuilder) Build() StateNode {
 	snapshot := replayEventSequenceToState(b.events)
 	pending := []PendingReconcile{}
 	return StateNode{
+		ID:                "TOP",
 		Contents:          *snapshot,
 		PendingReconciles: pending,
 	}
@@ -95,7 +109,10 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 	if err != nil {
 		panic("converting to unstructured: " + err.Error())
 	}
-	u := r.ToUnstructured()
+	u, err := r.ToUnstructured()
+	if err != nil {
+		panic("converting to unstructured: " + err.Error())
+	}
 	vHash := b.store.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
@@ -117,7 +134,7 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 	return StateNode{
 		Contents: StateSnapshot{
 			contents: ObjectVersions{key: vHash},
-			KindSequences: map[string]int64{
+			KindSequences: KindSequences{
 				ikey.Kind: 1,
 			},
 			stateEvents: []StateEvent{

@@ -4,6 +4,7 @@ go 1.23
 
 require (
 	github.com/go-logr/logr v1.4.1
+	github.com/go-logr/zerologr v1.2.3
 	github.com/goccy/go-graphviz v0.2.9
 	github.com/golang/mock v1.6.0
 	github.com/google/go-cmp v0.6.0
@@ -12,6 +13,7 @@ require (
 	github.com/onsi/ginkgo/v2 v2.17.1
 	github.com/onsi/gomega v1.32.0
 	github.com/pkg/errors v0.9.1
+	github.com/rs/zerolog v1.34.0
 	github.com/samber/lo v1.47.0
 	github.com/sirupsen/logrus v1.9.0
 	github.com/slackhq/simple-kubernetes-webhook v0.0.0-20211014080913-8b884847badb
@@ -61,6 +63,8 @@ require (
 	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.19 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.4 // indirect
 	github.com/minio/crc64nvme v1.0.1 // indirect
 	github.com/minio/md5-simd v1.1.2 // indirect

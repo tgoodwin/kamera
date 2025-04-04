@@ -5,7 +5,8 @@ import (
 	"time"
 
 	"github.com/samber/lo"
-	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
+	"github.com/tgoodwin/sleeve/controller-manager/pkg/controller"
+	tracegen "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -17,16 +18,19 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+var CleanupReconcilerID = "CleanupReconciler"
+
 type ExplorerBuilder struct {
-	reconcilers        map[string]ReconcilerConstructor
-	resourceDeps       ResourceDeps
-	scheme             *runtime.Scheme
-	maxDepth           int
-	exploreStaleStates int
-	kindBounds         map[string]KindBounds
-	emitter            testEmitter
-	snapStore          *snapshot.Store
-	reconcilerToKind   map[string]string
+	reconcilers      map[string]ReconcilerConstructor
+	resourceDeps     ResourceDeps
+	scheme           *runtime.Scheme
+	emitter          testEmitter
+	snapStore        *snapshot.Store
+	reconcilerToKind map[string]string
+
+	priorityBuilder *PriorityStrategyBuilder
+
+	config *ExploreConfig
 
 	// for replay mode
 	builder *replay.Builder
@@ -34,19 +38,30 @@ type ExplorerBuilder struct {
 
 func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	return &ExplorerBuilder{
-		reconcilers:        make(map[string]ReconcilerConstructor),
-		resourceDeps:       make(ResourceDeps),
-		scheme:             scheme,
-		snapStore:          snapshot.NewStore(),
-		maxDepth:           10, // Default value
-		exploreStaleStates: 0,  // Default value
-		reconcilerToKind:   make(map[string]string),
+		reconcilers:      make(map[string]ReconcilerConstructor),
+		resourceDeps:     make(ResourceDeps),
+		scheme:           scheme,
+		snapStore:        snapshot.NewStore(),
+		reconcilerToKind: make(map[string]string),
+
+		config: &ExploreConfig{
+			MaxDepth:                10,
+			KindBoundsPerReconciler: make(map[string]ReconcilerConfig),
+		},
 	}
 }
 
 func (b *ExplorerBuilder) WithReconciler(id string, constructor ReconcilerConstructor) *ExplorerBuilder {
 	b.reconcilers[id] = constructor
 	return b
+}
+
+func (b *ExplorerBuilder) WithDebug() {
+	b.config.debug = true
+}
+
+func (b *ExplorerBuilder) BreakEarly() {
+	b.config.breakEarly = true
 }
 
 func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) *ExplorerBuilder {
@@ -59,21 +74,23 @@ func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) 
 	return b
 }
 
+func (b *ExplorerBuilder) WithPriorityStrategy(p *PriorityStrategyBuilder) *ExplorerBuilder {
+	b.priorityBuilder = p
+	return b
+}
+
 func (b *ExplorerBuilder) WithMaxDepth(depth int) *ExplorerBuilder {
-	b.maxDepth = depth
+	b.config.MaxDepth = depth
 	return b
 }
 
 func (b *ExplorerBuilder) ExploreStaleStates() *ExplorerBuilder {
-	b.exploreStaleStates = 1
+	b.config.useStaleness = 1
 	return b
 }
 
-func (b *ExplorerBuilder) WithKindBounds(reconcilerID string, kb KindBounds) *ExplorerBuilder {
-	if b.kindBounds == nil {
-		b.kindBounds = make(map[string]KindBounds)
-	}
-	b.kindBounds[reconcilerID] = kb
+func (b *ExplorerBuilder) WithKindBounds(reconcilerID string, rc ReconcilerConfig) *ExplorerBuilder {
+	b.config.KindBoundsPerReconciler[reconcilerID] = rc
 	return b
 }
 
@@ -122,11 +139,11 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 		)
 
 		// Create wrapped client
-		wrappedClient := sleeveclient.New(
+		wrappedClient := tracegen.New(
 			replayClient,
 			reconcilerID,
 			b.emitter,
-			sleeveclient.NewContextTracker(
+			tracegen.NewContextTracker(
 				reconcilerID,
 				b.emitter,
 				replay.FrameIDFromContext,
@@ -145,7 +162,8 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 
 		// Create reconciler implementation
 		rImpl := &reconcileImpl{
-			Name:           reconcilerID,
+			Name: reconcilerID,
+			// TODO remove this. We no longer need to "infer" the reconcile request
 			For:            kindForReconciler,
 			Reconciler:     r,
 			versionManager: mgr,
@@ -164,6 +182,45 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 	return containers
 }
 
+// instantiateCleanupReconciler adds a reconciler to the system that handles
+// actual deletion of resources after they have been "marked" for deletion. In reality,
+// the APIServer would handle this, but we need to simulate this behavior in our system.
+func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) ReconcilerContainer {
+	fm := replay.NewFrameManager(nil)
+	replayClient := replay.NewClient(
+		CleanupReconcilerID,
+		b.scheme,
+		fm,
+		mgr,
+	)
+	wrappedClient := tracegen.New(
+		replayClient,
+		CleanupReconcilerID,
+		b.emitter,
+		tracegen.NewContextTracker(
+			CleanupReconcilerID,
+			b.emitter,
+			replay.FrameIDFromContext,
+		),
+	)
+	r := &controller.FinalizerReconciler{
+		Client:   wrappedClient,
+		Recorder: mgr,
+	}
+	rImpl := &reconcileImpl{
+		Name: CleanupReconcilerID,
+		// For:  "Finalizer",
+		Reconciler:     r,
+		versionManager: mgr,
+		effectReader:   mgr,
+		frameInserter:  fm,
+	}
+	container := ReconcilerContainer{
+		reconcileImpl: rImpl,
+	}
+	return container
+}
+
 func (b *ExplorerBuilder) NewStateEventBuilder() *StateEventBuilder {
 	return NewStateEventBuilder(b.snapStore)
 }
@@ -179,7 +236,10 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	if err != nil {
 		panic("converting to unstructured: " + err.Error())
 	}
-	u := r.ToUnstructured()
+	u, err := r.ToUnstructured()
+	if err != nil {
+		panic("converting to unstructured: " + err.Error())
+	}
 	vHash := b.snapStore.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
@@ -199,9 +259,9 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 
 	return StateNode{
-		Contents: NewStateSnapshot(
+		Contents: newStateSnapshot(
 			ObjectVersions{key: vHash},
-			map[string]int64{
+			KindSequences{
 				ikey.Kind: 1,
 			},
 			[]StateEvent{
@@ -260,6 +320,8 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 
 	// Initialize reconcilers with appropriate clients
 	reconcilers := b.instantiateReconcilers(mgr)
+	cleanupReconciler := b.instantiateCleanupReconciler(mgr)
+	reconcilers[CleanupReconcilerID] = cleanupReconciler
 
 	// Create knowledge manager if using replay builder
 	var knowledgeManager *EventKnowledge
@@ -268,6 +330,10 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		if err := knowledgeManager.Load(b.builder.Events()); err != nil {
 			return nil, fmt.Errorf("loading events: %w", err)
 		}
+	}
+
+	if b.priorityBuilder == nil {
+		b.priorityBuilder = NewPriorityBuilder()
 	}
 
 	// Create trigger manager
@@ -279,18 +345,14 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 
 	// Construct the Explorer
 	explorer := &Explorer{
-		reconcilers:      reconcilers,
-		dependencies:     b.resourceDeps,
-		triggerManager:   triggerManager,
-		knowledgeManager: knowledgeManager,
-
-		config: &ExploreConfig{
-			MaxDepth:                b.maxDepth,
-			StalenessDepth:          b.exploreStaleStates,
-			KindBoundsPerReconciler: b.kindBounds,
-		},
-
+		reconcilers:          reconcilers,
+		dependencies:         b.resourceDeps,
+		triggerManager:       triggerManager,
+		knowledgeManager:     knowledgeManager,
+		config:               b.config,
 		effectContextManager: mgr,
+
+		priorityHandler: b.priorityBuilder.Build(b.snapStore),
 	}
 
 	return explorer, nil

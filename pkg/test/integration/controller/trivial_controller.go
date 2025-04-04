@@ -25,8 +25,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/go-logr/logr"
 	webappv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
 )
+
+var logger logr.Logger
 
 // FooReconciler reconciles a Foo object
 type TestReconciler struct {
@@ -39,7 +42,7 @@ type TestReconciler struct {
 // +kubebuilder:rbac:groups=webapp.discrete.events,resources=foos/finalizers,verbs=update
 
 func (r *TestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	logger = log.FromContext(ctx)
 
 	var foo webappv1.Foo
 	if err := r.Get(ctx, req.NamespacedName, &foo); err != nil {
@@ -52,9 +55,11 @@ func (r *TestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.
 	updated := false
 
 	if foo.Status.State == "" {
+		logger.V(2).Info("Setting state to A-1")
 		foo.Status.State = "A-1"
 		updated = true
 	} else if foo.Status.State == "A-1" {
+		logger.V(2).Info("Setting state to A-Final")
 		foo.Status.State = "A-Final"
 		updated = true
 	}

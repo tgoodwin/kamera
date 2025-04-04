@@ -80,8 +80,6 @@ func main() {
 	result := explorer.Explore(ctx, initialState)
 
 	fmt.Printf("# converged states: %v\n", len(result.ConvergedStates))
-	fmt.Println("Duration: ", result.Duration)
-	fmt.Println("Aborted paths: ", result.AbortedPaths)
 	for _, convergedState := range result.ConvergedStates {
 		state := convergedState.State
 		paths := convergedState.Paths

@@ -144,17 +144,24 @@ func (ct *ContextTracker) setRootContextFromObservation(ctx context.Context, obj
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	name := obj.GetName()
 	rootID, err := tag.GetRootID(obj)
+	logger := log.WithValues(
+		"Kind", gvk,
+		"Name", name,
+		"NewRootID", rootID,
+	)
 	if err != nil {
-		log.V(2).WithValues("labels", obj.GetLabels()).Error(err, "setting root context")
+		logger.V(2).WithValues("labels", obj.GetLabels()).Error(err, "setting root context")
 		ct.handleError(fmt.Sprintf("no root ID on object - gvk: %s, name: %s", gvk, name))
 	}
 	if rootID == "" {
-		log.Error(nil, "rootID is empty")
+		logger.Error(nil, "rootID is empty")
 		ct.handleError(fmt.Sprintf("no root ID on object - gvk: %s, name: %s", gvk, name))
 	}
 	currRootID, ok := ct.rc.rootIDByReconcileID[ct.rc.GetReconcileID()]
 	if ok && currRootID != rootID {
-		log.V(0).Error(err, "rootID changed within the reconcile", "currRootID", currRootID, "newRootID", rootID)
+		logger.WithValues(
+			"CurrRootID", currRootID,
+		).Error(err, "rootID changed within the reconcile")
 
 		// Prioritize the first rootID we see.
 		// Sometimes we may observe a Resource with a different rootID than the one
@@ -171,8 +178,8 @@ func (ct *ContextTracker) setRootContextFromObservation(ctx context.Context, obj
 	return nil
 }
 
-func (Ct *ContextTracker) MustSetRootContextFromObservation(ctx context.Context, obj client.Object) {
-	if err := Ct.setRootContextFromObservation(ctx, obj); err != nil {
+func (ct *ContextTracker) MustSetRootContextFromObservation(ctx context.Context, obj client.Object) {
+	if err := ct.setRootContextFromObservation(ctx, obj); err != nil {
 		panic(err)
 	}
 }
@@ -183,11 +190,16 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 	defer ct.mu.Unlock()
 
 	if err := tag.SanityCheckLabels(obj); err != nil {
-		log.V(0).Error(err, "sanity checking object labels")
+		log.Error(err, "sanity checking object labels")
 	}
 
 	if op == event.GET || op == event.LIST {
-		ct.MustSetRootContextFromObservation(ctx, obj)
+		if err := ct.setRootContextFromObservation(ctx, obj); err != nil {
+			log.WithValues(
+				"Kind", obj.GetObjectKind().GroupVersionKind(),
+				"Name", obj.GetName(),
+			).Error(err, "setting root context")
+		}
 	}
 
 	// assign a change label to the object
@@ -200,7 +212,7 @@ func (ct *ContextTracker) TrackOperation(ctx context.Context, obj client.Object,
 		tag.AddSleeveObjectID(obj)
 	}
 
-	if op == event.DELETE {
+	if op == event.MARK_FOR_DELETION {
 		tag.AddDeletionID(obj)
 	}
 

@@ -161,7 +161,10 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 	if err != nil {
 		panic("converting to unstructured: " + err.Error())
 	}
-	u := r.ToUnstructured()
+	u, err := r.ToUnstructured()
+	if err != nil {
+		panic("converting to unstructured: " + err.Error())
+	}
 	vHash := tc.manager.versionStore.Publish(u)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
@@ -188,7 +191,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 	return StateNode{
 		Contents: StateSnapshot{
 			contents: ObjectVersions{key: vHash},
-			KindSequences: map[string]int64{
+			KindSequences: KindSequences{
 				ikey.Kind: 1,
 			},
 			stateEvents: []StateEvent{

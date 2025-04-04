@@ -1,6 +1,8 @@
 package tracecheck
 
-import "github.com/go-logr/logr"
+import (
+	"github.com/go-logr/logr"
+)
 
 var logger logr.Logger
 

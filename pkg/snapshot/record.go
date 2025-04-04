@@ -13,22 +13,22 @@ import (
 
 // Record represents a snapshot of a Kubernetes object as it appears in a Sleeve log
 type Record struct {
-	ObjectID      string `json:"object_id"`
-	ReconcileID   string `json:"reconcile_id"`
-	OperationID   string `json:"operation_id"` // the operation (event) that produced this record
-	OperationType string `json:"op_type"`      // the operation type that produced this record
-	Kind          string `json:"kind"`
-	Version       string `json:"version"` // resource version
-	// TODO change this to an interface that just requires the object is Marhsalable
-	Value string `json:"value"` // full object value (snapshot.VersionHash)
+	ObjectID      string          `json:"object_id"`
+	ReconcileID   string          `json:"reconcile_id"`
+	OperationID   string          `json:"operation_id"` // the operation (event) that produced this record
+	OperationType string          `json:"op_type"`      // the operation type that produced this record
+	Kind          string          `json:"kind"`
+	Version       string          `json:"version"` // resource version
+	Value         json.RawMessage `json:"value"`   // full object value (snapshot.VersionHash)
+	Hash          string          `json:"hash"`    // hash of the object value
 }
 
-func (r Record) ToUnstructured() *unstructured.Unstructured {
+func (r Record) ToUnstructured() (*unstructured.Unstructured, error) {
 	u := &unstructured.Unstructured{}
-	if err := json.Unmarshal([]byte(r.Value), u); err != nil {
-		log.Fatalf("Error unmarshaling JSON to unstructured: record operationID: %v, err: %v", r.OperationID, err)
+	if err := json.Unmarshal(r.Value, u); err != nil {
+		return nil, fmt.Errorf("error unmarshaling JSON to unstructured: record operationID: %v, err: %w", r.OperationID, err)
 	}
-	return u
+	return u, nil
 }
 
 func (r Record) GetID() string {
@@ -42,12 +42,12 @@ func (r Record) GetID() string {
 }
 
 var toMask = map[string]struct{}{
-	"UID":               {},
-	"ResourceVersion":   {},
-	"Generation":        {},
-	"CreationTimestamp": {},
+	"uid":               {},
+	"resourceVersion":   {},
+	"generation":        {},
+	"creationTimestamp": {},
 	// TODO just distinguish between nil and not-nil for purposes of comparison
-	"DeletionTimestamp": {},
+	"deletionTimestamp": {},
 }
 
 func serialize(obj interface{}) map[string]interface{} {
@@ -63,7 +63,7 @@ func serialize(obj interface{}) map[string]interface{} {
 	return resultMap
 }
 
-func maskFields(in map[string]string) map[string]interface{} {
+func maskFields(in map[string]interface{}) map[string]interface{} {
 	masked := make(map[string]interface{})
 	for k := range in {
 		if _, ok := toMask[k]; ok {
@@ -97,14 +97,19 @@ func AsRecord(obj client.Object, frameID string) (*Record, error) {
 		return nil, fmt.Errorf("APIVersion not set on object: %v", obj)
 	}
 
-	asJSON, _ := json.Marshal(unstructuredObj)
+	valueJSON, err := json.Marshal(unstructuredObj)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal object to JSON: %w", err)
+	}
+	hash := util.ShortenHash(string(valueJSON))
 	r := &Record{
 		// TODO use sleeve-object-id instead of the API-assigned ID
 		ObjectID:    string(obj.GetUID()),
 		ReconcileID: frameID,
 		Kind:        util.GetKind(obj),
 		Version:     obj.GetResourceVersion(),
-		Value:       string(asJSON),
+		Value:       valueJSON,
+		Hash:        hash,
 	}
 	return r, nil
 }

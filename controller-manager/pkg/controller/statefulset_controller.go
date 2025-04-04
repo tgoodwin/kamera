@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -65,7 +66,7 @@ type StatefulSetReconciler struct {
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	// loggr := logf.FromContext(ctx)
+	loggr := logf.FromContext(ctx).WithName("sleeve:statefulset-controller")
 
 	// Fetch the StatefulSet instance
 	statefulSet := &appsv1.StatefulSet{}
@@ -81,29 +82,58 @@ func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 	intendedReplicas := int(*statefulSet.Spec.Replicas)
 	if statefulSet.GetDeletionTimestamp() != nil {
 		loggr.Info("StatefulSet has been marked for deletion")
-		// Delete the pods
-		for i := 0; i < intendedReplicas; i++ {
 
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      fmt.Sprintf("%s-%d", statefulSet.Name, i),
-					Namespace: statefulSet.Namespace,
-				},
-			}
-
-			if err := r.Client.Delete(ctx, pod); err != nil {
-				loggr.Error(err, "Failed to delete the pod")
-				return ctrl.Result{}, err
-			}
+		// get all the pods owned by this StatefulSet
+		podList := &corev1.PodList{}
+		if err := r.List(ctx, podList, client.InNamespace(req.Namespace),
+			client.MatchingLabels(statefulSet.Spec.Selector.MatchLabels)); err != nil {
+			loggr.Error(err, "unable to list pods")
+			return ctrl.Result{}, err
 		}
 
+		// organize pods by ordinal
+		stsPods := make([]*corev1.Pod, 0)
+		for i := range podList.Items {
+			pod := &podList.Items[i]
+			if metav1.IsControlledBy(pod, statefulSet) {
+				stsPods = append(stsPods, pod)
+			}
+		}
+		// sort pods by ordinal highest to lowest
+		sort.Slice(stsPods, func(i, j int) bool {
+			ordinalI, _ := getOrdinal(stsPods[i].Name)
+			ordinalJ, _ := getOrdinal(stsPods[j].Name)
+			return ordinalI > ordinalJ
+		})
+
+		// check if any pods still need to be deleted
+		podsRemaining := false
+		for _, pod := range stsPods {
+			if pod.GetDeletionTimestamp() == nil {
+				// this pod is not yet deleted
+				loggr.V(1).Info("Deleting pod", "pod", pod.Name)
+				if err := r.Delete(ctx, pod); err != nil {
+					loggr.Error(err, "Failed to delete pod")
+					return ctrl.Result{}, err
+				}
+				podsRemaining = true
+				break
+			}
+		}
+		if podsRemaining || len(stsPods) > 0 {
+			// still pods remaining, return and wait for next reconcile
+			loggr.V(1).Info("Pods remaining, requeueing")
+			return ctrl.Result{Requeue: true}, nil
+		}
+
+		// all pods are deleted, we can remove the finalizer
+		loggr.V(1).Info("StatefulSet pods are all deleted, removing finalizer")
 		if controllerutil.RemoveFinalizer(statefulSet, "test.k8ssandra.io/sts-finalizer") {
-			if err := r.Client.Update(ctx, statefulSet); err != nil {
+			if err := r.Update(ctx, statefulSet); err != nil {
 				loggr.Error(err, "Failed to remove finalizer from StatefulSet")
 				return ctrl.Result{}, err
 			}
 		}
-
 		return ctrl.Result{}, nil
 	}
 
@@ -125,9 +155,12 @@ func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// We need to delete the pods..
 		for i := len(stsPods) - 1; i >= intendedReplicas; i-- {
 			pod := stsPods[i]
-			if err := r.Client.Delete(ctx, pod); err != nil {
-				loggr.Error(err, "Failed to delete extra pod from this StS")
-				return ctrl.Result{}, err
+			if pod.GetDeletionTimestamp() == nil {
+				loggr.V(1).Info("Deleting pod", "pod", pod.Name, "Spec.Replicas", intendedReplicas, "currPods", len(stsPods))
+				if err := r.Client.Delete(ctx, pod); err != nil {
+					loggr.Error(err, "Failed to delete extra pod from this StS")
+					return ctrl.Result{}, err
+				}
 			}
 		}
 		return ctrl.Result{}, nil
@@ -150,7 +183,10 @@ func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		podMap[ordinal] = pod
 	}
 
-	loggr.WithValues("podMap", len(podMap)).Info("podMap")
+	loggr.WithValues(
+		"currPods", len(podMap),
+		"spec.Replicas", int(*statefulSet.Spec.Replicas),
+	).Info("Reconciling StatefulSet")
 
 	// Create/update pods as needed
 	currentReplicas := int(*statefulSet.Spec.Replicas)
@@ -288,6 +324,14 @@ func createPodForStatefulSet(statefulSet *appsv1.StatefulSet, ordinal int) (*cor
 	podSpec := statefulSet.Spec.Template.Spec.DeepCopy()
 
 	labels := statefulSet.GetLabels()
+	// get non-sleeve labels
+	out := make(map[string]string)
+	for k, v := range labels {
+		if k == tag.TraceyObjectID {
+			continue
+		}
+		out[k] = v
+	}
 
 	// For each volumeClaimTemplate, add a corresponding volume to the pod
 	for _, template := range statefulSet.Spec.VolumeClaimTemplates {
@@ -313,7 +357,7 @@ func createPodForStatefulSet(statefulSet *appsv1.StatefulSet, ordinal int) (*cor
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-%d", statefulSet.Name, ordinal),
 			Namespace: statefulSet.Namespace,
-			Labels:    labels,
+			Labels:    out,
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(statefulSet, appsv1.SchemeGroupVersion.WithKind("StatefulSet")),
 			},

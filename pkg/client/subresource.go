@@ -22,7 +22,7 @@ func (c *Client) Status() client.SubResourceWriter {
 }
 
 func (s *SubResourceClient) logOperation(ctx context.Context, obj client.Object, action event.OperationType) {
-	s.client.logOperation(ctx, obj, action)
+	s.client.LogOperation(ctx, obj, action)
 }
 
 func (s *SubResourceClient) Update(ctx context.Context, obj client.Object, opts ...client.SubResourceUpdateOption) error {

@@ -17,7 +17,7 @@ func TestAssignResourceVersions(t *testing.T) {
 			input: []StateEvent{
 				{
 					Timestamp: "2023-01-01T00:00:01Z",
-					Effect:    effect{OpType: event.CREATE},
+					Effect:    Effect{OpType: event.CREATE},
 				},
 			},
 			expected: []int64{2},
@@ -27,15 +27,15 @@ func TestAssignResourceVersions(t *testing.T) {
 			input: []StateEvent{
 				{
 					Timestamp: "2023-01-01T00:00:01Z",
-					Effect:    effect{OpType: event.CREATE},
+					Effect:    Effect{OpType: event.CREATE},
 				},
 				{
 					Timestamp: "2023-01-01T00:00:02Z",
-					Effect:    effect{OpType: event.UPDATE},
+					Effect:    Effect{OpType: event.UPDATE},
 				},
 				{
 					Timestamp: "2023-01-01T00:00:03Z",
-					Effect:    effect{OpType: event.DELETE},
+					Effect:    Effect{OpType: event.MARK_FOR_DELETION},
 				},
 			},
 			expected: []int64{2, 3, 4},
@@ -45,11 +45,11 @@ func TestAssignResourceVersions(t *testing.T) {
 			input: []StateEvent{
 				{
 					Timestamp: "2023-01-01T00:00:01Z",
-					Effect:    effect{OpType: event.GET},
+					Effect:    Effect{OpType: event.GET},
 				},
 				{
 					Timestamp: "2023-01-01T00:00:02Z",
-					Effect:    effect{OpType: event.LIST},
+					Effect:    Effect{OpType: event.LIST},
 				},
 			},
 			expected: []int64{1, 1},
@@ -59,15 +59,15 @@ func TestAssignResourceVersions(t *testing.T) {
 			input: []StateEvent{
 				{
 					Timestamp: "2023-01-01T00:00:01Z",
-					Effect:    effect{OpType: event.CREATE},
+					Effect:    Effect{OpType: event.CREATE},
 				},
 				{
 					Timestamp: "2023-01-01T00:00:02Z",
-					Effect:    effect{OpType: event.GET},
+					Effect:    Effect{OpType: event.GET},
 				},
 				{
 					Timestamp: "2023-01-01T00:00:03Z",
-					Effect:    effect{OpType: event.UPDATE},
+					Effect:    Effect{OpType: event.UPDATE},
 				},
 			},
 			expected: []int64{2, 2, 3},
@@ -76,7 +76,7 @@ func TestAssignResourceVersions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := assignResourceVersions(tt.input)
+			result := AssignResourceVersions(tt.input)
 			if len(result) != len(tt.expected) {
 				t.Fatalf("expected %d events, got %d", len(tt.expected), len(result))
 			}
