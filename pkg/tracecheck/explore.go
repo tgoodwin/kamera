@@ -309,10 +309,6 @@ func (e *Explorer) explore(
 		}
 	}
 
-	result := &Result{
-		ConvergedStates: make([]ConvergedState, 0),
-	}
-
 	seenDepths := make(map[int]bool)
 
 	var queue []StateNode
@@ -481,20 +477,6 @@ func (e *Explorer) explore(
 		}
 	}
 
-	// Graph search has ended, summarize the results
-	for i, stateKey := range lo.Keys(seenConvergedStates) {
-		state := seenConvergedStates[stateKey]
-		paths := executionPathsToState[stateKey]
-
-		state.DivergencePoint = initialState.DivergencePoint
-		convergedState := ConvergedState{
-			ID:    fmt.Sprintf("state-%d", i),
-			State: state,
-			Paths: paths,
-		}
-		result.ConvergedStates = append(result.ConvergedStates, convergedState)
-	}
-
 	doneCh <- struct{}{}
 	return nil
 }
@@ -502,11 +484,6 @@ func (e *Explorer) explore(
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
 func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (StateNode, error) {
 	stepLog := log.FromContext(ctx)
-
-	// // remove the current controller from the pending reconciles list
-	// newPendingReconciles := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
-	// 	return pending != pr
-	// })
 
 	// defensive validation
 	if len(state.Contents.KindSequences) == 0 {

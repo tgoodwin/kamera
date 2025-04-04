@@ -127,7 +127,6 @@ func (s *StateSnapshot) Debug() {
 	for key, value := range s.KindSequences {
 		fmt.Println(key, value)
 	}
-
 }
 
 // generateCombos recursively generates all possible combinations

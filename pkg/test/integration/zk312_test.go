@@ -165,7 +165,6 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 
 	// Build the state events
 	initialState := stateBuilder.Build()
-	// initialState.Contents.Debug()
 
 	initialState.PendingReconciles = []tracecheck.PendingReconcile{
 		{
