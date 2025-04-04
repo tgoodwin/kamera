@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/samber/lo"
-	sleeveclient "github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/sleeve/pkg/tracegen"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -239,11 +239,11 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 			tc.manager, // this is what calls RecordEffect
 		)
 
-		wrappedClient := sleeveclient.New(
+		wrappedClient := tracegen.New(
 			replayClient,
 			reconcilerID,
 			tc.emitter,
-			sleeveclient.NewContextTracker(
+			tracegen.NewContextTracker(
 				reconcilerID,
 				tc.emitter,
 				replay.FrameIDFromContext,
