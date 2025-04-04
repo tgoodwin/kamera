@@ -220,8 +220,6 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	e.stats.Start()
 
 	go func() {
-		defer close(convergedStateChan)
-		defer close(executionHistoryChan)
 		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, doneChan)
 		if err != nil {
 			errChan <- err
@@ -271,6 +269,12 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 			cancel()
 		}
 	}
+
+	defer func() {
+		close(convergedStateChan)
+		close(executionHistoryChan)
+		close(doneChan)
+	}()
 
 	// if we broke out early, collect partial results, summarize them, and return
 	result := &Result{ConvergedStates: make([]ConvergedState, 0)}
@@ -614,37 +618,6 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		newStateEvents = append(newStateEvents, stateEvent)
 	}
 
-	// get the controllers that depend on the objects that were changed and add them
-	// to the pending reconciles list. n.b. this can include the controller that just executed.
-	// reconcilesToEnqueue := e.getTriggeredReconcilers(reconcileResult.Changes)
-	// if requeue is true, we also need to append the same pendingReconcile back to the list
-	// requeue := reconcileResult.ctrlRes.Requeue
-
-	// For controllers whose watch streams are connected to a network-partitioned APIServer shard,
-	// they cannot get triggered by the changes in the state as their watch streams are "stuck".
-	// Even if they performed the reconcile, they would not be able to see the changes.
-	// if len(reconcilesToEnqueue) > 0 {
-	// 	filtered := lo.Filter(reconcilesToEnqueue, func(pending PendingReconcile, _ int) bool {
-	// 		if state.stuckReconcilerPositions == nil {
-	// 			return true
-	// 		}
-	// 		// if the reconciler is in the staleness map, it is stuck
-	// 		_, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]
-	// 		return !stuck
-	// 	})
-
-	// 	logger.V(2).Info("filtered triggered reconciles based on who's stuck",
-	// 		"triggeredReconcilers", reconcilesToEnqueue, "filtered", filtered, "stuckPositions", state.stuckReconcilerPositions)
-	// 	reconcilesToEnqueue = filtered
-	// }
-	// // if the controller returned a response with Requeue = true,
-	// // we need to requeue the original request, which is contained in the
-	// // top level pendingReconcile this function was called with.
-	// if reconcileResult.ctrlRes.Requeue {
-	// 	logger.V(1).Info("requeueing original reconcile request", "ReconcileResult", reconcileResult.ctrlRes, "RequeueRequest", pr.Request)
-	// 	reconcilesToEnqueue = append(reconcilesToEnqueue, pr)
-	// }
-	// newPendingReconciles = e.getNewPendingReconciles(newPendingReconciles, reconcilesToEnqueue)
 	newPendingReconciles := e.determineNewPendingReconciles(state, pr, reconcileResult)
 
 	// make a copy of the current execution history
