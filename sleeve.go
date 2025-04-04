@@ -1,27 +1,21 @@
 package sleeve
 
 import (
-	"time"
-
-	"github.com/tgoodwin/sleeve/pkg/client"
 	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/tracegen"
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func VisibilityDelay(kind string, duration time.Duration) client.Option {
-	return client.VisibilityDelay(kind, duration)
-}
-
-func TrackSnapshots() client.Option {
-	return func(o *client.Config) {
+func TrackSnapshots() tracegen.Option {
+	return func(o *tracegen.Config) {
 		o.LogObjectSnapshots = true
 	}
 }
 
-func Wrap(wrapped kclient.Client, name string) *client.Client {
+func Wrap(wrapped kclient.Client, name string) *tracegen.Client {
 	minioEmitter, err := event.DefaultMinioEmitter()
 	if err != nil {
 		panic(err)
 	}
-	return client.Wrap(wrapped, name).WithEnvConfig().WithEmitter(minioEmitter)
+	return tracegen.Wrap(wrapped, name).WithEnvConfig().WithEmitter(minioEmitter)
 }
