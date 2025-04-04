@@ -17,7 +17,7 @@ type KindSequences map[string]int64
 type StateSnapshot struct {
 	contents ObjectVersions
 
-	priority Priority
+	Priority Priority
 
 	// per-kind sequence info for computing relative states
 	// possibly stale with respect to the contents of stateEvents

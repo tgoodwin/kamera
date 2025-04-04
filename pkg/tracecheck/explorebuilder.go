@@ -28,7 +28,7 @@ type ExplorerBuilder struct {
 	snapStore        *snapshot.Store
 	reconcilerToKind map[string]string
 
-	perturbationManager *PerturbationManager
+	priorityBuilder *PriorityStrategyBuilder
 
 	config *ExploreConfig
 
@@ -74,8 +74,8 @@ func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) 
 	return b
 }
 
-func (b *ExplorerBuilder) WithPerturbationManager(pm *PerturbationManager) *ExplorerBuilder {
-	b.perturbationManager = pm
+func (b *ExplorerBuilder) WithPriorityStrategy(p *PriorityStrategyBuilder) *ExplorerBuilder {
+	b.priorityBuilder = p
 	return b
 }
 
@@ -332,8 +332,8 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		}
 	}
 
-	if b.perturbationManager == nil {
-		b.perturbationManager = NewPerturbationManager(b.snapStore)
+	if b.priorityBuilder == nil {
+		b.priorityBuilder = NewPriorityBuilder()
 	}
 
 	// Create trigger manager
@@ -352,7 +352,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		config:               b.config,
 		effectContextManager: mgr,
 
-		priorityHandler: b.perturbationManager,
+		priorityHandler: b.priorityBuilder.Build(b.snapStore),
 	}
 
 	return explorer, nil

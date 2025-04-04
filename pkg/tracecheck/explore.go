@@ -428,7 +428,7 @@ func (e *Explorer) explore(
 		}
 
 		prioritizedViews := lo.Filter(possibleViews, func(s StateNode, _ int) bool {
-			return s.Contents.priority != Skip
+			return s.Contents.Priority != Skip
 		})
 		logger.V(2).WithValues(
 			"PreFilteredCount", len(possibleViews),

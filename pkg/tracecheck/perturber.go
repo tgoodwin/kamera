@@ -5,6 +5,34 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 )
 
+type PriorityStrategyBuilder struct {
+	filters         []filterPred
+	prioritizations []prioritizer
+}
+
+func NewPriorityBuilder() *PriorityStrategyBuilder {
+	return &PriorityStrategyBuilder{
+		filters:         []filterPred{},
+		prioritizations: []prioritizer{},
+	}
+}
+
+func (pb *PriorityStrategyBuilder) AddFilterPred(pred filterPred) {
+	pb.filters = append(pb.filters, pred)
+}
+
+func (pb *PriorityStrategyBuilder) AddStrategy(prioritizer prioritizer) {
+	pb.prioritizations = append(pb.prioritizations, prioritizer)
+}
+
+func (pb *PriorityStrategyBuilder) Build(store *snapshot.Store) *PriorityManager {
+	pm := &PriorityManager{
+		prioritizationStrategies: pb.prioritizations,
+		filterPreds:              pb.filters,
+	}
+	return pm
+}
+
 type filterPred func(view *StateSnapshot) bool
 
 type PriorityHandler interface {
@@ -12,36 +40,13 @@ type PriorityHandler interface {
 	PrioritizeViews(views []*StateSnapshot) []*StateSnapshot
 }
 
-type PerturbationManager struct {
+type PriorityManager struct {
 	store                    *snapshot.Store
 	prioritizationStrategies []prioritizer
 	filterPreds              []filterPred
 }
 
-func NewPerturbationManager(store *snapshot.Store) *PerturbationManager {
-	pm := &PerturbationManager{
-		store:                    store,
-		prioritizationStrategies: []prioritizer{},
-	}
-
-	// TODO remove
-	pm.AddPrioritizationStrategy(cass188Prioritize)
-	pm.AddFilterPred(func(view *StateSnapshot) bool {
-		return view.priority != Skip
-	})
-
-	return pm
-}
-
-func (p *PerturbationManager) AddPrioritizationStrategy(strategy prioritizer) {
-	p.prioritizationStrategies = append(p.prioritizationStrategies, strategy)
-}
-
-func (p *PerturbationManager) AddFilterPred(pred filterPred) {
-	p.filterPreds = append(p.filterPreds, pred)
-}
-
-func (p *PerturbationManager) ApplyPriorities(views []*StateSnapshot) []*StateSnapshot {
+func (p *PriorityManager) ApplyPriorities(views []*StateSnapshot) []*StateSnapshot {
 	if p.prioritizationStrategies == nil {
 		return views
 	}
@@ -56,7 +61,7 @@ func (p *PerturbationManager) ApplyPriorities(views []*StateSnapshot) []*StateSn
 	return views
 }
 
-func (p *PerturbationManager) PrioritizeViews(views []*StateSnapshot) []*StateSnapshot {
+func (p *PriorityManager) PrioritizeViews(views []*StateSnapshot) []*StateSnapshot {
 	if p.filterPreds == nil {
 		return views
 	}
