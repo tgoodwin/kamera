@@ -30,6 +30,8 @@ var UsernameSubstringValidationWhitelist = []string{
 	"system:node",               // kubelet
 	"garbage-collector",         // default garbage collector
 	"pvc-protection-controller", // removes finalizers from PVCs
+	"sleeve-system:sleevectrl",
+	"sleeve:controller-user", // the rest.Impersonate username when running controllers locally to distinguish from whatever it picks up in ~/.kube/config
 }
 
 func main() {
@@ -119,7 +121,7 @@ type Handler struct {
 // TODO de-hardcode
 func NewHandler() (*Handler, error) {
 	clientCfg := event.MinioConfig{
-		Endpoint:        event.InternalEndpoint,
+		Endpoint:        event.ClusterInternalEndpoint,
 		AccessKeyID:     "myaccesskey",
 		SecretAccessKey: "mysecretkey",
 		UseSSL:          false,
@@ -326,7 +328,6 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 		"message":         message,
 		"cameFromOutside": cameFromOutside,
 		"hasSleeveTags":   hasSleeveTags,
-		"isSleeve":        isSleeve,
 		"canBypass":       canBypass,
 	}).Debug("evaluated validation checks")
 
