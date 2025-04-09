@@ -6,14 +6,13 @@ import (
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-func TrackSnapshots() tracegen.Option {
-	return func(o *tracegen.Config) {
-		o.LogObjectSnapshots = true
-	}
-}
-
 func Wrap(wrapped kclient.Client, name string) *tracegen.Client {
-	minioEmitter, err := event.DefaultMinioEmitter()
+	minioConfig, err := event.MinioConfigFromEnv()
+	if err != nil {
+		panic(err)
+	}
+
+	minioEmitter, err := event.NewMinioEmitter(minioConfig)
 	if err != nil {
 		panic(err)
 	}
