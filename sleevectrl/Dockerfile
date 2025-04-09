@@ -3,6 +3,10 @@ FROM golang:1.23 AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
+#######################################
+### TO BE RUN FROM SLEEVE REPO ROOT ###
+#######################################
+
 WORKDIR /workspace
 # Copy the Go Modules manifests
 COPY go.mod go.sum /workspace/
