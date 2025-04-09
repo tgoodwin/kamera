@@ -16,9 +16,75 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/util"
 )
 
+const (
+	envMinioEndpoint    = "SLEEVE_MINIO_ENDPOINT"
+	envMinioAccessKey   = "SLEEVE_MINIO_ACCESS_KEY"
+	envMinioSecretKey   = "SLEEVE_MINIO_SECRET_KEY"
+	envMinioBucket      = "SLEEVE_MINIO_BUCKET"
+	envMinioUseSSL      = "SLEEVE_MINIO_USE_SSL"
+	envMinioCompression = "SLEEVE_MINIO_USE_COMPRESSION"
+)
+
+func mustGetEnv(key string) (string, error) {
+	val := os.Getenv(key)
+	if val == "" {
+		return "", fmt.Errorf("environment variable %s not set", key)
+	}
+	return val, nil
+}
+
+func getEnvBool(key string, defaultVal bool) (bool, error) {
+	val := os.Getenv(key)
+	if val == "" {
+		return defaultVal, nil
+	}
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		return false, fmt.Errorf("invalid value for %s: %w", key, err)
+	}
+	return parsed, nil
+}
+
+func MinioConfigFromEnv() (MinioConfig, error) {
+	endpoint, err := mustGetEnv(envMinioEndpoint)
+	if err != nil {
+		return MinioConfig{}, err
+	}
+	accessKey, err := mustGetEnv(envMinioAccessKey)
+	if err != nil {
+		return MinioConfig{}, err
+	}
+	secretKey, err := mustGetEnv(envMinioSecretKey)
+	if err != nil {
+		return MinioConfig{}, err
+	}
+	bucket, err := mustGetEnv(envMinioBucket)
+	if err != nil {
+		return MinioConfig{}, err
+	}
+
+	useSSL, err := getEnvBool(envMinioUseSSL, false)
+	if err != nil {
+		return MinioConfig{}, err
+	}
+	useCompression, err := getEnvBool(envMinioCompression, false)
+	if err != nil {
+		return MinioConfig{}, err
+	}
+
+	return MinioConfig{
+		Endpoint:        endpoint,
+		AccessKeyID:     accessKey,
+		SecretAccessKey: secretKey,
+		BucketName:      bucket,
+		UseSSL:          useSSL,
+		UseCompression:  useCompression,
+	}, nil
+}
+
 const DefaultBucketName = "sleeve"
-const InternalEndpoint = "minio-svc.sleeve-system.svc.cluster.local:9000"
-const ExternalEndpoint = "localhost:9000"
+const ClusterInternalEndpoint = "minio-svc.sleeve-system.svc.cluster.local:9000"
+const ClusterExternalEndpoint = "localhost:9000"
 
 // MinioEmitter implements the Emitter interface to store event data in a Minio bucket
 type MinioEmitter struct {
@@ -37,7 +103,7 @@ type MinioConfig struct {
 	UseCompression  bool
 }
 
-func GetBucketClient(config MinioConfig) (*minio.Client, error) {
+func getBucketClient(config MinioConfig) (*minio.Client, error) {
 	// Initialize Minio client
 	fmt.Println("initializing minio client")
 	client, err := minio.New(config.Endpoint, &minio.Options{
@@ -66,7 +132,7 @@ func GetBucketClient(config MinioConfig) (*minio.Client, error) {
 }
 
 func NewMinioEmitter(config MinioConfig) (*MinioEmitter, error) {
-	client, err := GetBucketClient(config)
+	client, err := getBucketClient(config)
 	if err != nil {
 		return nil, err
 	}
@@ -79,7 +145,7 @@ func NewMinioEmitter(config MinioConfig) (*MinioEmitter, error) {
 
 func DefaultMinioEmitter() (*MinioEmitter, error) {
 	config := MinioConfig{
-		Endpoint:        ExternalEndpoint,
+		Endpoint:        ClusterExternalEndpoint,
 		AccessKeyID:     "myaccesskey",
 		SecretAccessKey: "mysecretkey",
 		UseSSL:          false,
@@ -92,7 +158,6 @@ func DefaultMinioEmitter() (*MinioEmitter, error) {
 
 // LogOperation implements the Emitter interface to store operation events in Minio
 func (m *MinioEmitter) LogOperation(ctx context.Context, e *Event) {
-	// Serialize event to JSON
 	eventJSON, err := json.Marshal(e)
 	if err != nil {
 		// We can't return errors from this interface method, so log and continue
@@ -100,13 +165,9 @@ func (m *MinioEmitter) LogOperation(ctx context.Context, e *Event) {
 		return
 	}
 
-	// Create a meaningful object name/path
-	// timestamp := time.Now().Format(time.RFC3339)
-	// for example, "operations/controllerID/reconcileID/2021-08-01T12:00:00Z_create_123.json"
 	objectName := path.Join(
 		"operations",
 		e.ControllerID,
-		// e.ReconcileID,
 		fmt.Sprintf("%s_%s_%s.json", util.Shorter(e.ReconcileID), e.OpType, e.ID),
 	)
 
@@ -158,92 +219,4 @@ func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) 
 	if err != nil {
 		fmt.Printf("ERROR: failed to upload object version to Minio: %v\n", err)
 	}
-}
-
-// K8sMinioEnvConfig holds the environment variable names for Minio configuration
-type K8sMinioEnvConfig struct {
-	EndpointEnv        string
-	AccessKeyIDEnv     string
-	SecretAccessKeyEnv string
-	UseSSLEnv          string
-	BucketNameEnv      string
-	OperationsPathEnv  string
-	ObjectsPathEnv     string
-	UseCompressionEnv  string
-}
-
-// DefaultK8sMinioConfig returns a K8sMinioConfig with default environment variable names
-func DefaultK8sMinioConfig() K8sMinioEnvConfig {
-	return K8sMinioEnvConfig{
-		EndpointEnv:        "SLEEVE_MINIO_ENDPOINT",
-		AccessKeyIDEnv:     "SLEEVE_MINIO_ACCESS_KEY",
-		SecretAccessKeyEnv: "SLEEVE_MINIO_SECRET_KEY",
-		UseSSLEnv:          "SLEEVE_MINIO_USE_SSL",
-		BucketNameEnv:      "SLEEVE_MINIO_BUCKET",
-		OperationsPathEnv:  "SLEEVE_MINIO_OPERATIONS_PATH",
-		ObjectsPathEnv:     "SLEEVE_MINIO_OBJECTS_PATH",
-		UseCompressionEnv:  "SLEEVE_MINIO_USE_COMPRESSION",
-	}
-}
-
-// NewMinioEmitterFromEnv creates a new MinioEmitter using configuration from environment variables
-func NewMinioEmitterFromEnv() (*MinioEmitter, error) {
-	return NewMinioEmitterFromK8sConfig(DefaultK8sMinioConfig())
-}
-
-// NewMinioEmitterFromK8sConfig creates a new MinioEmitter using the provided K8sMinioConfig
-func NewMinioEmitterFromK8sConfig(config K8sMinioEnvConfig) (*MinioEmitter, error) {
-	// Get environment variables
-	endpoint := os.Getenv(config.EndpointEnv)
-	accessKeyID := os.Getenv(config.AccessKeyIDEnv)
-	secretAccessKey := os.Getenv(config.SecretAccessKeyEnv)
-	useSSLStr := os.Getenv(config.UseSSLEnv)
-	bucketName := os.Getenv(config.BucketNameEnv)
-	useCompressionStr := os.Getenv(config.UseCompressionEnv)
-
-	// Validate required fields
-	if endpoint == "" {
-		return nil, fmt.Errorf("minio endpoint not provided, set %s", config.EndpointEnv)
-	}
-	if accessKeyID == "" {
-		return nil, fmt.Errorf("minio access key ID not provided, set %s", config.AccessKeyIDEnv)
-	}
-	if secretAccessKey == "" {
-		return nil, fmt.Errorf("minio secret access key not provided, set %s", config.SecretAccessKeyEnv)
-	}
-	if bucketName == "" {
-		return nil, fmt.Errorf("minio bucket name not provided, set %s", config.BucketNameEnv)
-	}
-
-	// Parse boolean values
-	useSSL := false
-	if useSSLStr != "" {
-		var err error
-		useSSL, err = strconv.ParseBool(useSSLStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid value for %s: %w", config.UseSSLEnv, err)
-		}
-	}
-
-	useCompression := false
-	if useCompressionStr != "" {
-		var err error
-		useCompression, err = strconv.ParseBool(useCompressionStr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid value for %s: %w", config.UseCompressionEnv, err)
-		}
-	}
-
-	// Create MinioConfig
-	minioConfig := MinioConfig{
-		Endpoint:        endpoint,
-		AccessKeyID:     accessKeyID,
-		SecretAccessKey: secretAccessKey,
-		UseSSL:          useSSL,
-		BucketName:      bucketName,
-		UseCompression:  useCompression,
-	}
-
-	// Create MinioEmitter
-	return NewMinioEmitter(minioConfig)
 }

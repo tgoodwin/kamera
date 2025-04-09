@@ -57,7 +57,6 @@ func newEffectWithPrecondition(key snapshot.CompositeKey, version snapshot.Versi
 		Key:          key,
 		Version:      version,
 		Precondition: precondition,
-		// Timestamp: time.Now(),
 	}
 }
 
