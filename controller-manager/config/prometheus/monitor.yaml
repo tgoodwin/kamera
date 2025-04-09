@@ -6,13 +6,14 @@ metadata:
     control-plane: controller-manager
     app.kubernetes.io/name: sleeve-core-controllers
     app.kubernetes.io/managed-by: kustomize
-  name: controller-manager-metrics-monitor
-  namespace: system
+    release: prometheus
+  name: sleeve-controller-manager-metrics-monitor
+  namespace: sleeve-system
 spec:
   endpoints:
     - path: /metrics
-      port: https # Ensure this is the name of the port that exposes HTTPS metrics
-      scheme: https
+      port: metrics # Ensure this is the name of the port that exposes HTTPS metrics
+      scheme: http
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
       tlsConfig:
         # TODO(user): The option insecureSkipVerify: true is not recommended for production since it disables
