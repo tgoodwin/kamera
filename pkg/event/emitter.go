@@ -20,6 +20,8 @@ type LogEmitter struct {
 	logger logr.Logger
 }
 
+var _ Emitter = (*LogEmitter)(nil)
+
 func NewLogEmitter(logger logr.Logger) *LogEmitter {
 	return &LogEmitter{logger: logger}
 }
@@ -42,13 +44,17 @@ func (l *LogEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
 
 type NoopEmitter struct{}
 
-func (n *NoopEmitter) LogOperation(e *Event) {}
+var _ Emitter = (*NoopEmitter)(nil)
 
-func (n *NoopEmitter) LogObjectVersion(r snapshot.Record) {}
+func (n *NoopEmitter) LogOperation(ctx context.Context, e *Event) {}
+
+func (n *NoopEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {}
 
 type FileEmitter struct {
 	filePath string
 }
+
+var _ Emitter = (*FileEmitter)(nil)
 
 func NewFileEmitter(filePath string) *FileEmitter {
 	// Clear the file if it already exists
@@ -94,6 +100,8 @@ type InMemoryEmitter struct {
 	recordsByOperationID map[string][]snapshot.Record
 }
 
+var _ Emitter = (*InMemoryEmitter)(nil)
+
 func NewInMemoryEmitter() *InMemoryEmitter {
 	return &InMemoryEmitter{
 		eventsByReconcileID:  make(map[string][]*Event),
@@ -138,16 +146,6 @@ func (i *InMemoryEmitter) Dump(frameID string) []string {
 		}
 	}
 
-	// if records, ok := i.recordsByReconcileID[frameID]; ok {
-	// 	for _, record := range records {
-	// 		recordJSON, err := json.Marshal(record)
-	// 		if err != nil {
-	// 			panic("failed to serialize record")
-	// 		}
-	// 		logs = append(logs, string(recordJSON))
-	// 	}
-	// }
-
 	if len(logs) == 0 {
 		fmt.Println("Error: frameID not found")
 		panic("frameID not found")
@@ -160,6 +158,8 @@ type DebugEmitter struct {
 	fileEmitter *FileEmitter
 	*InMemoryEmitter
 }
+
+var _ Emitter = (*DebugEmitter)(nil)
 
 func NewDebugEmitter() *DebugEmitter {
 	return &DebugEmitter{

@@ -32,3 +32,6 @@ examples/chaos/**
 results/**
 
 testresults/**
+
+# ignore traces
+*.jsonl

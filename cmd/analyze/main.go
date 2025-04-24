@@ -79,12 +79,7 @@ func main() {
 
 	km := tracecheck.NewEventKnowledge(store)
 	km.Load(events)
-	rPodKnowledge := km.Kinds["RPod"]
-	rPodKnowledge.Summarize()
-
 	tc := tracecheck.FromBuilder(builder)
-	// init := tc.GetStartState()
-	// fmt.Println("Initial state:", init)
 
 	tc.AssignReconcilerToKind("RPodReconciler", "RPod")
 	tc.AssignReconcilerToKind("FelixReconciler", "RouteConfig")
@@ -123,5 +118,4 @@ func main() {
 		stateNodes = append(stateNodes, convergedState.State)
 	}
 	tc.Unique(stateNodes)
-	// tc.MaterializeResults(result, "results")
 }

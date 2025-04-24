@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
@@ -47,9 +48,9 @@ func NewOperation(obj client.Object, reconcileID, controllerID, rootEventID stri
 		Version:  obj.GetResourceVersion(),
 		Labels:   tag.GetSleeveLabels(obj),
 	}
-	changeID := e.MustGetChangeID()
-	if changeID == "" {
-		return nil, fmt.Errorf("event does not have a change ID: %v", e)
+	// post construction validation
+	if _, err := e.GetChangeID(); err != nil {
+		return nil, fmt.Errorf("failed to get change ID: %w", err)
 	}
 	return e, nil
 }
@@ -92,7 +93,9 @@ func (e *Event) MustGetChangeID() ChangeID {
 	changeID, err := e.GetChangeID()
 	if err != nil {
 		fmt.Printf("event with no change ID: %+v\n", e)
-		panic(err)
+		if os.Getenv("STRICT") == "true" {
+			panic(err)
+		}
 	}
 	return changeID
 }

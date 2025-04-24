@@ -1,3 +1,4 @@
+SLEEVECTRL_IMG ?= docker.io/tlg2132/sleeve-controller-manager:latest
 .PHONY: test
 test:
 	@echo "🧪 Running tests..."
@@ -35,10 +36,14 @@ deploy-webhook: push-webhook delete-webhook deploy-config
 	@echo "\n🚀 Deploying webhook..."
 	kubectl apply -f webhook/dev/manifests/webhook/
 
-.PHONY: docker-build-controllers
-docker-build-controllers:
+.PHONY: webhook
+webhook: docker-build-webhook deploy-webhook
+
+.PHONY: docker-build-sleevectrl
+docker-build-sleevectrl:
 	@echo "building sleeve-controller-manager docker image"
-	docker build -t sleeve-controller-manager:latest -f controller-manager/Dockerfile .
+	docker build -t $(SLEEVECTRL_IMG) -f controller-manager/Dockerfile .
+	kind load docker-image $(SLEEVECTRL_IMG)
 
 .PHONY: containers
 containers: docker-build-controllers docker-build-webhook

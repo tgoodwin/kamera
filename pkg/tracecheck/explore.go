@@ -210,7 +210,6 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	convergedStateChan := make(chan StateNode, 100)
 	executionHistoryChan := make(chan StateNode, 100)
-	doneChan := make(chan struct{}, 1)
 	errChan := make(chan error, 1)
 
 	seenConvergedStates := make(map[StateHash]StateNode)
@@ -220,7 +219,8 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	e.stats.Start()
 
 	go func() {
-		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, doneChan)
+		// TODO refactor to handle errors async like everythign else
+		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan)
 		if err != nil {
 			errChan <- err
 		}
@@ -229,25 +229,35 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 
+	// Ctrl-C cancels the search
+	go func() {
+		<-sigs
+		fmt.Println("received interrupt signal")
+		cancel()
+	}()
+
 	summarize := func(res *Result) {
 		fmt.Println("### Summary ###")
 		e.stats.Print()
 		res.Summarize()
 	}
 
-	processingComplete := false
-	for !processingComplete {
+	for convergedStateChan != nil || executionHistoryChan != nil {
 		select {
 		case convergedState, ok := <-convergedStateChan:
 			if !ok {
+				convergedStateChan = nil
 				continue // channel closed
 			}
 			stateKey := convergedState.Hash()
 			if _, seen := seenConvergedStates[stateKey]; !seen {
+				fmt.Println("adding converged state", stateKey)
 				seenConvergedStates[stateKey] = convergedState
 			}
 		case state, ok := <-executionHistoryChan:
 			if !ok {
+				fmt.Println("execution history channel closed")
+				executionHistoryChan = nil
 				continue // channel closed
 			}
 			stateKey := state.Hash()
@@ -255,26 +265,8 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 				executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
 			}
 			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], state.ExecutionHistory)
-
-		// explore finished entirely
-		case _, ok := <-doneChan:
-			if !ok {
-				continue
-			}
-			processingComplete = true
-
-		case <-sigs:
-			logger.Info("received signal, stopping exploration")
-			processingComplete = true
-			cancel()
 		}
 	}
-
-	defer func() {
-		close(convergedStateChan)
-		close(executionHistoryChan)
-		close(doneChan)
-	}()
 
 	// if we broke out early, collect partial results, summarize them, and return
 	result := &Result{ConvergedStates: make([]ConvergedState, 0)}
@@ -298,8 +290,12 @@ func (e *Explorer) explore(
 	initialState StateNode,
 	convergedStatesCh chan<- StateNode,
 	executionPathsCh chan<- StateNode,
-	doneCh chan<- struct{},
 ) error {
+	defer func() {
+		close(convergedStatesCh)
+		close(executionPathsCh)
+	}()
+
 	if e.config.MaxDepth == 0 {
 		e.config.MaxDepth = DefaultMaxDepth
 	}
@@ -402,6 +398,7 @@ func (e *Explorer) explore(
 				convergencesByDivergenceKey[currentState.divergenceKey] = append(convergencesByDivergenceKey[currentState.divergenceKey], stateKey)
 			}
 
+			fmt.Println("sending converged state", currentState.Hash())
 			convergedStatesCh <- currentState
 			continue
 		}
@@ -481,7 +478,6 @@ func (e *Explorer) explore(
 		}
 	}
 
-	doneCh <- struct{}{}
 	return nil
 }
 

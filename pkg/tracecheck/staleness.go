@@ -252,13 +252,6 @@ func NewKindKnowledge() *KindKnowledge {
 	}
 }
 
-func (k *KindKnowledge) Summarize() {
-	// for key, obj := range k.Objects {
-	// 	fmt.Println(key)
-	// 	fmt.Println("isDeleted", obj.IsDeleted, "num lifecycle events", len(obj.Events))
-	// }
-}
-
 func (k *KindKnowledge) AddEvent(e event.Event, eff Effect, rv ResourceVersion) StateEvent {
 	// Increment sequence
 	k.CurrentSequence++
