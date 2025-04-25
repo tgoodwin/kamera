@@ -219,7 +219,6 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	e.stats.Start()
 
 	go func() {
-		// TODO refactor to handle errors async like everythign else
 		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan)
 		if err != nil {
 			errChan <- err
@@ -247,18 +246,16 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 		case convergedState, ok := <-convergedStateChan:
 			if !ok {
 				convergedStateChan = nil
-				continue // channel closed
+				continue
 			}
 			stateKey := convergedState.Hash()
 			if _, seen := seenConvergedStates[stateKey]; !seen {
-				fmt.Println("adding converged state", stateKey)
 				seenConvergedStates[stateKey] = convergedState
 			}
 		case state, ok := <-executionHistoryChan:
 			if !ok {
-				fmt.Println("execution history channel closed")
 				executionHistoryChan = nil
-				continue // channel closed
+				continue
 			}
 			stateKey := state.Hash()
 			if _, seen := executionPathsToState[stateKey]; !seen {
@@ -380,7 +377,9 @@ func (e *Explorer) explore(
 			e.stats.UniqueNodeVisits++
 		}
 		executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
-		executionPathsCh <- currentState
+		if cancelled := sendWithCancel(ctx, executionPathsCh, currentState); cancelled {
+			return nil
+		}
 
 		if len(currentState.PendingReconciles) == 0 {
 			logger.WithValues(
@@ -399,7 +398,9 @@ func (e *Explorer) explore(
 			}
 
 			fmt.Println("sending converged state", currentState.Hash())
-			convergedStatesCh <- currentState
+			if cancelled := sendWithCancel(ctx, convergedStatesCh, currentState); cancelled {
+				return nil
+			}
 			continue
 		}
 
@@ -560,22 +561,6 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			stepLog.WithValues("Key", effect.Key).V(2).Info("marked object for deletion")
 			// the delete effect is valid, so we should add it to the state
 			prevState[effect.Key] = changeOV[effect.Key]
-			// TODO when properly implementing preconditions, test with this:
-			// "go run examples/zookeeper/cmd/main.go --search-depth 2"
-			// and then uncomment the code below
-
-			// logger.Info("warning: deleted key absent in state - ", effect.Key)
-			// logger.Info("frameID: ", frameID)
-			// logger.Info("true state:")
-			// for k := range state.Objects() {
-			// 	logger.Info(k)
-			// }
-			// logger.Info("observed state")
-			// for k := range observableState {
-			// 	logger.Info(k)
-			// }
-			// panic("deletion effect")
-			// delete(prevState, effect.Key)
 
 		case event.REMOVE:
 			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !ok {
@@ -706,7 +691,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return nil, errors.Wrap(err, "getting possible views")
 	}
 
-	possiblePastViews = e.priorityHandler.ApplyPriorities(possiblePastViews)
+	possiblePastViews = e.priorityHandler.AssignPriorities(possiblePastViews)
 	possiblePastViews = e.priorityHandler.PrioritizeViews(possiblePastViews)
 
 	// When we generate possible stale views for a controller at a certain depth in the execution,
@@ -810,4 +795,13 @@ func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput
 	}
 
 	return e.getNewPendingReconciles(stillPending, triggeredByChanges)
+}
+
+func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {
+	select {
+	case <-ctx.Done():
+		return true
+	case ch <- val:
+		return false
+	}
 }

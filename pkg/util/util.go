@@ -138,6 +138,7 @@ func PrettyPrintJSON(jsonStr string) (string, error) {
 	return prettyJSON.String(), nil
 }
 
+// MostCommenElementCount returns the count of the most common element in a slice.
 func MostCommonElementCount[T comparable](items []T) int {
 	if len(items) == 0 {
 		return 0

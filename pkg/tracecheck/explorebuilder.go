@@ -333,7 +333,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 	}
 
 	if b.priorityBuilder == nil {
-		b.priorityBuilder = NewPriorityBuilder()
+		b.priorityBuilder = NewPriorityStrategyBuilder()
 	}
 
 	// Create trigger manager
