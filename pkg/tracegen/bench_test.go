@@ -7,7 +7,7 @@ import (
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/sleeve/mocks"
-	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/emitter"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -21,7 +21,7 @@ func TestGetOperation(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockClient := mocks.NewMockClient(ctrl)
-	fileEmitter := event.NewFileEmitter("/dev/null")
+	fileEmitter := emitter.NewFileEmitter("/dev/null")
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -60,7 +60,7 @@ func BenchmarkGet(b *testing.B) {
 
 	// Setup
 	mockClient := mocks.NewMockClient(ctrl)
-	fileEmitter := event.NewFileEmitter("/dev/null")
+	fileEmitter := emitter.NewFileEmitter("/dev/null")
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -96,7 +96,7 @@ func BenchmarkGet(b *testing.B) {
 		instrumentedClient := &Client{
 			Client:       mockClient,
 			reconcilerID: "test-controller",
-			emitter:      &event.NoopEmitter{},
+			emitter:      &emitter.NoopEmitter{},
 			config:       NewConfig(),
 			tracker: &ContextTracker{
 				rc:         &ReconcileContext{},
@@ -146,7 +146,7 @@ func BenchmarkGet(b *testing.B) {
 		instrumentedClient := &Client{
 			Client:       mockClient,
 			reconcilerID: "test-controller",
-			emitter:      event.NewInMemoryEmitter(),
+			emitter:      emitter.NewInMemoryEmitter(),
 			config:       NewConfig(),
 			tracker: &ContextTracker{
 				rc:         &ReconcileContext{},
@@ -176,7 +176,7 @@ func BenchmarkUpdate(b *testing.B) {
 
 	// Setup
 	mockClient := mocks.NewMockClient(ctrl)
-	fileEmitter := event.NewFileEmitter("/dev/null")
+	fileEmitter := emitter.NewFileEmitter("/dev/null")
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -250,7 +250,7 @@ func BenchmarkCreate(b *testing.B) {
 
 	// Setup
 	mockClient := mocks.NewMockClient(ctrl)
-	fileEmitter := event.NewFileEmitter("/dev/null")
+	fileEmitter := emitter.NewFileEmitter("/dev/null")
 
 	templatePod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{

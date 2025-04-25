@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/emitter"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
@@ -42,7 +42,7 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
 	// eb.WithDebug()
-	eb.WithEmitter(event.NewInMemoryEmitter())
+	eb.WithEmitter(emitter.NewInMemoryEmitter())
 	eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
@@ -125,7 +125,7 @@ func TestExhaustiveInterleavings(t *testing.T) {
 func TestConvergedStateIdentification(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
-	eb.WithEmitter(event.NewInMemoryEmitter())
+	eb.WithEmitter(emitter.NewInMemoryEmitter())
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.

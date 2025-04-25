@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-logr/logr"
+	"github.com/tgoodwin/sleeve/pkg/emitter"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
@@ -28,7 +29,7 @@ type Client struct {
 
 	logger logr.Logger // legacy
 	// handles logging of events
-	emitter event.Emitter
+	emitter emitter.Emitter
 
 	config *Config
 
@@ -37,7 +38,7 @@ type Client struct {
 
 var _ client.Client = (*Client)(nil)
 
-func New(wrapped client.Client, reconcilerID string, emitter event.Emitter, tracker *ContextTracker) *Client {
+func New(wrapped client.Client, reconcilerID string, emitter emitter.Emitter, tracker *ContextTracker) *Client {
 	return &Client{
 		reconcilerID: reconcilerID,
 		Client:       wrapped,
@@ -53,7 +54,7 @@ func newClient(wrapped client.Client, id string) *Client {
 		reconcilerID: id,
 		Client:       wrapped,
 		logger:       log,
-		emitter:      event.NewLogEmitter(log),
+		emitter:      emitter.NewLogEmitter(log),
 		config:       NewConfig(),
 		tracker:      NewProdTracker(id),
 	}
@@ -63,7 +64,7 @@ func Wrap(c client.Client, id string) *Client {
 	return newClient(c, id)
 }
 
-func (c *Client) WithEmitter(emitter event.Emitter) *Client {
+func (c *Client) WithEmitter(emitter emitter.Emitter) *Client {
 	c.emitter = emitter
 	return c
 }

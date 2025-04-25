@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
 
+	"github.com/tgoodwin/sleeve/pkg/emitter"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
@@ -115,20 +116,20 @@ func hasSleeveLabels(in *admissionv1.AdmissionReview) bool {
 }
 
 type Handler struct {
-	emitter event.Emitter
+	emitter emitter.Emitter
 }
 
 // TODO de-hardcode
 func NewHandler() (*Handler, error) {
-	clientCfg := event.MinioConfig{
-		Endpoint:        event.ClusterInternalEndpoint,
+	clientCfg := emitter.MinioConfig{
+		Endpoint:        emitter.ClusterInternalEndpoint,
 		AccessKeyID:     "myaccesskey",
 		SecretAccessKey: "mysecretkey",
 		UseSSL:          false,
-		BucketName:      event.DefaultBucketName,
+		BucketName:      emitter.DefaultBucketName,
 	}
 
-	emitter, err := event.NewMinioEmitter(clientCfg)
+	emitter, err := emitter.NewMinioEmitter(clientCfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Minio emitter")
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/tgoodwin/sleeve/pkg/emitter"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -54,7 +55,7 @@ type frameExtractor func(ctx context.Context) string
 
 type ContextTracker struct {
 	rc           *ReconcileContext
-	emitter      event.Emitter
+	emitter      emitter.Emitter
 	getFrameID   frameExtractor
 	reconcilerID string
 
@@ -66,7 +67,7 @@ type ContextTracker struct {
 	mu sync.Mutex
 }
 
-func NewContextTracker(reconcilerID string, emitter event.Emitter, extract frameExtractor) *ContextTracker {
+func NewContextTracker(reconcilerID string, emitter emitter.Emitter, extract frameExtractor) *ContextTracker {
 	return &ContextTracker{
 		rc:           &ReconcileContext{},
 		getFrameID:   extract,
@@ -82,7 +83,7 @@ func NewProdTracker(reconcilerID string) *ContextTracker {
 			return string(ctrl.ReconcileIDFromContext(ctx))
 		},
 		reconcilerID: reconcilerID,
-		emitter:      event.NewLogEmitter(log),
+		emitter:      emitter.NewLogEmitter(log),
 	}
 }
 

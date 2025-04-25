@@ -12,7 +12,7 @@ import (
 
 	appsv1 "github.com/tgoodwin/sleeve/examples/chaos/api/v1"
 	controller "github.com/tgoodwin/sleeve/examples/chaos/internal/controller"
-	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/emitter"
 	tracecheck "github.com/tgoodwin/sleeve/pkg/tracecheck"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -50,7 +50,7 @@ func main() {
 	logger := zap.New(zap.UseDevMode(true))
 	log.SetLogger(logger)
 
-	eb.WithEmitter(event.NewDebugEmitter())
+	eb.WithEmitter(emitter.NewDebugEmitter())
 
 	topLevelObj := &appsv1.Orchestration{
 		ObjectMeta: metav1.ObjectMeta{

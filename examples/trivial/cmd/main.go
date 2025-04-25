@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/sleeve/pkg/emitter"
 	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
@@ -36,7 +36,7 @@ func main() {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
 	// eb.WithDebug()
-	eb.WithEmitter(event.NewInMemoryEmitter())
+	eb.WithEmitter(emitter.NewInMemoryEmitter())
 	eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
