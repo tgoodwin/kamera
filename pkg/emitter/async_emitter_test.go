@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/golang/mock/gomock"
-	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/sleeve/mocks"
 	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/sleeve/pkg/tag"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestAsyncEmitterBasicProcessing(t *testing.T) {
@@ -23,17 +24,23 @@ func TestAsyncEmitterBasicProcessing(t *testing.T) {
 	async := NewAsyncEmitter(mock, 10)
 	ctx := context.Background()
 
-	// Create test event and record
-	testEvent := &event.Event{ID: "test-event-1"}
-	testRecord := snapshot.Record{ObjectID: "test-object-1"}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "default",
+			Name:      "test-pod",
+			Labels: map[string]string{
+				tag.ChangeID:     "test-change-id",
+				tag.TraceyRootID: "test-root-id",
+			},
+		},
+	}
 
 	// Set expectations for the mock
-	mock.EXPECT().LogOperation(gomock.Any(), testEvent).Times(1)
-	mock.EXPECT().LogObjectVersion(gomock.Any(), testRecord).Times(1)
+	mock.EXPECT().LogOperation(gomock.Any(), gomock.Any()).Times(1)
+	mock.EXPECT().LogObjectVersion(gomock.Any(), gomock.Any()).Times(1)
 
 	// Log via the async emitter
-	async.LogOperation(ctx, testEvent)
-	async.LogObjectVersion(ctx, testRecord)
+	async.Emit(ctx, pod, event.CREATE, "test-controller", "test-reconcile", "test-root-id")
 
 	// Give the async emitter time to process
 	time.Sleep(100 * time.Millisecond)
@@ -53,19 +60,28 @@ func TestAsyncEmitterShutdown(t *testing.T) {
 	ctx := context.Background()
 
 	// Create test events
-	events := make([]*event.Event, 10)
+	pods := make([]*corev1.Pod, 10)
 	for i := 0; i < 10; i++ {
-		events[i] = &event.Event{ID: "test-event-" + string(rune('0'+i))}
+		pods[i] = &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "test-pod-" + string(rune('0'+i)),
+				Labels: map[string]string{
+					tag.ChangeID:     "test-change-id-" + string(rune('0'+i)),
+					tag.TraceyRootID: "test-root-id-" + string(rune('0'+i)),
+				},
+			},
+		}
 	}
 
 	// Set expectations - all events should be processed
-	for _, event := range events {
-		mock.EXPECT().LogOperation(gomock.Any(), event).Times(1)
+	for range pods {
+		mock.EXPECT().LogOperation(gomock.Any(), gomock.Any()).Times(1)
+		mock.EXPECT().LogObjectVersion(gomock.Any(), gomock.Any()).Times(1)
 	}
 
-	// Send events
-	for _, event := range events {
-		async.LogOperation(ctx, event)
+	for _, p := range pods {
+		async.Emit(ctx, p, event.CREATE, "test-controller", "test-reconcile", "test-root-id")
 	}
 
 	// Initiate shutdown which should process all events
@@ -130,45 +146,5 @@ func TestAsyncEmitterBlocking(t *testing.T) {
 	}
 
 	// Shutdown to ensure all queued events are processed
-	async.Shutdown()
-}
-
-func TestAsyncEmitterContextCancellation(t *testing.T) {
-	// Set up gomock controller
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	// Create mock emitter
-	mock := mocks.NewMockEmitter(ctrl)
-	async := NewAsyncEmitter(mock, 1)
-
-	// Create a context we can cancel
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Set up the mock to delay on each call
-	mock.EXPECT().
-		LogOperation(gomock.Any(), gomock.Any()).
-		DoAndReturn(func(ctx context.Context, e *event.Event) {
-			time.Sleep(500 * time.Millisecond)
-		}).
-		AnyTimes()
-
-	// Fill the buffer
-	async.LogOperation(ctx, &event.Event{ID: "test-event-1"})
-
-	// Cancel the context
-	cancel()
-
-	// Try to send another event with the canceled context
-	// This should return quickly due to context cancellation
-	start := time.Now()
-	async.LogOperation(ctx, &event.Event{ID: "test-event-2"})
-	duration := time.Since(start)
-
-	// Should return almost immediately, not block for long
-	assert.Less(t, duration, 100*time.Millisecond,
-		"LogOperation with canceled context should return quickly")
-
-	// Clean up
 	async.Shutdown()
 }

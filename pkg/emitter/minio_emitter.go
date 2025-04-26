@@ -15,6 +15,7 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -155,6 +156,15 @@ func DefaultMinioEmitter() (*MinioEmitter, error) {
 	}
 
 	return NewMinioEmitter(config)
+}
+
+func (m *MinioEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
+	e, _ := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	m.LogOperation(ctx, e)
+	r, _ := snapshot.AsRecord(obj, reconcileID)
+	r.OperationID = e.ID
+	r.OperationType = string(opType)
+	m.LogObjectVersion(ctx, *r)
 }
 
 // LogOperation implements the Emitter interface to store operation events in Minio

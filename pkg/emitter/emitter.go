@@ -10,11 +10,13 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type Emitter interface {
 	LogOperation(ctx context.Context, e *event.Event)
 	LogObjectVersion(ctx context.Context, r snapshot.Record)
+	Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string)
 }
 
 type LogEmitter struct {
@@ -25,6 +27,15 @@ var _ Emitter = (*LogEmitter)(nil)
 
 func NewLogEmitter(logger logr.Logger) *LogEmitter {
 	return &LogEmitter{logger: logger}
+}
+
+func (l *LogEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
+	e, _ := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	eventJSON, err := json.Marshal(e)
+	if err != nil {
+		panic("failed to serialize event")
+	}
+	l.logger.WithValues("LogType", tag.ControllerOperationKey).Info(string(eventJSON))
 }
 
 func (l *LogEmitter) LogOperation(ctx context.Context, e *event.Event) {
@@ -47,25 +58,49 @@ type NoopEmitter struct{}
 
 var _ Emitter = (*NoopEmitter)(nil)
 
+func (n *NoopEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
+	// No operation
+}
+
 func (n *NoopEmitter) LogOperation(ctx context.Context, e *event.Event) {}
 
 func (n *NoopEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {}
 
 type FileEmitter struct {
 	filePath string
+	file     *os.File
 }
 
 var _ Emitter = (*FileEmitter)(nil)
 
 func NewFileEmitter(filePath string) *FileEmitter {
-	// Clear the file if it already exists
-	file, err := os.OpenFile(filePath, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0644)
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
-		panic("failed to clear file")
+		panic("failed to open file")
 	}
-	file.Close()
 
-	return &FileEmitter{filePath: filePath}
+	return &FileEmitter{
+		filePath: filePath,
+		file:     file,
+	}
+}
+
+func (f *FileEmitter) Close() {
+	if err := f.file.Close(); err != nil {
+		panic("failed to close file")
+	}
+}
+
+func (f *FileEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
+	e, _ := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	f.LogOperation(ctx, e)
+	r, err := snapshot.AsRecord(obj, reconcileID)
+	if err != nil {
+		panic("failed to serialize record")
+	}
+	r.OperationID = e.ID
+	r.OperationType = string(opType)
+	f.LogObjectVersion(ctx, *r)
 }
 
 func (f *FileEmitter) LogOperation(ctx context.Context, e *event.Event) {
@@ -85,14 +120,8 @@ func (f *FileEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
 }
 
 func (f *FileEmitter) appendToFile(data string) {
-	file, err := os.OpenFile(f.filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		panic("failed to open file")
-	}
-	defer file.Close()
-
-	if _, err := file.WriteString(data + "\n"); err != nil {
-		panic("failed to write to file")
+	if _, err := f.file.WriteString(data + "\n"); err != nil {
+		panic("failed to write to file: " + err.Error())
 	}
 }
 
@@ -108,6 +137,15 @@ func NewInMemoryEmitter() *InMemoryEmitter {
 		eventsByReconcileID:  make(map[string][]*event.Event),
 		recordsByOperationID: make(map[string][]snapshot.Record),
 	}
+}
+
+func (i *InMemoryEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
+	e, _ := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	i.LogOperation(ctx, e)
+	r, _ := snapshot.AsRecord(obj, reconcileID)
+	r.OperationID = e.ID
+	r.OperationType = string(opType)
+	i.LogObjectVersion(ctx, *r)
 }
 
 func (i *InMemoryEmitter) LogOperation(ctx context.Context, e *event.Event) {
@@ -167,6 +205,18 @@ func NewDebugEmitter() *DebugEmitter {
 		fileEmitter:     NewFileEmitter("debug.jsonl"),
 		InMemoryEmitter: NewInMemoryEmitter(),
 	}
+}
+
+func (d *DebugEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
+	e, _ := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	d.LogOperation(ctx, e)
+	r, err := snapshot.AsRecord(obj, reconcileID)
+	if err != nil {
+		panic("failed to serialize record")
+	}
+	r.OperationID = e.ID
+	r.OperationType = string(opType)
+	d.LogObjectVersion(ctx, *r)
 }
 
 func (d *DebugEmitter) LogOperation(ctx context.Context, e *event.Event) {

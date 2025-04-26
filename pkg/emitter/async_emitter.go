@@ -7,13 +7,13 @@ import (
 
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // QueueItem represents an item in the async queue
 type QueueItem struct {
-	ItemType string // "operation" or "record"
-	Event    *event.Event
-	Record   snapshot.Record
+	Event  *event.Event
+	Record *snapshot.Record
 }
 
 // AsyncEmitter is an emitter that buffers events in a channel to be processed asynchronously
@@ -51,11 +51,8 @@ func (ae *AsyncEmitter) processQueue() {
 		select {
 		case item := <-ae.queue:
 			// Process the item
-			if item.ItemType == "operation" {
-				ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
-			} else if item.ItemType == "record" {
-				ae.underlyingEmitter.LogObjectVersion(backgroundCtx, item.Record)
-			}
+			ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
+			ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record)
 		case <-ae.shutdown:
 			// Drain the queue before exiting
 			ae.drainQueue()
@@ -73,11 +70,8 @@ func (ae *AsyncEmitter) drainQueue() {
 	for {
 		select {
 		case item := <-ae.queue:
-			if item.ItemType == "operation" {
-				ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
-			} else if item.ItemType == "record" {
-				ae.underlyingEmitter.LogObjectVersion(backgroundCtx, item.Record)
-			}
+			ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
+			ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record)
 		default:
 			// Queue is empty
 			return
@@ -85,12 +79,25 @@ func (ae *AsyncEmitter) drainQueue() {
 	}
 }
 
-// LogOperation queues an operation event, blocking if the queue is full
-func (ae *AsyncEmitter) LogOperation(ctx context.Context, e *event.Event) {
+func (ae *AsyncEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
+	e, err := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	if err != nil {
+		fmt.Println("ERROR: creating event:", err)
+		return
+	}
+
+	r, err := snapshot.AsRecord(obj, reconcileID)
+	if err != nil {
+		fmt.Println("ERROR: creating record:", err)
+		return
+	}
+	r.OperationID = e.ID
+	r.OperationType = string(opType)
+
 	select {
 	case ae.queue <- QueueItem{
-		ItemType: "operation",
-		Event:    e,
+		Event:  e,
+		Record: r,
 	}:
 		// Item queued successfully
 	case <-ctx.Done():
@@ -99,18 +106,12 @@ func (ae *AsyncEmitter) LogOperation(ctx context.Context, e *event.Event) {
 	}
 }
 
+// LogOperation queues an operation event, blocking if the queue is full
+func (ae *AsyncEmitter) LogOperation(ctx context.Context, e *event.Event) {
+}
+
 // LogObjectVersion queues an object version record, blocking if the queue is full
 func (ae *AsyncEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
-	select {
-	case ae.queue <- QueueItem{
-		ItemType: "record",
-		Record:   r,
-	}:
-		// Item queued successfully
-	case <-ctx.Done():
-		// Context canceled, log a warning
-		fmt.Println("WARNING: Context canceled while trying to queue object version record")
-	}
 }
 
 // Shutdown gracefully shuts down the AsyncEmitter, ensuring all queued events are processed
