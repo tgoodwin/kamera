@@ -10,7 +10,6 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/sleeve/pkg/emitter"
 	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -102,28 +101,8 @@ func (c *Client) LogOperation(ctx context.Context, obj client.Object, op event.O
 		return
 	}
 	reconcileID := c.tracker.rc.GetReconcileID()
-	event, err := event.NewOperation(obj, reconcileID, c.reconcilerID, c.tracker.rc.GetRootID(reconcileID), op)
-	if err != nil {
-		c.logger.Error(err, "creating event")
-		if c.tracker.strict {
-			panic(err)
-		}
-		return
-	}
-	r, err := snapshot.AsRecord(obj, reconcileID)
-	if err != nil {
-		c.logger.Error(err, "creating record")
-		if c.tracker.strict {
-			panic(err)
-		}
-		return
-	}
-	c.emitter.LogOperation(ctx, event)
-
-	// associate the operation with the object's snapshot
-	r.OperationID = event.ID
-	r.OperationType = string(op)
-	c.emitter.LogObjectVersion(ctx, *r)
+	rootID := c.tracker.rc.GetRootID(reconcileID)
+	c.emitter.Emit(ctx, obj, op, c.reconcilerID, reconcileID, rootID)
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {

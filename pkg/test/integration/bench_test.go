@@ -2,6 +2,10 @@ package test
 
 import (
 	"context"
+	"os"
+	"runtime/pprof"
+
+	_ "net/http/pprof"
 	"strconv"
 	"testing"
 
@@ -72,76 +76,119 @@ func SetupFakeClient() client.Client {
 // run with go test -bench=BenchmarkReconcile_ -benchmem ./...
 // ------------------------------------------
 func BenchmarkReconcile_Baseline(b *testing.B) {
-	b.ReportAllocs()
-	ctx := context.Background()
+	withProfiles(b, "cpu_baseline.pprof", "heap_baseline.pprof", func(b *testing.B) {
+		b.ReportAllocs()
+		ctx := context.Background()
 
-	baseClient := SetupFakeClient()
-	reconciler := &RealisticReconciler{client: baseClient}
+		baseClient := SetupFakeClient()
+		reconciler := &RealisticReconciler{client: baseClient}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-1"},
-		})
-	}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-1"},
+			})
+		}
+	})
 }
 
 func BenchmarkReconcile_InlineEmitter(b *testing.B) {
-	b.ReportAllocs()
-	ctx := context.Background()
+	withProfiles(b, "cpu_inline.pprof", "heap_inline.pprof", func(b *testing.B) {
+		b.ReportAllocs()
+		ctx := context.Background()
 
-	emitter := emitter.NewFileEmitter("/dev/null")
-	baseClient := SetupFakeClient()
-	frameExtractor := func(ctx context.Context) string { return "test-frame" }
-	instrumented := tracegen.New(
-		baseClient,
-		"test-reconciler",
-		emitter,
-		tracegen.NewContextTracker(
+		emitter := emitter.NewFileEmitter("/dev/null")
+		defer emitter.Close()
+
+		baseClient := SetupFakeClient()
+		frameExtractor := func(ctx context.Context) string { return "test-frame" }
+		instrumented := tracegen.New(
+			baseClient,
 			"test-reconciler",
 			emitter,
-			frameExtractor,
-		),
-	)
+			tracegen.NewContextTracker(
+				"test-reconciler",
+				emitter,
+				frameExtractor,
+			),
+		)
 
-	reconciler := &RealisticReconciler{client: instrumented}
+		reconciler := &RealisticReconciler{client: instrumented}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-1"},
-		})
-	}
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-1"},
+			})
+		}
+	})
 }
 
 func BenchmarkReconcile_AsyncEmitter(b *testing.B) {
-	b.ReportAllocs()
-	ctx := context.Background()
+	withProfiles(b, "cpu_async.pprof", "heap_async.pprof", func(b *testing.B) {
+		b.ReportAllocs()
+		ctx := context.Background()
 
-	baseClient := SetupFakeClient()
-	asyncEmitter := emitter.NewAsyncEmitter(
-		emitter.NewFileEmitter("/dev/null"),
-		500,
-	)
+		baseClient := SetupFakeClient()
+		fileEmitter := emitter.NewFileEmitter("/dev/null")
+		// defer fileEmitter.Close()
 
-	frameExtractor := func(ctx context.Context) string { return "test-frame" }
-	instrumented := tracegen.New(
-		baseClient,
-		"test-reconciler",
-		asyncEmitter,
-		tracegen.NewContextTracker(
+		asyncEmitter := emitter.NewAsyncEmitter(
+			fileEmitter,
+			1000,
+		)
+
+		frameExtractor := func(ctx context.Context) string { return "test-frame" }
+		instrumented := tracegen.New(
+			baseClient,
 			"test-reconciler",
 			asyncEmitter,
-			frameExtractor,
-		),
-	)
+			tracegen.NewContextTracker(
+				"test-reconciler",
+				asyncEmitter,
+				frameExtractor,
+			),
+		)
 
-	reconciler := &RealisticReconciler{client: instrumented}
+		reconciler := &RealisticReconciler{client: instrumented}
 
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = reconciler.Reconcile(ctx, ctrl.Request{
-			NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-1"},
-		})
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, _ = reconciler.Reconcile(ctx, ctrl.Request{
+				NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-1"},
+			})
+		}
+	})
+}
+
+func withProfiles(b *testing.B, cpuProfileFilename, heapProfileFilename string, fn func(b *testing.B)) {
+	// Create CPU profile file
+	cpuFile, err := os.Create(cpuProfileFilename)
+	if err != nil {
+		b.Fatalf("could not create CPU profile: %v", err)
+	}
+	defer cpuFile.Close()
+
+	// Start CPU profiling
+	if err := pprof.StartCPUProfile(cpuFile); err != nil {
+		b.Fatalf("could not start CPU profile: %v", err)
+	}
+
+	// Run the actual benchmark
+	fn(b)
+
+	// Stop CPU profiling
+	pprof.StopCPUProfile()
+
+	// Create Heap profile file
+	heapFile, err := os.Create(heapProfileFilename)
+	if err != nil {
+		b.Fatalf("could not create heap profile: %v", err)
+	}
+	defer heapFile.Close()
+
+	// Write current heap profile
+	if err := pprof.WriteHeapProfile(heapFile); err != nil {
+		b.Fatalf("could not write heap profile: %v", err)
 	}
 }
