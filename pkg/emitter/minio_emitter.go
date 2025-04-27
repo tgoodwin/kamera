@@ -159,7 +159,11 @@ func DefaultMinioEmitter() (*MinioEmitter, error) {
 }
 
 func (m *MinioEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
-	e, _ := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	e, err := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	if err != nil {
+		// for now, just log it
+		fmt.Printf("ERROR: creating event: %v\n", err)
+	}
 	m.LogOperation(ctx, e)
 	r, _ := snapshot.AsRecord(obj, reconcileID)
 	r.OperationID = e.ID

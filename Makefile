@@ -1,4 +1,4 @@
-SLEEVECTRL_IMG ?= docker.io/tlg2132/sleeve-controller-manager:latest
+CLUSTER_NAME ?= operator-perf-test
 .PHONY: test
 test:
 	@echo "🧪 Running tests..."
@@ -19,7 +19,7 @@ docker-build-webhook:
 .PHONY: push-webhook
 push-webhook: docker-build-webhook
 	@echo "\n📦 Pushing admission-webhook image into Kind's Docker daemon..."
-	kind load docker-image simple-kubernetes-webhook:latest
+	kind load docker-image simple-kubernetes-webhook:latest --name $(CLUSTER_NAME)
 
 .PHONY: deploy-config
 deploy-config:
@@ -32,18 +32,18 @@ delete-webhook:
 	kubectl delete -f webhook/dev/manifests/webhook/ || true
 
 .PHONY: deploy-webhook
-deploy-webhook: push-webhook delete-webhook deploy-config
+deploy-webhook: delete-webhook deploy-config
 	@echo "\n🚀 Deploying webhook..."
 	kubectl apply -f webhook/dev/manifests/webhook/
 
 .PHONY: webhook
-webhook: docker-build-webhook deploy-webhook
+webhook: push-webhook deploy-webhook
 
 .PHONY: docker-build-sleevectrl
 docker-build-sleevectrl:
 	@echo "building sleeve-controller-manager docker image"
-	docker build -t $(SLEEVECTRL_IMG) -f sleevectrl/Dockerfile .
-	kind load docker-image $(SLEEVECTRL_IMG)
+	docker build -t sleeve-controller-manager:latest -f sleevectrl/Dockerfile .
+	kind load docker-image sleeve-controller-manager:latest --name $(CLUSTER_NAME)
 
 .PHONY: containers
 containers: docker-build-controllers docker-build-webhook

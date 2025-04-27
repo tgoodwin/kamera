@@ -27,7 +27,8 @@ spec:
         args:
           - --health-probe-bind-address=:8081
           - --metrics-bind-address=:8080
-        image: docker.io/tlg2132/sleeve-controller-manager:latest
+        image: sleeve-controller-manager:latest
+        imagePullPolicy: Never
         name: manager
         securityContext:
           allowPrivilegeEscalation: false
@@ -53,5 +54,14 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
+        env:
+        - name: SLEEVE_MINIO_ENDPOINT
+          value: minio-svc.sleeve-system.svc.cluster.local:9000
+        - name: SLEEVE_MINIO_ACCESS_KEY
+          value: myaccesskey
+        - name: SLEEVE_MINIO_SECRET_KEY
+          value: mysecretkey
+        - name: SLEEVE_MINIO_BUCKET
+          value: sleeve
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10

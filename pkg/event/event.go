@@ -50,7 +50,7 @@ func NewOperation(obj client.Object, reconcileID, controllerID, rootEventID stri
 	}
 	// post construction validation
 	if _, err := e.GetChangeID(); err != nil {
-		return nil, fmt.Errorf("failed to get change ID: %w", err)
+		return e, fmt.Errorf("failed to get change ID: %w", err)
 	}
 	return e, nil
 }

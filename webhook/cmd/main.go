@@ -31,8 +31,14 @@ var UsernameSubstringValidationWhitelist = []string{
 	"system:node",               // kubelet
 	"garbage-collector",         // default garbage collector
 	"pvc-protection-controller", // removes finalizers from PVCs
-	"sleeve-system:sleevectrl",
-	"sleeve:controller-user", // the rest.Impersonate username when running controllers locally to distinguish from whatever it picks up in ~/.kube/config
+	"sleeve-system:controller-manager",
+	"kube-scheduler",
+
+	util.SleeveControllerUsername, // the rest.Impersonate username when running controllers locally to distinguish from whatever it picks up in ~/.kube/config
+	"cass-operator",
+
+	// uncomment to let kube-system service accounts through
+	// "kube-system",
 }
 
 func main() {
@@ -172,6 +178,11 @@ func (s *Handler) ServeTagResource(w http.ResponseWriter, r *http.Request) {
 
 	// only label the object if it doesn't already have a propagated root label
 	if cameFromTheOutside(in) && notTaggedYet(labels) {
+		logger.WithFields(logrus.Fields{
+			"requestID": in.Request.UID,
+			"objectID":  wl.ObjectMeta.UID,
+			"userInfo":  in.Request.UserInfo.Username,
+		}).Info("tagging object")
 		// set the top-level label, which is used to track
 		// causal relationships between downstream events.
 		// also assign a unique object ID to the object to be consistent
@@ -273,17 +284,6 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 		logger.Error(err, "capturing object removal event")
 	}
 
-	// this requires explicitly impersonating the sleeve controller user
-	// in he controller setup configuration:
-	// 	cfg := ctrl.GetConfigOrDie()
-	// cfg.Impersonate = rest.ImpersonationConfig{
-	// 	UserName: "sleeve:controller-user",
-	// 	Groups:   []string{"system:masters"},
-	// }
-	// mgr, err := ctrl.NewManager(cfg, options)
-
-	isSleeve := in.Request.UserInfo.Username == util.SleeveControllerUsername
-
 	if cameFromOutside {
 		logger.WithField("userinfo", in.Request.UserInfo).Debug("logging external declaration event")
 		err := h.emitDeclarativeEvent(in.Request)
@@ -291,20 +291,6 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 			logger.Error(err)
 			return
 		}
-	}
-
-	var message string
-	switch {
-	case cameFromOutside:
-		message = "external request"
-	case hasSleeveTags:
-		message = "Has sleeve tags"
-	case canBypass:
-		message = fmt.Sprintf("user %s whitelisted: can bypass validation", in.Request.UserInfo.Username)
-	case isSleeve:
-		message = "you are sleeve"
-	default:
-		message = "sleeve tags are required for this namespace"
 	}
 
 	// I removed the `hasSleeveTags` check because it was allowing some
@@ -315,12 +301,13 @@ func (h *Handler) ServeValidateResource(w http.ResponseWriter, r *http.Request) 
 	// but they do not fully become ready (as the core statefulset controller is no longer helping).
 	// creating / deleting is all I really need for the bug I am experimenting with, so I will leave
 	// the code as it is now.
-	// - TODO - get the sleeve:statefulset-controller working so it doesnt need help
-	allowed := cameFromOutside || isSleeve || canBypass
+	// - TODO - get the sleeve:statefulset-controller working so it doesnt need "help" from the actual controller
+	allowed := cameFromOutside || canBypass
 	statusCode := http.StatusForbidden
 	if allowed {
 		statusCode = http.StatusAccepted
 	}
+	message := fmt.Sprintf("cameFromOutside: %t, hasSleeveTags: %t, whitelisted: %t", cameFromOutside, hasSleeveTags, canBypass)
 
 	logger.WithFields(logrus.Fields{
 		"requestID":       in.Request.UID,

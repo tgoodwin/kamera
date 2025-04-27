@@ -77,14 +77,12 @@ func NewContextTracker(reconcilerID string, emitter emitter.Emitter, extract fra
 }
 
 func NewProdTracker(reconcilerID string) *ContextTracker {
-	return &ContextTracker{
-		rc: &ReconcileContext{},
-		getFrameID: func(ctx context.Context) string {
-			return string(ctrl.ReconcileIDFromContext(ctx))
-		},
-		reconcilerID: reconcilerID,
-		emitter:      emitter.NewLogEmitter(log),
+	emitter := emitter.NewLogEmitter(log)
+	extractorFn := func(ctx context.Context) string {
+		return string(ctrl.ReconcileIDFromContext(ctx))
 	}
+
+	return NewContextTracker(reconcilerID, emitter, extractorFn)
 }
 
 func (ct *ContextTracker) handleError(msg string) {

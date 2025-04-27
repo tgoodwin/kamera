@@ -108,7 +108,6 @@ func (c *Client) LogOperation(ctx context.Context, obj client.Object, op event.O
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	currLabels := obj.GetLabels()
 	tag.AddSleeveObjectID(obj)
-	// tag.EnsureSleeveFinalizer(obj)
 	tag.LabelChange(obj)
 	c.tracker.propagateLabels(obj)
 
@@ -178,7 +177,6 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		item := itemsValue.Index(i).Addr().Interface().(client.Object)
 		// instead of treating the LIST operation as a singular observation event,
 		// we treat each item in the list as a separate event
-		c.tracker.TrackOperation(ctx, item, event.LIST)
 		c.LogOperation(ctx, item, event.LIST)
 		out = reflect.Append(out, itemsValue.Index(i))
 	}
