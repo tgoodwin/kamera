@@ -42,7 +42,7 @@ webhook: docker-build-webhook deploy-webhook
 .PHONY: docker-build-sleevectrl
 docker-build-sleevectrl:
 	@echo "building sleeve-controller-manager docker image"
-	docker build -t $(SLEEVECTRL_IMG) -f controller-manager/Dockerfile .
+	docker build -t $(SLEEVECTRL_IMG) -f sleevectrl/Dockerfile .
 	kind load docker-image $(SLEEVECTRL_IMG)
 
 .PHONY: containers
