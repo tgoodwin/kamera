@@ -27,22 +27,33 @@ import (
 
 var KUBECTL_USERNAME = "kubernetes-admin"
 
-var UsernameSubstringValidationWhitelist = []string{
-	"system:node",               // kubelet
-	"garbage-collector",         // default garbage collector
-	"pvc-protection-controller", // removes finalizers from PVCs
-	"sleeve-system:controller-manager",
-	"kube-scheduler",
+var UsernameSubstringValidationWhitelist []string
 
-	util.SleeveControllerUsername, // the rest.Impersonate username when running controllers locally to distinguish from whatever it picks up in ~/.kube/config
-	"cass-operator",
+func init() {
+	whitelist := os.Getenv("USERNAME_VALIDATION_WHITELIST")
+	if whitelist != "" {
+		UsernameSubstringValidationWhitelist = strings.Split(whitelist, ",")
+	} else {
+		UsernameSubstringValidationWhitelist = []string{
+			"system:node",               // kubelet
+			"garbage-collector",         // default garbage collector
+			"pvc-protection-controller", // removes finalizers from PVCs
+			"sleeve-system:controller-manager",
+			"kube-scheduler",
 
-	// uncomment to let kube-system service accounts through
-	// "kube-system",
+			util.SleeveControllerUsername, // the rest.Impersonate username when running controllers locally to distinguish from whatever it picks up in ~/.kube/config
+			"cass-operator",
+
+			// uncomment to let kube-system service accounts through
+			// "kube-system",
+		}
+	}
 }
 
 func main() {
 	setLogger()
+
+	logrus.Print("Username Whitelist: ", UsernameSubstringValidationWhitelist)
 
 	handler, err := NewHandler()
 	if err != nil {
