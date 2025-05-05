@@ -15,7 +15,6 @@ import (
 	// Import meta package for EachListItem
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -155,25 +154,37 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		return err
 	}
 
-	// This is generally more efficient and safer than manual reflection.
-	err = meta.EachListItem(list, func(obj runtime.Object) error {
-		// The object returned by EachListItem is runtime.Object.
-		// We need to convert it to client.Object for LogOperation.
-		clientObj, ok := obj.(client.Object)
-		if !ok {
-			// Log an error if conversion fails, but don't stop the iteration
-			// unless absolutely necessary. This might happen for non-standard list types.
-			c.logger.Error(fmt.Errorf("item in list is not a client.Object: %T", obj), "List logging error")
-			return nil // Continue iterating
-		}
-		// Log each item using the converted object
-		c.LogOperation(ctx, clientObj, event.LIST)
-		return nil // Continue iteration
-	})
+	listCopy := list.DeepCopyObject()
 
-	if err != nil {
-		c.logger.Error(err, "Error during list item iteration/logging")
-	}
+	go func(bgCtx context.Context, bgList runtime.Object) {
+		bgLogger := c.logger.WithValues("goroutine", "list_logger")
+		bgLogger.Info("Starting list item logging")
+		itererr := meta.EachListItem(list, func(obj runtime.Object) error {
+			select {
+			case <-bgCtx.Done():
+				bgLogger.V(1).Info("Context cancelled during list item logging iteration")
+				return bgCtx.Err() // Stop iteration if context is cancelled
+			default:
+			}
+			// The object returned by EachListItem is runtime.Object.
+			// We need to convert it to client.Object for LogOperation.
+			clientObj, ok := obj.(client.Object)
+			if !ok {
+				// Log an error if conversion fails, but don't stop the iteration
+				// unless absolutely necessary. This might happen for non-standard list types.
+				bgLogger.Error(fmt.Errorf("item in list is not a client.Object: %T", obj), "List logging error")
+				return nil // Continue iterating
+			}
+			// Log each item using the converted object
+			c.LogOperation(bgCtx, clientObj, event.LIST)
+			return nil // Continue iteration
+		})
+
+		if itererr != nil {
+			bgLogger.Error(itererr, "Error during list item iteration/logging")
+		}
+
+	}(ctx, listCopy)
 
 	return nil
 }
@@ -204,31 +215,4 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 	}
 	c.LogOperation(ctx, objPrePropagation, event.PATCH)
 	return nil
-}
-
-// --- Status Subresource and Pass-Through Methods ---
-// (Status, GroupVersionKindFor, IsObjectNamespaced, Scheme, RESTMapper
-// remain the same, delegating to the embedded c.Client which is the MetricsWrapper)
-
-func (c *Client) Status() client.StatusWriter {
-	// Delegate to the embedded MetricsWrapper's Status() method.
-	// The MetricsWrapper's Status() returns a writer that calls its own
-	// instrumented Update/Patch methods.
-	return c.Client.Status()
-}
-
-func (c *Client) GroupVersionKindFor(obj runtime.Object) (schema.GroupVersionKind, error) {
-	return c.Client.GroupVersionKindFor(obj)
-}
-
-func (c *Client) IsObjectNamespaced(obj runtime.Object) (bool, error) {
-	return c.Client.IsObjectNamespaced(obj)
-}
-
-func (c *Client) Scheme() *runtime.Scheme {
-	return c.Client.Scheme()
-}
-
-func (c *Client) RESTMapper() meta.RESTMapper {
-	return c.Client.RESTMapper()
 }
