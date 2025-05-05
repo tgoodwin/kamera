@@ -74,13 +74,19 @@ func MinioConfigFromEnv() (MinioConfig, error) {
 		return MinioConfig{}, err
 	}
 
+	skipObjectVersions, _ := getEnvBool("SKIP_OBJECT_VERSIONS", false)
+	if skipObjectVersions {
+		fmt.Println("SKIP_OBJECT_VERSIONS is set to true, object versions will not be logged")
+	}
+
 	return MinioConfig{
-		Endpoint:        endpoint,
-		AccessKeyID:     accessKey,
-		SecretAccessKey: secretKey,
-		BucketName:      bucket,
-		UseSSL:          useSSL,
-		UseCompression:  useCompression,
+		Endpoint:           endpoint,
+		AccessKeyID:        accessKey,
+		SecretAccessKey:    secretKey,
+		BucketName:         bucket,
+		UseSSL:             useSSL,
+		UseCompression:     useCompression,
+		skipObjectVersions: skipObjectVersions,
 	}, nil
 }
 
@@ -88,21 +94,21 @@ const DefaultBucketName = "sleeve"
 const ClusterInternalEndpoint = "minio-svc.sleeve-system.svc.cluster.local:9000"
 const ClusterExternalEndpoint = "localhost:9000"
 
-// MinioEmitter implements the Emitter interface to store event data in a Minio bucket
-type MinioEmitter struct {
-	client         *minio.Client
-	bucketName     string
-	useCompression bool
-}
-
 // MinioConfig holds configuration for connecting to a Minio server
 type MinioConfig struct {
-	Endpoint        string
-	AccessKeyID     string
-	SecretAccessKey string
-	UseSSL          bool
-	BucketName      string
-	UseCompression  bool
+	Endpoint           string
+	AccessKeyID        string
+	SecretAccessKey    string
+	UseSSL             bool
+	BucketName         string
+	UseCompression     bool
+	skipObjectVersions bool
+}
+
+// MinioEmitter implements the Emitter interface to store event data in a Minio bucket
+type MinioEmitter struct {
+	client *minio.Client
+	config MinioConfig
 }
 
 func getBucketClient(config MinioConfig) (*minio.Client, error) {
@@ -139,9 +145,8 @@ func NewMinioEmitter(config MinioConfig) (*MinioEmitter, error) {
 		return nil, err
 	}
 	return &MinioEmitter{
-		client:         client,
-		bucketName:     config.BucketName,
-		useCompression: config.UseCompression,
+		client: client,
+		config: config,
 	}, nil
 }
 
@@ -165,10 +170,12 @@ func (m *MinioEmitter) Emit(ctx context.Context, obj client.Object, opType event
 		fmt.Printf("ERROR: creating event: %v\n", err)
 	}
 	m.LogOperation(ctx, e)
-	r, _ := snapshot.AsRecord(obj, reconcileID)
-	r.OperationID = e.ID
-	r.OperationType = string(opType)
-	m.LogObjectVersion(ctx, *r)
+	if !m.config.skipObjectVersions {
+		r, _ := snapshot.AsRecord(obj, reconcileID)
+		r.OperationID = e.ID
+		r.OperationType = string(opType)
+		m.LogObjectVersion(ctx, *r)
+	}
 }
 
 // LogOperation implements the Emitter interface to store operation events in Minio
@@ -190,7 +197,7 @@ func (m *MinioEmitter) LogOperation(ctx context.Context, e *event.Event) {
 	contentType := "application/json"
 	_, err = m.client.PutObject(
 		ctx,
-		m.bucketName,
+		m.config.BucketName,
 		objectName,
 		bytes.NewReader(eventJSON),
 		int64(len(eventJSON)),
@@ -224,7 +231,7 @@ func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) 
 	contentType := "application/json"
 	_, err = m.client.PutObject(
 		ctx,
-		m.bucketName,
+		m.config.BucketName,
 		objectName,
 		bytes.NewReader(recordJSON),
 		int64(len(recordJSON)),
