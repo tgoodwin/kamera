@@ -93,10 +93,6 @@ func AsRecord(obj client.Object, frameID string) (*Record, error) {
 		unstructuredObj.SetKind(kind)
 	}
 
-	if unstructuredObj.GetAPIVersion() == "" {
-		return nil, fmt.Errorf("APIVersion not set on object: %v", obj)
-	}
-
 	valueJSON, err := json.Marshal(unstructuredObj)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal object to JSON: %w", err)

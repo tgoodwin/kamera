@@ -40,14 +40,14 @@ func (rc *ReconcileContext) SetRootID(reconcileID, rootID string) {
 }
 
 func (rc *ReconcileContext) GetReconcileID() string {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
+	// rc.mu.Lock()
+	// defer rc.mu.Unlock()
 	return rc.reconcileID
 }
 
 func (rc *ReconcileContext) GetRootID(reconcileID string) string {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
+	// rc.mu.Lock()
+	// defer rc.mu.Unlock()
 	return rc.rootIDByReconcileID[reconcileID]
 }
 
@@ -158,9 +158,9 @@ func (ct *ContextTracker) setRootContextFromObservation(ctx context.Context, obj
 	}
 	currRootID, ok := ct.rc.rootIDByReconcileID[ct.rc.GetReconcileID()]
 	if ok && currRootID != rootID {
-		logger.WithValues(
-			"CurrRootID", currRootID,
-		).Error(err, "rootID changed within the reconcile")
+		// logger.WithValues(
+		// 	"CurrRootID", currRootID,
+		// ).Error(err, "rootID changed within the reconcile")
 
 		// Prioritize the first rootID we see.
 		// Sometimes we may observe a Resource with a different rootID than the one

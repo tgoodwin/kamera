@@ -3,6 +3,7 @@ package emitter
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/tgoodwin/sleeve/pkg/event"
@@ -26,23 +27,28 @@ type AsyncEmitter struct {
 }
 
 // NewAsyncEmitter creates a new AsyncEmitter with the specified buffer size
-func NewAsyncEmitter(underlying Emitter, bufferSize int) *AsyncEmitter {
+func NewAsyncEmitter(underlying Emitter, bufferSize, numConsumers int) *AsyncEmitter {
 	ae := &AsyncEmitter{
 		underlyingEmitter: underlying,
 		queue:             make(chan QueueItem, bufferSize),
 		shutdown:          make(chan struct{}),
 	}
 
-	// Start the consumer goroutine
-	ae.wg.Add(1)
-	go ae.processQueue()
+	numConsumers = max(1, numConsumers)
 
+	// Start the consumer goroutine
+	ae.wg.Add(numConsumers)
+	for i := 0; i < numConsumers; i++ {
+		go ae.processQueue(i)
+	}
 	return ae
 }
 
 // processQueue processes items from the queue until shutdown is signaled
-func (ae *AsyncEmitter) processQueue() {
+func (ae *AsyncEmitter) processQueue(workerID int) {
 	defer ae.wg.Done()
+
+	fmt.Println("AsyncEmitter worker started:", workerID)
 
 	// Use background context for processing queued items
 	backgroundCtx := context.Background()
@@ -71,7 +77,10 @@ func (ae *AsyncEmitter) drainQueue() {
 		select {
 		case item := <-ae.queue:
 			ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
-			ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record)
+			if item.Record != nil {
+				// Only log object version if it exists
+				ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record)
+			}
 		default:
 			// Queue is empty
 			return
@@ -86,13 +95,16 @@ func (ae *AsyncEmitter) Emit(ctx context.Context, obj client.Object, opType even
 		return
 	}
 
-	r, err := snapshot.AsRecord(obj, reconcileID)
-	if err != nil {
-		fmt.Println("ERROR: creating record:", err)
-		return
+	var r *snapshot.Record
+	if skip := os.Getenv("SKIP_OBJECT_VERSIONS"); skip != "" && skip == "true" {
+		r, err = snapshot.AsRecord(obj, reconcileID)
+		if err != nil {
+			fmt.Println("ERROR: creating record:", err)
+			return
+		}
+		r.OperationID = e.ID
+		r.OperationType = string(opType)
 	}
-	r.OperationID = e.ID
-	r.OperationType = string(opType)
 
 	select {
 	case ae.queue <- QueueItem{

@@ -148,7 +148,6 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 
 // --- Refactored List Method ---
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
-	// Call the embedded client (MetricsWrapper) first to populate list and record metrics
 	err := c.Client.List(ctx, list, opts...)
 	if err != nil {
 		return err
