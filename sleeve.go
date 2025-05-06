@@ -10,6 +10,7 @@ import (
 )
 
 var bufferSize = 1000
+var numConsumers = 1
 
 func Wrap(wrapped client.Client, name string) *tracegen.Client {
 	minioConfig, err := emitter.MinioConfigFromEnv()
@@ -24,7 +25,12 @@ func Wrap(wrapped client.Client, name string) *tracegen.Client {
 	return tracegen.Wrap(wrapped, name).WithEnvConfig().WithEmitter(minioEmitter)
 }
 
-func WrapAsync(wrapped client.Client, name string) *tracegen.Client {
+func WithMetrics(wrapped client.Client, name string) client.Client {
+	withMetrics := tracegen.NewMetricsWrapper(wrapped, name)
+	return withMetrics
+}
+
+func WrapAsync(wrapped client.Client, name string) client.Client {
 	minioConfig, err := emitter.MinioConfigFromEnv()
 	if err != nil {
 		panic(err)
@@ -42,6 +48,14 @@ func WrapAsync(wrapped client.Client, name string) *tracegen.Client {
 	if err != nil {
 		panic(err)
 	}
-	asyncEmitter := emitter.NewAsyncEmitter(minioEmitter, bufferSize)
-	return tracegen.Wrap(wrapped, name).WithEnvConfig().WithEmitter(asyncEmitter)
+	numConsumersEnv := os.Getenv("NUM_CONSUMERS")
+	if numConsumersEnv != "" {
+		if parsedNumConsumers, err := strconv.Atoi(numConsumersEnv); err == nil {
+			numConsumers = parsedNumConsumers
+		}
+	}
+	asyncEmitter := emitter.NewAsyncEmitter(minioEmitter, bufferSize, numConsumers)
+	base := tracegen.Wrap(wrapped, name).WithEnvConfig().WithEmitter(asyncEmitter)
+	withMetrics := tracegen.NewMetricsWrapper(base, name)
+	return withMetrics
 }
