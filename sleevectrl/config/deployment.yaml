@@ -63,5 +63,13 @@ spec:
           value: mysecretkey
         - name: SLEEVE_MINIO_BUCKET
           value: sleeve
+        # - name: DISABLE_INSTRUMENTATION
+        #   value: "true"
+        - name: BUFFER_SIZE
+          value: "1000"
+        - name: NUM_CONSUMERS
+          value: "20"
+        - name: MAX_CONCURRENT_RECONCILES
+          value: "20"
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
