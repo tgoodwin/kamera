@@ -3,7 +3,6 @@ package emitter
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 
 	"github.com/tgoodwin/sleeve/pkg/event"
@@ -13,8 +12,11 @@ import (
 
 // QueueItem represents an item in the async queue
 type QueueItem struct {
-	Event  *event.Event
-	Record *snapshot.Record
+	obj          client.Object
+	opType       event.OperationType
+	controllerID string
+	reconcileID  string
+	rootID       string
 }
 
 // AsyncEmitter is an emitter that buffers events in a channel to be processed asynchronously
@@ -56,13 +58,14 @@ func (ae *AsyncEmitter) processQueue(workerID int) {
 	for {
 		select {
 		case item := <-ae.queue:
+			ae.underlyingEmitter.Emit(backgroundCtx, item.obj, item.opType, item.controllerID, item.reconcileID, item.rootID)
 			// Process the item
-			if item.Event != nil && item.Record != nil {
-				ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
-				ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record, item.Event.ControllerID)
-			} else {
-				fmt.Println("WARNING: Received nil event or record in queue item")
-			}
+			// if item.Event != nil && item.Record != nil {
+			// 	ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
+			// 	ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record, item.Event.ControllerID)
+			// } else {
+			// 	fmt.Println("WARNING: Received nil event or record in queue item")
+			// }
 		case <-ae.shutdown:
 			// Drain the queue before exiting
 			ae.drainQueue()
@@ -80,11 +83,7 @@ func (ae *AsyncEmitter) drainQueue() {
 	for {
 		select {
 		case item := <-ae.queue:
-			ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
-			if item.Record != nil && item.Event != nil {
-				// Only log object version if it exists
-				ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record, item.Event.ControllerID)
-			}
+			ae.underlyingEmitter.Emit(backgroundCtx, item.obj, item.opType, item.controllerID, item.reconcileID, item.rootID)
 		default:
 			// Queue is empty
 			return
@@ -93,27 +92,33 @@ func (ae *AsyncEmitter) drainQueue() {
 }
 
 func (ae *AsyncEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
-	e, err := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
-	if err != nil {
-		fmt.Println("ERROR: creating event:", err)
-		return
-	}
+	// e, err := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	// if err != nil {
+	// 	fmt.Println("ERROR: creating event:", err)
+	// 	return
+	// }
 
-	var r *snapshot.Record
-	if skip := os.Getenv("SKIP_OBJECT_VERSIONS"); skip != "" && skip == "true" {
-		r, err = snapshot.AsRecord(obj, reconcileID)
-		if err != nil {
-			fmt.Println("ERROR: creating record:", err)
-			return
-		}
-		r.OperationID = e.ID
-		r.OperationType = string(opType)
-	}
+	// var r *snapshot.Record
+	// if skip := os.Getenv("SKIP_OBJECT_VERSIONS"); skip != "" && skip == "true" {
+	// 	r, err = snapshot.AsRecord(obj, reconcileID)
+	// 	if err != nil {
+	// 		fmt.Println("ERROR: creating record:", err)
+	// 		return
+	// 	}
+	// 	r.OperationID = e.ID
+	// 	r.OperationType = string(opType)
+	// }
 
 	select {
 	case ae.queue <- QueueItem{
-		Event:  e,
-		Record: r,
+		obj:          obj,
+		opType:       opType,
+		controllerID: controllerID,
+		reconcileID:  reconcileID,
+		rootID:       rootID,
+
+		// Event:  e,
+		// Record: r,
 	}:
 		// Item queued successfully
 	case <-ctx.Done():

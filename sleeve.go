@@ -3,6 +3,7 @@ package sleeve
 import (
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/tgoodwin/sleeve/pkg/emitter"
 	"github.com/tgoodwin/sleeve/pkg/tracegen"
@@ -31,10 +32,10 @@ func WithMetrics(wrapped client.Client, name string) client.Client {
 }
 
 func WrapAsync(wrapped client.Client, name string) client.Client {
-	minioConfig, err := emitter.MinioConfigFromEnv()
-	if err != nil {
-		panic(err)
-	}
+	// minioConfig, err := emitter.MinioConfigFromEnv()
+	// if err != nil {
+	// 	panic(err)
+	// }
 
 	// Set buffer size from environment variable if available
 	bufferSizeEnv := os.Getenv("BUFFER_SIZE")
@@ -44,17 +45,22 @@ func WrapAsync(wrapped client.Client, name string) client.Client {
 		}
 	}
 
-	minioEmitter, err := emitter.NewMinioEmitter(minioConfig)
-	if err != nil {
-		panic(err)
-	}
+	bufferSize := 10000
+	pollInterval := 10 * time.Millisecond
+
+	zerologEmitter := emitter.NewZerologEmitter(bufferSize, pollInterval)
+
+	// minioEmitter, err := emitter.NewMinioEmitter(minioConfig)
+	// if err != nil {
+	// 	panic(err)
+	// }
 	numConsumersEnv := os.Getenv("NUM_CONSUMERS")
 	if numConsumersEnv != "" {
 		if parsedNumConsumers, err := strconv.Atoi(numConsumersEnv); err == nil {
 			numConsumers = parsedNumConsumers
 		}
 	}
-	asyncEmitter := emitter.NewAsyncEmitter(minioEmitter, bufferSize, numConsumers)
+	asyncEmitter := emitter.NewAsyncEmitter(zerologEmitter, bufferSize, numConsumers)
 	base := tracegen.Wrap(wrapped, name).WithEnvConfig().WithEmitter(asyncEmitter)
 	withMetrics := tracegen.NewMetricsWrapper(base, name)
 	return withMetrics

@@ -6,6 +6,7 @@ import (
 	"log"
 	"regexp"
 
+	"github.com/rs/zerolog"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -21,6 +22,21 @@ type Record struct {
 	Version       string          `json:"version"` // resource version
 	Value         json.RawMessage `json:"value"`   // full object value (snapshot.VersionHash)
 	Hash          string          `json:"hash"`    // hash of the object value
+}
+
+// Ensure Record implements the zerolog.LogObjectMarshaler interface
+var _ zerolog.LogObjectMarshaler = (*Record)(nil)
+
+// MarshalZerologObject implements the zerolog.LogObjectMarshaler interface.
+func (r *Record) MarshalZerologObject(evt *zerolog.Event) {
+	evt.Str("object_id", r.ObjectID).
+		Str("reconcile_id", r.ReconcileID).
+		Str("operation_id", r.OperationID).
+		Str("op_type", r.OperationType).
+		Str("kind", r.Kind).
+		Str("version", r.Version).
+		Str("hash", r.Hash).
+		RawJSON("value", r.Value) // Efficiently embed raw JSON
 }
 
 func (r Record) ToUnstructured() (*unstructured.Unstructured, error) {

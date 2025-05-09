@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/rs/zerolog"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
@@ -53,6 +54,29 @@ func NewOperation(obj client.Object, reconcileID, controllerID, rootEventID stri
 		return e, fmt.Errorf("failed to get change ID: %w", err)
 	}
 	return e, nil
+}
+
+// MarshalZerologObject implements the zerolog.LogObjectMarshaler interface.
+// This method writes the Event fields directly to the zerolog event encoder.
+func (e *Event) MarshalZerologObject(evt *zerolog.Event) {
+	evt.Str("id", e.ID).
+		Str("timestamp", e.Timestamp). // Keep as string for now to match existing format
+		Str("reconcile_id", e.ReconcileID).
+		Str("controller_id", e.ControllerID).
+		Str("root_event_id", e.RootEventID).
+		Str("op_type", e.OpType).
+		Str("kind", e.Kind).
+		Str("object_id", e.ObjectID).
+		Str("version", e.Version)
+
+	// Efficiently add labels map if it's not empty
+	if len(e.Labels) > 0 {
+		lblDict := zerolog.Dict()
+		for k, v := range e.Labels {
+			lblDict.Str(k, v)
+		}
+		evt.Dict("labels", lblDict)
+	}
 }
 
 func (e *Event) CausalKey() CausalKey {
