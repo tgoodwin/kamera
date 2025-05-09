@@ -2,9 +2,15 @@
 // TODO(user): Add simple overview of use/purpose
 
 ## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
 
-## Getting Started
+~~~~~DEPLOYING~~~~~~
+dont bother with the makefile / kustomize! just apply the config
+but be sure to build first! 
+-tgoodwin
+```
+kubectl apply -f config/
+```
+~~~~~~~~~~~~~~~~~~~~
 
 ### Prerequisites
 - go version v1.22.0+
