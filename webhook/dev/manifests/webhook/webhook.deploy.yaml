@@ -3,10 +3,10 @@ kind: Deployment
 metadata:
   labels:
     app: simple-kubernetes-webhook
-  name: simple-kubernetes-webhook
+  name: sleeve-webhook
   namespace: default
 spec:
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: simple-kubernetes-webhook
@@ -30,6 +30,16 @@ spec:
               value: "trace"
             - name: LOG_JSON
               value: "false"
+            - name: USERNAME_VALIDATION_WHITELIST
+              value: "system:node,garbage-collector,pvc-protection-controller,sleeve-system:controller-manager,kube-scheduler,cass-operator,sleeve:controller-user,persistent-volume-binder"
+            - name: SLEEVE_MINIO_ENDPOINT
+              value: minio-svc.sleeve-system.svc.cluster.local:9000
+            - name: SLEEVE_MINIO_ACCESS_KEY
+              value: myaccesskey
+            - name: SLEEVE_MINIO_SECRET_KEY
+              value: mysecretkey
+            - name: SLEEVE_MINIO_BUCKET
+              value: sleeve2
           volumeMounts:
             - name: tls
               mountPath: "/etc/admission-webhook/tls"

@@ -136,17 +136,13 @@ type Handler struct {
 	emitter emitter.Emitter
 }
 
-// TODO de-hardcode
 func NewHandler() (*Handler, error) {
-	clientCfg := emitter.MinioConfig{
-		Endpoint:        emitter.ClusterInternalEndpoint,
-		AccessKeyID:     "myaccesskey",
-		SecretAccessKey: "mysecretkey",
-		UseSSL:          false,
-		BucketName:      emitter.DefaultBucketName,
+	minioConfig, err := emitter.MinioConfigFromEnv()
+	if err != nil {
+		panic(err)
 	}
 
-	emitter, err := emitter.NewMinioEmitter(clientCfg)
+	emitter, err := emitter.NewMinioEmitter(minioConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize Minio emitter")
 	}
@@ -571,7 +567,7 @@ func (h *Handler) emitEvent(id types.UID, obj *unstructured.Unstructured, Contro
 	}
 
 	h.emitter.LogOperation(context.TODO(), &baseEvent)
-	h.emitter.LogObjectVersion(context.TODO(), record)
+	h.emitter.LogObjectVersion(context.TODO(), record, ControllerID)
 
 	logrus.WithFields(logrus.Fields{
 		"eventID":      eventID,
