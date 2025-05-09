@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 
 	// Removed math/rand, os, path/filepath, strconv, time
 	"reflect"
@@ -19,6 +21,7 @@ import (
 	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -30,6 +33,17 @@ const (
 	// Annotation for the selected node used with WaitForFirstConsumer binding mode
 	selectedNodeAnnotation = "volume.kubernetes.io/selected-node"
 )
+
+var MaxConcurrentReconciles = 10
+
+func init() {
+	if os.Getenv("MAX_CONCURRENT_RECONCILES") != "" {
+		if max, err := strconv.Atoi(os.Getenv("MAX_CONCURRENT_RECONCILES")); err == nil {
+			fmt.Println("Setting MaxConcurrentReconciles to", max)
+			MaxConcurrentReconciles = max
+		}
+	}
+}
 
 // PersistentVolumeClaimReconciler reconciles a PersistentVolumeClaim object
 type PersistentVolumeClaimReconciler struct {
@@ -610,6 +624,9 @@ func (r *PersistentVolumeClaimReconciler) SetupWithManager(mgr ctrl.Manager) err
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.PersistentVolumeClaim{}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: MaxConcurrentReconciles, // Limit to one reconcile at a time
+		}).
 		// Watch PVs: Events on PVs (like creation by external provisioner, or status changes)
 		// will trigger reconciliation for the associated PVC (if ClaimRef is set) or potentially all PVCs.
 		Watches(&corev1.PersistentVolume{}, &pvEventHandler{client: mgr.GetClient()}). // Custom handler might be needed for complex scenarios

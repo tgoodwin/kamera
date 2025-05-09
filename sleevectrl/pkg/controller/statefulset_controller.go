@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -399,7 +400,9 @@ func calculateStatus(sts *appsv1.StatefulSet, pods map[int]*corev1.Pod) appsv1.S
 func (r *StatefulSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.StatefulSet{}).
-		Complete(r)
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: MaxConcurrentReconciles,
+		}).Complete(r)
 }
 
 // TODO These should be created to test certain decommission features also
