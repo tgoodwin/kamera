@@ -1,4 +1,4 @@
-package event
+package emitter
 
 import (
 	"bytes"
@@ -12,8 +12,10 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
 	"github.com/tgoodwin/sleeve/pkg/util"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -72,13 +74,19 @@ func MinioConfigFromEnv() (MinioConfig, error) {
 		return MinioConfig{}, err
 	}
 
+	skipObjectVersions, _ := getEnvBool("SKIP_OBJECT_VERSIONS", false)
+	if skipObjectVersions {
+		fmt.Println("SKIP_OBJECT_VERSIONS is set to true, object versions will not be logged")
+	}
+
 	return MinioConfig{
-		Endpoint:        endpoint,
-		AccessKeyID:     accessKey,
-		SecretAccessKey: secretKey,
-		BucketName:      bucket,
-		UseSSL:          useSSL,
-		UseCompression:  useCompression,
+		Endpoint:           endpoint,
+		AccessKeyID:        accessKey,
+		SecretAccessKey:    secretKey,
+		BucketName:         bucket,
+		UseSSL:             useSSL,
+		UseCompression:     useCompression,
+		skipObjectVersions: skipObjectVersions,
 	}, nil
 }
 
@@ -86,21 +94,21 @@ const DefaultBucketName = "sleeve"
 const ClusterInternalEndpoint = "minio-svc.sleeve-system.svc.cluster.local:9000"
 const ClusterExternalEndpoint = "localhost:9000"
 
-// MinioEmitter implements the Emitter interface to store event data in a Minio bucket
-type MinioEmitter struct {
-	client         *minio.Client
-	bucketName     string
-	useCompression bool
-}
-
 // MinioConfig holds configuration for connecting to a Minio server
 type MinioConfig struct {
-	Endpoint        string
-	AccessKeyID     string
-	SecretAccessKey string
-	UseSSL          bool
-	BucketName      string
-	UseCompression  bool
+	Endpoint           string
+	AccessKeyID        string
+	SecretAccessKey    string
+	UseSSL             bool
+	BucketName         string
+	UseCompression     bool
+	skipObjectVersions bool
+}
+
+// MinioEmitter implements the Emitter interface to store event data in a Minio bucket
+type MinioEmitter struct {
+	client *minio.Client
+	config MinioConfig
 }
 
 func getBucketClient(config MinioConfig) (*minio.Client, error) {
@@ -137,9 +145,8 @@ func NewMinioEmitter(config MinioConfig) (*MinioEmitter, error) {
 		return nil, err
 	}
 	return &MinioEmitter{
-		client:         client,
-		bucketName:     config.BucketName,
-		useCompression: config.UseCompression,
+		client: client,
+		config: config,
 	}, nil
 }
 
@@ -156,8 +163,23 @@ func DefaultMinioEmitter() (*MinioEmitter, error) {
 	return NewMinioEmitter(config)
 }
 
+func (m *MinioEmitter) Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string) {
+	e, err := event.NewOperation(obj, reconcileID, controllerID, rootID, opType)
+	if err != nil {
+		// for now, just log it
+		fmt.Printf("ERROR: creating event: %v\n", err)
+	}
+	m.LogOperation(ctx, e)
+	if !m.config.skipObjectVersions {
+		r, _ := snapshot.AsRecord(obj, reconcileID)
+		r.OperationID = e.ID
+		r.OperationType = string(opType)
+		m.LogObjectVersion(ctx, *r, controllerID)
+	}
+}
+
 // LogOperation implements the Emitter interface to store operation events in Minio
-func (m *MinioEmitter) LogOperation(ctx context.Context, e *Event) {
+func (m *MinioEmitter) LogOperation(ctx context.Context, e *event.Event) {
 	eventJSON, err := json.Marshal(e)
 	if err != nil {
 		// We can't return errors from this interface method, so log and continue
@@ -175,7 +197,7 @@ func (m *MinioEmitter) LogOperation(ctx context.Context, e *Event) {
 	contentType := "application/json"
 	_, err = m.client.PutObject(
 		ctx,
-		m.bucketName,
+		m.config.BucketName,
 		objectName,
 		bytes.NewReader(eventJSON),
 		int64(len(eventJSON)),
@@ -188,7 +210,7 @@ func (m *MinioEmitter) LogOperation(ctx context.Context, e *Event) {
 }
 
 // LogObjectVersion implements the Emitter interface to store object version records in Minio
-func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
+func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record, controllerID string) {
 	// Serialize record to JSON
 	recordJSON, err := json.Marshal(r)
 	if err != nil {
@@ -200,6 +222,7 @@ func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) 
 	timestamp := time.Now().Format(time.RFC3339)
 	objectName := path.Join(
 		"objects",
+		controllerID,
 		r.Kind,
 		r.ObjectID,
 		fmt.Sprintf("%s_%s_%s.json", timestamp, r.OperationType, r.OperationID),
@@ -209,7 +232,7 @@ func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) 
 	contentType := "application/json"
 	_, err = m.client.PutObject(
 		ctx,
-		m.bucketName,
+		m.config.BucketName,
 		objectName,
 		bytes.NewReader(recordJSON),
 		int64(len(recordJSON)),

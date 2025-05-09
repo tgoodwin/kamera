@@ -40,3 +40,9 @@ use a parallelized script to read data back down.
 ```
 go run cmd/collect/main.go --bucket <BUCKET_NAME> --output-file out.jsonl
 ```
+
+## using the web client
+First, port forward the `sleeve-system/minio-svc` port 9001 to 9001.
+Then, log in using username=sleeveadmin and password = sleevepassword
+
+

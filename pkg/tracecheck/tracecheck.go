@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/samber/lo"
+	"github.com/tgoodwin/sleeve/pkg/emitter"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/replay"
 	"github.com/tgoodwin/sleeve/pkg/snapshot"
@@ -25,7 +26,7 @@ type Reconciler reconcile.Reconciler
 type ReconcilerConstructor func(client Client) Reconciler
 
 type testEmitter interface {
-	event.Emitter
+	emitter.Emitter
 	Dump(frameID string) []string
 }
 
@@ -67,7 +68,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 
 		knowledgeManager: KnowledgeManager,
 
-		emitter: event.NewInMemoryEmitter(),
+		emitter: emitter.NewInMemoryEmitter(),
 
 		mode: "standalone",
 

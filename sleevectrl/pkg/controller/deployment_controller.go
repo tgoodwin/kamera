@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -276,6 +277,8 @@ func (r *DeploymentReconciler) calculateStatus(
 func (r *DeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&appsv1.Deployment{}).
-		Owns(&appsv1.ReplicaSet{}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: MaxConcurrentReconciles,
+		}).Owns(&appsv1.ReplicaSet{}).
 		Complete(r)
 }

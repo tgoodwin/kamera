@@ -35,3 +35,4 @@ testresults/**
 
 # ignore traces
 *.jsonl
+pkg/test/integration/*.pprof

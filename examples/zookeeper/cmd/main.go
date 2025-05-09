@@ -8,6 +8,7 @@ import (
 
 	"github.com/samber/lo"
 	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
+	"github.com/tgoodwin/sleeve/pkg/emitter"
 	"github.com/tgoodwin/sleeve/pkg/event"
 	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
@@ -101,7 +102,7 @@ func main() {
 	eb.WithResourceDep("PersistentVolumeClaim", "ZookeeperReconciler")
 	eb.AssignReconcilerToKind("ZookeeperReconciler", "ZookeeperCluster")
 
-	emitter := event.NewDebugEmitter()
+	emitter := emitter.NewDebugEmitter()
 	eb.WithEmitter(emitter)
 
 	stateBuilder := eb.NewStateEventBuilder()

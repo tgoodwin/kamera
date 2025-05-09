@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -71,4 +73,36 @@ func TestMostCommonElementCount(t *testing.T) {
 	assert.Equal(t, 2, MostCommonElementCount([]customType{
 		{ID: 1}, {ID: 2}, {ID: 1}, {ID: 3},
 	}))
+}
+
+func TestConvertToUnstructured_ValidObject(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "mypod",
+			Namespace: "default",
+		},
+	}
+
+	unstructuredObj, err := ConvertToUnstructured(pod)
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if unstructuredObj.GetName() != "mypod" {
+		t.Errorf("expected name 'mypod', got: %s", unstructuredObj.GetName())
+	}
+	if unstructuredObj.GetNamespace() != "default" {
+		t.Errorf("expected namespace 'default', got: %s", unstructuredObj.GetNamespace())
+	}
+	if unstructuredObj.GetKind() != "" {
+		t.Logf("note: kind is not automatically set by conversion, got: %s", unstructuredObj.GetKind())
+	}
+}
+
+func TestConvertToUnstructured_NilInput(t *testing.T) {
+	nilObj := (*corev1.Pod)(nil)
+
+	_, err := ConvertToUnstructured(nilObj)
+	if err == nil {
+		t.Fatalf("expected an error when converting nil object, got none")
+	}
 }
