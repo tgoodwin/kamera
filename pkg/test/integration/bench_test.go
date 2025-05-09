@@ -135,7 +135,8 @@ func BenchmarkReconcile_AsyncEmitter(b *testing.B) {
 
 		asyncEmitter := emitter.NewAsyncEmitter(
 			fileEmitter,
-			1000,
+			10000,
+			10,
 		)
 
 		frameExtractor := func(ctx context.Context) string { return "test-frame" }
