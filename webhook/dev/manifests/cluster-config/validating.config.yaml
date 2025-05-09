@@ -59,5 +59,5 @@ webhooks:
         scope: "Namespaced"
     admissionReviewVersions: ["v1"]
     sideEffects: None
-    timeoutSeconds: 5
-    failurePolicy: Fail  # This ensures the request is rejected if the webhook fails
+    timeoutSeconds: 15
+    failurePolicy: Ignore

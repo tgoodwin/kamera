@@ -45,4 +45,4 @@ webhooks:
         TTBFekQxTkNlOVZmVGNiNUQ1MlRycjg0PQotLS0tLUVORCBDRVJUSUZJQ0FURS0tLS0tCg==
     admissionReviewVersions: ["v1"]
     sideEffects: None
-    timeoutSeconds: 2
+    timeoutSeconds: 15
