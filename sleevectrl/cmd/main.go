@@ -31,6 +31,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -161,36 +162,45 @@ func main() {
 		os.Exit(1)
 	}
 
+	getClient := func(c client.Client, name string) client.Client {
+		if os.Getenv("DISABLE_INSTRUMENTATION") != "" {
+			setupLog.Info("sleeve instrumentation disabled")
+			return c
+		}
+		setupLog.Info("sleeve instrumentation enabled for controller " + name)
+		return sleeve.WrapAsync(c, name)
+	}
+
 	if err = (&controller.StatefulSetReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "StatefulSetReconciler"),
+		Client: getClient(mgr.GetClient(), "StatefulSetReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "StatefulSet")
 		os.Exit(1)
 	}
 	if err = (&controller.ServiceReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "ServiceReconciler"),
+		Client: getClient(mgr.GetClient(), "ServiceReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Service")
 		os.Exit(1)
 	}
 	if err = (&controller.DeploymentReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "DeploymentReconciler"),
+		Client: getClient(mgr.GetClient(), "DeploymentReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Deployment")
 		os.Exit(1)
 	}
 	if err = (&controller.ReplicaSetReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "ReplicaSetReconciler"),
+		Client: getClient(mgr.GetClient(), "ReplicaSetReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ReplicaSet")
 		os.Exit(1)
 	}
 	if err = (&controller.PersistentVolumeClaimReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "PersistentVolumeClaimReconciler"),
+		Client: getClient(mgr.GetClient(), "PersistentVolumeClaimReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PersistentVolumeClaim")
