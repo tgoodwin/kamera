@@ -2,7 +2,6 @@ package tracegen
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"strings"
@@ -94,13 +93,14 @@ func (c *Client) WithEnvConfig() *Client {
 }
 
 // LogOperation performs the tracegen-specific logging.
-func (c *Client) LogOperation(ctx context.Context, obj client.Object, op event.OperationType) {
+func (c *Client) LogOperation(ctx context.Context, objCopy client.Object, op event.OperationType) {
 	if c.config.disableLogging {
 		return
 	}
 	reconcileID := c.tracker.rc.GetReconcileID()
 	rootID := c.tracker.rc.GetRootID(reconcileID)
-	c.emitter.Emit(ctx, obj, op, c.reconcilerID, reconcileID, rootID)
+
+	c.emitter.Emit(ctx, objCopy, op, c.reconcilerID, reconcileID, rootID)
 }
 
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
@@ -113,7 +113,8 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 		obj.SetLabels(currLabels)
 		return err
 	}
-	c.LogOperation(ctx, obj, event.CREATE)
+	objCopy := obj.DeepCopyObject().(client.Object)
+	c.LogOperation(ctx, objCopy, event.CREATE)
 	return nil
 }
 
@@ -125,7 +126,8 @@ func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.D
 		obj.SetLabels(origLabels)
 		return err
 	}
-	c.LogOperation(ctx, obj, event.MARK_FOR_DELETION)
+	objCopy := obj.DeepCopyObject().(client.Object)
+	c.LogOperation(ctx, objCopy, event.MARK_FOR_DELETION)
 	return nil
 }
 
@@ -142,7 +144,8 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return err
 	}
 	c.tracker.TrackOperation(ctx, obj, event.GET)
-	c.LogOperation(ctx, obj, event.GET)
+	objCopy := obj.DeepCopyObject().(client.Object)
+	c.LogOperation(ctx, objCopy, event.GET)
 	return nil
 }
 
@@ -153,37 +156,36 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		return err
 	}
 
-	listCopy := list.DeepCopyObject()
-
-	go func(bgCtx context.Context, bgList runtime.Object) {
-		bgLogger := c.logger.WithValues("goroutine", "list_logger")
-		bgLogger.Info("Starting list item logging")
-		itererr := meta.EachListItem(list, func(obj runtime.Object) error {
-			select {
-			case <-bgCtx.Done():
-				bgLogger.V(1).Info("Context cancelled during list item logging iteration")
-				return bgCtx.Err() // Stop iteration if context is cancelled
-			default:
-			}
-			// The object returned by EachListItem is runtime.Object.
-			// We need to convert it to client.Object for LogOperation.
-			clientObj, ok := obj.(client.Object)
-			if !ok {
-				// Log an error if conversion fails, but don't stop the iteration
-				// unless absolutely necessary. This might happen for non-standard list types.
-				bgLogger.Error(fmt.Errorf("item in list is not a client.Object: %T", obj), "List logging error")
-				return nil // Continue iterating
-			}
-			// Log each item using the converted object
-			c.LogOperation(bgCtx, clientObj, event.LIST)
-			return nil // Continue iteration
-		})
-
-		if itererr != nil {
-			bgLogger.Error(itererr, "Error during list item iteration/logging")
+	// go func(bgCtx context.Context, bgList runtime.Object) {
+	bgLogger := c.logger.WithValues("goroutine", "list_logger")
+	bgLogger.Info("Starting list item logging")
+	itererr := meta.EachListItem(list, func(obj runtime.Object) error {
+		select {
+		case <-ctx.Done():
+			bgLogger.V(1).Info("Context cancelled during list item logging iteration")
+			return ctx.Err() // Stop iteration if context is cancelled
+		default:
 		}
+		// The object returned by EachListItem is runtime.Object.
+		// We need to convert it to client.Object for LogOperation.
+		// clientObj, ok := obj.(client.Object)
+		clientObj := obj.DeepCopyObject().(client.Object)
+		// if !ok {
+		// 	// Log an error if conversion fails, but don't stop the iteration
+		// 	// unless absolutely necessary. This might happen for non-standard list types.
+		// 	bgLogger.Error(fmt.Errorf("item in list is not a client.Object: %T", obj), "List logging error")
+		// 	return nil // Continue iterating
+		// }
+		// Log each item using the converted object
+		c.LogOperation(ctx, clientObj, event.LIST)
+		return nil // Continue iteration
+	})
 
-	}(ctx, listCopy)
+	if itererr != nil {
+		bgLogger.Error(itererr, "Error during list item iteration/logging")
+	}
+
+	// }(ctx, listCopy)
 
 	return nil
 }

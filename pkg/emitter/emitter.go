@@ -15,7 +15,7 @@ import (
 
 type Emitter interface {
 	LogOperation(ctx context.Context, e *event.Event)
-	LogObjectVersion(ctx context.Context, r snapshot.Record)
+	LogObjectVersion(ctx context.Context, r snapshot.Record, controllerID string)
 	Emit(ctx context.Context, obj client.Object, opType event.OperationType, controllerID, reconcileID, rootID string)
 }
 
@@ -46,7 +46,7 @@ func (l *LogEmitter) LogOperation(ctx context.Context, e *event.Event) {
 	l.logger.WithValues("LogType", tag.ControllerOperationKey).Info(string(eventJSON))
 }
 
-func (l *LogEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
+func (l *LogEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record, _ string) {
 	recordJSON, err := json.Marshal(r)
 	if err != nil {
 		panic("failed to serialize record")
@@ -64,7 +64,7 @@ func (n *NoopEmitter) Emit(ctx context.Context, obj client.Object, opType event.
 
 func (n *NoopEmitter) LogOperation(ctx context.Context, e *event.Event) {}
 
-func (n *NoopEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {}
+func (n *NoopEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record, _ string) {}
 
 type FileEmitter struct {
 	filePath string
@@ -100,7 +100,7 @@ func (f *FileEmitter) Emit(ctx context.Context, obj client.Object, opType event.
 	}
 	r.OperationID = e.ID
 	r.OperationType = string(opType)
-	f.LogObjectVersion(ctx, *r)
+	f.LogObjectVersion(ctx, *r, controllerID)
 }
 
 func (f *FileEmitter) LogOperation(ctx context.Context, e *event.Event) {
@@ -111,7 +111,7 @@ func (f *FileEmitter) LogOperation(ctx context.Context, e *event.Event) {
 	f.appendToFile(string(eventJSON))
 }
 
-func (f *FileEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
+func (f *FileEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record, _ string) {
 	recordJSON, err := json.Marshal(r)
 	if err != nil {
 		panic("failed to serialize record")
@@ -145,7 +145,7 @@ func (i *InMemoryEmitter) Emit(ctx context.Context, obj client.Object, opType ev
 	r, _ := snapshot.AsRecord(obj, reconcileID)
 	r.OperationID = e.ID
 	r.OperationType = string(opType)
-	i.LogObjectVersion(ctx, *r)
+	i.LogObjectVersion(ctx, *r, controllerID)
 }
 
 func (i *InMemoryEmitter) LogOperation(ctx context.Context, e *event.Event) {
@@ -155,7 +155,7 @@ func (i *InMemoryEmitter) LogOperation(ctx context.Context, e *event.Event) {
 	i.eventsByReconcileID[e.ReconcileID] = append(i.eventsByReconcileID[e.ReconcileID], e)
 }
 
-func (i *InMemoryEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
+func (i *InMemoryEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record, _ string) {
 	if _, ok := i.recordsByOperationID[r.OperationID]; !ok {
 		i.recordsByOperationID[r.OperationID] = make([]snapshot.Record, 0)
 	}
@@ -216,7 +216,7 @@ func (d *DebugEmitter) Emit(ctx context.Context, obj client.Object, opType event
 	}
 	r.OperationID = e.ID
 	r.OperationType = string(opType)
-	d.LogObjectVersion(ctx, *r)
+	d.LogObjectVersion(ctx, *r, controllerID)
 }
 
 func (d *DebugEmitter) LogOperation(ctx context.Context, e *event.Event) {
@@ -224,7 +224,7 @@ func (d *DebugEmitter) LogOperation(ctx context.Context, e *event.Event) {
 	d.InMemoryEmitter.LogOperation(ctx, e)
 }
 
-func (d *DebugEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
-	d.fileEmitter.LogObjectVersion(ctx, r)
-	d.InMemoryEmitter.LogObjectVersion(ctx, r)
+func (d *DebugEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record, s string) {
+	d.fileEmitter.LogObjectVersion(ctx, r, s)
+	d.InMemoryEmitter.LogObjectVersion(ctx, r, s)
 }

@@ -57,8 +57,12 @@ func (ae *AsyncEmitter) processQueue(workerID int) {
 		select {
 		case item := <-ae.queue:
 			// Process the item
-			ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
-			ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record)
+			if item.Event != nil && item.Record != nil {
+				ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
+				ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record, item.Event.ControllerID)
+			} else {
+				fmt.Println("WARNING: Received nil event or record in queue item")
+			}
 		case <-ae.shutdown:
 			// Drain the queue before exiting
 			ae.drainQueue()
@@ -77,9 +81,9 @@ func (ae *AsyncEmitter) drainQueue() {
 		select {
 		case item := <-ae.queue:
 			ae.underlyingEmitter.LogOperation(backgroundCtx, item.Event)
-			if item.Record != nil {
+			if item.Record != nil && item.Event != nil {
 				// Only log object version if it exists
-				ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record)
+				ae.underlyingEmitter.LogObjectVersion(backgroundCtx, *item.Record, item.Event.ControllerID)
 			}
 		default:
 			// Queue is empty
@@ -123,7 +127,7 @@ func (ae *AsyncEmitter) LogOperation(ctx context.Context, e *event.Event) {
 }
 
 // LogObjectVersion queues an object version record, blocking if the queue is full
-func (ae *AsyncEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
+func (ae *AsyncEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record, _ string) {
 }
 
 // Shutdown gracefully shuts down the AsyncEmitter, ensuring all queued events are processed

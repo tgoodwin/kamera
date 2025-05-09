@@ -174,7 +174,7 @@ func (m *MinioEmitter) Emit(ctx context.Context, obj client.Object, opType event
 		r, _ := snapshot.AsRecord(obj, reconcileID)
 		r.OperationID = e.ID
 		r.OperationType = string(opType)
-		m.LogObjectVersion(ctx, *r)
+		m.LogObjectVersion(ctx, *r, controllerID)
 	}
 }
 
@@ -210,7 +210,7 @@ func (m *MinioEmitter) LogOperation(ctx context.Context, e *event.Event) {
 }
 
 // LogObjectVersion implements the Emitter interface to store object version records in Minio
-func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) {
+func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record, controllerID string) {
 	// Serialize record to JSON
 	recordJSON, err := json.Marshal(r)
 	if err != nil {
@@ -222,6 +222,7 @@ func (m *MinioEmitter) LogObjectVersion(ctx context.Context, r snapshot.Record) 
 	timestamp := time.Now().Format(time.RFC3339)
 	objectName := path.Join(
 		"objects",
+		controllerID,
 		r.Kind,
 		r.ObjectID,
 		fmt.Sprintf("%s_%s_%s.json", timestamp, r.OperationType, r.OperationID),

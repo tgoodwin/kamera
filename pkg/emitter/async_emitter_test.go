@@ -21,7 +21,7 @@ func TestAsyncEmitterBasicProcessing(t *testing.T) {
 
 	// Create mock emitter using gomock
 	mock := mocks.NewMockEmitter(ctrl)
-	async := NewAsyncEmitter(mock, 10)
+	async := NewAsyncEmitter(mock, 10, 10)
 	ctx := context.Background()
 
 	pod := &corev1.Pod{
@@ -37,7 +37,7 @@ func TestAsyncEmitterBasicProcessing(t *testing.T) {
 
 	// Set expectations for the mock
 	mock.EXPECT().LogOperation(gomock.Any(), gomock.Any()).Times(1)
-	mock.EXPECT().LogObjectVersion(gomock.Any(), gomock.Any()).Times(1)
+	mock.EXPECT().LogObjectVersion(gomock.Any(), gomock.Any(), "test-controller").Times(1)
 
 	// Log via the async emitter
 	async.Emit(ctx, pod, event.CREATE, "test-controller", "test-reconcile", "test-root-id")
@@ -56,7 +56,7 @@ func TestAsyncEmitterShutdown(t *testing.T) {
 
 	// Create mock emitter using gomock
 	mock := mocks.NewMockEmitter(ctrl)
-	async := NewAsyncEmitter(mock, 5)
+	async := NewAsyncEmitter(mock, 5, 5)
 	ctx := context.Background()
 
 	// Create test events
@@ -77,7 +77,7 @@ func TestAsyncEmitterShutdown(t *testing.T) {
 	// Set expectations - all events should be processed
 	for range pods {
 		mock.EXPECT().LogOperation(gomock.Any(), gomock.Any()).Times(1)
-		mock.EXPECT().LogObjectVersion(gomock.Any(), gomock.Any()).Times(1)
+		mock.EXPECT().LogObjectVersion(gomock.Any(), gomock.Any(), "test-controller").Times(1)
 	}
 
 	for _, p := range pods {
@@ -109,7 +109,7 @@ func TestAsyncEmitterBlocking(t *testing.T) {
 		AnyTimes()
 
 	// Create async emitter with small buffer
-	async := NewAsyncEmitter(mock, 2)
+	async := NewAsyncEmitter(mock, 2, 1)
 	ctx := context.Background()
 
 	// Create test events

@@ -50,15 +50,15 @@ func (mr *MockEmitterMockRecorder) Emit(arg0, arg1, arg2, arg3, arg4, arg5 inter
 }
 
 // LogObjectVersion mocks base method.
-func (m *MockEmitter) LogObjectVersion(arg0 context.Context, arg1 snapshot.Record) {
+func (m *MockEmitter) LogObjectVersion(arg0 context.Context, arg1 snapshot.Record, arg2 string) {
 	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "LogObjectVersion", arg0, arg1)
+	m.ctrl.Call(m, "LogObjectVersion", arg0, arg1, arg2)
 }
 
 // LogObjectVersion indicates an expected call of LogObjectVersion.
-func (mr *MockEmitterMockRecorder) LogObjectVersion(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockEmitterMockRecorder) LogObjectVersion(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogObjectVersion", reflect.TypeOf((*MockEmitter)(nil).LogObjectVersion), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "LogObjectVersion", reflect.TypeOf((*MockEmitter)(nil).LogObjectVersion), arg0, arg1, arg2)
 }
 
 // LogOperation mocks base method.
