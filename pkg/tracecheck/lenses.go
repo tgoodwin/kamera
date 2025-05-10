@@ -312,8 +312,14 @@ type ProvenanceNode struct {
 	CausalChildren []ProvenanceNode      // Downstream write events causally linked to this event
 }
 
-// ProvenanceLens analyzes and prints causal provenance, tracing upwards to a root
-// and then downwards for the root and its siblings.
+const (
+	rootTypeTrueWebhookWrite          = "true_webhook_write"
+	rootTypeWebhookInitiatedReconcile = "webhook_initiated_reconcile"
+	rootTypeNoLinkFound               = "no_link_found"
+	rootTypeCycleDetected             = "cycle_detected"
+)
+
+// ProvenanceLens analyzes and prints causal provenance.
 func (lm *LensManager) ProvenanceLens(slug string) error {
 	if lm.state == nil {
 		return errors.New("LensManager state is nil")
@@ -321,7 +327,7 @@ func (lm *LensManager) ProvenanceLens(slug string) error {
 	if lm.eventsByReconcileID == nil {
 		return errors.New("LensManager eventsByReconcileID is nil")
 	}
-	if lm.state.stateEvents == nil { // Ensure all events are available for lookup
+	if lm.state.stateEvents == nil {
 		return errors.New("LensManager state.stateEvents is nil")
 	}
 
@@ -331,7 +337,9 @@ func (lm *LensManager) ProvenanceLens(slug string) error {
 	}
 
 	relevantEvents := lo.Filter(lm.state.stateEvents, func(e StateEvent, _ int) bool {
-		return e.Effect.Key.IdentityKey == ckey.IdentityKey && event.IsWriteOp(event.OperationType(e.OpType))
+		// Ensure Effect and Key are not nil before accessing IdentityKey
+		return e.Effect.Key.IdentityKey == ckey.IdentityKey &&
+			event.IsWriteOp(event.OperationType(e.OpType))
 	})
 
 	if len(relevantEvents) == 0 {
@@ -344,106 +352,116 @@ func (lm *LensManager) ProvenanceLens(slug string) error {
 		return tsI < tsJ
 	})
 
-	firstWriteEvent := relevantEvents[0] // This is the event identified by the slug
+	firstWriteEvent := relevantEvents[0]
 
 	fmt.Printf("Starting Provenance Analysis from event ID: %s for object: %s\n", firstWriteEvent.ID, firstWriteEvent.Effect.Key.String())
 
-	// Trace upwards to find the effective root and its siblings
 	visitedUpwards := make(map[string]bool)
-	effectiveRootEvent, siblingEvents, isWebhookRoot, webhookID, err := lm.findCausalRootAndSiblings(firstWriteEvent, visitedUpwards)
+	// rootLevelWriteEvents contains the event(s) from the highest reconcile instance found.
+	rootLevelWriteEvents, rootTypeFound, rootWebhookID, err := lm.findCausalRootAndSiblings(firstWriteEvent, visitedUpwards)
 	if err != nil {
-		return errors.Wrapf(err, "failed to find causal root starting from event ID %s", firstWriteEvent.ID)
-	}
-
-	// Prepare a list of top-level nodes to process (the effective root and its siblings)
-	topLevelEventsToProcess := []StateEvent{}
-	if effectiveRootEvent != nil {
-		topLevelEventsToProcess = append(topLevelEventsToProcess, *effectiveRootEvent)
-	}
-	topLevelEventsToProcess = append(topLevelEventsToProcess, siblingEvents...)
-
-	// Deduplicate topLevelEventsToProcess just in case (e.g., if effectiveRootEvent was also found as a sibling)
-	processedTopLevelIDs := make(map[string]bool)
-	uniqueTopLevelEvents := []StateEvent{}
-	for _, ev := range topLevelEventsToProcess {
-		if !processedTopLevelIDs[ev.ID] {
-			uniqueTopLevelEvents = append(uniqueTopLevelEvents, ev)
-			processedTopLevelIDs[ev.ID] = true
+		// If a cycle was detected upwards, err will be non-nil.
+		// We still might have rootLevelWriteEvents to print from where the cycle was detected.
+		fmt.Printf("Warning during upward trace: %v\n", err)
+		if len(rootLevelWriteEvents) == 0 { // If error and no events, truly cannot proceed.
+			return errors.Wrapf(err, "failed to find causal root starting from event ID %s and no events returned", firstWriteEvent.ID)
 		}
 	}
-	// Sort them by timestamp for consistent output order
-	sort.Slice(uniqueTopLevelEvents, func(i, j int) bool {
-		tsI, _ := strconv.ParseInt(uniqueTopLevelEvents[i].Timestamp, 10, 64)
-		tsJ, _ := strconv.ParseInt(uniqueTopLevelEvents[j].Timestamp, 10, 64)
+
+	if len(rootLevelWriteEvents) == 0 {
+		return errors.Errorf("no root level events identified from event ID %s", firstWriteEvent.ID)
+	}
+
+	// Sort the final set of root-level events by timestamp.
+	sort.Slice(rootLevelWriteEvents, func(i, j int) bool {
+		tsI, _ := strconv.ParseInt(rootLevelWriteEvents[i].Timestamp, 10, 64)
+		tsJ, _ := strconv.ParseInt(rootLevelWriteEvents[j].Timestamp, 10, 64)
 		return tsI < tsJ
 	})
 
-	fmt.Println("\nCausality Tree(s):")
-	if isWebhookRoot {
-		fmt.Printf("ROOT (Webhook)\nRootID: %s\n", webhookID)
-	} else if effectiveRootEvent != nil {
-		// Standard root, the printProvenanceTree will handle its "ROOT: " prefix if it's the first.
-		// If there are multiple top-level trees (e.g. from siblings of a non-webhook root)
-		// the first one will be prefixed ROOT, others will just start.
+	fmt.Println("\nProvenance Tree:")
+	switch rootTypeFound {
+	case rootTypeTrueWebhookWrite:
+		fmt.Printf("ROOT (True Webhook Event Trigger)\nRoot Webhook ID (from write event): %s\n", rootWebhookID)
+	case rootTypeWebhookInitiatedReconcile:
+		fmt.Printf("ROOT (Webhook-Initiated Reconcile)\nTriggering Webhook ID (from read event): %s\n", rootWebhookID)
+	case rootTypeCycleDetected:
+		fmt.Printf("ROOT (Upward Cycle Detected)\nStarting downward trace from events in the cycle's origin reconcile.\n")
+	case rootTypeNoLinkFound:
+		fmt.Printf("ROOT (Effective Trace Start - No further upward link found)\n")
+	default:
+		fmt.Printf("ROOT (Unknown Root Type)\n")
 	}
 
-	for i, topEvent := range uniqueTopLevelEvents {
-		if i > 0 && len(uniqueTopLevelEvents) > 1 {
-			fmt.Println("\n--- Sibling Tree ---") // Separator for multiple top-level trees
-		}
+	// If multiple rootLevelWriteEvents, they are siblings from the same root reconcile.
+	// Print a header for this shared reconcile.
+	if len(rootLevelWriteEvents) > 1 {
+		firstRootEvent := rootLevelWriteEvents[0] // Use the first for common reconcile info
+		tsInt, _ := strconv.ParseInt(firstRootEvent.Timestamp, 10, 64)
+		parsedTime := time.Unix(0, tsInt*int64(time.Microsecond))
+		formattedTime := parsedTime.Format(time.RFC3339Nano)
 
-		// For the very first tree being printed, it's the main root.
-		// For subsequent trees (siblings), they are roots of their own sub-provenance.
-		// isActualRoot := (i == 0 && effectiveRootEvent != nil && topEvent.ID == effectiveRootEvent.ID)
-
-		rootNode := ProvenanceNode{
-			Key:   topEvent.Effect.Key,
-			Event: topEvent,
+		fmt.Printf("Shared Root Reconcile (Controller: %s, ReconcileID: %s, Approx. Timestamp: %s)\n",
+			firstRootEvent.ControllerID,
+			firstRootEvent.ReconcileID,
+			formattedTime, // Timestamp of the first event in the group
+		)
+		// Subsequent calls to printProvenanceTree will be indented under this.
+		for i, topEvent := range rootLevelWriteEvents {
+			rootNode := ProvenanceNode{Key: topEvent.Effect.Key, Event: topEvent}
+			expandedDownwards := make(map[string]bool)
+			lm.buildCausalityRecursively(&rootNode, expandedDownwards)
+			// Start at depth 1 because they are under the "Shared Root Reconcile" header.
+			// The indentPrefix starts empty for the first level of the tree structure.
+			lm.printProvenanceTree(&rootNode, 1, "", (i == len(rootLevelWriteEvents)-1))
 		}
-		// klog.V(2).Infof("Building downward tree for top-level event: ID %s, ChangeID %s", topEvent.ID, topEvent.Labels[tag.ChangeID])
+	} else if len(rootLevelWriteEvents) == 1 {
+		// Single root event, print its tree directly starting at depth 0.
+		topEvent := rootLevelWriteEvents[0]
+		rootNode := ProvenanceNode{Key: topEvent.Effect.Key, Event: topEvent}
 		expandedDownwards := make(map[string]bool)
 		lm.buildCausalityRecursively(&rootNode, expandedDownwards)
-
-		// The first event printed by printProvenanceTree gets "ROOT: " prefix.
-		// If we have multiple top-level events, only the true effectiveRootEvent should be the "ROOT".
-		// We can pass a flag or adjust printProvenanceTree.
-		// For now, the current printProvenanceTree prints "ROOT: " if depth is 0.
-		// This means each tree from uniqueTopLevelEvents will start with "ROOT: " if called with depth 0.
-		// This might be acceptable if each is considered a root of its own provenance chain.
-		// If only one true "ROOT" is desired, the printing logic would need more context.
-		// Let's assume for now, each top-level event starts a tree that can be prefixed "ROOT:".
-		lm.printProvenanceTree(&rootNode, 0, "", true)
+		lm.printProvenanceTree(&rootNode, 0, "", true) // Depth 0, it's the last (only) one.
 	}
 
 	return nil
 }
 
-// findCausalRootAndSiblings traces upwards from startEvent to find an effective root.
-// Returns: (effectiveRootEvent, siblingEvents, isWebhookRoot, webhookID, error)
+// findCausalRootAndSiblings traces upwards from currentWriteEvent.
+// Returns:
+// - []StateEvent: The set of write events from the highest-level reconcile found (root + its siblings).
+// - string: The type of root found (e.g., rootTypeTrueWebhookWrite).
+// - string: The Webhook ID if applicable.
+// - error: If an error (like a cycle) occurs.
 func (lm *LensManager) findCausalRootAndSiblings(
-	currentEvent StateEvent,
+	currentWriteEvent StateEvent,
 	visitedUpwards map[string]bool,
-) (*StateEvent, []StateEvent, bool, string, error) {
+) ([]StateEvent, string, string, error) {
 
-	if visitedUpwards[currentEvent.ID] {
-		// klog.Warningf("Upward cycle detected at event ID %s. Stopping upward search for this path.", currentEvent.ID)
-		// Return currentEvent as the "root" for this path to break the cycle. Its siblings are writes in its own reconcile.
-		siblings := lm.getSiblingWriteEvents(currentEvent)
-		return &currentEvent, siblings, false, "", errors.Errorf("upward cycle detected at event ID %s", currentEvent.ID)
+	if visitedUpwards[currentWriteEvent.ID] {
+		// klog.Warningf("Upward cycle detected at event ID %s.", currentWriteEvent.ID)
+		siblings := lm.getSiblingWriteEvents(currentWriteEvent)
+		allEventsInCycleReconcile := append([]StateEvent{currentWriteEvent}, siblings...)
+		return allEventsInCycleReconcile, rootTypeCycleDetected, "", errors.Errorf("upward cycle detected at event ID %s", currentWriteEvent.ID)
 	}
-	visitedUpwards[currentEvent.ID] = true
-	// Create a new map for the next recursive call to ensure path-specific cycle detection
+	visitedUpwards[currentWriteEvent.ID] = true
 	nextVisitedUpwards := make(map[string]bool)
 	for k, v := range visitedUpwards {
 		nextVisitedUpwards[k] = v
 	}
 
-	eventsInCurrentReconcile := lm.eventsByReconcileID[currentEvent.ReconcileID]
-	// if eventsInCurrentReconcile == nil { // This case should ideally not happen if currentEvent is valid
-	// 	// klog.Warningf("No events found for ReconcileID %s of event %s. Treating as root.", currentEvent.ReconcileID, currentEvent.ID)
-	// 	return &currentEvent, nil, false, "", nil // No siblings if reconcile events are missing
-	// }
+	// Check if currentWriteEvent itself is a "true webhook root"
+	if currentWriteEvent.Labels != nil {
+		// Use TraceyWebhookLabel as per user correction
+		if webhookID, ok := currentWriteEvent.Labels[tag.TraceyWebhookLabel]; ok && webhookID != "" {
+			// klog.V(2).Infof("True webhook root write event ID %s with WebhookID %s", currentWriteEvent.ID, webhookID)
+			siblings := lm.getSiblingWriteEvents(currentWriteEvent)
+			allEvents := append([]StateEvent{currentWriteEvent}, siblings...)
+			return allEvents, rootTypeTrueWebhookWrite, webhookID, nil
+		}
+	}
 
+	eventsInCurrentReconcile := lm.eventsByReconcileID[currentWriteEvent.ReconcileID]
 	readEventsInReconcile := []StateEvent{}
 	for _, e := range eventsInCurrentReconcile {
 		if event.IsReadOp(event.OperationType(e.OpType)) {
@@ -452,33 +470,34 @@ func (lm *LensManager) findCausalRootAndSiblings(
 	}
 
 	if len(readEventsInReconcile) == 0 {
-		// No reads in this reconcile, so currentEvent is a root for this path.
-		siblings := lm.getSiblingWriteEvents(currentEvent)
-		return &currentEvent, siblings, false, "", nil
+		// No reads, currentWriteEvent and its siblings are the root of this path.
+		siblings := lm.getSiblingWriteEvents(currentWriteEvent)
+		allEvents := append([]StateEvent{currentWriteEvent}, siblings...)
+		return allEvents, rootTypeNoLinkFound, "", nil
 	}
 
-	// Parent Selection Heuristic:
 	var potentialParentReads []StateEvent
 	for _, r := range readEventsInReconcile {
 		if r.Labels != nil {
 			_, hasChangeID := r.Labels[tag.ChangeID]
-			_, hasTraceyUID := r.Labels[tag.TraceyWebhookLabel] // Use the correct constant
-			if hasChangeID || hasTraceyUID {
+			// Use TraceyWebhookLabel as per user correction
+			_, hasTraceyWebhook := r.Labels[tag.TraceyWebhookLabel]
+			if (hasChangeID && r.Labels[tag.ChangeID] != "") || (hasTraceyWebhook && r.Labels[tag.TraceyWebhookLabel] != "") {
 				potentialParentReads = append(potentialParentReads, r)
 			}
 		}
 	}
 
 	if len(potentialParentReads) == 0 {
-		// No reads that can link upwards, currentEvent is a root.
-		siblings := lm.getSiblingWriteEvents(currentEvent)
-		return &currentEvent, siblings, false, "", nil
+		siblings := lm.getSiblingWriteEvents(currentWriteEvent)
+		allEvents := append([]StateEvent{currentWriteEvent}, siblings...)
+		return allEvents, rootTypeNoLinkFound, "", nil
 	}
 
 	sort.Slice(potentialParentReads, func(i, j int) bool {
 		tsI, _ := strconv.ParseInt(potentialParentReads[i].Timestamp, 10, 64)
 		tsJ, _ := strconv.ParseInt(potentialParentReads[j].Timestamp, 10, 64)
-		if tsI == tsJ { // Tie-break by ID for deterministic behavior
+		if tsI == tsJ {
 			return potentialParentReads[i].ID < potentialParentReads[j].ID
 		}
 		return tsI < tsJ
@@ -489,58 +508,63 @@ func (lm *LensManager) findCausalRootAndSiblings(
 		tsSelected, _ := strconv.ParseInt(selectedParentReadEvent.Timestamp, 10, 64)
 		tsNext, _ := strconv.ParseInt(potentialParentReads[1].Timestamp, 10, 64)
 		if tsSelected == tsNext {
-			fmt.Printf("WARNING: Tie in timestamps for selecting causal parent read event in ReconcileID %s. Selected %s based on earliest timestamp and ID.\n", currentEvent.ReconcileID, selectedParentReadEvent.ID)
+			fmt.Printf("WARNING: Tie in timestamps for selecting causal parent read event in ReconcileID %s. Selected %s.\n", currentWriteEvent.ReconcileID, selectedParentReadEvent.ID)
 		}
 	}
-	// klog.V(3).Infof("Selected parent read event %s (Timestamp: %s) in ReconcileID %s for upward trace from %s", selectedParentReadEvent.ID, selectedParentReadEvent.Timestamp, currentEvent.ReconcileID, currentEvent.ID)
 
 	parentReadChangeID := ""
-	traceyUID := ""
+	webhookIDFromRead := ""
 	if selectedParentReadEvent.Labels != nil {
 		parentReadChangeID = selectedParentReadEvent.Labels[tag.ChangeID]
-		traceyUID = selectedParentReadEvent.Labels[tag.TraceyWebhookLabel] // Use the correct constant
+		// Use TraceyWebhookLabel as per user correction
+		webhookIDFromRead = selectedParentReadEvent.Labels[tag.TraceyWebhookLabel]
 	}
 
-	if parentReadChangeID == "" && traceyUID != "" {
-		// This is a webhook root. currentEvent is the first write event under this webhook-initiated reconcile.
-		// The "effective root" is currentEvent. Its siblings are other writes in its own reconcile.
-		// klog.V(2).Infof("Webhook root identified by TraceyWebhook ID %s via read event %s. Effective root is %s.", traceyUID, selectedParentReadEvent.ID, currentEvent.ID)
-		siblings := lm.getSiblingWriteEvents(currentEvent)
-		return &currentEvent, siblings, true, traceyUID, nil
-	}
-
+	// Prioritize ChangeID for tracing up. If ChangeID exists, use it.
 	if parentReadChangeID != "" {
-		// Find the upstream write event that produced this parentReadChangeID.
 		var actualUpstreamWriteEvent *StateEvent
-		for i := range lm.state.stateEvents { // Must iterate by index to take address for pointer
-			candidateEvent := lm.state.stateEvents[i]
+		for i := range lm.state.stateEvents {
+			candidateEvent := lm.state.stateEvents[i] // Iterate over value, then take address if needed
 			if event.IsWriteOp(event.OperationType(candidateEvent.OpType)) &&
 				candidateEvent.Labels != nil &&
 				candidateEvent.Labels[tag.ChangeID] == parentReadChangeID {
-				actualUpstreamWriteEvent = &lm.state.stateEvents[i] // Assign address
+				actualUpstreamWriteEvent = &lm.state.stateEvents[i]
 				break
 			}
 		}
 
 		if actualUpstreamWriteEvent == nil {
-			fmt.Printf("WARNING: Upstream write event for ChangeID %s (read by %s in Reconcile %s) not found. Treating event %s as a root.\n",
-				parentReadChangeID, selectedParentReadEvent.ID, selectedParentReadEvent.ReconcileID, currentEvent.ID)
-			siblings := lm.getSiblingWriteEvents(currentEvent)
-			return &currentEvent, siblings, false, "", nil
+			fmt.Printf("WARNING: Upstream write event for ChangeID %s (read by %s) not found. Treating current reconcile as root.\n", parentReadChangeID, selectedParentReadEvent.ID)
+			siblings := lm.getSiblingWriteEvents(currentWriteEvent)
+			allEvents := append([]StateEvent{currentWriteEvent}, siblings...)
+			// If the read also had a webhookID, this could be a webhook-initiated reconcile that couldn't trace further up via ChangeID
+			if webhookIDFromRead != "" {
+				return allEvents, rootTypeWebhookInitiatedReconcile, webhookIDFromRead, nil
+			}
+			return allEvents, rootTypeNoLinkFound, "", nil
 		}
-		// klog.V(3).Infof("Found upstream write event %s for ChangeID %s. Recursing upwards.", actualUpstreamWriteEvent.ID, parentReadChangeID)
 		return lm.findCausalRootAndSiblings(*actualUpstreamWriteEvent, nextVisitedUpwards)
 	}
 
-	// If selectedParentReadEvent had neither a valid ChangeID to trace nor a TraceyWebhook label,
-	// or if parentReadChangeID was empty and traceyUID was also empty.
-	// Treat currentEvent as a root.
-	// klog.V(2).Infof("No further upward link from read event %s. Treating event %s as a root.", selectedParentReadEvent.ID, currentEvent.ID)
-	siblings := lm.getSiblingWriteEvents(currentEvent)
-	return &currentEvent, siblings, false, "", nil
+	// If no parentReadChangeID, but there's a webhookIDFromRead, this reconcile is webhook-initiated.
+	if webhookIDFromRead != "" {
+		// klog.V(2).Infof("Webhook-initiated reconcile identified by read of TraceyWebhookLabel %s. Effective root events are from ReconcileID %s.", webhookIDFromRead, currentWriteEvent.ReconcileID)
+		// All write events in the currentWriteEvent's reconcile are the "roots" of this branch.
+		allWritesInThisReconcile := []StateEvent{}
+		for _, e := range eventsInCurrentReconcile {
+			if event.IsWriteOp(event.OperationType(e.OpType)) {
+				allWritesInThisReconcile = append(allWritesInThisReconcile, e)
+			}
+		}
+		return allWritesInThisReconcile, rootTypeWebhookInitiatedReconcile, webhookIDFromRead, nil
+	}
+
+	// No ChangeID and no WebhookID on the selected parent read.
+	siblings := lm.getSiblingWriteEvents(currentWriteEvent)
+	allEvents := append([]StateEvent{currentWriteEvent}, siblings...)
+	return allEvents, rootTypeNoLinkFound, "", nil
 }
 
-// getSiblingWriteEvents finds other write events in the same reconcile as the given event.
 func (lm *LensManager) getSiblingWriteEvents(evt StateEvent) []StateEvent {
 	siblings := []StateEvent{}
 	eventsInReconcile := lm.eventsByReconcileID[evt.ReconcileID]
@@ -552,7 +576,6 @@ func (lm *LensManager) getSiblingWriteEvents(evt StateEvent) []StateEvent {
 	return siblings
 }
 
-// buildCausalityRecursively populates the CausalChildren of the given parentNode.
 func (lm *LensManager) buildCausalityRecursively(parentNode *ProvenanceNode, expandedEventIDsInPath map[string]bool) {
 	parentEventID := parentNode.Event.ID
 	parentChangeID := ""
@@ -564,7 +587,6 @@ func (lm *LensManager) buildCausalityRecursively(parentNode *ProvenanceNode, exp
 		fmt.Printf("DEBUG: Downward cycle detected for Event ID %s (ChangeID: %s)\n", parentEventID, parentChangeID)
 		return
 	}
-
 	currentPathExpandedIDs := make(map[string]bool, len(expandedEventIDsInPath)+1)
 	for id, val := range expandedEventIDsInPath {
 		currentPathExpandedIDs[id] = val
@@ -583,7 +605,6 @@ func (lm *LensManager) buildCausalityRecursively(parentNode *ProvenanceNode, exp
 		if processedTriggersForThisParent[triggerKey] {
 			continue
 		}
-
 		parentChangeWasRead := false
 		for _, readEvent := range eventsInReconcile {
 			if event.IsReadOp(event.OperationType(readEvent.OpType)) && readEvent.Labels != nil {
@@ -593,7 +614,6 @@ func (lm *LensManager) buildCausalityRecursively(parentNode *ProvenanceNode, exp
 				}
 			}
 		}
-
 		if parentChangeWasRead {
 			processedTriggersForThisParent[triggerKey] = true
 			for _, childCandidateEvent := range lm.eventsByReconcileID[triggeringReconcileID] {
@@ -608,8 +628,8 @@ func (lm *LensManager) buildCausalityRecursively(parentNode *ProvenanceNode, exp
 	}
 
 	sortedChildStateEvents := make([]StateEvent, 0, len(directChildrenEvents))
-	for _, event := range directChildrenEvents {
-		sortedChildStateEvents = append(sortedChildStateEvents, event)
+	for _, ev := range directChildrenEvents {
+		sortedChildStateEvents = append(sortedChildStateEvents, ev)
 	}
 	sort.Slice(sortedChildStateEvents, func(i, j int) bool {
 		tsI, _ := strconv.ParseInt(sortedChildStateEvents[i].Timestamp, 10, 64)
@@ -619,16 +639,12 @@ func (lm *LensManager) buildCausalityRecursively(parentNode *ProvenanceNode, exp
 
 	parentNode.CausalChildren = make([]ProvenanceNode, 0, len(sortedChildStateEvents))
 	for _, childEvent := range sortedChildStateEvents {
-		childNode := ProvenanceNode{
-			Key:   childEvent.Effect.Key,
-			Event: childEvent,
-		}
+		childNode := ProvenanceNode{Key: childEvent.Effect.Key, Event: childEvent}
 		lm.buildCausalityRecursively(&childNode, currentPathExpandedIDs)
 		parentNode.CausalChildren = append(parentNode.CausalChildren, childNode)
 	}
 }
 
-// printProvenanceTree prints the causality tree with reconcile instance grouping.
 func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int, indentPrefix string, isLastInPreviousLevel bool) {
 	currentLineOutput := indentPrefix
 	if depth > 0 {
@@ -638,20 +654,9 @@ func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int,
 			currentLineOutput += "├─ "
 		}
 	} else {
-		// Only the very first node of a top-level tree gets "ROOT: "
-		// This is handled by the initial call in ProvenanceLens.
-		// If we want to distinguish subsequent top-level trees (siblings),
-		// the ProvenanceLens loop should handle their specific "header".
-		// For now, this makes each top-level start with "ROOT: "
-		currentLineOutput += "ROOT: "
+		currentLineOutput += "EVENT: "
 	}
 
-	// Use Effect.Key.Kind and Effect.Key.Name as per user's canvas version of this function
-	// The canvas version had: eventNode.Event.Effect.Key.ResourceKey.Kind
-	// Assuming CompositeKey has Kind and Name directly for now.
-	// If CompositeKey has a ResourceKey field, it should be:
-	// eventNode.Event.Effect.Key.ResourceKey.Kind and eventNode.Event.Effect.Key.ResourceKey.Name
-	// Sticking to the user's latest canvas version for this print line.
 	kind := eventNode.Event.Effect.Key.ResourceKey.Kind
 	name := eventNode.Event.Effect.Key.ResourceKey.Name
 
@@ -659,20 +664,17 @@ func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int,
 	var formattedTime string
 	timestampInt, err := strconv.ParseInt(timestampStr, 10, 64)
 	if err != nil {
-		// klog.Errorf("Error parsing timestamp string '%s': %v", timestampStr, err)
 		formattedTime = fmt.Sprintf("InvalidTimestamp(%s)", timestampStr)
 	} else {
-		// Assuming timestamp is in microseconds as per user's canvas
 		parsedTime := time.Unix(0, timestampInt*int64(time.Microsecond))
 		formattedTime = parsedTime.Format(time.RFC3339)
 	}
 
-	// Printing format from user's canvas: OpType Kind "Name" (Time: formattedTime)
 	fmt.Printf("%s%s %s %q (Time: %s)\n",
 		currentLineOutput,
 		eventNode.Event.OpType,
-		kind, // Use kind derived above
-		name, // Use name derived above
+		kind,
+		name,
 		formattedTime,
 	)
 
@@ -692,8 +694,8 @@ func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int,
 	type ReconcileInstanceGroup struct {
 		Key                ReconcileInstanceKey
 		Events             []ProvenanceNode
-		MinTimestampStr    string // Keep as string for consistency with Event.Timestamp
-		MinTimestampInt    int64  // For actual numeric sorting
+		MinTimestampStr    string
+		MinTimestampInt    int64
 		ActualControllerID string
 	}
 
@@ -707,7 +709,6 @@ func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int,
 			ControllerID: groupControllerID,
 			ReconcileID:  childNode.Event.ReconcileID,
 		}
-
 		childTsInt, _ := strconv.ParseInt(childNode.Event.Timestamp, 10, 64)
 
 		group, exists := groupedChildren[key]
@@ -750,7 +751,6 @@ func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int,
 
 	for i, group := range sortedGroups {
 		isLastGroup := (i == len(sortedGroups)-1)
-
 		reconcileGroupLine := childrenBaseIndent
 		if isLastGroup {
 			reconcileGroupLine += "└─ "
@@ -758,17 +758,10 @@ func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int,
 			reconcileGroupLine += "├─ "
 		}
 
-		// Format the MinTimestamp for the reconcile group header
 		var formattedGroupTime string
-		groupTsInt, err := strconv.ParseInt(group.MinTimestampStr, 10, 64)
-		if err != nil {
-			formattedGroupTime = fmt.Sprintf("InvalidTimestamp(%s)", group.MinTimestampStr)
-		} else {
-			parsedGroupTime := time.Unix(0, groupTsInt*int64(time.Microsecond))
-			formattedGroupTime = parsedGroupTime.Format(time.RFC3339Nano) // Use RFC3339Nano for more precision if available
-		}
+		parsedGroupTime := time.Unix(0, group.MinTimestampInt*int64(time.Microsecond))
+		formattedGroupTime = parsedGroupTime.Format(time.RFC3339Nano)
 
-		// Re-added timestamp to reconcile group header as per earlier user request style
 		fmt.Printf("%s%s reconcile (reconcile ID: %s, timestamp: %s)\n",
 			reconcileGroupLine,
 			group.ActualControllerID,
