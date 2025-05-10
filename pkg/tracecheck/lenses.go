@@ -20,6 +20,7 @@ type LensManager struct {
 	state                    *StateSnapshot
 	manager                  *manager
 	dataEffectsByReconcileID map[string]reconcileEffects
+	eventsByReconcileID      map[string][]StateEvent
 	effects                  []Effect
 }
 
@@ -53,6 +54,7 @@ func NewLensManager(state *StateSnapshot, mgr *manager) *LensManager {
 		state:                    state,
 		manager:                  mgr,
 		dataEffectsByReconcileID: dataEffectByReconcileID,
+		eventsByReconcileID:      byReconcile,
 		effects:                  effects,
 	}
 }
@@ -167,6 +169,7 @@ func (lm *LensManager) LifecycleLens(slug string) error {
 				continue
 			}
 			fmt.Println("Delta:", diff.String())
+			fmt.Println("==========================")
 			continue
 		}
 		prevEvent := relevantEvents[i-1]
@@ -220,4 +223,77 @@ func (lm *LensManager) ckeyFromSlug(slug string) (snapshot.CompositeKey, error) 
 		}
 	}
 	return snapshot.CompositeKey{}, errors.Errorf("could not find object with slug %s", slug)
+}
+
+type ProvenanceNode struct {
+	Key            snapshot.CompositeKey
+	Event          StateEvent
+	causalChildren []ProvenanceNode
+}
+
+func (lm *LensManager) ProvenanceLens(slug string) error {
+	ckey, err := lm.ckeyFromSlug(slug)
+	if err != nil {
+		return errors.Wrap(err, "getting ckey from slug")
+	}
+	// find all trace events where this object was modified
+	relevantEvents := lo.Filter(lm.state.stateEvents, func(e StateEvent, _ int) bool {
+		return e.Effect.Key.IdentityKey == ckey.IdentityKey && event.IsWriteOp(event.OperationType(e.OpType))
+	})
+	if len(relevantEvents) == 0 {
+		return errors.Errorf("no events found for object with slug %s", slug)
+	}
+	sort.Slice(relevantEvents, func(i, j int) bool {
+		return relevantEvents[i].Timestamp < relevantEvents[j].Timestamp
+	})
+	// this is the event where the resource was created (first modification)
+	first := relevantEvents[0]
+	labels := tag.FilterSleeveLabels(first.Labels)
+	fmt.Println("labels:", labels)
+
+	// start building the causality tree downwards
+	provenanceNode := ProvenanceNode{
+		Key:   first.Effect.Key,
+		Event: first,
+	}
+
+	getCausalChildren := func(writeEvent StateEvent) []StateEvent {
+		changeID := writeEvent.Labels[tag.ChangeID]
+		children := make([]StateEvent, 0)
+		for reconcileID, events := range lm.eventsByReconcileID {
+			for _, e := range events {
+				if event.IsReadOp(event.OperationType(e.OpType)) {
+					labels := tag.FilterSleeveLabels(e.Labels)
+					observedChangeID := labels[tag.ChangeID]
+					// we've identified a downstream reconcile where this change ID was observed
+					if observedChangeID == changeID {
+						fmt.Printf("reconcile ID: %s, observed change ID: %s\n", reconcileID, observedChangeID)
+						// this means that all the write events under this reconcileID were causally affected by
+						// the change ID
+						// we need to find all the write events under this reconcile ID and add them to the children list
+						eventsUnderReconcile := lm.eventsByReconcileID[reconcileID]
+						for _, e := range eventsUnderReconcile {
+							if event.IsWriteOp(event.OperationType(e.OpType)) {
+								children = append(children, e)
+							}
+						}
+					}
+				}
+			}
+		}
+		return children
+	}
+
+	provenanceNode.causalChildren = make([]ProvenanceNode, 0)
+	childrenForChangeID := getCausalChildren(first)
+	fmt.Println("children for change ID:")
+	for _, e := range childrenForChangeID {
+		fmt.Printf("reconcile ID: %s, opType: %s, RKey: %s\n", e.ReconcileID, e.OpType, e.Effect.Key.ResourceKey)
+		provenanceNode.causalChildren = append(provenanceNode.causalChildren, ProvenanceNode{
+			Key:   e.Effect.Key,
+			Event: e,
+		})
+	}
+
+	return nil
 }
