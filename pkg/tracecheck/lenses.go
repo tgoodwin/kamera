@@ -161,7 +161,12 @@ func (lm *LensManager) LifecycleLens(slug string) error {
 	for i, e := range relevantEvents {
 		fmt.Printf("controllerID: %s, ReconcileID: %s, opType: %s\n", e.ControllerID, e.ReconcileID, e.OpType)
 		if i == 0 {
-			fmt.Println("Delta: CREATE")
+			diff, err := lm.JSONDelta("{}", e.Effect.Version.Value)
+			if err != nil {
+				fmt.Printf("error computing JSON delta: %v\n", err)
+				continue
+			}
+			fmt.Println("Delta:", diff.String())
 			continue
 		}
 		prevEvent := relevantEvents[i-1]
@@ -171,6 +176,7 @@ func (lm *LensManager) LifecycleLens(slug string) error {
 			continue
 		}
 		fmt.Println("Delta:", diff.String())
+		fmt.Println("==========================")
 	}
 	return nil
 
