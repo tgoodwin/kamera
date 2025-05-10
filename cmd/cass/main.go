@@ -34,11 +34,6 @@ func main() {
 		fmt.Printf("ts:%s (%d) frameID:%s controller=%s op=%s item=%s:%s %s\n", e.Timestamp, e.Sequence, util.Shorter(e.ReconcileID), e.ControllerID, e.OpType, e.Kind, util.Shorter(sleeveObjectID), util.ShortenHash(e.Effect.Version.Value))
 	}
 	fmt.Println("===before rollup===")
-	// for _, t := range traces {
-	// 	if strings.HasPrefix(t.Event.ID, "09f8") {
-	// 		panic("found it outside")
-	// 	}
-	// }
 
 	byKind := lo.GroupBy(traces, func(t tracecheck.StateEvent) string {
 		return t.Kind
@@ -60,10 +55,4 @@ func main() {
 	}
 	topState := tracecheck.CausalRollup(traces)
 	topState.Debug()
-	fixed := topState.FixAt(tracecheck.KindSequences{
-		"CassandraDatacenter": 40,
-	})
-	fixed.Debug()
-
-	log.Println("Traces sorted by timestamp")
 }
