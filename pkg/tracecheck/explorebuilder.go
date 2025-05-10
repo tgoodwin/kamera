@@ -357,3 +357,23 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 
 	return explorer, nil
 }
+
+func (b *ExplorerBuilder) LensManager(traceFilePath string) (*LensManager, error) {
+	traces, err := b.ParseJSONLTrace(traceFilePath)
+	if err != nil {
+		return nil, fmt.Errorf("parsing trace file: %w", err)
+	}
+	rollup := CausalRollup(traces)
+	mgr := &manager{
+		versionStore: newVersionStore(b.snapStore),
+		effects:      make(map[string]reconcileEffects),
+		snapStore:    b.snapStore,
+		effectRKeys:  make(map[string]util.Set[snapshot.ResourceKey]),
+		effectIKeys:  make(map[string]util.Set[snapshot.IdentityKey]),
+	}
+
+	return NewLensManager(
+		rollup,
+		mgr,
+	), nil
+}
