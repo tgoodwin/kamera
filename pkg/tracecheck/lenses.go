@@ -319,6 +319,17 @@ const (
 	rootTypeCycleDetected             = "cycle_detected"
 )
 
+// formatTimestamp is a helper function to parse and format timestamp strings.
+func formatTimestamp(tsStr string) string {
+	timestampInt, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		return fmt.Sprintf("InvalidTimestamp(%s)", tsStr)
+	}
+	// Assuming timestamp is in microseconds
+	parsedTime := time.Unix(0, timestampInt*int64(time.Microsecond))
+	return parsedTime.Format(time.RFC3339Nano) // Use Nano for more precision
+}
+
 // ProvenanceLens analyzes and prints causal provenance.
 func (lm *LensManager) ProvenanceLens(slug string) error {
 	if lm.state == nil {
@@ -337,7 +348,6 @@ func (lm *LensManager) ProvenanceLens(slug string) error {
 	}
 
 	relevantEvents := lo.Filter(lm.state.stateEvents, func(e StateEvent, _ int) bool {
-		// Ensure Effect and Key are not nil before accessing IdentityKey
 		return e.Effect.Key.IdentityKey == ckey.IdentityKey &&
 			event.IsWriteOp(event.OperationType(e.OpType))
 	})
@@ -357,13 +367,10 @@ func (lm *LensManager) ProvenanceLens(slug string) error {
 	fmt.Printf("Starting Provenance Analysis from event ID: %s for object: %s\n", firstWriteEvent.ID, firstWriteEvent.Effect.Key.String())
 
 	visitedUpwards := make(map[string]bool)
-	// rootLevelWriteEvents contains the event(s) from the highest reconcile instance found.
-	rootLevelWriteEvents, rootTypeFound, rootWebhookID, err := lm.findCausalRootAndSiblings(firstWriteEvent, visitedUpwards)
+	rootLevelWriteEvents, _, rootWebhookIDValue, err := lm.findCausalRootAndSiblings(firstWriteEvent, visitedUpwards)
 	if err != nil {
-		// If a cycle was detected upwards, err will be non-nil.
-		// We still might have rootLevelWriteEvents to print from where the cycle was detected.
 		fmt.Printf("Warning during upward trace: %v\n", err)
-		if len(rootLevelWriteEvents) == 0 { // If error and no events, truly cannot proceed.
+		if len(rootLevelWriteEvents) == 0 {
 			return errors.Wrapf(err, "failed to find causal root starting from event ID %s and no events returned", firstWriteEvent.ID)
 		}
 	}
@@ -372,74 +379,62 @@ func (lm *LensManager) ProvenanceLens(slug string) error {
 		return errors.Errorf("no root level events identified from event ID %s", firstWriteEvent.ID)
 	}
 
-	// Sort the final set of root-level events by timestamp.
 	sort.Slice(rootLevelWriteEvents, func(i, j int) bool {
 		tsI, _ := strconv.ParseInt(rootLevelWriteEvents[i].Timestamp, 10, 64)
 		tsJ, _ := strconv.ParseInt(rootLevelWriteEvents[j].Timestamp, 10, 64)
 		return tsI < tsJ
 	})
 
-	fmt.Println("\nProvenance Tree:")
-	switch rootTypeFound {
-	case rootTypeTrueWebhookWrite:
-		fmt.Printf("ROOT (True Webhook Event Trigger)\nRoot Webhook ID (from write event): %s\n", rootWebhookID)
-	case rootTypeWebhookInitiatedReconcile:
-		fmt.Printf("ROOT (Webhook-Initiated Reconcile)\nTriggering Webhook ID (from read event): %s\n", rootWebhookID)
-	case rootTypeCycleDetected:
-		fmt.Printf("ROOT (Upward Cycle Detected)\nStarting downward trace from events in the cycle's origin reconcile.\n")
-	case rootTypeNoLinkFound:
-		fmt.Printf("ROOT (Effective Trace Start - No further upward link found)\n")
-	default:
-		fmt.Printf("ROOT (Unknown Root Type)\n")
-	}
+	fmt.Println("\nProvenance:")
 
-	// If multiple rootLevelWriteEvents, they are siblings from the same root reconcile.
-	// Print a header for this shared reconcile.
-	if len(rootLevelWriteEvents) > 1 {
-		firstRootEvent := rootLevelWriteEvents[0] // Use the first for common reconcile info
-		tsInt, _ := strconv.ParseInt(firstRootEvent.Timestamp, 10, 64)
-		parsedTime := time.Unix(0, tsInt*int64(time.Microsecond))
-		formattedTime := parsedTime.Format(time.RFC3339Nano)
+	if len(rootLevelWriteEvents) > 0 {
+		firstRootEvt := rootLevelWriteEvents[0]
+		controllerForHeader := firstRootEvt.ControllerID
+		if controllerForHeader == "" { // Default if missing
+			controllerForHeader = "UnknownController"
+		}
+		reconcileIDForHeader := firstRootEvt.ReconcileID
+		timestampForHeader := firstRootEvt.Timestamp
 
-		fmt.Printf("Shared Root Reconcile (Controller: %s, ReconcileID: %s, Approx. Timestamp: %s)\n",
-			firstRootEvent.ControllerID,
-			firstRootEvent.ReconcileID,
-			formattedTime, // Timestamp of the first event in the group
+		topEvent, err := lm.findTopLevelEvent(rootWebhookIDValue, "TraceyWebhook")
+		if err != nil {
+			fmt.Printf("Error finding top-level event: %v\n", err)
+		}
+		fmt.Printf("%s (ID: %s, timestamp: %s)\n",
+			"External Request",
+			// topEvent.ControllerID,
+			rootWebhookIDValue,
+			formatTimestamp(timestampForHeader),
 		)
-		// Subsequent calls to printProvenanceTree will be indented under this.
+		prefix := "└─"
+		fmt.Printf("%s %s %s %s\n", prefix, topEvent.OpType, topEvent.Kind, topEvent.Effect.Key.ResourceKey.Name)
+
+		fmt.Printf("%s %s reconcile (reconcile ID%s, timestamp: %s)\n", "  "+prefix, controllerForHeader, reconcileIDForHeader, formatTimestamp(timestampForHeader))
+
+		// Now print each rootLevelWriteEvent as an item under this header.
+		// These are the actual write operations within that root reconcile instance.
 		for i, topEvent := range rootLevelWriteEvents {
 			rootNode := ProvenanceNode{Key: topEvent.Effect.Key, Event: topEvent}
 			expandedDownwards := make(map[string]bool)
 			lm.buildCausalityRecursively(&rootNode, expandedDownwards)
-			// Start at depth 1 because they are under the "Shared Root Reconcile" header.
-			// The indentPrefix starts empty for the first level of the tree structure.
-			lm.printProvenanceTree(&rootNode, 1, "", (i == len(rootLevelWriteEvents)-1))
+			// These events are direct children of the conceptual root reconcile header.
+			// Pass depth 1, empty indentPrefix, and isLast status.
+			lm.printProvenanceTree(&rootNode, 1, "     ", (i == len(rootLevelWriteEvents)-1))
 		}
-	} else if len(rootLevelWriteEvents) == 1 {
-		// Single root event, print its tree directly starting at depth 0.
-		topEvent := rootLevelWriteEvents[0]
-		rootNode := ProvenanceNode{Key: topEvent.Effect.Key, Event: topEvent}
-		expandedDownwards := make(map[string]bool)
-		lm.buildCausalityRecursively(&rootNode, expandedDownwards)
-		lm.printProvenanceTree(&rootNode, 0, "", true) // Depth 0, it's the last (only) one.
+	} else {
+		fmt.Println("No root events to display.")
 	}
 
 	return nil
 }
 
 // findCausalRootAndSiblings traces upwards from currentWriteEvent.
-// Returns:
-// - []StateEvent: The set of write events from the highest-level reconcile found (root + its siblings).
-// - string: The type of root found (e.g., rootTypeTrueWebhookWrite).
-// - string: The Webhook ID if applicable.
-// - error: If an error (like a cycle) occurs.
 func (lm *LensManager) findCausalRootAndSiblings(
 	currentWriteEvent StateEvent,
 	visitedUpwards map[string]bool,
 ) ([]StateEvent, string, string, error) {
 
 	if visitedUpwards[currentWriteEvent.ID] {
-		// klog.Warningf("Upward cycle detected at event ID %s.", currentWriteEvent.ID)
 		siblings := lm.getSiblingWriteEvents(currentWriteEvent)
 		allEventsInCycleReconcile := append([]StateEvent{currentWriteEvent}, siblings...)
 		return allEventsInCycleReconcile, rootTypeCycleDetected, "", errors.Errorf("upward cycle detected at event ID %s", currentWriteEvent.ID)
@@ -450,11 +445,8 @@ func (lm *LensManager) findCausalRootAndSiblings(
 		nextVisitedUpwards[k] = v
 	}
 
-	// Check if currentWriteEvent itself is a "true webhook root"
 	if currentWriteEvent.Labels != nil {
-		// Use TraceyWebhookLabel as per user correction
 		if webhookID, ok := currentWriteEvent.Labels[tag.TraceyWebhookLabel]; ok && webhookID != "" {
-			// klog.V(2).Infof("True webhook root write event ID %s with WebhookID %s", currentWriteEvent.ID, webhookID)
 			siblings := lm.getSiblingWriteEvents(currentWriteEvent)
 			allEvents := append([]StateEvent{currentWriteEvent}, siblings...)
 			return allEvents, rootTypeTrueWebhookWrite, webhookID, nil
@@ -470,7 +462,6 @@ func (lm *LensManager) findCausalRootAndSiblings(
 	}
 
 	if len(readEventsInReconcile) == 0 {
-		// No reads, currentWriteEvent and its siblings are the root of this path.
 		siblings := lm.getSiblingWriteEvents(currentWriteEvent)
 		allEvents := append([]StateEvent{currentWriteEvent}, siblings...)
 		return allEvents, rootTypeNoLinkFound, "", nil
@@ -480,7 +471,6 @@ func (lm *LensManager) findCausalRootAndSiblings(
 	for _, r := range readEventsInReconcile {
 		if r.Labels != nil {
 			_, hasChangeID := r.Labels[tag.ChangeID]
-			// Use TraceyWebhookLabel as per user correction
 			_, hasTraceyWebhook := r.Labels[tag.TraceyWebhookLabel]
 			if (hasChangeID && r.Labels[tag.ChangeID] != "") || (hasTraceyWebhook && r.Labels[tag.TraceyWebhookLabel] != "") {
 				potentialParentReads = append(potentialParentReads, r)
@@ -516,15 +506,13 @@ func (lm *LensManager) findCausalRootAndSiblings(
 	webhookIDFromRead := ""
 	if selectedParentReadEvent.Labels != nil {
 		parentReadChangeID = selectedParentReadEvent.Labels[tag.ChangeID]
-		// Use TraceyWebhookLabel as per user correction
 		webhookIDFromRead = selectedParentReadEvent.Labels[tag.TraceyWebhookLabel]
 	}
 
-	// Prioritize ChangeID for tracing up. If ChangeID exists, use it.
 	if parentReadChangeID != "" {
 		var actualUpstreamWriteEvent *StateEvent
 		for i := range lm.state.stateEvents {
-			candidateEvent := lm.state.stateEvents[i] // Iterate over value, then take address if needed
+			candidateEvent := lm.state.stateEvents[i]
 			if event.IsWriteOp(event.OperationType(candidateEvent.OpType)) &&
 				candidateEvent.Labels != nil &&
 				candidateEvent.Labels[tag.ChangeID] == parentReadChangeID {
@@ -532,12 +520,10 @@ func (lm *LensManager) findCausalRootAndSiblings(
 				break
 			}
 		}
-
 		if actualUpstreamWriteEvent == nil {
 			fmt.Printf("WARNING: Upstream write event for ChangeID %s (read by %s) not found. Treating current reconcile as root.\n", parentReadChangeID, selectedParentReadEvent.ID)
 			siblings := lm.getSiblingWriteEvents(currentWriteEvent)
 			allEvents := append([]StateEvent{currentWriteEvent}, siblings...)
-			// If the read also had a webhookID, this could be a webhook-initiated reconcile that couldn't trace further up via ChangeID
 			if webhookIDFromRead != "" {
 				return allEvents, rootTypeWebhookInitiatedReconcile, webhookIDFromRead, nil
 			}
@@ -546,12 +532,9 @@ func (lm *LensManager) findCausalRootAndSiblings(
 		return lm.findCausalRootAndSiblings(*actualUpstreamWriteEvent, nextVisitedUpwards)
 	}
 
-	// If no parentReadChangeID, but there's a webhookIDFromRead, this reconcile is webhook-initiated.
 	if webhookIDFromRead != "" {
-		// klog.V(2).Infof("Webhook-initiated reconcile identified by read of TraceyWebhookLabel %s. Effective root events are from ReconcileID %s.", webhookIDFromRead, currentWriteEvent.ReconcileID)
-		// All write events in the currentWriteEvent's reconcile are the "roots" of this branch.
 		allWritesInThisReconcile := []StateEvent{}
-		for _, e := range eventsInCurrentReconcile {
+		for _, e := range eventsInCurrentReconcile { // Use eventsInCurrentReconcile (already fetched)
 			if event.IsWriteOp(event.OperationType(e.OpType)) {
 				allWritesInThisReconcile = append(allWritesInThisReconcile, e)
 			}
@@ -559,7 +542,6 @@ func (lm *LensManager) findCausalRootAndSiblings(
 		return allWritesInThisReconcile, rootTypeWebhookInitiatedReconcile, webhookIDFromRead, nil
 	}
 
-	// No ChangeID and no WebhookID on the selected parent read.
 	siblings := lm.getSiblingWriteEvents(currentWriteEvent)
 	allEvents := append([]StateEvent{currentWriteEvent}, siblings...)
 	return allEvents, rootTypeNoLinkFound, "", nil
@@ -647,29 +629,43 @@ func (lm *LensManager) buildCausalityRecursively(parentNode *ProvenanceNode, exp
 
 func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int, indentPrefix string, isLastInPreviousLevel bool) {
 	currentLineOutput := indentPrefix
-	if depth > 0 {
+	if depth > 0 { // Apply tree branching characters for nodes not at the immediate root of this print call
 		if isLastInPreviousLevel {
 			currentLineOutput += "└─ "
 		} else {
 			currentLineOutput += "├─ "
 		}
 	} else {
-		currentLineOutput += "EVENT: "
+		// Depth 0 for this function means it's the first event being printed in a sequence
+		// (e.g., the items directly under the "Shared Root Reconcile" or a single root event).
+		// The main "ROOT" headers are handled by ProvenanceLens.
+		// For consistency with the user's example "│   └─ CREATE...",
+		// items at depth 0 in this *specific* call (which are actually depth 1 from the overall root header)
+		// still need a branch prefix if they are part of a list.
+		// This is handled by the caller setting isLastInPreviousLevel correctly.
+		// So, if depth is 0 here, it means it's a top-level event *for this particular tree rendering pass*.
+		// The `isLastInPreviousLevel` will determine └─ or ├─.
+		// The `indentPrefix` will be "" if it's truly the start.
+		// Let's assume the caller (ProvenanceLens) correctly sets depth and isLast for the first level of events.
+		// If this function is called with depth 0, it's a standalone event print.
+		// No, the logic in ProvenanceLens calls this with depth 1 for items under the main header.
+		// If called with depth 0, it's a single overall root.
+		if isLastInPreviousLevel { // If it's the only/last item at this effective "root" level for this call
+			currentLineOutput += "└─ "
+		} else { // If there are more siblings at this effective "root" level for this call
+			currentLineOutput += "├─ "
+		}
+		// This makes depth 0 behave like depth 1 for prefixing, which simplifies the caller.
+		// The very first "ROOT" or "Shared Reconcile" header is printed outside.
 	}
 
 	kind := eventNode.Event.Effect.Key.ResourceKey.Kind
 	name := eventNode.Event.Effect.Key.ResourceKey.Name
 
 	timestampStr := eventNode.Event.Timestamp
-	var formattedTime string
-	timestampInt, err := strconv.ParseInt(timestampStr, 10, 64)
-	if err != nil {
-		formattedTime = fmt.Sprintf("InvalidTimestamp(%s)", timestampStr)
-	} else {
-		parsedTime := time.Unix(0, timestampInt*int64(time.Microsecond))
-		formattedTime = parsedTime.Format(time.RFC3339)
-	}
+	formattedTime := formatTimestamp(timestampStr) // Use helper
 
+	// Format from user's canvas: OpType Kind "Name" (Time: formattedTime)
 	fmt.Printf("%s%s %s %q (Time: %s)\n",
 		currentLineOutput,
 		eventNode.Event.OpType,
@@ -679,12 +675,11 @@ func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int,
 	)
 
 	childrenBaseIndent := indentPrefix
-	if depth > 0 {
-		if isLastInPreviousLevel {
-			childrenBaseIndent += "  "
-		} else {
-			childrenBaseIndent += "│ "
-		}
+	// This logic correctly extends the indent string for the next level.
+	if isLastInPreviousLevel { // If current node is last, its children don't need vertical bar from this level
+		childrenBaseIndent += "  "
+	} else { // If current node is not last, its children need vertical bar from this level
+		childrenBaseIndent += "│ "
 	}
 
 	type ReconcileInstanceKey struct {
@@ -758,9 +753,7 @@ func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int,
 			reconcileGroupLine += "├─ "
 		}
 
-		var formattedGroupTime string
-		parsedGroupTime := time.Unix(0, group.MinTimestampInt*int64(time.Microsecond))
-		formattedGroupTime = parsedGroupTime.Format(time.RFC3339Nano)
+		formattedGroupTime := formatTimestamp(group.MinTimestampStr) // Use helper
 
 		fmt.Printf("%s%s reconcile (reconcile ID: %s, timestamp: %s)\n",
 			reconcileGroupLine,
@@ -778,7 +771,18 @@ func (lm *LensManager) printProvenanceTree(eventNode *ProvenanceNode, depth int,
 
 		for j, actualWriteEventNodeInGroup := range group.Events {
 			isLastEventInThisGroup := (j == len(group.Events)-1)
+			// Depth increases for each level of *event* nesting.
+			// Reconcile groups are part of the presentation of an event's children.
 			lm.printProvenanceTree(&actualWriteEventNodeInGroup, depth+1, operationsIndent, isLastEventInThisGroup)
 		}
 	}
+}
+
+func (lm *LensManager) findTopLevelEvent(rootEventID string, controllerID string) (*StateEvent, error) {
+	for _, event := range lm.state.stateEvents {
+		if event.Labels[tag.TraceyWebhookLabel] == rootEventID && event.ControllerID == controllerID {
+			return &event, nil
+		}
+	}
+	return nil, errors.Errorf("no top-level event found for ID %s and controller ID %s", rootEventID, controllerID)
 }
