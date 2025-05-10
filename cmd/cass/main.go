@@ -14,10 +14,12 @@ import (
 
 func main() {
 	logfile := flag.String("logfile", "app.log", "path to the log file")
+	slug := flag.String("slug", "default", "slug representing sleeve object ID prefix")
 	flag.Parse()
 
 	eb := tracecheck.NewExplorerBuilder(runtime.NewScheme())
 
+	// this is stateful
 	traces, err := eb.ParseJSONLTrace(*logfile)
 	if err != nil {
 		log.Fatalf("failed to parse JSONL trace: %v", err)
@@ -55,4 +57,15 @@ func main() {
 	}
 	topState := tracecheck.CausalRollup(traces)
 	topState.Debug()
+	fmt.Println("HI")
+
+	eb2 := tracecheck.NewExplorerBuilder(runtime.NewScheme())
+	lensManager, err := eb2.LensManager(*logfile)
+	if err != nil {
+		log.Fatalf("failed to create lens manager: %v", err)
+	}
+	err = lensManager.LifecycleLens(*slug)
+	if err != nil {
+		log.Fatalf("failed to get lifecycle lens: %v", err)
+	}
 }
