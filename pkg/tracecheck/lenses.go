@@ -386,7 +386,6 @@ func (lm *LensManager) ProvenanceLens(slug string) error {
 	})
 
 	fmt.Println("\nProvenance:")
-
 	if len(rootLevelWriteEvents) > 0 {
 		firstRootEvt := rootLevelWriteEvents[0]
 		controllerForHeader := firstRootEvt.ControllerID
@@ -785,4 +784,115 @@ func (lm *LensManager) findTopLevelEvent(rootEventID string, controllerID string
 		}
 	}
 	return nil, errors.Errorf("no top-level event found for ID %s and controller ID %s", rootEventID, controllerID)
+}
+
+func (lm *LensManager) KnowledgeLens(reconcileID string) error {
+	effects := lm.dataEffectsByReconcileID[reconcileID]
+	if effects.writes == nil {
+		return errors.Errorf("no writes found for reconcile ID %s", reconcileID)
+	}
+	events := lm.eventsByReconcileID[reconcileID]
+	var controllerID string
+	for _, e := range events {
+		controllerID = e.ControllerID
+		break
+	}
+	for _, e := range events {
+		fmt.Println("Event:", e.OpType, e.Kind, e.Event.Version)
+	}
+	controllerDeps := make(map[string]bool)
+	for _, e := range lm.state.stateEvents {
+		if e.ControllerID == controllerID && event.IsReadOp(event.OperationType(e.OpType)) {
+			controllerDeps[e.Kind] = true
+		}
+	}
+	fmt.Printf("Controller ID: %s\n", controllerID)
+	for kind := range controllerDeps {
+		fmt.Printf("  %s\n", kind)
+	}
+
+	controllerReadEvents := lo.Filter(lm.state.stateEvents, func(e StateEvent, _ int) bool {
+		return e.ControllerID == controllerID && event.IsReadOp(event.OperationType(e.OpType))
+	})
+	sort.Slice(controllerReadEvents, func(i, j int) bool {
+		return controllerReadEvents[i].Sequence < controllerReadEvents[j].Sequence
+	})
+
+	// find the highest sequence number for the write set of this reconcileID
+	var highestSequenceNumber int64
+	for _, e := range events {
+		if event.IsWriteOp(event.OperationType(e.OpType)) {
+			rv, err := strconv.ParseInt(e.Event.Version, 10, 64)
+			if err != nil {
+				return errors.Wrapf(err, "parsing version %s", e.Event.Version)
+			}
+			if rv > highestSequenceNumber {
+				highestSequenceNumber = rv
+			}
+		}
+	}
+	upperBound := highestSequenceNumber
+	fmt.Println("RV upper bound:", upperBound)
+	frontiers := make(map[string]int64)
+	for kind := range controllerDeps {
+		frontier, err := lm.getFrontierForKind(kind, controllerID, upperBound)
+		if err != nil {
+			return errors.Wrapf(err, "getting frontier for kind %s", kind)
+		}
+		frontiers[kind] = frontier
+	}
+
+	missedEvents := make(map[string][]StateEvent)
+	for kind, frontier := range frontiers {
+		lowerBound := frontier
+		if lowerBound > upperBound {
+			return errors.Errorf("lower bound %d is greater than upper bound %d for kind %s", lowerBound, upperBound, kind)
+		}
+		missedEventsForKind := lm.findMissedEvents(kind, lowerBound, upperBound)
+		if len(missedEventsForKind) > 0 {
+			missedEvents[kind] = missedEventsForKind
+		}
+	}
+	fmt.Printf("Missed events for %s reconcile %s:\n", controllerID, reconcileID)
+	for kind := range controllerDeps {
+		if _, ok := missedEvents[kind]; !ok {
+			fmt.Printf("  %s: 0\n", kind)
+			continue
+		}
+		fmt.Printf("  %s: %d\n", kind, len(missedEvents[kind]))
+	}
+	return nil
+}
+func (lm *LensManager) getFrontierForKind(kind, controllerID string, upperBoundRV int64) (int64, error) {
+	var frontier int64
+
+	for _, e := range lm.state.stateEvents {
+		if e.Kind != kind || e.ControllerID != controllerID {
+			continue
+		}
+		eventRV, _ := strconv.ParseInt(e.Event.Version, 10, 64)
+		if eventRV < upperBoundRV && eventRV > frontier {
+			frontier = eventRV
+		}
+	}
+
+	if frontier == 0 {
+		return 0, errors.Errorf("no events found for kind %s", kind)
+	}
+
+	return frontier, nil
+}
+
+func (lm *LensManager) findMissedEvents(kind string, lowerBound, upperBound int64) []StateEvent {
+	missedEvents := make([]StateEvent, 0)
+	for _, e := range lm.state.stateEvents {
+		if e.Kind == kind {
+			eventRV, _ := strconv.ParseInt(e.Event.Version, 10, 64)
+			if eventRV > lowerBound && eventRV < upperBound {
+				missedEvents = append(missedEvents, e)
+			}
+		}
+	}
+
+	return missedEvents
 }
