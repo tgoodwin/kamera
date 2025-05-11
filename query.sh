@@ -1,6 +1,6 @@
 #!/bin/bash
 reconcile_prefix="$1"
-file="debug.jsonl"
+file="test.jsonl"
 if [[ "$1" == "--file" ]]; then
     file="$2"
     shift 2

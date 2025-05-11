@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"time"
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/sleeve/pkg/tracecheck"
@@ -15,6 +16,7 @@ import (
 func main() {
 	logfile := flag.String("logfile", "app.log", "path to the log file")
 	slug := flag.String("slug", "default", "slug representing sleeve object ID prefix")
+	reconcileID := flag.String("reconcileID", "", "object ID to analyze (optional)")
 	flag.Parse()
 
 	eb := tracecheck.NewExplorerBuilder(runtime.NewScheme())
@@ -57,15 +59,35 @@ func main() {
 	}
 	topState := tracecheck.CausalRollup(traces)
 	topState.Debug()
-	fmt.Println("HI")
 
 	eb2 := tracecheck.NewExplorerBuilder(runtime.NewScheme())
-	lensManager, err := eb2.LensManager(*logfile)
+	startTime := time.Now()
+	lensManager, err := eb2.BuildLensManager(*logfile)
+	elapsedTime := time.Since(startTime)
+	log.Printf("BuildLensManager completed in %s", elapsedTime)
 	if err != nil {
 		log.Fatalf("failed to create lens manager: %v", err)
 	}
-	err = lensManager.LifecycleLens(*slug)
-	if err != nil {
-		log.Fatalf("failed to get lifecycle lens: %v", err)
+	// err = lensManager.LifecycleLens(*slug)
+	// if err != nil {
+	// 	log.Fatalf("failed to get lifecycle lens: %v", err)
+	// }
+
+	// fmt.Println("===provenance===")
+	// err = lensManager.ProvenanceLens(*slug)
+	// if err != nil {
+	// 	log.Fatalf("failed to get provenance lens: %v", err)
+	// }
+	fmt.Println("===knowledge===")
+	if *reconcileID != "" {
+		err = lensManager.KnowledgeLens(*reconcileID)
+		if err != nil {
+			log.Fatalf("failed to get knowledge lens: %v", err)
+		}
+	} else {
+		// err = lensManager.KnowledgeLens(*slug, "")
+		// if err != nil {
+		// 	log.Fatalf("failed to get knowledge lens: %v", err)
+		// }
 	}
 }

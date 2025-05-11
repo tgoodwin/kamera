@@ -21,7 +21,7 @@ var provenanceCmd = &cobra.Command{
 		}
 
 		eb := tracecheck.NewExplorerBuilder(runtime.NewScheme())
-		lm, err := eb.LensManager(tracePath)
+		lm, err := eb.BuildLensManager(tracePath)
 		if err != nil {
 			fmt.Println("failed to load trace:", err)
 			return
