@@ -896,3 +896,37 @@ func (lm *LensManager) findMissedEvents(kind string, lowerBound, upperBound int6
 
 	return missedEvents
 }
+
+func (lm *LensManager) ReplayLens(reconcileID string) error {
+	effects := lm.dataEffectsByReconcileID[reconcileID]
+	if effects.writes == nil {
+		return errors.Errorf("no writes found for reconcile ID %s", reconcileID)
+	}
+	events := lm.eventsByReconcileID[reconcileID]
+	for _, e := range events {
+		fmt.Println("Event:", e.OpType, e.Kind, e.Event.Version)
+	}
+	kindSeqPre := make(KindSequences)
+	kindSeqPost := make(KindSequences)
+	for _, e := range events {
+		if event.IsReadOp(event.OperationType(e.OpType)) {
+			if e.Sequence > kindSeqPre[e.Kind] {
+				kindSeqPre[e.Kind] = e.Sequence
+			}
+		}
+		if event.IsWriteOp(event.OperationType(e.OpType)) {
+			if e.Sequence > kindSeqPre[e.Kind] {
+				kindSeqPost[e.Kind] = e.Sequence
+			}
+		}
+	}
+	fmt.Printf("kindSeqPre: %+v\n", kindSeqPre)
+	fmt.Printf("kindSeqPost: %+v\n", kindSeqPost)
+	lm.state.ObserveAt(kindSeqPre)
+	lm.state.ObserveAt(kindSeqPost)
+	// // fmt.Println("=== Pre ===\n")
+	// // pre.Summarize()
+	// // fmt.Println("=== Post ===\n")
+	// post.Summarize()
+	return nil
+}
