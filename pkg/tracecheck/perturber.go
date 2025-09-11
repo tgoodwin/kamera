@@ -10,7 +10,7 @@ type PriorityStrategyBuilder struct {
 	prioritizations []prioritizer
 }
 
-func NewPriorityBuilder() *PriorityStrategyBuilder {
+func NewPriorityStrategyBuilder() *PriorityStrategyBuilder {
 	return &PriorityStrategyBuilder{
 		filters:         []filterPred{},
 		prioritizations: []prioritizer{},
@@ -36,17 +36,18 @@ func (pb *PriorityStrategyBuilder) Build(store *snapshot.Store) *PriorityManager
 type filterPred func(view *StateSnapshot) bool
 
 type PriorityHandler interface {
-	ApplyPriorities(views []*StateSnapshot) []*StateSnapshot
+	AssignPriorities(views []*StateSnapshot) []*StateSnapshot
 	PrioritizeViews(views []*StateSnapshot) []*StateSnapshot
 }
 
 type PriorityManager struct {
+	// TODO allow for priority assignment funcs to access a store
 	store                    *snapshot.Store
 	prioritizationStrategies []prioritizer
 	filterPreds              []filterPred
 }
 
-func (p *PriorityManager) ApplyPriorities(views []*StateSnapshot) []*StateSnapshot {
+func (p *PriorityManager) AssignPriorities(views []*StateSnapshot) []*StateSnapshot {
 	if p.prioritizationStrategies == nil {
 		return views
 	}
@@ -61,6 +62,7 @@ func (p *PriorityManager) ApplyPriorities(views []*StateSnapshot) []*StateSnapsh
 	return views
 }
 
+// PrioritizeViews applies the priority-based filter predicates to the view
 func (p *PriorityManager) PrioritizeViews(views []*StateSnapshot) []*StateSnapshot {
 	if p.filterPreds == nil {
 		return views

@@ -117,7 +117,10 @@ func IsSleeveLabel(key string) bool {
 }
 
 func GetSleeveLabels(obj client.Object) map[string]string {
-	labels := obj.GetLabels()
+	return FilterSleeveLabels(obj.GetLabels())
+}
+
+func FilterSleeveLabels(labels map[string]string) map[string]string {
 	filteredLabels := make(map[string]string)
 	for key, value := range labels {
 		if key == TraceyWebhookLabel {
