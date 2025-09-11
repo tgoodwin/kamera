@@ -23,7 +23,7 @@ type frameInserter interface {
 	InsertCacheFrame(id string, data replay.CacheFrame)
 }
 
-type reconcileImpl struct {
+type ReconcilerContainer struct {
 	// The name of the reconciler
 	Name string
 
@@ -43,7 +43,7 @@ type reconcileImpl struct {
 	frameInserter
 }
 
-func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
+func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
 	frameID := replay.FrameIDFromContext(ctx)
 
 	// insert a "frame" to hold the readset data ahead of the reconcile
@@ -83,7 +83,7 @@ func (r *reconcileImpl) doReconcile(ctx context.Context, observableState ObjectV
 	}, nil
 }
 
-func (r *reconcileImpl) replayReconcile(ctx context.Context, request reconcile.Request) (*ReconcileResult, error) {
+func (r *ReconcilerContainer) replayReconcile(ctx context.Context, request reconcile.Request) (*ReconcileResult, error) {
 	frameID := replay.FrameIDFromContext(ctx)
 	if _, err := r.Reconcile(ctx, request); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
@@ -102,13 +102,13 @@ func (r *reconcileImpl) replayReconcile(ctx context.Context, request reconcile.R
 }
 
 func Wrap(name string, r reconcile.Reconciler) reconciler {
-	return &reconcileImpl{
+	return &ReconcilerContainer{
 		Name:       name,
 		Reconciler: r,
 	}
 }
 
-func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
+func (r *ReconcilerContainer) toFrameData(ov ObjectVersions) replay.CacheFrame {
 	out := make(replay.CacheFrame)
 	for key, hash := range ov {
 		kind := key.IdentityKey.Kind
@@ -134,7 +134,7 @@ func (r *reconcileImpl) toFrameData(ov ObjectVersions) replay.CacheFrame {
 	return out
 }
 
-func (r *reconcileImpl) computeDeltas(readSet, writeSet ObjectVersions) map[snapshot.CompositeKey]Delta {
+func (r *ReconcilerContainer) computeDeltas(readSet, writeSet ObjectVersions) map[snapshot.CompositeKey]Delta {
 	out := make(map[snapshot.CompositeKey]Delta)
 	for key, hash := range writeSet {
 		if prevHash, ok := readSet[key]; ok {

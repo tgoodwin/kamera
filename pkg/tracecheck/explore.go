@@ -19,15 +19,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-var DefaultMaxDepth = 10
+const (
+	DefaultMaxDepth = 10
+)
 
 type reconciler interface {
 	doReconcile(ctx context.Context, readset ObjectVersions, req reconcile.Request) (*ReconcileResult, error)
 	replayReconcile(ctx context.Context, req reconcile.Request) (*ReconcileResult, error)
-}
-
-type ReconcilerContainer struct {
-	*reconcileImpl
 }
 
 // EffectContextManager manages a "current state of the world" context
@@ -72,7 +70,7 @@ type TriggerHandler interface {
 
 type Explorer struct {
 	// reconciler implementations keyed by ID
-	reconcilers map[string]ReconcilerContainer
+	reconcilers map[string]*ReconcilerContainer
 	// maps Kinds to a list of reconcilerIDs that depend on them
 	dependencies ResourceDeps
 
@@ -282,6 +280,9 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	return result
 }
 
+// explore performs a state space exploration starting from the initialState.
+// the state space is modeled as a graph where nodes are states and edges are reconcile steps.
+// each branch represents a possible execution path through the state space, and leaf nodes are converged states.
 func (e *Explorer) explore(
 	ctx context.Context,
 	initialState StateNode,

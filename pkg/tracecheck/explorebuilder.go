@@ -109,8 +109,8 @@ func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *Exp
 	return b
 }
 
-func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]ReconcilerContainer {
-	containers := make(map[string]ReconcilerContainer)
+func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*ReconcilerContainer {
+	containers := make(map[string]*ReconcilerContainer)
 
 	for reconcilerID, constructor := range b.reconcilers {
 		var frameManager *replay.FrameManager
@@ -161,7 +161,7 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 		}
 
 		// Create reconciler implementation
-		rImpl := &reconcileImpl{
+		rImpl := &ReconcilerContainer{
 			Name: reconcilerID,
 			// TODO remove this. We no longer need to "infer" the reconcile request
 			For:            kindForReconciler,
@@ -171,12 +171,7 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 			frameInserter:  frameManager,
 		}
 
-		// Create container
-		container := ReconcilerContainer{
-			reconcileImpl: rImpl,
-		}
-
-		containers[reconcilerID] = container
+		containers[reconcilerID] = rImpl
 	}
 
 	return containers
@@ -185,7 +180,7 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]Reconc
 // instantiateCleanupReconciler adds a reconciler to the system that handles
 // actual deletion of resources after they have been "marked" for deletion. In reality,
 // the APIServer would handle this, but we need to simulate this behavior in our system.
-func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) ReconcilerContainer {
+func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *ReconcilerContainer {
 	fm := replay.NewFrameManager(nil)
 	replayClient := replay.NewClient(
 		CleanupReconcilerID,
@@ -207,16 +202,13 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) ReconcilerC
 		Client:   wrappedClient,
 		Recorder: mgr,
 	}
-	rImpl := &reconcileImpl{
+	container := &ReconcilerContainer{
 		Name: CleanupReconcilerID,
 		// For:  "Finalizer",
 		Reconciler:     r,
 		versionManager: mgr,
 		effectReader:   mgr,
 		frameInserter:  fm,
-	}
-	container := ReconcilerContainer{
-		reconcileImpl: rImpl,
 	}
 	return container
 }

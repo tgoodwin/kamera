@@ -30,10 +30,10 @@ type testEmitter interface {
 }
 
 type TraceChecker struct {
-	reconcilers  map[string]ReconcilerConstructor
-	ResourceDeps ResourceDeps
-	manager      *manager
-	scheme       *runtime.Scheme
+	reconcilerFactory map[string]ReconcilerConstructor
+	ResourceDeps      ResourceDeps
+	manager           *manager
+	scheme            *runtime.Scheme
 
 	// this just determines which top-level object a reconciler is triggered with
 	reconcilerToKind map[string]string
@@ -60,10 +60,10 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	}
 
 	return &TraceChecker{
-		reconcilers:  make(map[string]ReconcilerConstructor),
-		ResourceDeps: readDeps,
-		manager:      mgr,
-		scheme:       scheme,
+		reconcilerFactory: make(map[string]ReconcilerConstructor),
+		ResourceDeps:      readDeps,
+		manager:           mgr,
+		scheme:            scheme,
 
 		knowledgeManager: KnowledgeManager,
 
@@ -144,10 +144,10 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 	}
 
 	return &TraceChecker{
-		reconcilers:  make(map[string]ReconcilerConstructor),
-		ResourceDeps: readDeps,
-		manager:      mgr,
-		mode:         "traced",
+		reconcilerFactory: make(map[string]ReconcilerConstructor),
+		ResourceDeps:      readDeps,
+		manager:           mgr,
+		mode:              "traced",
 
 		knowledgeManager: knowledgeManager,
 
@@ -208,7 +208,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 }
 
 func (tc *TraceChecker) AddReconciler(reconcilerID string, constructor ReconcilerConstructor) {
-	tc.reconcilers[reconcilerID] = constructor
+	tc.reconcilerFactory[reconcilerID] = constructor
 }
 
 func (tc *TraceChecker) AssignReconcilerToKind(reconcilerID, kind string) {
@@ -219,12 +219,12 @@ func (tc *TraceChecker) AddEmitter(emitter testEmitter) {
 	tc.emitter = emitter
 }
 
-func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer {
+func (tc *TraceChecker) instantiateReconcilers() map[string]*ReconcilerContainer {
 	if tc.emitter == nil {
 		panic("Must set emitter on TraceChecker before instantiating reconcilers")
 	}
-	out := make(map[string]ReconcilerContainer)
-	for reconcilerID, constructor := range tc.reconcilers {
+	out := make(map[string]*ReconcilerContainer)
+	for reconcilerID, constructor := range tc.reconcilerFactory {
 		h, err := tc.builder.BuildHarness(reconcilerID)
 		if err != nil {
 			panic(fmt.Sprintf("building harness: %s", err))
@@ -256,16 +256,13 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]ReconcilerContainer 
 			panic(fmt.Sprintf("No kind assigned to reconciler: %s", reconcilerID))
 		}
 
-		rImpl := reconcileImpl{
+		container := &ReconcilerContainer{
 			Name:           reconcilerID,
 			For:            kindforReconciler,
 			Reconciler:     r,
 			versionManager: tc.manager,
 			effectReader:   tc.manager,
 			frameInserter:  frameManager,
-		}
-		container := ReconcilerContainer{
-			reconcileImpl: &rImpl,
 		}
 		out[reconcilerID] = container
 
