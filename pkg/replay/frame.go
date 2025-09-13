@@ -46,8 +46,9 @@ func FrameIDFromContext(ctx context.Context) string {
 	return id
 }
 
-// CacheFrame is a map of kind -> namespace/name -> object
-// and it is keyed by namespace/name cause that is the access pattern that controller code uses.
+// CacheFrame represents the observable state of the cluster at a given point in time
+// for a particular reconciler.
+// is a map of kind -> namespace/name -> object
 type CacheFrame map[string]map[types.NamespacedName]*unstructured.Unstructured
 
 func (c CacheFrame) Copy() CacheFrame {
@@ -73,8 +74,7 @@ func (c CacheFrame) Dump() {
 type CacheFrameContainer map[string]CacheFrame
 
 type FrameManager struct {
-	cacheFrames             CacheFrameContainer
-	replayFramesByReconcile map[string]*Frame
+	cacheFrames CacheFrameContainer
 }
 
 func NewFrameManager(initialFrames CacheFrameContainer) *FrameManager {
