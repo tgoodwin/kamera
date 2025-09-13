@@ -251,18 +251,10 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]*ReconcilerContainer
 		)
 		r := constructor(wrappedClient)
 
-		kindforReconciler, ok := tc.reconcilerToKind[reconcilerID]
-		if !ok {
-			panic(fmt.Sprintf("No kind assigned to reconciler: %s", reconcilerID))
-		}
-
 		container := &ReconcilerContainer{
-			Name:           reconcilerID,
-			For:            kindforReconciler,
-			Reconciler:     r,
-			versionManager: tc.manager,
-			effectReader:   tc.manager,
-			frameInserter:  frameManager,
+			Name:         reconcilerID,
+			Strategy:     NewControllerRuntimeStrategy(r, tc.manager, frameManager, reconcilerID),
+			effectReader: tc.manager,
 		}
 		out[reconcilerID] = container
 

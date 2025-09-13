@@ -161,15 +161,8 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 		}
 
 		// Create reconciler implementation
-		rImpl := &ReconcilerContainer{
-			Name: reconcilerID,
-			// TODO remove this. We no longer need to "infer" the reconcile request
-			For:            kindForReconciler,
-			Reconciler:     r,
-			versionManager: mgr,
-			effectReader:   mgr,
-			frameInserter:  frameManager,
-		}
+		rImpl := Wrap(reconcilerID, r, mgr, frameManager, mgr).(*ReconcilerContainer)
+		rImpl.For = kindForReconciler
 
 		containers[reconcilerID] = rImpl
 	}
@@ -203,12 +196,10 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 		Recorder: mgr,
 	}
 	container := &ReconcilerContainer{
-		Name: CleanupReconcilerID,
-		// For:  "Finalizer",
-		Reconciler:     r,
+		Name:           CleanupReconcilerID,
+		Strategy:       NewControllerRuntimeStrategy(r, mgr, fm, CleanupReconcilerID),
 		versionManager: mgr,
 		effectReader:   mgr,
-		frameInserter:  fm,
 	}
 	return container
 }
