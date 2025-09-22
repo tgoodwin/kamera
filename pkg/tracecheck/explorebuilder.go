@@ -189,9 +189,8 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 	}
 	container := &ReconcilerContainer{
 		Name:           CleanupReconcilerID,
-		Strategy:       NewControllerRuntimeStrategy(r, fm, CleanupReconcilerID),
+		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, reconcilerName: CleanupReconcilerID, effectReader: mgr},
 		versionManager: mgr,
-		effectReader:   mgr,
 	}
 	return container
 }

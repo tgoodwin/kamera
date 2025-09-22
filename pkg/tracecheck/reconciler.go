@@ -27,20 +27,28 @@ type frameInserter interface {
 type Strategy interface {
 	PrepareState(ctx context.Context, state []runtime.Object) (context.Context, error)
 	ReconcileAtState(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
+	RetrieveEffects(ctx context.Context) (Changes, error)
 }
 
 type ControllerRuntimeStrategy struct {
 	reconcile.Reconciler
 	frameInserter
 	reconcilerName string
+	effectReader
 }
 
-func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, name string) *ControllerRuntimeStrategy {
+func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er effectReader, name string) *ControllerRuntimeStrategy {
 	return &ControllerRuntimeStrategy{
 		Reconciler:     r,
 		frameInserter:  fi,
 		reconcilerName: name,
+		effectReader:   er,
 	}
+}
+
+func (s *ControllerRuntimeStrategy) RetrieveEffects(ctx context.Context) (Changes, error) {
+	frameID := replay.FrameIDFromContext(ctx)
+	return s.effectReader.retrieveEffects(frameID)
 }
 
 func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, error) {
@@ -103,10 +111,6 @@ type ReconcilerContainer struct {
 
 	// both implemented by the manager type
 	versionManager VersionManager
-
-	// effectReader lets us observe what the reconciler did
-	// TODO this could live elsewhere
-	effectReader
 }
 
 func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
@@ -132,7 +136,7 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 	}
 
 	logger.V(2).Info("reconcile complete", "result", res)
-	effects, err := r.retrieveEffects(frameID)
+	effects, err := r.Strategy.RetrieveEffects(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
@@ -153,7 +157,7 @@ func (r *ReconcilerContainer) replayReconcile(ctx context.Context, request recon
 	if _, err := r.Strategy.ReconcileAtState(ctx, request); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
-	effects, err := r.retrieveEffects(frameID)
+	effects, err := r.Strategy.RetrieveEffects(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
@@ -171,12 +175,12 @@ func Wrap(name string, r reconcile.Reconciler, vm VersionManager, fi frameInsert
 		Reconciler:     r,
 		frameInserter:  fi,
 		reconcilerName: name,
+		effectReader:   er,
 	}
 	return &ReconcilerContainer{
 		Name:           name,
 		Strategy:       strategy,
 		versionManager: vm,
-		effectReader:   er,
 	}
 }
 
