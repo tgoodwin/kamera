@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -75,7 +76,7 @@ func InferListKind(list client.ObjectList) string {
 	return itemType.Name()
 }
 
-func ConvertToUnstructured(obj client.Object) (*unstructured.Unstructured, error) {
+func ConvertToUnstructured(obj runtime.Object) (*unstructured.Unstructured, error) {
 	// Get the GroupVersionKind (GVK) using reflection or Scheme
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	if gvk.Kind == "" {
