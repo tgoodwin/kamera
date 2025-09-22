@@ -280,6 +280,7 @@ func (tc *TraceChecker) PrintState(s StateNode) {
 	fmt.Println("Pending Reconciles: ", s.PendingReconciles)
 }
 
+// Deprecated: NewExplorer is deprecated. Use ExplorerBuilder instead.
 func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 	if len(tc.ResourceDeps) == 0 {
 		panic("Warning: No resource dependencies found")
