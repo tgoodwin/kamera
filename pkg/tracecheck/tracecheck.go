@@ -253,7 +253,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]*ReconcilerContainer
 
 		container := &ReconcilerContainer{
 			Name:         reconcilerID,
-			Strategy:     NewControllerRuntimeStrategy(r, tc.manager, frameManager, reconcilerID),
+			Strategy:     NewControllerRuntimeStrategy(r, frameManager, reconcilerID),
 			effectReader: tc.manager,
 		}
 		out[reconcilerID] = container

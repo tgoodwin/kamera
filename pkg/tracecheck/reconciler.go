@@ -2,7 +2,6 @@ package tracecheck
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pkg/errors"
 	"github.com/tgoodwin/sleeve/pkg/replay"
@@ -10,7 +9,9 @@ import (
 	"github.com/tgoodwin/sleeve/pkg/tag"
 	"github.com/tgoodwin/sleeve/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -23,42 +24,46 @@ type frameInserter interface {
 	InsertCacheFrame(id string, data replay.CacheFrame)
 }
 
-type ReconcileStrategy interface {
-	// DoReconcile performs the reconciliation.
-	// If observableState is provided, it first prepares the environment.
-	DoReconcile(ctx context.Context, req reconcile.Request, observableState ObjectVersions) (reconcile.Result, error)
+type Strategy interface {
+	PrepareState(ctx context.Context, state []runtime.Object) (context.Context, error)
+	ReconcileAtState(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
 }
 
 type ControllerRuntimeStrategy struct {
 	reconcile.Reconciler
-	versionManager VersionManager
 	frameInserter
 	reconcilerName string
 }
 
-func NewControllerRuntimeStrategy(r reconcile.Reconciler, vm VersionManager, fi frameInserter, name string) *ControllerRuntimeStrategy {
+func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, name string) *ControllerRuntimeStrategy {
 	return &ControllerRuntimeStrategy{
 		Reconciler:     r,
-		versionManager: vm,
 		frameInserter:  fi,
 		reconcilerName: name,
 	}
 }
 
-func (s *ControllerRuntimeStrategy) DoReconcile(ctx context.Context, req reconcile.Request, observableState ObjectVersions) (reconcile.Result, error) {
-	if observableState != nil {
-		frameID := replay.FrameIDFromContext(ctx)
-		frameData := s.toFrameData(observableState)
-		s.InsertCacheFrame(frameID, frameData)
+func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, error) {
+	frameID := replay.FrameIDFromContext(ctx)
+	frameData := s.toFrameData(state)
+	s.InsertCacheFrame(frameID, frameData)
+	return ctx, nil
+}
 
-		// our cleanup reconciler implementation needs to know what kind of object it is reconciling
-		// as reconcile.Request is only namespace/name. so we inject it through the context.
-		if s.reconcilerName == CleanupReconcilerID {
-			for kind, objs := range frameData {
-				for nn := range objs {
-					if nn.Name == req.Name && nn.Namespace == req.Namespace {
-						ctx = context.WithValue(ctx, tag.CleanupKindKey{}, kind)
-					}
+func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	// our cleanup reconciler implementation needs to know what kind of object it is reconciling
+	// as reconcile.Request is only namespace/name. so we inject it through the context.
+	// TODO factor this cleanup-specific stuff out into a dedicated strategy
+	if s.reconcilerName == CleanupReconcilerID {
+		frameID := replay.FrameIDFromContext(ctx)
+		frameData, err := s.frameInserter.(*replay.FrameManager).GetCacheFrame(frameID)
+		if err != nil {
+			return reconcile.Result{}, err
+		}
+		for kind, objs := range frameData {
+			for nn := range objs {
+				if nn.Name == req.Name && nn.Namespace == req.Namespace {
+					ctx = context.WithValue(ctx, tag.CleanupKindKey{}, kind)
 				}
 			}
 		}
@@ -66,29 +71,26 @@ func (s *ControllerRuntimeStrategy) DoReconcile(ctx context.Context, req reconci
 	return s.Reconciler.Reconcile(ctx, req)
 }
 
-// toFrameData converts an ObjectVersions map (which tracks per-branch cluster state)
-// into a CacheFrame by resolving the object hashes to full objects.
-func (s *ControllerRuntimeStrategy) toFrameData(ov ObjectVersions) replay.CacheFrame {
+// toFrameData converts a slice of runtime objects into a CacheFrame.
+func (s *ControllerRuntimeStrategy) toFrameData(objects []runtime.Object) replay.CacheFrame {
 	out := make(replay.CacheFrame)
-	for key, hash := range ov {
-		kind := key.IdentityKey.Kind
+	for _, obj := range objects {
+		u, err := util.ConvertToUnstructured(obj.(client.Object))
+		if err != nil {
+			// This should ideally not happen if the input is valid
+			logger.Error(err, "failed to convert object to unstructured")
+			continue
+		}
+
+		kind := u.GetKind()
 		if _, ok := out[kind]; !ok {
 			out[kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
 		}
-		obj := s.versionManager.Resolve(hash)
-		if obj == nil {
-			logger.Error(nil, "unable to resolve object hash", "key", key, "hash", util.ShortenHash(hash.Value))
-			panic(fmt.Sprintf("unable to resolve object hash for key: %s stragegy %s", key, hash.Strategy))
-		}
 		namespacedName := types.NamespacedName{
-			Name:      obj.GetName(),
-			Namespace: obj.GetNamespace(),
+			Name:      u.GetName(),
+			Namespace: u.GetNamespace(),
 		}
-		out[kind][namespacedName] = obj
-		logger.V(2).WithValues(
-			"Key", key,
-			"Hash", util.ShortenHash(hash.Value),
-		).Info("resolved frame data item")
+		out[kind][namespacedName] = u
 	}
 	return out
 }
@@ -97,10 +99,7 @@ type ReconcilerContainer struct {
 	// The name of the reconciler
 	Name string
 
-	// the primary resource type that this reconciler manages
-	For string
-
-	Strategy ReconcileStrategy
+	Strategy Strategy
 
 	// both implemented by the manager type
 	versionManager VersionManager
@@ -113,10 +112,25 @@ type ReconcilerContainer struct {
 func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
 	frameID := replay.FrameIDFromContext(ctx)
 
-	res, err := r.Strategy.DoReconcile(ctx, req, observableState)
+	// convert ObjectVersions to []runtime.Object
+	var objects []runtime.Object
+	for _, hash := range observableState {
+		obj := r.versionManager.Resolve(hash)
+		if obj != nil {
+			objects = append(objects, obj)
+		}
+	}
+
+	ctx, err := r.Strategy.PrepareState(ctx, objects)
+	if err != nil {
+		return nil, errors.Wrap(err, "preparing state")
+	}
+
+	res, err := r.Strategy.ReconcileAtState(ctx, req)
 	if err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
+
 	logger.V(2).Info("reconcile complete", "result", res)
 	effects, err := r.retrieveEffects(frameID)
 	if err != nil {
@@ -136,7 +150,7 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 
 func (r *ReconcilerContainer) replayReconcile(ctx context.Context, request reconcile.Request) (*ReconcileResult, error) {
 	frameID := replay.FrameIDFromContext(ctx)
-	if _, err := r.Strategy.DoReconcile(ctx, request, nil); err != nil {
+	if _, err := r.Strategy.ReconcileAtState(ctx, request); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
 	effects, err := r.retrieveEffects(frameID)
@@ -152,10 +166,9 @@ func (r *ReconcilerContainer) replayReconcile(ctx context.Context, request recon
 	}, nil
 }
 
-func Wrap(name string, r reconcile.Reconciler, vm VersionManager, fi frameInserter, er effectReader) reconciler {
+func Wrap(name string, r reconcile.Reconciler, vm VersionManager, fi frameInserter, er effectReader) *ReconcilerContainer {
 	strategy := &ControllerRuntimeStrategy{
 		Reconciler:     r,
-		versionManager: vm,
 		frameInserter:  fi,
 		reconcilerName: name,
 	}

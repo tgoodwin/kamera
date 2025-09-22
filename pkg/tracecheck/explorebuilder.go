@@ -153,16 +153,8 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 		// Create reconciler
 		r := constructor(wrappedClient)
 
-		// Get kind for reconciler
-		kindForReconciler, ok := b.reconcilerToKind[reconcilerID]
-		if !ok {
-			// Skip or handle error
-			panic(fmt.Sprintf("No kind assigned to reconciler: %s", reconcilerID))
-		}
-
 		// Create reconciler implementation
-		rImpl := Wrap(reconcilerID, r, mgr, frameManager, mgr).(*ReconcilerContainer)
-		rImpl.For = kindForReconciler
+		rImpl := Wrap(reconcilerID, r, mgr, frameManager, mgr)
 
 		containers[reconcilerID] = rImpl
 	}
@@ -197,7 +189,7 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 	}
 	container := &ReconcilerContainer{
 		Name:           CleanupReconcilerID,
-		Strategy:       NewControllerRuntimeStrategy(r, mgr, fm, CleanupReconcilerID),
+		Strategy:       NewControllerRuntimeStrategy(r, fm, CleanupReconcilerID),
 		versionManager: mgr,
 		effectReader:   mgr,
 	}
