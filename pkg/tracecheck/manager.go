@@ -150,12 +150,13 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) error {
 	frameID := replay.FrameIDFromContext(ctx)
-
 	cKeys := lo.Keys(ov)
+	// holds objectID
 	iKeys := lo.Map(cKeys, func(k snapshot.CompositeKey, _ int) snapshot.IdentityKey {
 		return k.IdentityKey
 	})
 
+	// holds kind/namespace/name
 	rKeys := lo.Map(cKeys, func(k snapshot.CompositeKey, _ int) snapshot.ResourceKey {
 		return k.ResourceKey
 	})

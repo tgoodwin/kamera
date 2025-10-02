@@ -644,7 +644,7 @@ func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingRecon
 }
 
 func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions, pr PendingReconcile) (*ReconcileResult, error) {
-	reconciler, ok := e.reconcilers[pr.ReconcilerID]
+	container, ok := e.reconcilers[pr.ReconcilerID]
 	if !ok {
 		return nil, fmt.Errorf("implementation for reconciler %s not found", pr.ReconcilerID)
 	}
@@ -655,7 +655,7 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 
 	// execute the controller
 	// convert the write set to object versions
-	result, err := reconciler.doReconcile(ctx, objState, pr.Request)
+	result, err := container.doReconcile(ctx, objState, pr.Request)
 	if err != nil {
 		return nil, err
 	}
