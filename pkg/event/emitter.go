@@ -7,8 +7,8 @@ import (
 	"os"
 
 	"github.com/go-logr/logr"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/tag"
 )
 
 type Emitter interface {

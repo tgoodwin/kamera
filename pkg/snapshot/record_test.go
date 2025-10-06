@@ -7,7 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
+	appsv1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )

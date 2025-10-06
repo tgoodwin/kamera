@@ -36,9 +36,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/tgoodwin/sleeve"
-	"github.com/tgoodwin/sleeve/pkg/util"
-	"github.com/tgoodwin/sleeve/sleevectrl/pkg/controller"
+	sleeve "github.com/tgoodwin/kamera"
+	"github.com/tgoodwin/kamera/pkg/util"
+	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
 	// +kubebuilder:scaffold:imports
 )
 

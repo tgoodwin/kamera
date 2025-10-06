@@ -3,7 +3,7 @@ package tracecheck
 import (
 	"testing"
 
-	"github.com/tgoodwin/sleeve/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/event"
 )
 
 func TestAssignResourceVersions(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/tgoodwin/sleeve
+module github.com/tgoodwin/kamera
 
 go 1.23
 
@@ -19,6 +19,7 @@ require (
 	github.com/slackhq/simple-kubernetes-webhook v0.0.0-20211014080913-8b884847badb
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.9.0
+	github.com/tgoodwin/sleeve v0.0.17
 	github.com/wI2L/jsondiff v0.6.1
 	k8s.io/api v0.30.1
 	k8s.io/apimachinery v0.30.1

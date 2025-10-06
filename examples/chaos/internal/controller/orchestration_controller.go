@@ -26,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	appsv1 "github.com/tgoodwin/sleeve/examples/chaos/api/v1"
+	appsv1 "github.com/tgoodwin/kamera/examples/chaos/api/v1"
 )
 
 func allServicesHealthy(states []appsv1.ServiceState) bool {

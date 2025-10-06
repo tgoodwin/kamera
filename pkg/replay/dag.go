@@ -1,8 +1,8 @@
 package replay
 
 import (
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/util"
 )
 
 type Node struct {

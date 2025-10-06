@@ -3,7 +3,7 @@ package snapshot
 import (
 	"encoding/json"
 
-	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/tag"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 

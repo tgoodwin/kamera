@@ -1,8 +1,8 @@
 package sleeve
 
 import (
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/tracegen"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/tracegen"
 	kclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 

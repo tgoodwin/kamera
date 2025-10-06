@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
 )
 
 // DiffResult represents the differences between two ObjectVersions maps

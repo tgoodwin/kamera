@@ -10,10 +10,10 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
-	appsv1 "github.com/tgoodwin/sleeve/examples/chaos/api/v1"
-	controller "github.com/tgoodwin/sleeve/examples/chaos/internal/controller"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	tracecheck "github.com/tgoodwin/sleeve/pkg/tracecheck"
+	appsv1 "github.com/tgoodwin/kamera/examples/chaos/api/v1"
+	controller "github.com/tgoodwin/kamera/examples/chaos/internal/controller"
+	"github.com/tgoodwin/kamera/pkg/event"
+	tracecheck "github.com/tgoodwin/kamera/pkg/tracecheck"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )

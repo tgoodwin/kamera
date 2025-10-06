@@ -8,9 +8,11 @@ import (
 
 	"github.com/goccy/go-graphviz"
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/util"
 )
+
+// Utilities for graphing reconciliation executions
 
 var readOps map[event.OperationType]struct{} = map[event.OperationType]struct{}{
 	event.GET:  {},

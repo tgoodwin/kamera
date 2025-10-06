@@ -14,9 +14,9 @@ import (
 	"slices"
 
 	"github.com/pkg/errors"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/tag"
 )
 
 // ParseJSONLFile reads a JSONL file and parses each record into either a snapshot.Record or an event.Event.

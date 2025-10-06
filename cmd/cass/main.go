@@ -6,7 +6,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/tgoodwin/sleeve/pkg/tracecheck"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 

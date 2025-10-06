@@ -8,12 +8,12 @@ import (
 
 	"slices"
 
-	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
-	controller "github.com/tgoodwin/sleeve/examples/robinhood/controller"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/replay"
-	"github.com/tgoodwin/sleeve/pkg/tracecheck"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	appsv1 "github.com/tgoodwin/kamera/examples/robinhood/api/v1"
+	controller "github.com/tgoodwin/kamera/examples/robinhood/controller"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/replay"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"

@@ -1,12 +1,16 @@
 package replay
 
+// ** NOTE ** THIS IS DEAD CODE **
+// Deprecated: This file is no longer actively maintained and may contain outdated or unused code.
+// It is recommended to use alternative approaches for replay synthesis.
+
 import (
 	"fmt"
 	"sort"
 
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 )
