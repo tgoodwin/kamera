@@ -34,7 +34,6 @@ type Effect struct {
 	Version snapshot.VersionHash
 
 	Precondition *replay.PreconditionInfo
-	// Timestamp time.Time
 }
 
 type reconcileEffects struct {
@@ -47,7 +46,6 @@ func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event
 		OpType:  op,
 		Key:     key,
 		Version: version,
-		// Timestamp: time.Now(),
 	}
 }
 
@@ -170,6 +168,11 @@ func (m *manager) CleanupEffectContext(ctx context.Context) {
 	frameID := replay.FrameIDFromContext(ctx)
 	delete(m.effectRKeys, frameID)
 	delete(m.effectIKeys, frameID)
+}
+
+func (m *manager) GetEffects(ctx context.Context) (Changes, error) {
+	frameID := replay.FrameIDFromContext(ctx)
+	return m.retrieveEffects(frameID)
 }
 
 func (m *manager) retrieveEffects(frameID string) (Changes, error) {

@@ -17,7 +17,12 @@ import (
 
 type effectReader interface {
 	// TODO how to more idiomatically represent "not found" ?
-	retrieveEffects(frameID string) (Changes, error)
+	GetEffects(ctx context.Context) (Changes, error)
+}
+
+type EffectHandler interface {
+	effectReader
+	replay.EffectRecorder
 }
 
 type frameInserter interface {
@@ -26,8 +31,7 @@ type frameInserter interface {
 
 type Strategy interface {
 	PrepareState(ctx context.Context, state []runtime.Object) (context.Context, error)
-	ReconcileAtState(ctx context.Context, req reconcile.Request) (reconcile.Result, error)
-	RetrieveEffects(ctx context.Context) (Changes, error)
+	ReconcileAtState(ctx context.Context, name types.NamespacedName) (reconcile.Result, error)
 }
 
 type ControllerRuntimeStrategy struct {
@@ -47,8 +51,7 @@ func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er e
 }
 
 func (s *ControllerRuntimeStrategy) RetrieveEffects(ctx context.Context) (Changes, error) {
-	frameID := replay.FrameIDFromContext(ctx)
-	return s.effectReader.retrieveEffects(frameID)
+	return s.effectReader.GetEffects(ctx)
 }
 
 func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, error) {
@@ -58,7 +61,7 @@ func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []ru
 	return ctx, nil
 }
 
-func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, name types.NamespacedName) (reconcile.Result, error) {
 	// our cleanup reconciler implementation needs to know what kind of object it is reconciling
 	// as reconcile.Request is only namespace/name. so we inject it through the context.
 	// TODO factor this cleanup-specific stuff out into a dedicated strategy
@@ -70,12 +73,13 @@ func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, req re
 		}
 		for kind, objs := range frameData {
 			for nn := range objs {
-				if nn.Name == req.Name && nn.Namespace == req.Namespace {
+				if nn.Name == name.Name && nn.Namespace == name.Namespace {
 					ctx = context.WithValue(ctx, tag.CleanupKindKey{}, kind)
 				}
 			}
 		}
 	}
+	req := reconcile.Request{NamespacedName: name}
 	return s.Reconciler.Reconcile(ctx, req)
 }
 
@@ -107,7 +111,8 @@ type ReconcilerContainer struct {
 	// The name of the reconciler
 	Name string
 
-	Strategy Strategy
+	Strategy     Strategy
+	effectReader effectReader
 
 	// both implemented by the manager type
 	versionManager VersionManager
@@ -130,13 +135,13 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 		return nil, errors.Wrap(err, "preparing state")
 	}
 
-	res, err := r.Strategy.ReconcileAtState(ctx, req)
+	res, err := r.Strategy.ReconcileAtState(ctx, req.NamespacedName)
 	if err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
 
 	logger.V(2).Info("reconcile complete", "result", res)
-	effects, err := r.Strategy.RetrieveEffects(ctx)
+	effects, err := r.effectReader.GetEffects(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
@@ -154,10 +159,10 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 
 func (r *ReconcilerContainer) replayReconcile(ctx context.Context, request reconcile.Request) (*ReconcileResult, error) {
 	frameID := replay.FrameIDFromContext(ctx)
-	if _, err := r.Strategy.ReconcileAtState(ctx, request); err != nil {
+	if _, err := r.Strategy.ReconcileAtState(ctx, request.NamespacedName); err != nil {
 		return nil, errors.Wrap(err, "executing reconcile")
 	}
-	effects, err := r.Strategy.RetrieveEffects(ctx)
+	effects, err := r.effectReader.GetEffects(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
@@ -180,6 +185,7 @@ func Wrap(name string, r reconcile.Reconciler, vm VersionManager, fi frameInsert
 	return &ReconcilerContainer{
 		Name:           name,
 		Strategy:       strategy,
+		effectReader:   er,
 		versionManager: vm,
 	}
 }
