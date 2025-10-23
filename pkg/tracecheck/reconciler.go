@@ -30,7 +30,7 @@ type frameInserter interface {
 }
 
 type Strategy interface {
-	PrepareState(ctx context.Context, state []runtime.Object) (context.Context, error)
+	PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error)
 	ReconcileAtState(ctx context.Context, name types.NamespacedName) (reconcile.Result, error)
 }
 
@@ -54,11 +54,12 @@ func (s *ControllerRuntimeStrategy) RetrieveEffects(ctx context.Context) (Change
 	return s.effectReader.GetEffects(ctx)
 }
 
-func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, error) {
+func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
 	frameID := replay.FrameIDFromContext(ctx)
 	frameData := s.toFrameData(state)
 	s.InsertCacheFrame(frameID, frameData)
-	return ctx, nil
+	cleanup := func() {}
+	return ctx, cleanup, nil
 }
 
 func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, name types.NamespacedName) (reconcile.Result, error) {
@@ -130,10 +131,11 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 		}
 	}
 
-	ctx, err := r.Strategy.PrepareState(ctx, objects)
+	ctx, cleanup, err := r.Strategy.PrepareState(ctx, objects)
 	if err != nil {
 		return nil, errors.Wrap(err, "preparing state")
 	}
+	defer cleanup()
 
 	res, err := r.Strategy.ReconcileAtState(ctx, req.NamespacedName)
 	if err != nil {
@@ -171,7 +173,6 @@ func (r *ReconcilerContainer) replayReconcile(ctx context.Context, request recon
 		FrameID:      frameID,
 		FrameType:    FrameTypeReplay,
 		Changes:      effects,
-		// Deltas:       effects,
 	}, nil
 }
 
