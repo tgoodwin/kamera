@@ -1,51 +1,81 @@
 package snapshot
 
 import (
-	"reflect"
+	"strings"
 	"testing"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-func TestEliminates(t *testing.T) {
-	type testCase struct {
-		name     string
-		d1       Delta
-		d2       Delta
-		expected bool
-	}
-	testCases := []testCase{
-		{
-			name: "same path, prev eliminates curr",
-			d1: Delta{
-				prev: reflect.ValueOf("foo"),
-				curr: reflect.ValueOf("bar"),
+func TestComputeDeltaProducesYAMLDiff(t *testing.T) {
+	oldObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"type":   "Ready",
+						"status": "Unknown",
+					},
+				},
 			},
-			d2: Delta{
-				prev: reflect.ValueOf("bar"),
-				curr: reflect.ValueOf("foo"),
-			},
-			expected: true,
-		},
-		{
-			name: "different path, prev eliminates curr",
-			d1: Delta{
-				path: "abc",
-				prev: reflect.ValueOf("foo"),
-				curr: reflect.ValueOf("bar"),
-			},
-			d2: Delta{
-				path: "abcdef",
-				prev: reflect.ValueOf("bar"),
-				curr: reflect.ValueOf("foo"),
-			},
-			expected: false,
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			if tc.d1.Eliminates(tc.d2) != tc.expected {
-				t.Errorf("expected %v to eliminate %v", tc.d1, tc.d2)
-			}
-		})
+	newObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"status": map[string]interface{}{
+				"conditions": []interface{}{
+					map[string]interface{}{
+						"type":               "ContainerHealthy",
+						"status":             "Unknown",
+						"reason":             "Deploying",
+						"lastTransitionTime": "2025-10-23T20:32:29Z",
+					},
+					map[string]interface{}{
+						"type":               "Ready",
+						"status":             "Unknown",
+						"reason":             "Deploying",
+						"lastTransitionTime": "2025-10-23T20:32:29Z",
+					},
+				},
+			},
+		},
+	}
+
+	diffStr := ComputeDelta(oldObj, newObj)
+	if diffStr == "" {
+		t.Fatalf("expected diff output, got empty string")
+	}
+
+	normalized := strings.ReplaceAll(diffStr, " ", "")
+	normalized = strings.ReplaceAll(normalized, "\t", "")
+	if !strings.Contains(normalized, "+type:ContainerHealthy") {
+		t.Fatalf("expected diff to record addition, got:\n%s", diffStr)
+	}
+	if !strings.Contains(normalized, "-status:Unknown") {
+		t.Fatalf("expected diff to record removal, got:\n%s", diffStr)
+	}
+}
+
+func TestComputeDeltaIgnoresDefaultKeys(t *testing.T) {
+	oldObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"resourceVersion": "1",
+			},
+		},
+	}
+
+	newObj := &unstructured.Unstructured{
+		Object: map[string]interface{}{
+			"metadata": map[string]interface{}{
+				"resourceVersion": "2",
+			},
+		},
+	}
+
+	diffStr := ComputeDelta(oldObj, newObj)
+	if diffStr != "" {
+		t.Fatalf("expected diff to ignore resourceVersion changes, got:\n%s", diffStr)
 	}
 }

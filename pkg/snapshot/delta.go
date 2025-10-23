@@ -5,43 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"reflect"
 
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/util/diff"
+	"sigs.k8s.io/yaml"
 )
-
-// Delta represents a change between two fields in an object
-// where a diff between two versions of an object is represented by a collection of Deltas
-type Delta struct {
-	path string
-	prev reflect.Value
-	curr reflect.Value
-}
-
-func (d Delta) String() string {
-	if !d.prev.IsValid() {
-		return fmt.Sprintf("%s:\n\t-: %+v\n\t+: %+v\n", d.path, nil, d.curr)
-	}
-	if !d.curr.IsValid() {
-		return fmt.Sprintf("%s:\n\t-: %+v\n\t+: %+v\n", d.path, d.prev, nil)
-	}
-	return fmt.Sprintf("%s:\n\t-: %+v\n\t+: %+v\n", d.path, d.prev, d.curr)
-}
-
-func (d Delta) Eliminates(other Delta) bool {
-	if d.path == other.path {
-		if d.prev.String() == other.curr.String() {
-			return true
-		}
-		if d.curr.String() == other.prev.String() {
-			return true
-		}
-	}
-	return false
-}
 
 type uniqueKey struct {
 	Kind     string
@@ -103,14 +73,12 @@ func (r Record) Diff(other Record) (string, error) {
 	if err := json.Unmarshal([]byte(other.Value), &otherObj); err != nil {
 		return "", err
 	}
-	reporter := DiffReporter{}
 	header := fmt.Sprintf("currVersion: %s\nprevVersion:%s", other.GetID(), r.GetID())
-	return fmt.Sprintf("%s\nDeltas:\n%s", header, computeDelta(reporter, &this, &otherObj)), nil
+	return fmt.Sprintf("%s\nDeltas:\n%s", header, computeDelta(&this, &otherObj)), nil
 }
 
 func DiffObjects(first, other *unstructured.Unstructured) (string, error) {
-	reporter := DiffReporter{}
-	return computeDelta(reporter, first, other), nil
+	return computeDelta(first, other), nil
 }
 
 var toIgnore = map[string]struct{}{
@@ -133,14 +101,85 @@ func DefaultIgnore(k string, v interface{}) bool {
 	return false
 }
 
-func computeDelta(dr DiffReporter, old, new *unstructured.Unstructured) string {
-	cmpOpt := cmpopts.IgnoreMapEntries(DefaultIgnore)
-	cmp.Diff(old, new, cmpOpt, cmp.Reporter(&dr))
-	rdiff := dr.String()
-	return rdiff
+func computeDelta(old, new *unstructured.Unstructured) string {
+	oldYAML, oldErr := objectToYAML(old)
+	newYAML, newErr := objectToYAML(new)
+
+	switch {
+	case oldErr != nil && newErr != nil:
+		return fmt.Sprintf("error computing diff: old=%v new=%v", oldErr, newErr)
+	case oldErr != nil:
+		return fmt.Sprintf("error computing old object diff: %v", oldErr)
+	case newErr != nil:
+		return fmt.Sprintf("error computing new object diff: %v", newErr)
+	}
+
+	// If both objects sanitize to nothing, return empty diff.
+	if len(oldYAML) == 0 && len(newYAML) == 0 {
+		return ""
+	}
+
+	return diff.StringDiff(string(oldYAML), string(newYAML))
 }
 
 func ComputeDelta(old, new *unstructured.Unstructured, opts ...cmp.Option) string {
-	reporter := DiffReporter{}
-	return computeDelta(reporter, old, new)
+	// opts currently unused but kept for backward compatibility with callers.
+	return computeDelta(old, new)
+}
+
+func objectToYAML(obj *unstructured.Unstructured) ([]byte, error) {
+	if obj == nil {
+		return nil, nil
+	}
+	sanitized := sanitizeMap(obj.Object)
+	if len(sanitized) == 0 {
+		return nil, nil
+	}
+	out, err := yaml.Marshal(sanitized)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func sanitizeMap(input map[string]interface{}) map[string]interface{} {
+	if input == nil {
+		return map[string]interface{}{}
+	}
+	result := make(map[string]interface{}, len(input))
+	for key, value := range input {
+		if DefaultIgnore(key, value) {
+			continue
+		}
+		result[key] = sanitizeValue(value)
+	}
+	return result
+}
+
+func sanitizeValue(value interface{}) interface{} {
+	switch typed := value.(type) {
+	case map[string]interface{}:
+		return sanitizeMap(typed)
+	case []interface{}:
+		return sanitizeSlice(typed)
+	case []map[string]interface{}:
+		slice := make([]interface{}, 0, len(typed))
+		for _, item := range typed {
+			slice = append(slice, sanitizeMap(item))
+		}
+		return slice
+	default:
+		return typed
+	}
+}
+
+func sanitizeSlice(values []interface{}) []interface{} {
+	if values == nil {
+		return nil
+	}
+	result := make([]interface{}, 0, len(values))
+	for _, item := range values {
+		result = append(result, sanitizeValue(item))
+	}
+	return result
 }

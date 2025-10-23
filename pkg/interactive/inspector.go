@@ -20,10 +20,14 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 	printStateList(states)
 
 	scanner := bufio.NewScanner(os.Stdin)
-	current := 0
+	current := -1
 
 	for {
-		fmt.Printf("state %d> ", current)
+		if current == -1 {
+			fmt.Print("explore> ")
+		} else {
+			fmt.Printf("state %d> ", current)
+		}
 		if !scanner.Scan() {
 			fmt.Println("\ninput closed, exiting inspector.")
 			return
@@ -33,12 +37,20 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 		if line == "" {
 			continue
 		}
-		if line == "\x1b" {
+		if isEscape(line) {
+			if current != -1 {
+				fmt.Printf("leaving state %d\n", current)
+				current = -1
+				continue
+			}
 			fmt.Println("exiting inspector.")
 			return
 		}
 
 		args := strings.Fields(line)
+		if len(args) == 0 {
+			continue
+		}
 		switch args[0] {
 		case "help":
 			fmt.Println("Commands: list, show <idx>, next, prev, paths [idx], quit (or <esc> to exit)")
@@ -57,6 +69,15 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 			current = targetIdx
 			printStateDetail(states[current], current)
 		case "next":
+			if len(states) == 0 {
+				fmt.Println("no states available")
+				continue
+			}
+			if current == -1 {
+				current = 0
+				printStateDetail(states[current], current)
+				continue
+			}
 			if current+1 >= len(states) {
 				fmt.Println("already at the last state")
 				continue
@@ -64,6 +85,15 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 			current++
 			printStateDetail(states[current], current)
 		case "prev":
+			if len(states) == 0 {
+				fmt.Println("no states available")
+				continue
+			}
+			if current == -1 {
+				current = 0
+				printStateDetail(states[current], current)
+				continue
+			}
 			if current == 0 {
 				fmt.Println("already at the first state")
 				continue
@@ -79,6 +109,9 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 					continue
 				}
 				targetIdx = idx
+			} else if targetIdx == -1 {
+				fmt.Println("select a state first")
+				continue
 			}
 			printStatePaths(states[targetIdx], targetIdx)
 		case "path":
@@ -88,6 +121,10 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 			)
 			switch len(args) {
 			case 2:
+				if stateIdx == -1 {
+					fmt.Println("select a state first")
+					continue
+				}
 				pathIdxStr = args[1]
 			case 3:
 				idx, err := strconv.Atoi(args[1])
@@ -123,6 +160,15 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 			fmt.Println("exiting inspector.")
 			return
 		default:
+			if idx, err := strconv.Atoi(args[0]); err == nil {
+				if idx < 0 || idx >= len(states) {
+					fmt.Printf("invalid index %d\n", idx)
+					continue
+				}
+				current = idx
+				printStateDetail(states[current], current)
+				continue
+			}
 			fmt.Printf("unknown command %q, type 'help' for options\n", args[0])
 		}
 	}
@@ -202,9 +248,13 @@ func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, stateI
 
 	printPathSteps(path)
 
-	currentStep := 0
+	currentStep := -1
 	for {
-		fmt.Printf("state %d:path %d:step %d> ", stateIdx, pathIdx, currentStep)
+		if currentStep == -1 {
+			fmt.Printf("state %d:path %d> ", stateIdx, pathIdx)
+		} else {
+			fmt.Printf("state %d:path %d:step %d> ", stateIdx, pathIdx, currentStep)
+		}
 		if !scanner.Scan() {
 			fmt.Println("\ninput closed, exiting inspector.")
 			return false
@@ -214,37 +264,47 @@ func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, stateI
 		if line == "" {
 			continue
 		}
-		if line == "\x1b" {
+		if isEscape(line) {
 			return true
 		}
 
 		args := strings.Fields(line)
-		nextIndex := func(defaultIdx int) (int, bool) {
-			target := defaultIdx
-			if len(args) > 1 {
-				idx, err := strconv.Atoi(args[1])
-				if err != nil || idx < 0 || idx >= len(path) {
-					fmt.Printf("invalid step index %q\n", args[1])
-					return 0, false
-				}
-				target = idx
-			}
-			return target, true
+		if len(args) == 0 {
+			continue
 		}
-
 		switch args[0] {
 		case "help":
 			fmt.Println("Path commands: steps, step <idx>, next, prev, effects [idx], objects [idx], deltas [idx], back, quit (or <esc> to go back)")
 		case "steps":
 			printPathSteps(path)
 		case "step", "show":
-			target, ok := nextIndex(currentStep)
-			if !ok {
+			if len(path) == 0 {
+				fmt.Println("path is empty")
 				continue
+			}
+			target := currentStep
+			if len(args) > 1 {
+				idx, err := strconv.Atoi(args[1])
+				if err != nil || idx < 0 || idx >= len(path) {
+					fmt.Printf("invalid step index %q\n", args[1])
+					continue
+				}
+				target = idx
+			} else if target == -1 {
+				target = 0
 			}
 			currentStep = target
 			printPathStepDetail(path[currentStep], currentStep)
 		case "next":
+			if len(path) == 0 {
+				fmt.Println("path is empty")
+				continue
+			}
+			if currentStep == -1 {
+				currentStep = 0
+				printPathStepDetail(path[currentStep], currentStep)
+				continue
+			}
 			if currentStep+1 >= len(path) {
 				fmt.Println("already at the last step")
 				continue
@@ -252,6 +312,10 @@ func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, stateI
 			currentStep++
 			printPathStepDetail(path[currentStep], currentStep)
 		case "prev":
+			if currentStep == -1 {
+				fmt.Println("select a step first")
+				continue
+			}
 			if currentStep == 0 {
 				fmt.Println("already at the first step")
 				continue
@@ -259,14 +323,32 @@ func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, stateI
 			currentStep--
 			printPathStepDetail(path[currentStep], currentStep)
 		case "effects":
-			target, ok := nextIndex(currentStep)
-			if !ok {
+			target := currentStep
+			if len(args) > 1 {
+				idx, err := strconv.Atoi(args[1])
+				if err != nil || idx < 0 || idx >= len(path) {
+					fmt.Printf("invalid step index %q\n", args[1])
+					continue
+				}
+				target = idx
+			}
+			if target == -1 {
+				fmt.Println("select a step first")
 				continue
 			}
 			printStepEffects(path[target], target)
 		case "objects":
-			target, ok := nextIndex(currentStep)
-			if !ok {
+			target := currentStep
+			if len(args) > 1 {
+				idx, err := strconv.Atoi(args[1])
+				if err != nil || idx < 0 || idx >= len(path) {
+					fmt.Printf("invalid step index %q\n", args[1])
+					continue
+				}
+				target = idx
+			}
+			if target == -1 {
+				fmt.Println("select a step first")
 				continue
 			}
 			if path[target] == nil {
@@ -276,8 +358,17 @@ func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, stateI
 			fmt.Printf("\nObjects written at step %d:\n", target)
 			printObjectVersions(path[target].Changes.ObjectVersions)
 		case "deltas":
-			target, ok := nextIndex(currentStep)
-			if !ok {
+			target := currentStep
+			if len(args) > 1 {
+				idx, err := strconv.Atoi(args[1])
+				if err != nil || idx < 0 || idx >= len(path) {
+					fmt.Printf("invalid step index %q\n", args[1])
+					continue
+				}
+				target = idx
+			}
+			if target == -1 {
+				fmt.Println("select a step first")
 				continue
 			}
 			printStepDeltas(path[target], target)
@@ -358,7 +449,33 @@ func printStepDeltas(step *tracecheck.ReconcileResult, idx int) {
 	sort.Slice(keys, func(i, j int) bool {
 		return keys[i].String() < keys[j].String()
 	})
-	for _, key := range keys {
-		fmt.Printf("  %s => %s\n", key.String(), string(step.Deltas[key]))
+	for i, key := range keys {
+		fmt.Printf("  %s\n", key.String())
+		printIndentedBlock(string(step.Deltas[key]), "    ")
+		if i < len(keys)-1 {
+			fmt.Println()
+		}
 	}
+}
+
+func printIndentedBlock(text, indent string) {
+	content := strings.TrimRight(text, "\n")
+	if content == "" {
+		fmt.Printf("%s(no diff)\n", indent)
+		return
+	}
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		fmt.Printf("%s%s\n", indent, line)
+	}
+}
+
+func isEscape(line string) bool {
+	if len(line) == 0 {
+		return false
+	}
+	if len(line) == 1 && line[0] == 0x1b {
+		return true
+	}
+	return line == "^["
 }
