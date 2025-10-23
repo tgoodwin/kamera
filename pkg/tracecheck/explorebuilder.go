@@ -21,12 +21,13 @@ import (
 var CleanupReconcilerID = "CleanupReconciler"
 
 type ExplorerBuilder struct {
-	reconcilers      map[string]ReconcilerConstructor
-	resourceDeps     ResourceDeps
-	scheme           *runtime.Scheme
-	emitter          testEmitter
-	snapStore        *snapshot.Store
-	reconcilerToKind map[string]string
+	reconcilers                map[string]ReconcilerConstructor
+	recorderInjectedStrategies map[string]func(recorder replay.EffectRecorder) Strategy
+	resourceDeps               ResourceDeps
+	scheme                     *runtime.Scheme
+	emitter                    testEmitter
+	snapStore                  *snapshot.Store
+	reconcilerToKind           map[string]string
 
 	priorityBuilder *PriorityStrategyBuilder
 
@@ -38,11 +39,12 @@ type ExplorerBuilder struct {
 
 func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	return &ExplorerBuilder{
-		reconcilers:      make(map[string]ReconcilerConstructor),
-		resourceDeps:     make(ResourceDeps),
-		scheme:           scheme,
-		snapStore:        snapshot.NewStore(),
-		reconcilerToKind: make(map[string]string),
+		reconcilers:                make(map[string]ReconcilerConstructor),
+		recorderInjectedStrategies: make(map[string]func(recorder replay.EffectRecorder) Strategy),
+		resourceDeps:               make(ResourceDeps),
+		scheme:                     scheme,
+		snapStore:                  snapshot.NewStore(),
+		reconcilerToKind:           make(map[string]string),
 
 		config: &ExploreConfig{
 			MaxDepth:                10,
@@ -54,6 +56,13 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 func (b *ExplorerBuilder) WithReconciler(id string, constructor ReconcilerConstructor) *ExplorerBuilder {
 	b.reconcilers[id] = constructor
 	return b
+}
+
+func (b *ExplorerBuilder) WithCustomStrategy(id string, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
+	{
+		b.recorderInjectedStrategies[id] = strategyFunc
+		return b
+	}
 }
 
 func (b *ExplorerBuilder) WithDebug() {
@@ -104,6 +113,7 @@ func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBu
 	return b
 }
 
+// TODO make how we handle kinds more type safe
 func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *ExplorerBuilder {
 	b.reconcilerToKind[reconcilerID] = kind
 	return b
@@ -157,6 +167,18 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 		rImpl := Wrap(reconcilerID, r, mgr, frameManager, mgr)
 
 		containers[reconcilerID] = rImpl
+	}
+
+	// for strategies where we need to inject the recorder directly (e.g. Knative)
+	for name, constructor := range b.recorderInjectedStrategies {
+		strategy := constructor(mgr)
+		container := &ReconcilerContainer{
+			Name:           name,
+			Strategy:       strategy,
+			effectReader:   mgr,
+			versionManager: mgr,
+		}
+		containers[container.Name] = container
 	}
 
 	return containers
@@ -263,7 +285,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 	}
 
 	if b.emitter == nil {
-		return nil, fmt.Errorf("no emitter specified")
+		b.emitter = event.NewInMemoryEmitter()
 	}
 
 	// Create version store and knowledge manager
