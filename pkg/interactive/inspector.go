@@ -15,7 +15,7 @@ import (
 
 func RunStateInspector(states []tracecheck.ConvergedState) {
 	fmt.Println("\nInteractive state inspector ready.")
-	fmt.Println("Commands: list, show <idx>, next, prev, paths [idx], path <pathIdx>|<stateIdx> <pathIdx>, help, quit")
+	fmt.Println("Commands: list, show <idx>, next, prev, paths [idx], path <pathIdx>|<stateIdx> <pathIdx>, help, quit (or <esc> to exit)")
 
 	printStateList(states)
 
@@ -23,7 +23,7 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 	current := 0
 
 	for {
-		fmt.Print("explore> ")
+		fmt.Printf("state %d> ", current)
 		if !scanner.Scan() {
 			fmt.Println("\ninput closed, exiting inspector.")
 			return
@@ -33,11 +33,15 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 		if line == "" {
 			continue
 		}
+		if line == "\x1b" {
+			fmt.Println("exiting inspector.")
+			return
+		}
 
 		args := strings.Fields(line)
 		switch args[0] {
 		case "help":
-			fmt.Println("Commands: list, show <idx>, next, prev, paths [idx], quit")
+			fmt.Println("Commands: list, show <idx>, next, prev, paths [idx], quit (or <esc> to exit)")
 		case "list":
 			printStateList(states)
 		case "show":
@@ -112,7 +116,7 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 				continue
 			}
 			current = stateIdx
-			if !inspectPath(scanner, states[stateIdx], pathIdx) {
+			if !inspectPath(scanner, states[stateIdx], stateIdx, pathIdx) {
 				return
 			}
 		case "quit", "exit":
@@ -188,9 +192,9 @@ func printObjectVersions(objects tracecheck.ObjectVersions) {
 	}
 }
 
-func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, pathIdx int) bool {
+func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, stateIdx, pathIdx int) bool {
 	path := state.Paths[pathIdx]
-	fmt.Printf("\nInspecting path %d of state hash %s (steps=%d)\n", pathIdx, state.State.Hash(), len(path))
+	fmt.Printf("\nInspecting state %d path %d (hash=%s, steps=%d)\n", stateIdx, pathIdx, state.State.Hash(), len(path))
 	if len(path) == 0 {
 		fmt.Println("  (path is empty)")
 		return true
@@ -200,7 +204,7 @@ func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, pathId
 
 	currentStep := 0
 	for {
-		fmt.Print("path> ")
+		fmt.Printf("state %d:path %d:step %d> ", stateIdx, pathIdx, currentStep)
 		if !scanner.Scan() {
 			fmt.Println("\ninput closed, exiting inspector.")
 			return false
@@ -209,6 +213,9 @@ func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, pathId
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
 			continue
+		}
+		if line == "\x1b" {
+			return true
 		}
 
 		args := strings.Fields(line)
@@ -227,7 +234,7 @@ func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, pathId
 
 		switch args[0] {
 		case "help":
-			fmt.Println("Path commands: steps, step <idx>, next, prev, effects [idx], objects [idx], deltas [idx], back, quit")
+			fmt.Println("Path commands: steps, step <idx>, next, prev, effects [idx], objects [idx], deltas [idx], back, quit (or <esc> to go back)")
 		case "steps":
 			printPathSteps(path)
 		case "step", "show":
