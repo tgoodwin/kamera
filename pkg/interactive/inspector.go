@@ -206,21 +206,6 @@ func printStatePaths(state tracecheck.ConvergedState, idx int) {
 	fmt.Println("  Use `path <pathIdx>` to inspect a path in detail.")
 }
 
-func summarizePath(path tracecheck.ExecutionHistory) string {
-	if len(path) == 0 {
-		return "(empty)"
-	}
-	parts := make([]string, len(path))
-	for i, step := range path {
-		if step == nil {
-			parts[i] = "(nil)"
-			continue
-		}
-		parts[i] = fmt.Sprintf("%s[%d]", step.ControllerID, len(step.Changes.ObjectVersions))
-	}
-	return strings.Join(parts, " -> ")
-}
-
 func printObjectVersions(objects tracecheck.ObjectVersions) {
 	if len(objects) == 0 {
 		fmt.Println("  (empty)")
