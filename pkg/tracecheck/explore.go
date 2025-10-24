@@ -447,6 +447,12 @@ func (e *Explorer) explore(
 			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
+			fmt.Println("taking reconcile step", "ReconcilerID", reconcilerID, "Depth", currentState.depth)
+			logger.V(0).WithValues(
+				"ReconcilerID", reconcilerID,
+				"Depth", currentState.depth,
+			).Info("Taking reconcile step")
+
 			// for each view, create a new branch in exploration
 			newState, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
 			if err != nil {
@@ -666,7 +672,7 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 	res, err := e.triggerManager.GetTriggered(changes)
 	if err != nil {
 		logger.Error(err, "getting triggered reconciles")
-		panic("getting triggered reconciles")
+		panic("getting triggered reconciles: " + err.Error())
 	}
 	return res
 }

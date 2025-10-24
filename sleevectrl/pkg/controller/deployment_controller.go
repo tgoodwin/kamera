@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"hash/fnv"
 
@@ -27,6 +26,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -145,7 +145,7 @@ func (r *DeploymentReconciler) getOrCreateReplicaSet(
 	existingRSs []appsv1.ReplicaSet) (*appsv1.ReplicaSet, error) {
 
 	// Generate a hash for the deployment template
-	podTemplateHash := computeHash(deployment.Spec.Template.Spec)
+	podTemplateHash := computeTemplateHash(deployment.Spec.Template)
 
 	// Check if we already have a ReplicaSet with this hash
 	for i := range existingRSs {
@@ -158,9 +158,9 @@ func (r *DeploymentReconciler) getOrCreateReplicaSet(
 	// Create a new ReplicaSet
 	newRS := &appsv1.ReplicaSet{
 		ObjectMeta: metav1.ObjectMeta{
-			GenerateName: deployment.Name + "-",
-			Namespace:    deployment.Namespace,
-			Labels:       deployment.Spec.Selector.MatchLabels,
+			Name:      fmt.Sprintf("%s-%s", deployment.Name, podTemplateHash),
+			Namespace: deployment.Namespace,
+			Labels:    deployment.Spec.Selector.MatchLabels,
 			OwnerReferences: []metav1.OwnerReference{
 				*metav1.NewControllerRef(deployment, appsv1.SchemeGroupVersion.WithKind("Deployment")),
 			},
@@ -192,14 +192,11 @@ func (r *DeploymentReconciler) getOrCreateReplicaSet(
 	return newRS, nil
 }
 
-// computeHash generates a hash string for a pod spec
-func computeHash(spec corev1.PodSpec) string {
-	// In a real implementation, this would use a more robust hashing algorithm
-	// Here, we're just using a simplified approach for demo purposes
-	podSpecJSON, _ := json.Marshal(spec)
-	h := fnv.New32a()
-	h.Write(podSpecJSON)
-	return fmt.Sprintf("%d", h.Sum32())
+// computeTemplateHash generates a deterministic hash for a pod template
+func computeTemplateHash(template corev1.PodTemplateSpec) string {
+	hasher := fnv.New32a()
+	utilruntime.DeepHashObject(hasher, template)
+	return fmt.Sprintf("%d", hasher.Sum32())
 }
 
 // calculateStatus calculates the deployment status based on associated ReplicaSets
@@ -218,7 +215,7 @@ func (r *DeploymentReconciler) calculateStatus(
 		availableReplicas += rs.Status.AvailableReplicas
 
 		// Consider a ReplicaSet "updated" if it matches the current pod template hash
-		if rs.Labels["pod-template-hash"] == computeHash(deployment.Spec.Template.Spec) {
+		if rs.Labels["pod-template-hash"] == computeTemplateHash(deployment.Spec.Template) {
 			updatedReplicas += rs.Status.Replicas
 		}
 	}

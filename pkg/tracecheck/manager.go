@@ -110,10 +110,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 	// TODO SLE-28 figure out why this can happen.
 	if sleeveObjectID == "" {
-		labels := obj.GetLabels()
-		fmt.Printf("Op Type: %s, Object labels: %v\n", opType, labels)
-		fmt.Printf("Object: %+v\n", obj)
-		panic(fmt.Sprintf("object does not have a sleeve object ID: kind=%s, namespace=%s, name=%s, uid=%s", kind, obj.GetNamespace(), obj.GetName(), obj.GetUID()))
+		logger.V(2).Error(nil, "object does not have a sleeve object ID", "kind", kind)
 	}
 
 	frameID := replay.FrameIDFromContext(ctx)

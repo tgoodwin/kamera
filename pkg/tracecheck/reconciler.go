@@ -133,6 +133,7 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 
 	ctx, cleanup, err := r.Strategy.PrepareState(ctx, objects)
 	if err != nil {
+		logger.V(1).Error(err, "error preparing state")
 		return nil, errors.Wrap(err, "preparing state")
 	}
 	defer cleanup()
