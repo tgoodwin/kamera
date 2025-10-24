@@ -95,7 +95,7 @@ func (rw *ResultWriter) MaterializeResults(result *Result, outDir string) {
 	}
 }
 
-func (rw *ResultWriter) writeStateSummary(state ConvergedState, outPath string) {
+func (rw *ResultWriter) writeStateSummary(state ResultState, outPath string) {
 	file, err := os.Create(outPath)
 	if err != nil {
 		log.Fatalf("failed to create state summary file: %v", err)
@@ -138,7 +138,7 @@ func (rw *ResultWriter) writeStateSummary(state ConvergedState, outPath string) 
 	}
 }
 
-func (rw *ResultWriter) materializeTraces(state ConvergedState, outPrefix string) {
+func (rw *ResultWriter) materializeTraces(state ResultState, outPrefix string) {
 	// filter out no-ops
 	uniquePaths := GetUniquePaths(state.Paths)
 	for i, path := range uniquePaths {

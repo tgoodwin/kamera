@@ -21,7 +21,7 @@ type DiffResult struct {
 }
 
 // DiffObjectVersions compares two ObjectVersions maps and returns their differences
-func (tc *TraceChecker) DiffObjectVersions(first, second ConvergedState) DiffResult {
+func (tc *TraceChecker) DiffObjectVersions(first, second ResultState) DiffResult {
 	result := DiffResult{
 		BaseID:         first.ID,
 		OtherID:        second.ID,

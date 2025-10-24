@@ -39,8 +39,8 @@ type effectEntry struct {
 	diff   string
 }
 
-// RunStateInspectorTUIView launches a tview-based inspector for converged states.
-func RunStateInspectorTUIView(states []tracecheck.ConvergedState) error {
+// RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
+func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 	if len(states) == 0 {
 		return fmt.Errorf("no converged states supplied")
 	}
@@ -310,7 +310,11 @@ func RunStateInspectorTUIView(states []tracecheck.ConvergedState) error {
 			}
 		}
 
-		detailTable.SetTitle(fmt.Sprintf("Objects • State %d", selectedState))
+		title := fmt.Sprintf("Objects • State %d", selectedState)
+		if state.Reason != "" {
+			title = fmt.Sprintf("%s (%s)", title, state.Reason)
+		}
+		detailTable.SetTitle(title)
 		showDetailTable()
 		if stateDetailRow > 0 && len(stateObjects) > 0 {
 			detailTable.Select(stateDetailRow, 0)
@@ -626,9 +630,9 @@ func configureTable(title string, selectable bool) *tview.Table {
 	return table
 }
 
-func populateStates(table *tview.Table, states []tracecheck.ConvergedState) {
+func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 	table.Clear()
-	headers := []string{"Idx", "Hash", "Objects", "Paths"}
+	headers := []string{"Idx", "Hash", "Objects", "Paths", "Reason"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -640,10 +644,11 @@ func populateStates(table *tview.Table, states []tracecheck.ConvergedState) {
 		table.SetCell(row+1, 1, tview.NewTableCell(util.ShortenHash(hash)))
 		table.SetCell(row+1, 2, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
 		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
+		table.SetCell(row+1, 4, tview.NewTableCell(state.Reason))
 	}
 }
 
-func populatePaths(table *tview.Table, states []tracecheck.ConvergedState, stateIdx int) {
+func populatePaths(table *tview.Table, states []tracecheck.ResultState, stateIdx int) {
 	table.Clear()
 	headers := []string{"Idx", "Steps", "Summary"}
 	for col, val := range headers {
@@ -664,7 +669,7 @@ func populatePaths(table *tview.Table, states []tracecheck.ConvergedState, state
 	}
 }
 
-func populateSteps(table *tview.Table, states []tracecheck.ConvergedState, stateIdx, pathIdx int) {
+func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx, pathIdx int) {
 	table.Clear()
 	headers := []string{"Idx", "Controller", "Frame", "Writes"}
 	for col, val := range headers {
@@ -721,7 +726,7 @@ func summarizePath(path tracecheck.ExecutionHistory) string {
 	return strings.Join(parts, " -> ")
 }
 
-func formatPathSummary(state tracecheck.ConvergedState, pathIdx int) string {
+func formatPathSummary(state tracecheck.ResultState, pathIdx int) string {
 	if pathIdx < 0 || pathIdx >= len(state.Paths) {
 		return fmt.Sprintf("Path %d not found", pathIdx)
 	}

@@ -250,7 +250,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	}
 
 	for _, expectedState := range expected {
-		var matchedState *tracecheck.ConvergedState
+		var matchedState *tracecheck.ResultState
 		for _, convergedState := range result.ConvergedStates {
 			match := true
 			for key, vHash := range convergedState.State.Objects() {

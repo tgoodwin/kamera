@@ -87,10 +87,11 @@ type Explorer struct {
 	stats *ExploreStats
 }
 
-type ConvergedState struct {
-	ID    string
-	State StateNode
-	Paths []ExecutionHistory
+type ResultState struct {
+	ID     string
+	State  StateNode
+	Paths  []ExecutionHistory
+	Reason string
 }
 
 func (e *Explorer) shouldExploreDownstream(frameID string) bool {
@@ -103,7 +104,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 	currExecutionHistory := make(ExecutionHistory, 0)
 
 	result := &Result{
-		ConvergedStates: make([]ConvergedState, 0),
+		ConvergedStates: make([]ResultState, 0),
 	}
 
 	var rebuiltState *StateSnapshot
@@ -165,9 +166,10 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 	currExecutionHistory.Summarize()
 
 	// the end of the trace trivially converges
-	traceWalkResult := ConvergedState{
-		State: StateNode{Contents: *rebuiltState, DivergencePoint: "TRACE_START"},
-		Paths: []ExecutionHistory{currExecutionHistory},
+	traceWalkResult := ResultState{
+		State:  StateNode{Contents: *rebuiltState, DivergencePoint: "TRACE_START"},
+		Paths:  []ExecutionHistory{currExecutionHistory},
+		Reason: "trace",
 	}
 	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
 	logger.Info("len curr execution history", len(currExecutionHistory))
@@ -208,6 +210,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	convergedStateChan := make(chan StateNode, 100)
 	executionHistoryChan := make(chan StateNode, 100)
+	abortedStateChan := make(chan ResultState, 100)
 	errChan := make(chan error, 1)
 
 	seenConvergedStates := make(map[StateHash]StateNode)
@@ -217,7 +220,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	e.stats.Start()
 
 	go func() {
-		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan)
+		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, abortedStateChan)
 		if err != nil {
 			errChan <- err
 		}
@@ -239,7 +242,9 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 		res.Summarize()
 	}
 
-	for convergedStateChan != nil || executionHistoryChan != nil {
+	abortedCollected := make([]ResultState, 0)
+
+	for convergedStateChan != nil || executionHistoryChan != nil || abortedStateChan != nil {
 		select {
 		case convergedState, ok := <-convergedStateChan:
 			if !ok {
@@ -260,21 +265,34 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 				executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
 			}
 			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], state.ExecutionHistory)
+		case aborted, ok := <-abortedStateChan:
+			if !ok {
+				abortedStateChan = nil
+				continue
+			}
+			abortedCollected = append(abortedCollected, aborted)
 		}
 	}
 
 	// if we broke out early, collect partial results, summarize them, and return
-	result := &Result{ConvergedStates: make([]ConvergedState, 0)}
+	result := &Result{ConvergedStates: make([]ResultState, 0), AbortedStates: abortedCollected}
 	for i, stateKey := range lo.Keys(seenConvergedStates) {
 		state := seenConvergedStates[stateKey]
 		paths := executionPathsToState[stateKey]
 		state.DivergencePoint = initialState.DivergencePoint
-		convergedState := ConvergedState{
-			ID:    fmt.Sprintf("state-%d", i),
-			State: state,
-			Paths: paths,
+		convergedState := ResultState{
+			ID:     fmt.Sprintf("state-%d", i),
+			State:  state,
+			Paths:  paths,
+			Reason: "converged",
 		}
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
+	}
+	for i := range result.AbortedStates {
+		stateKey := result.AbortedStates[i].State.Hash()
+		if paths, ok := executionPathsToState[stateKey]; ok && len(paths) > 0 {
+			result.AbortedStates[i].Paths = paths
+		}
 	}
 	summarize(result)
 	return result
@@ -288,10 +306,12 @@ func (e *Explorer) explore(
 	initialState StateNode,
 	convergedStatesCh chan<- StateNode,
 	executionPathsCh chan<- StateNode,
+	abortedStatesCh chan<- ResultState,
 ) error {
 	defer func() {
 		close(convergedStatesCh)
 		close(executionPathsCh)
+		close(abortedStatesCh)
 	}()
 
 	if e.config.MaxDepth == 0 {
@@ -333,6 +353,11 @@ func (e *Explorer) explore(
 	queue = append(queue, initialState)
 
 	for len(queue) > 0 {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
@@ -479,6 +504,17 @@ func (e *Explorer) explore(
 					"Lineage", newState.ReconcileLineage(),
 				).V(1).Info("aborting path due to max depth")
 				e.stats.AbortedPaths++
+				stateKey := newState.Hash()
+				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], newState.ExecutionHistory)
+				select {
+				case abortedStatesCh <- ResultState{
+					ID:     fmt.Sprintf("aborted-%s", stateKey),
+					State:  newState,
+					Paths:  []ExecutionHistory{newState.ExecutionHistory},
+					Reason: fmt.Sprintf("max depth %d", e.config.MaxDepth),
+				}:
+				case <-ctx.Done():
+				}
 			} else {
 				// enqueue the new state to explore
 				queue = e.addStateToExplore(queue, newState)

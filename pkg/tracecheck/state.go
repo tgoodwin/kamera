@@ -150,14 +150,9 @@ func DebugPaths(paths []ExecutionHistory) {
 }
 
 func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
-	unique := lo.UniqBy(paths, func(path ExecutionHistory) string {
+	return lo.UniqBy(paths, func(path ExecutionHistory) string {
 		return path.UniqueKey()
 	})
-	for _, path := range unique {
-		key := path.UniqueKey()
-		fmt.Println("Unique Key: ", key)
-	}
-	return unique
 }
 
 func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {

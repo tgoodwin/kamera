@@ -13,7 +13,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/util"
 )
 
-func RunStateInspector(states []tracecheck.ConvergedState) {
+func RunStateInspector(states []tracecheck.ResultState) {
 	fmt.Println("\nInteractive state inspector ready.")
 	fmt.Println("Commands: list, show <idx>, next, prev, paths [idx], path <pathIdx>|<stateIdx> <pathIdx>, help, quit (or <esc> to exit)")
 
@@ -174,7 +174,7 @@ func RunStateInspector(states []tracecheck.ConvergedState) {
 	}
 }
 
-func printStateList(states []tracecheck.ConvergedState) {
+func printStateList(states []tracecheck.ResultState) {
 	fmt.Println("\nConverged states:")
 	for idx, state := range states {
 		summary := fmt.Sprintf("hash=%s", state.State.Hash())
@@ -182,7 +182,7 @@ func printStateList(states []tracecheck.ConvergedState) {
 	}
 }
 
-func printStateDetail(state tracecheck.ConvergedState, idx int) {
+func printStateDetail(state tracecheck.ResultState, idx int) {
 	fmt.Printf("\nState [%d]\n", idx)
 	if state.ID != "" {
 		fmt.Println("ID:", state.ID)
@@ -194,7 +194,7 @@ func printStateDetail(state tracecheck.ConvergedState, idx int) {
 	printObjectVersions(state.State.Objects())
 }
 
-func printStatePaths(state tracecheck.ConvergedState, idx int) {
+func printStatePaths(state tracecheck.ResultState, idx int) {
 	fmt.Printf("\nPaths for state [%d]\n", idx)
 	if len(state.Paths) == 0 {
 		fmt.Println("  (no paths captured)")
@@ -223,7 +223,7 @@ func printObjectVersions(objects tracecheck.ObjectVersions) {
 	}
 }
 
-func inspectPath(scanner *bufio.Scanner, state tracecheck.ConvergedState, stateIdx, pathIdx int) bool {
+func inspectPath(scanner *bufio.Scanner, state tracecheck.ResultState, stateIdx, pathIdx int) bool {
 	path := state.Paths[pathIdx]
 	fmt.Printf("\nInspecting state %d path %d (hash=%s, steps=%d)\n", stateIdx, pathIdx, state.State.Hash(), len(path))
 	if len(path) == 0 {

@@ -41,13 +41,13 @@ func (s *StateClassifier) computeSignature(contents ObjectVersions) string {
 	return util.ShortenHash(strings.Join(anonHashes, "|"))
 }
 
-func (s *StateClassifier) GroupBySignature(states []ConvergedState) map[string][]ConvergedState {
-	statesBySignature := make(map[string][]ConvergedState)
+func (s *StateClassifier) GroupBySignature(states []ResultState) map[string][]ResultState {
+	statesBySignature := make(map[string][]ResultState)
 	for _, converged := range states {
 		contents := converged.State.Contents.All()
 		signature := s.computeSignature(contents)
 		if _, ok := statesBySignature[signature]; !ok {
-			statesBySignature[signature] = []ConvergedState{}
+			statesBySignature[signature] = []ResultState{}
 		}
 		statesBySignature[signature] = append(statesBySignature[signature], converged)
 	}
@@ -55,7 +55,7 @@ func (s *StateClassifier) GroupBySignature(states []ConvergedState) map[string][
 	return statesBySignature
 }
 
-func (s *StateClassifier) ClassifyResults(states []ConvergedState, predicate StatePredicate) []ClassifiedState {
+func (s *StateClassifier) ClassifyResults(states []ResultState, predicate StatePredicate) []ClassifiedState {
 	happyCount := 0
 	badCount := 0
 	classified := []ClassifiedState{}
@@ -110,7 +110,7 @@ type ClassifiedResult struct {
 
 // ClassifiedState holds a state with its classification information
 type ClassifiedState struct {
-	State          ConvergedState
+	State          ResultState
 	Signature      string   // a hash representing the state "shape"
 	ID             string   // something we produce to facilitate bookkeeping during analysis
 	Classification string   // "happy" or "bad"
