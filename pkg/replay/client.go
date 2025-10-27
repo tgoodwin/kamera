@@ -2,7 +2,6 @@ package replay
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -59,6 +59,21 @@ func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType eve
 	return c.recorder.RecordEffect(ctx, obj, opType, preconditions)
 }
 
+func (c *Client) copyInto(obj client.Object, from *unstructured.Unstructured) error {
+	if unstr, ok := obj.(runtime.Unstructured); ok {
+		unstr.SetUnstructuredContent(from.DeepCopy().Object)
+		return nil
+	}
+
+	if c.scheme != nil {
+		if err := c.scheme.Convert(from, obj, nil); err == nil {
+			return nil
+		}
+	}
+
+	return runtime.DefaultUnstructuredConverter.FromUnstructured(from.Object, obj)
+}
+
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	logger = log.FromContext(ctx)
 	gvk := obj.GetObjectKind().GroupVersionKind()
@@ -72,13 +87,8 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 				return err
 			}
 
-			// use json.Marshal to copy the frozen object into the obj
-			data, err := json.Marshal(frozenObj)
-			if err != nil {
-				return err
-			}
-			if err := json.Unmarshal(data, obj); err != nil {
-				return err
+			if err := c.copyInto(obj, frozenObj); err != nil {
+				return fmt.Errorf("convert cached object: %w", err)
 			}
 		} else {
 			// fmt.Println("not found!!!", kind, key)
@@ -115,13 +125,8 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 				// create a new object of the correct type
 				newObj := reflect.New(itemType).Interface().(client.Object)
 
-				// use json.Marshal to copy the unstructured object into the new object
-				data, err := json.Marshal(obj)
-				if err != nil {
-					return err
-				}
-				if err := json.Unmarshal(data, newObj); err != nil {
-					return err
+				if err := c.copyInto(newObj, obj); err != nil {
+					return fmt.Errorf("convert cached object: %w", err)
 				}
 
 				// append the new object to the slice
