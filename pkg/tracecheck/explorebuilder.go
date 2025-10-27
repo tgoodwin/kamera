@@ -12,8 +12,11 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tracegen"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -42,6 +45,9 @@ type ExplorerBuilder struct {
 }
 
 func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
+	utilruntime.Must(appsv1.AddToScheme(scheme))
+	utilruntime.Must(corev1.AddToScheme(scheme))
+
 	builder := &ExplorerBuilder{
 		reconcilers:                make(map[string]ReconcilerConstructor),
 		recorderInjectedStrategies: make(map[string]func(recorder replay.EffectRecorder) Strategy),
@@ -128,9 +134,6 @@ func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *Exp
 }
 
 func (b *ExplorerBuilder) registerCoreControllers() {
-	// b.WithCustomStrategy(deploymentControllerID, func(recorder replay.EffectRecorder) Strategy {
-	// 	return tracecheckinternal.NewDeploymentStrategy(recorder)
-	// })
 	b.WithReconciler("DeploymentController", func(c Client) Reconciler {
 		return &controller.DeploymentReconciler{
 			Client: c,
@@ -139,6 +142,18 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	})
 	b.AssignReconcilerToKind(deploymentControllerID, "Deployment")
 	b.WithResourceDep("Deployment", deploymentControllerID)
+	b.WithResourceDep("ReplicaSet", deploymentControllerID)
+
+	b.WithReconciler("ReplicaSetController", func(c Client) Reconciler {
+		return &controller.ReplicaSetReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
+	b.AssignReconcilerToKind("ReplicaSetController", "ReplicaSet")
+	b.WithResourceDep("ReplicaSet", "ReplicaSetController")
+	b.WithResourceDep("Pod", "ReplicaSetController")
+	b.WithResourceDep("Deployment", "ReplicaSetController")
 }
 
 func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*ReconcilerContainer {
@@ -370,6 +385,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		knowledgeManager:     knowledgeManager,
 		config:               b.config,
 		effectContextManager: mgr,
+		versionManager:       vStore,
 
 		priorityHandler: b.priorityBuilder.Build(b.snapStore),
 	}
