@@ -134,6 +134,7 @@ func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *Exp
 }
 
 func (b *ExplorerBuilder) registerCoreControllers() {
+	// Deployment Controller
 	b.WithReconciler("DeploymentController", func(c Client) Reconciler {
 		return &controller.DeploymentReconciler{
 			Client: c,
@@ -144,6 +145,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDep("Deployment", deploymentControllerID)
 	b.WithResourceDep("ReplicaSet", deploymentControllerID)
 
+	// ReplicaSet Controller
 	b.WithReconciler("ReplicaSetController", func(c Client) Reconciler {
 		return &controller.ReplicaSetReconciler{
 			Client: c,
@@ -154,6 +156,25 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDep("ReplicaSet", "ReplicaSetController")
 	b.WithResourceDep("Pod", "ReplicaSetController")
 	b.WithResourceDep("Deployment", "ReplicaSetController")
+
+	// Pod Lifecycle Controller, e.g. "fake kubelet"
+	b.WithReconciler("PodLifecycleController", func(c Client) Reconciler {
+		return controller.NewPodLifecycleReconciler(
+			c,
+			b.scheme,
+			controller.NewDefaultPodLifecycleFactory(),
+			0,
+		)
+	})
+	b.AssignReconcilerToKind("PodLifecycleController", "Pod")
+	b.WithResourceDep("Pod", "PodLifecycleController")
+	b.WithResourceDep("PodTemplate", "PodLifecycleController")
+	b.WithResourceDep("ReplicaSet", "PodLifecycleController")
+	b.WithResourceDep("Deployment", "PodLifecycleController")
+	b.WithResourceDep("StatefulSet", "PodLifecycleController")
+	b.WithResourceDep("DaemonSet", "PodLifecycleController")
+	b.WithResourceDep("Job", "PodLifecycleController")
+	b.WithResourceDep("CronJob", "PodLifecycleController")
 }
 
 func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*ReconcilerContainer {

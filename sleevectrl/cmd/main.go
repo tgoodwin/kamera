@@ -189,6 +189,18 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ReplicaSet")
 		os.Exit(1)
 	}
+	podLifecycleFactory := controller.NewDefaultPodLifecycleFactory()
+
+	podLifecycleReconciler := controller.NewPodLifecycleReconciler(
+		sleeve.Wrap(mgr.GetClient(), "PodLifecycleReconciler"),
+		mgr.GetScheme(),
+		podLifecycleFactory,
+		0,
+	)
+	if err = podLifecycleReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "PodLifecycle")
+		os.Exit(1)
+	}
 	if err = (&controller.PersistentVolumeClaimReconciler{
 		Client: sleeve.Wrap(mgr.GetClient(), "PersistentVolumeClaimReconciler"),
 		Scheme: mgr.GetScheme(),
