@@ -20,6 +20,10 @@ import (
 
 var CleanupReconcilerID = "CleanupReconciler"
 
+const (
+	deploymentControllerID = "DeploymentController"
+)
+
 type ExplorerBuilder struct {
 	reconcilers                map[string]ReconcilerConstructor
 	recorderInjectedStrategies map[string]func(recorder replay.EffectRecorder) Strategy
@@ -38,7 +42,7 @@ type ExplorerBuilder struct {
 }
 
 func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
-	return &ExplorerBuilder{
+	builder := &ExplorerBuilder{
 		reconcilers:                make(map[string]ReconcilerConstructor),
 		recorderInjectedStrategies: make(map[string]func(recorder replay.EffectRecorder) Strategy),
 		resourceDeps:               make(ResourceDeps),
@@ -51,6 +55,10 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			KindBoundsPerReconciler: make(map[string]ReconcilerConfig),
 		},
 	}
+
+	builder.registerCoreControllers()
+
+	return builder
 }
 
 func (b *ExplorerBuilder) WithReconciler(id string, constructor ReconcilerConstructor) *ExplorerBuilder {
@@ -119,6 +127,20 @@ func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *Exp
 	return b
 }
 
+func (b *ExplorerBuilder) registerCoreControllers() {
+	// b.WithCustomStrategy(deploymentControllerID, func(recorder replay.EffectRecorder) Strategy {
+	// 	return tracecheckinternal.NewDeploymentStrategy(recorder)
+	// })
+	b.WithReconciler("DeploymentController", func(c Client) Reconciler {
+		return &controller.DeploymentReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
+	b.AssignReconcilerToKind(deploymentControllerID, "Deployment")
+	b.WithResourceDep("Deployment", deploymentControllerID)
+}
+
 func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*ReconcilerContainer {
 	containers := make(map[string]*ReconcilerContainer)
 
@@ -149,19 +171,19 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 		)
 
 		// Create wrapped client
-		wrappedClient := tracegen.New(
-			replayClient,
-			reconcilerID,
-			b.emitter,
-			tracegen.NewContextTracker(
-				reconcilerID,
-				b.emitter,
-				replay.FrameIDFromContext,
-			),
-		)
+		// wrappedClient := tracegen.New(
+		// 	replayClient,
+		// 	reconcilerID,
+		// 	b.emitter,
+		// 	tracegen.NewContextTracker(
+		// 		reconcilerID,
+		// 		b.emitter,
+		// 		replay.FrameIDFromContext,
+		// 	),
+		// )
 
 		// Create reconciler
-		r := constructor(wrappedClient)
+		r := constructor(replayClient)
 
 		// Create reconciler implementation
 		rImpl := Wrap(reconcilerID, r, mgr, frameManager, mgr)

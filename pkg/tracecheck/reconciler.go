@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pkg/errors"
 	"github.com/tgoodwin/kamera/pkg/replay"
@@ -148,6 +149,9 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
 	}
+	if len(effects.ObjectVersions) > 0 && len(effects.Effects) == 0 {
+		panic(fmt.Sprintf("reconcile %s (%s) recorded %d object version(s) without effect metadata", frameID, r.Name, len(effects.ObjectVersions)))
+	}
 	deltas := r.computeDeltas(observableState, effects.ObjectVersions)
 
 	return &ReconcileResult{
@@ -168,6 +172,9 @@ func (r *ReconcilerContainer) replayReconcile(ctx context.Context, request recon
 	effects, err := r.effectReader.GetEffects(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
+	}
+	if len(effects.ObjectVersions) > 0 && len(effects.Effects) == 0 {
+		panic(fmt.Sprintf("replay reconcile %s (%s) recorded %d object version(s) without effect metadata", frameID, r.Name, len(effects.ObjectVersions)))
 	}
 	return &ReconcileResult{
 		ControllerID: r.Name,

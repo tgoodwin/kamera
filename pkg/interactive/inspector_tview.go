@@ -41,6 +41,10 @@ type effectEntry struct {
 
 // RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
 func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
+	states = validateResultStates(states)
+	states = tracecheck.TrimStatesForInspection(states)
+	states = dedupeResultStates(states)
+
 	if len(states) == 0 {
 		return fmt.Errorf("no converged states supplied")
 	}

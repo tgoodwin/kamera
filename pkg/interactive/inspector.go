@@ -14,6 +14,10 @@ import (
 )
 
 func RunStateInspector(states []tracecheck.ResultState) {
+	states = validateResultStates(states)
+	states = tracecheck.TrimStatesForInspection(states)
+	states = dedupeResultStates(states)
+
 	fmt.Println("\nInteractive state inspector ready.")
 	fmt.Println("Commands: list, show <idx>, next, prev, paths [idx], path <pathIdx>|<stateIdx> <pathIdx>, help, quit (or <esc> to exit)")
 

@@ -319,6 +319,25 @@ func (sn StateNode) Hash() StateHash {
 	return StateHash(util.ShortenHash(s))
 }
 
+func (sn *StateSnapshot) trimForInspection() {
+	if sn == nil {
+		return
+	}
+	sn.stateEvents = nil
+}
+
+func (sn *StateNode) TrimForInspection() {
+	if sn == nil {
+		return
+	}
+	sn.parent = nil
+	sn.action = nil
+	sn.PendingReconciles = nil
+	sn.ExecutionHistory = nil
+	sn.stuckReconcilerPositions = nil
+	sn.Contents.trimForInspection()
+}
+
 // OrderHash represents the contents of the state node and the order of pending reconciles.
 type OrderHash string
 
@@ -357,7 +376,7 @@ func (sn StateNode) ReconcileLineage() string {
 
 	if sn.action != nil {
 		id = sn.action.ControllerID
-		frameID = util.Shorter(sn.action.FrameID)
+		frameID = util.Shorter(sn.action.FrameID) // TODO this is not robust
 		numChanges = len(sn.action.Changes.ObjectVersions)
 	} else {
 		id = "root"
