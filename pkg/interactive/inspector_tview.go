@@ -411,7 +411,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 		stepEffects = stepEffects[:0]
 		if step != nil {
 			for _, eff := range step.Changes.Effects {
-				diff := string(step.Deltas[eff.Key])
+				diff := normalizeDeltaPresentation(string(step.Deltas[eff.Key]))
 				if strings.TrimSpace(diff) == "" {
 					if cache != nil {
 						if yamlStr, err := cache.YAML(eff.Version); err == nil {
@@ -829,7 +829,7 @@ func formatStepSummary(step *tracecheck.ReconcileResult, stepIdx int) string {
 		})
 		for _, key := range keys {
 			fmt.Fprintf(&b, "  %s\n", key.String())
-			diffText := strings.TrimSpace(string(step.Deltas[key]))
+			diffText := strings.TrimSpace(normalizeDeltaPresentation(string(step.Deltas[key])))
 			if diffText == "" {
 				b.WriteString("    (no diff)\n")
 				continue
@@ -867,4 +867,81 @@ func formatResolverUnavailable(hash snapshot.VersionHash) string {
 
 func formatResolveError(hash snapshot.VersionHash, err error) string {
 	return fmt.Sprintf("error retrieving object (%s, %s): %v\nfull hash: %s", hash.Strategy, util.ShortenHash(hash.Value), err, hash.Value)
+}
+
+// TODO : this is a bit of a hack to clean up the delta presentation
+// produced by tracecheck. Ideally the diff generation would be improved
+// upstream to avoid the need for this.
+func normalizeDeltaPresentation(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	// unwrap surrounding parentheses that godebug/diff adds
+	if strings.HasPrefix(trimmed, "(") && strings.HasSuffix(trimmed, ")") {
+		trimmed = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	filtered := lines[:0]
+	for _, line := range lines {
+		if strings.TrimSpace(line) == `"""` {
+			continue
+		}
+		filtered = append(filtered, line)
+	}
+
+	minIndent := -1
+	for _, line := range filtered {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		indent := leadingWhitespaceCount(line)
+		if minIndent == -1 || indent < minIndent {
+			minIndent = indent
+		}
+	}
+
+	if minIndent > 0 {
+		for i, line := range filtered {
+			if strings.TrimSpace(line) == "" {
+				filtered[i] = ""
+				continue
+			}
+			filtered[i] = trimLeadingWhitespace(line, minIndent)
+		}
+	}
+
+	return strings.TrimSpace(strings.Join(filtered, "\n"))
+}
+
+func leadingWhitespaceCount(s string) int {
+	count := 0
+	for _, r := range s {
+		if r == ' ' || r == '\t' {
+			count++
+			continue
+		}
+		break
+	}
+	return count
+}
+
+func trimLeadingWhitespace(s string, count int) string {
+	if count <= 0 {
+		return s
+	}
+	consumed := 0
+	for i, r := range s {
+		if consumed >= count {
+			return s[i:]
+		}
+		if r == ' ' || r == '\t' {
+			consumed++
+			continue
+		}
+		return s[i:]
+	}
+	return ""
 }
