@@ -85,6 +85,11 @@ type ReconcileResult struct {
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
 	Deltas       map[snapshot.CompositeKey]Delta
 
+	StateBefore   ObjectVersions
+	StateAfter    ObjectVersions
+	KindSeqBefore KindSequences
+	KindSeqAfter  KindSequences
+
 	ctrlRes reconcile.Result
 }
 

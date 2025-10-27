@@ -635,6 +635,14 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		"Result", reconcileResult.ctrlRes,
 	).Info("finished reconcile")
 
+	beforeState := make(ObjectVersions)
+	maps.Copy(beforeState, state.Objects())
+	beforeSequences := make(KindSequences)
+	maps.Copy(beforeSequences, state.Contents.KindSequences)
+
+	reconcileResult.StateBefore = beforeState
+	reconcileResult.KindSeqBefore = beforeSequences
+
 	newSequences := make(KindSequences)
 	maps.Copy(newSequences, state.Contents.KindSequences)
 	effects := reconcileResult.Changes.Effects
@@ -724,6 +732,14 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
+
+	afterState := make(ObjectVersions)
+	maps.Copy(afterState, prevState)
+	afterSequences := make(KindSequences)
+	maps.Copy(afterSequences, newSequences)
+
+	reconcileResult.StateAfter = afterState
+	reconcileResult.KindSeqAfter = afterSequences
 
 	child := StateNode{
 		Contents:          newStateSnapshot(prevState, newSequences, newStateEvents),

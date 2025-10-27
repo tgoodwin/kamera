@@ -18,6 +18,7 @@ const (
 	modeStates inspectorMode = iota
 	modePaths
 	modeSteps
+	modeReconcile
 )
 
 type detailTableMode int
@@ -67,23 +68,25 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 
 	mainTable := configureTable("States", true)
 	detailTable := configureTable("Details", true)
+	effectsTable := configureTable("Effects", true)
 	detailText := tview.NewTextView()
 	detailText.SetDynamicColors(true)
 	detailText.SetWrap(true)
 	detailText.SetTitle("Details")
 	detailText.SetBorder(true)
 	detailContainer := tview.NewFlex()
-	detailContainer.AddItem(detailTable, 0, 1, false)
+	detailContainer.SetDirection(tview.FlexRow)
+
+	contentFlex := tview.NewFlex()
 	currentDetailPrim := tview.Primitive(detailTable)
 
 	statusBar := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText(`[yellow]<Tab>[/yellow] to move focus • [yellow]Enter[/yellow] to select • [yellow]q[/yellow] to quit`).
+		SetText(`[yellow]<Tab>[-] to move focus • [yellow]Enter[-] to select • [yellow]q[-] to quit`).
 		SetTextAlign(tview.AlignCenter)
 
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
-		AddItem(mainTable, 0, 5, true).
-		AddItem(detailContainer, 0, 3, false).
+		AddItem(contentFlex, 0, 1, true).
 		AddItem(statusBar, 1, 0, false)
 
 	var (
@@ -100,11 +103,12 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 	)
 
 	const (
-		stateStatusMessage  = `[yellow]Enter/d[/yellow] describe object • [yellow]Tab[/yellow] swap focus • [yellow]q[/yellow] quit`
-		stateDescribeStatus = `[yellow]Esc[/yellow] back • [yellow]q[/yellow] quit`
-		pathStatusMessage   = `[yellow]Enter[/yellow] open steps • [yellow]Esc[/yellow] back • [yellow]Tab[/yellow] swap focus • [yellow]q[/yellow] quit`
-		stepStatusMessage   = `[yellow]Enter/d[/yellow] view diff • [yellow]Esc[/yellow] back • [yellow]Tab[/yellow] swap focus • [yellow]q[/yellow] quit`
-		stepDescribeStatus  = `[yellow]Esc[/yellow] back • [yellow]q[/yellow] quit`
+		stateStatusMessage     = `[yellow]Enter/d[-] describe object • [yellow]Tab[-] swap focus • [yellow]q[-] quit`
+		stateDescribeStatus    = `[yellow]Esc[-] back • [yellow]q[-] quit`
+		pathStatusMessage      = `[yellow]Enter[-] open steps • [yellow]Esc[-] back • [yellow]Tab[-] swap focus • [yellow]q[-] quit`
+		stepStatusMessage      = `[yellow]Enter/d[-] inspect reconcile • [yellow]Esc[-] back • [yellow]Tab[-] swap focus • [yellow]q[-] quit`
+		stepDescribeStatus     = `[yellow]Esc[-] back • [yellow]q[-] quit`
+		reconcileStatusMessage = `[yellow]Esc[-] back • [yellow]Tab[-] swap focus • [yellow]q[-] quit`
 	)
 
 	var (
@@ -118,9 +122,10 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 	)
 
 	var (
-		renderStateDetail func()
-		renderPathDetail  func()
-		renderStepDetail  func()
+		renderStateDetail     func()
+		renderPathDetail      func()
+		renderStepDetail      func()
+		renderReconcileDetail func()
 	)
 
 	updateStatus := func(text string) {
@@ -159,6 +164,9 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 			return true
 		}
 		switch mode {
+		case modeReconcile:
+			applyMode(modeSteps)
+			return true
 		case modeSteps:
 			applyMode(modePaths)
 			return true
@@ -191,7 +199,46 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 	detailTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyTab:
-			app.SetFocus(mainTable)
+			if mode == modeSteps {
+				currentDetailPrim = effectsTable
+				currentDetailMode = detailStepEffects
+				app.SetFocus(effectsTable)
+			} else {
+				app.SetFocus(mainTable)
+			}
+			return nil
+		case tcell.KeyEscape:
+			if goBack() {
+				return nil
+			}
+		case tcell.KeyEnter:
+			if performDetailAction != nil {
+				performDetailAction()
+			}
+			return nil
+		}
+		switch event.Rune() {
+		case 'q', 'Q':
+			app.Stop()
+			return nil
+		case 'd', 'D':
+			if performDetailAction != nil {
+				performDetailAction()
+			}
+			return nil
+		}
+		return event
+	})
+
+	effectsTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyTab:
+			if mode == modeSteps {
+				app.SetFocus(mainTable)
+			} else if mode == modeReconcile {
+				currentDetailPrim = detailText
+				app.SetFocus(detailText)
+			}
 			return nil
 		case tcell.KeyEscape:
 			if goBack() {
@@ -219,7 +266,12 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 	detailText.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyTab:
-			app.SetFocus(mainTable)
+			if mode == modeReconcile {
+				currentDetailPrim = effectsTable
+				app.SetFocus(effectsTable)
+			} else {
+				app.SetFocus(mainTable)
+			}
 			return nil
 		case tcell.KeyEscape:
 			if goBack() {
@@ -238,35 +290,10 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 		switch currentDetailMode {
 		case detailStateObjects:
 			stateDetailRow = row
-		case detailStepEffects:
-			stepDetailRow = row
 		}
 	})
 
-	showObjectYAML := func(entry stateObjectEntry) {
-		row := stateDetailRow
-		title := fmt.Sprintf("Object %s", entry.key.String())
-		var body string
-		if entry.cache != nil {
-			if yamlStr, err := entry.cache.YAML(entry.hash); err == nil {
-				body = yamlStr
-			} else {
-				body = formatResolveError(entry.hash, err)
-			}
-		} else {
-			body = formatResolverUnavailable(entry.hash)
-		}
-		showDetailText(title, body, stateDescribeStatus)
-		returnFromText = func() {
-			stateDetailRow = row
-			renderStateDetail()
-			focusDetail()
-		}
-		focusDetail()
-	}
-
-	showEffectDiff := func(entry effectEntry) {
-		row := stepDetailRow
+	buildEffectDetail := func(entry effectEntry) (string, string) {
 		key := entry.effect.Key
 		title := fmt.Sprintf("%s %s/%s/%s", string(entry.effect.OpType), key.ResourceKey.Kind, key.ResourceKey.Namespace, key.ResourceKey.Name)
 		diff := entry.diff
@@ -281,10 +308,42 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 				diff = formatResolverUnavailable(entry.effect.Version)
 			}
 		}
-		showDetailText(title, diff, stepDescribeStatus)
+		return title, diff
+	}
+
+	effectsTable.SetSelectionChangedFunc(func(row, _ int) {
+		if row <= 0 {
+			return
+		}
+		stepDetailRow = row
+		if mode == modeReconcile && row-1 < len(stepEffects) {
+			title, body := buildEffectDetail(stepEffects[row-1])
+			detailText.SetTitle(title)
+			detailText.SetText(body)
+		}
+	})
+
+	showObjectYAML := func(entry stateObjectEntry) {
+		row := stateDetailRow
+		title := fmt.Sprintf("Object %s", formatResourceTitle(entry.key))
+		var body string
+		if entry.cache != nil {
+			if yamlStr, err := entry.cache.YAML(entry.hash); err == nil {
+				body = yamlStr
+			} else {
+				body = formatResolveError(entry.hash, err)
+			}
+		} else {
+			body = formatResolverUnavailable(entry.hash)
+		}
+		showDetailText(title, body, stateDescribeStatus)
 		returnFromText = func() {
-			stepDetailRow = row
-			renderStepDetail()
+			stateDetailRow = row
+			if mode == modeSteps {
+				renderStepDetail()
+			} else {
+				renderStateDetail()
+			}
 			focusDetail()
 		}
 		focusDetail()
@@ -387,19 +446,34 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 	renderStepDetail = func() {
 		if selectedState < 0 || selectedState >= len(states) {
 			currentDetailMode = detailNone
-			showDetailText("Details", "no state selected", stepStatusMessage)
+			detailContainer.Clear()
+			detailContainer.AddItem(detailText, 0, 1, false)
+			detailText.SetTitle("Details")
+			detailText.SetText("no state selected")
+			currentDetailPrim = detailText
+			updateStatus(stepStatusMessage)
 			return
 		}
 		state := states[selectedState]
 		if selectedPath < 0 || selectedPath >= len(state.Paths) {
 			currentDetailMode = detailNone
-			showDetailText("Details", fmt.Sprintf("State %d has no path selected", selectedState), stepStatusMessage)
+			detailContainer.Clear()
+			detailContainer.AddItem(detailText, 0, 1, false)
+			detailText.SetTitle("Details")
+			detailText.SetText(fmt.Sprintf("State %d has no path selected", selectedState))
+			currentDetailPrim = detailText
+			updateStatus(stepStatusMessage)
 			return
 		}
 		path := state.Paths[selectedPath]
 		if len(path) == 0 {
 			currentDetailMode = detailNone
-			showDetailText("Details", fmt.Sprintf("State %d path %d is empty", selectedState, selectedPath), stepStatusMessage)
+			detailContainer.Clear()
+			detailContainer.AddItem(detailText, 0, 1, false)
+			detailText.SetTitle("Details")
+			detailText.SetText(fmt.Sprintf("State %d path %d is empty", selectedState, selectedPath))
+			currentDetailPrim = detailText
+			updateStatus(stepStatusMessage)
 			return
 		}
 		if selectedStep < 0 || selectedStep >= len(path) {
@@ -407,8 +481,88 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 		}
 		step := path[selectedStep]
 
-		cache := getCache(state.Resolver)
+		detailContainer.Clear()
+		detailContainer.SetDirection(tview.FlexRow)
+		currentDetailPrim = detailTable
+		currentDetailMode = detailStateObjects
+
+		// Populate state objects using the stored post-step state snapshot
+		stateObjects = stateObjects[:0]
+		var stateMap tracecheck.ObjectVersions
+		if step != nil && step.StateAfter != nil {
+			stateMap = step.StateAfter
+		} else {
+			stateMap = state.State.Objects()
+		}
+		if len(stateMap) > 0 {
+			keys := make([]snapshot.CompositeKey, 0, len(stateMap))
+			for key := range stateMap {
+				keys = append(keys, key)
+			}
+			sort.Slice(keys, func(i, j int) bool {
+				return keys[i].String() < keys[j].String()
+			})
+			for _, key := range keys {
+				stateObjects = append(stateObjects, stateObjectEntry{
+					key:   key,
+					hash:  stateMap[key],
+					cache: getCache(state.Resolver),
+				})
+			}
+		}
+
+		detailTable.Clear()
+		headers := []string{"Idx", "Kind", "Namespace", "Name", "Hash"}
+		for col, val := range headers {
+			detailTable.SetCell(0, col, headerCell(val))
+		}
+		if len(stateObjects) == 0 {
+			detailTable.SetCell(1, 0,
+				valueCell("(no objects)").
+					SetSelectable(false).
+					SetAlign(tview.AlignCenter))
+			for col := 1; col < len(headers); col++ {
+				detailTable.SetCell(1, col, valueCell("").SetSelectable(false))
+			}
+			stateDetailRow = 0
+		} else {
+			if stateDetailRow <= 0 || stateDetailRow > len(stateObjects) {
+				stateDetailRow = 1
+			}
+			for idx, entry := range stateObjects {
+				key := entry.key
+				detailTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
+				detailTable.SetCell(idx+1, 1, valueCell(key.ResourceKey.Kind))
+				detailTable.SetCell(idx+1, 2, valueCell(key.ResourceKey.Namespace))
+				detailTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Name))
+				detailTable.SetCell(idx+1, 4, valueCell(util.ShortenHash(entry.hash.Value)))
+			}
+		}
+
+		controller := "(nil)"
+		frame := "-"
+		if step != nil {
+			controller = step.ControllerID
+			frame = util.Shorter(step.FrameID)
+		}
+		detailTable.SetTitle(fmt.Sprintf("State • Step %d (%s @ %s)", selectedStep, controller, frame))
+		detailTable.SetSelectedFunc(func(row, _ int) {
+			if row <= 0 || row-1 >= len(stateObjects) {
+				return
+			}
+			stateDetailRow = row
+			showObjectYAML(stateObjects[row-1])
+		})
+		detailContainer.AddItem(detailTable, 0, 3, false)
+		if stateDetailRow > 0 && len(stateObjects) > 0 {
+			detailTable.Select(stateDetailRow, 0)
+		} else {
+			detailTable.Select(0, 0)
+		}
+
+		// Populate effects bottom panel
 		stepEffects = stepEffects[:0]
+		cache := getCache(state.Resolver)
 		if step != nil {
 			for _, eff := range step.Changes.Effects {
 				diff := normalizeDeltaPresentation(string(step.Deltas[eff.Key]))
@@ -431,73 +585,184 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 			}
 		}
 
+		effectsTable.Clear()
 		if len(stepEffects) == 0 {
-			currentDetailMode = detailNone
-			summary := formatStepSummary(step, selectedStep)
-			showDetailText(fmt.Sprintf("State %d • Path %d • Step %d", selectedState, selectedPath, selectedStep), summary, stepStatusMessage)
+			effectsTable.SetTitle("Effects • (none)")
+			effectsTable.SetCell(0, 0, valueCell("(no effects)").SetSelectable(false).SetAlign(tview.AlignCenter))
+			effectsTable.SetSelectedFunc(nil)
+			stepDetailRow = 0
+		} else {
+			headers := []string{"Idx", "Verb", "Kind", "Namespace", "Name"}
+			for col, val := range headers {
+				effectsTable.SetCell(0, col, headerCell(val))
+			}
+			if stepDetailRow <= 0 || stepDetailRow > len(stepEffects) {
+				stepDetailRow = 1
+			}
+			for idx, entry := range stepEffects {
+				key := entry.effect.Key
+				effectsTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
+				effectsTable.SetCell(idx+1, 1, valueCell(string(entry.effect.OpType)))
+				effectsTable.SetCell(idx+1, 2, valueCell(key.ResourceKey.Kind))
+				effectsTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Namespace))
+				effectsTable.SetCell(idx+1, 4, valueCell(key.ResourceKey.Name))
+			}
+			effectsTable.Select(stepDetailRow, 0)
+			effectsTable.SetTitle(fmt.Sprintf("Effects • Step %d (%s @ %s)", selectedStep, controller, frame))
+			effectsTable.SetSelectedFunc(nil)
+		}
+		detailContainer.AddItem(effectsTable, 0, 2, false)
+		currentDetailMode = detailStateObjects
+		updateStatus(stepStatusMessage)
+	}
+
+	renderReconcileDetail = func() {
+		if selectedState < 0 || selectedState >= len(states) {
+			detailText.SetTitle("Effect Detail")
+			detailText.SetText("no state selected")
+			updateStatus(reconcileStatusMessage)
 			return
 		}
 
-		currentDetailMode = detailStepEffects
-		detailTable.Clear()
+		state := states[selectedState]
+		if selectedPath < 0 || selectedPath >= len(state.Paths) {
+			detailText.SetTitle("Effect Detail")
+			detailText.SetText("no path selected")
+			updateStatus(reconcileStatusMessage)
+			return
+		}
+
+		path := state.Paths[selectedPath]
+		if len(path) == 0 {
+			detailText.SetTitle("Effect Detail")
+			detailText.SetText("path is empty")
+			updateStatus(reconcileStatusMessage)
+			return
+		}
+
+		if selectedStep < 0 || selectedStep >= len(path) {
+			selectedStep = len(path) - 1
+		}
+
+		controller := "(nil)"
+		frame := "-"
+		step := path[selectedStep]
+		if step != nil {
+			controller = step.ControllerID
+			frame = util.Shorter(step.FrameID)
+		}
+
+		effectsTable.Clear()
+		if len(stepEffects) == 0 {
+			effectsTable.SetTitle(fmt.Sprintf("Effects • Step %d (%s @ %s)", selectedStep, controller, frame))
+			effectsTable.SetCell(0, 0, valueCell("(no effects)").SetSelectable(false).SetAlign(tview.AlignCenter))
+			detailText.SetTitle("Effect Detail")
+			detailText.SetText("(no effects to display)")
+			updateStatus(reconcileStatusMessage)
+			return
+		}
+
 		headers := []string{"Idx", "Verb", "Kind", "Namespace", "Name"}
 		for col, val := range headers {
-			detailTable.SetCell(0, col, headerCell(val))
+			effectsTable.SetCell(0, col, headerCell(val))
 		}
 		if stepDetailRow <= 0 || stepDetailRow > len(stepEffects) {
 			stepDetailRow = 1
 		}
 		for idx, entry := range stepEffects {
 			key := entry.effect.Key
-			detailTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
-			detailTable.SetCell(idx+1, 1, valueCell(string(entry.effect.OpType)))
-			detailTable.SetCell(idx+1, 2, valueCell(key.ResourceKey.Kind))
-			detailTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Namespace))
-			detailTable.SetCell(idx+1, 4, valueCell(key.ResourceKey.Name))
+			effectsTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
+			effectsTable.SetCell(idx+1, 1, valueCell(string(entry.effect.OpType)))
+			effectsTable.SetCell(idx+1, 2, valueCell(key.ResourceKey.Kind))
+			effectsTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Namespace))
+			effectsTable.SetCell(idx+1, 4, valueCell(key.ResourceKey.Name))
 		}
-
-		controller := "(nil)"
-		frame := "-"
-		if step != nil {
-			controller = step.ControllerID
-			frame = util.Shorter(step.FrameID)
-		}
-		detailTable.SetTitle(fmt.Sprintf("Effects • Step %d (%s @ %s)", selectedStep, controller, frame))
-		detailTable.SetSelectedFunc(func(row, _ int) {
+		effectsTable.SetTitle(fmt.Sprintf("Effects • Step %d (%s @ %s)", selectedStep, controller, frame))
+		effectsTable.SetSelectedFunc(func(row, _ int) {
 			if row <= 0 || row-1 >= len(stepEffects) {
 				return
 			}
 			stepDetailRow = row
-			showEffectDiff(stepEffects[row-1])
+			title, body := buildEffectDetail(stepEffects[row-1])
+			detailText.SetTitle(title)
+			detailText.SetText(body)
 		})
-		showDetailTable()
-		detailTable.Select(stepDetailRow, 0)
-		updateStatus(stepStatusMessage)
+		effectsTable.Select(stepDetailRow, 0)
+		if stepDetailRow > 0 && stepDetailRow <= len(stepEffects) {
+			title, body := buildEffectDetail(stepEffects[stepDetailRow-1])
+			detailText.SetTitle(title)
+			detailText.SetText(body)
+		}
+		currentDetailMode = detailStepEffects
+		currentDetailPrim = effectsTable
+		updateStatus(reconcileStatusMessage)
 	}
 
 	performDetailAction = func() {
-		switch currentDetailMode {
-		case detailStateObjects:
+		switch app.GetFocus() {
+		case detailTable:
 			row, _ := detailTable.GetSelection()
 			if row <= 0 || row-1 >= len(stateObjects) {
 				return
 			}
 			stateDetailRow = row
 			showObjectYAML(stateObjects[row-1])
-		case detailStepEffects:
-			row, _ := detailTable.GetSelection()
+		case effectsTable:
+			row, _ := effectsTable.GetSelection()
 			if row <= 0 || row-1 >= len(stepEffects) {
 				return
 			}
 			stepDetailRow = row
-			showEffectDiff(stepEffects[row-1])
+			if mode == modeReconcile {
+				title, body := buildEffectDetail(stepEffects[row-1])
+				detailText.SetTitle(title)
+				detailText.SetText(body)
+				currentDetailPrim = detailText
+				updateStatus(reconcileStatusMessage)
+			} else {
+				applyMode(modeReconcile)
+			}
+		default:
+			switch currentDetailMode {
+			case detailStateObjects:
+				row, _ := detailTable.GetSelection()
+				if row <= 0 || row-1 >= len(stateObjects) {
+					return
+				}
+				stateDetailRow = row
+				showObjectYAML(stateObjects[row-1])
+			case detailStepEffects:
+				row, _ := effectsTable.GetSelection()
+				if row <= 0 || row-1 >= len(stepEffects) {
+					return
+				}
+				stepDetailRow = row
+				if mode == modeReconcile {
+					title, body := buildEffectDetail(stepEffects[row-1])
+					detailText.SetTitle(title)
+					detailText.SetText(body)
+					currentDetailPrim = detailText
+					updateStatus(reconcileStatusMessage)
+				} else {
+					applyMode(modeReconcile)
+				}
+			}
 		}
 	}
 
 	applyMode = func(newMode inspectorMode) {
 		mode = newMode
+		returnFromText = nil
 		switch mode {
 		case modeStates:
+			contentFlex.Clear()
+			contentFlex.SetDirection(tview.FlexRow)
+			contentFlex.AddItem(mainTable, 0, 5, true)
+			detailContainer.Clear()
+			detailContainer.SetDirection(tview.FlexRow)
+			detailContainer.AddItem(detailTable, 0, 1, false)
+			contentFlex.AddItem(detailContainer, 0, 3, false)
+			currentDetailPrim = detailTable
 			mainTable.SetTitle("States")
 			populateStates(mainTable, states)
 			if selectedState >= len(states) {
@@ -543,6 +808,13 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 			}
 			renderPathDetail()
 		case modeSteps:
+			contentFlex.Clear()
+			contentFlex.SetDirection(tview.FlexColumn)
+			contentFlex.AddItem(mainTable, 0, 2, true)
+			detailContainer.Clear()
+			detailContainer.SetDirection(tview.FlexRow)
+			contentFlex.AddItem(detailContainer, 0, 3, false)
+			currentDetailPrim = detailTable
 			mainTable.SetTitle(fmt.Sprintf("Steps • State %d • Path %d", selectedState, selectedPath))
 			populateSteps(mainTable, states, selectedState, selectedPath)
 			path := states[selectedState].Paths[selectedPath]
@@ -563,6 +835,13 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 				mainTable.SetSelectedFunc(stepEnter)
 			}
 			renderStepDetail()
+		case modeReconcile:
+			contentFlex.Clear()
+			contentFlex.SetDirection(tview.FlexColumn)
+			contentFlex.AddItem(effectsTable, 0, 2, true)
+			contentFlex.AddItem(detailText, 0, 3, false)
+			currentDetailPrim = effectsTable
+			renderReconcileDetail()
 		}
 	}
 
@@ -659,6 +938,9 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 		stepDetailRow = 1
 		if mode == modeSteps {
 			renderStepDetail()
+			if len(stepEffects) > 0 {
+				applyMode(modeReconcile)
+			}
 		}
 	}
 
@@ -867,6 +1149,14 @@ func formatResolverUnavailable(hash snapshot.VersionHash) string {
 
 func formatResolveError(hash snapshot.VersionHash, err error) string {
 	return fmt.Sprintf("error retrieving object (%s, %s): %v\nfull hash: %s", hash.Strategy, util.ShortenHash(hash.Value), err, hash.Value)
+}
+
+func formatResourceTitle(key snapshot.CompositeKey) string {
+	namespace := key.ResourceKey.Namespace
+	if namespace != "" {
+		return fmt.Sprintf("%s %s/%s", key.ResourceKey.Kind, namespace, key.ResourceKey.Name)
+	}
+	return fmt.Sprintf("%s %s", key.ResourceKey.Kind, key.ResourceKey.Name)
 }
 
 // TODO : this is a bit of a hack to clean up the delta presentation
