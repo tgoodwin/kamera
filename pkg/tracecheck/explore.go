@@ -80,6 +80,8 @@ type Explorer struct {
 
 	effectContextManager EffectContextManager
 
+	versionManager VersionManager
+
 	priorityHandler PriorityHandler // prioritize possible views to explore
 
 	config *ExploreConfig
@@ -88,10 +90,11 @@ type Explorer struct {
 }
 
 type ResultState struct {
-	ID     string
-	State  StateNode
-	Paths  []ExecutionHistory
-	Reason string
+	ID       string
+	State    StateNode
+	Paths    []ExecutionHistory
+	Reason   string
+	Resolver VersionManager
 }
 
 func (e *Explorer) shouldExploreDownstream(frameID string) bool {
@@ -167,9 +170,10 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 	// the end of the trace trivially converges
 	traceWalkResult := ResultState{
-		State:  StateNode{Contents: *rebuiltState, DivergencePoint: "TRACE_START"},
-		Paths:  []ExecutionHistory{currExecutionHistory},
-		Reason: "trace",
+		State:    StateNode{Contents: *rebuiltState, DivergencePoint: "TRACE_START"},
+		Paths:    []ExecutionHistory{currExecutionHistory},
+		Reason:   "trace",
+		Resolver: e.versionManager,
 	}
 	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
 	logger.Info("len curr execution history", len(currExecutionHistory))
@@ -281,10 +285,11 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 		paths := executionPathsToState[stateKey]
 		state.DivergencePoint = initialState.DivergencePoint
 		convergedState := ResultState{
-			ID:     fmt.Sprintf("state-%d", i),
-			State:  state,
-			Paths:  paths,
-			Reason: "converged",
+			ID:       fmt.Sprintf("state-%d", i),
+			State:    state,
+			Paths:    paths,
+			Reason:   "converged",
+			Resolver: e.versionManager,
 		}
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
 	}
@@ -329,6 +334,10 @@ func (e *Explorer) explore(
 
 	seenDepths := make(map[int]bool)
 
+	// Track explored state hashes keyed by the sequence of state-changing reconciles.
+	// This lets us prune branches that only differ by no-op reads.
+	visitedStatePaths := make(map[StateHash]map[string]struct{})
+
 	var queue []StateNode
 
 	// executionPathsToState is a map of stateKey -> ExecutionHistory
@@ -352,12 +361,34 @@ func (e *Explorer) explore(
 
 	queue = append(queue, initialState)
 
+	initialHash := initialState.Hash()
+	initialSignature := initialState.ExecutionHistory.UniqueKey()
+	visitedStatePaths[initialHash] = map[string]struct{}{initialSignature: {}}
+
 	for len(queue) > 0 {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
 		}
+
+		if len(queue) == 1 {
+			remaining := queue[0]
+			logger.WithValues(
+				"StateHash", remaining.Hash(),
+				"OrderHash", remaining.OrderSensitiveHash(),
+				"PendingCount", len(remaining.PendingReconciles),
+				"Depth", remaining.depth,
+				"Mode", remaining.mode,
+			).Info("only one state remaining in queue")
+			if logger.V(1).Enabled() {
+				logger.V(1).WithValues(
+					"DivergenceKey", remaining.divergenceKey,
+					"ReconcileLineage", remaining.ReconcileLineage(),
+				).Info("queue tail details")
+			}
+		}
+
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
@@ -460,6 +491,33 @@ func (e *Explorer) explore(
 		).Info("filtered possible views based on priority")
 		possibleViews = prioritizedViews
 
+		if len(possibleViews) == 0 {
+			logger.WithValues(
+				"StateKey", stateKey,
+				"ReconcilerID", pendingReconcile.ReconcilerID,
+				"PendingCount", len(currentState.PendingReconciles),
+			).Info("no eligible views for pending reconcile; marking state as aborted")
+
+			e.stats.AbortedPaths++
+			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
+			abortReason := fmt.Sprintf("no eligible views for %s", pendingReconcile.ReconcilerID)
+
+			select {
+			case abortedStatesCh <- ResultState{
+				ID:       fmt.Sprintf("aborted-%s", stateKey),
+				State:    currentState,
+				Paths:    []ExecutionHistory{currentState.ExecutionHistory},
+				Reason:   abortReason,
+				Resolver: e.versionManager,
+			}:
+			case <-ctx.Done():
+				return nil
+			}
+
+			// Skip exploring this branch further since there are no viable views.
+			continue
+		}
+
 		reconcilerID := pendingReconcile.ReconcilerID
 		for _, stateView := range possibleViews {
 			if e.config.debug {
@@ -497,6 +555,10 @@ func (e *Explorer) explore(
 			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
 				seenDepths[newState.depth] = true
 			}
+
+			stateHash := newState.Hash()
+			normalizedHistory := newState.ExecutionHistory.UniqueKey()
+
 			if newState.depth > e.config.MaxDepth {
 				logger.WithValues(
 					"maxDepth", e.config.MaxDepth,
@@ -508,15 +570,31 @@ func (e *Explorer) explore(
 				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], newState.ExecutionHistory)
 				select {
 				case abortedStatesCh <- ResultState{
-					ID:     fmt.Sprintf("aborted-%s", stateKey),
-					State:  newState,
-					Paths:  []ExecutionHistory{newState.ExecutionHistory},
-					Reason: fmt.Sprintf("max depth %d", e.config.MaxDepth),
+					ID:       fmt.Sprintf("aborted-%s", stateKey),
+					State:    newState,
+					Paths:    []ExecutionHistory{newState.ExecutionHistory},
+					Reason:   fmt.Sprintf("max depth %d", e.config.MaxDepth),
+					Resolver: e.versionManager,
 				}:
 				case <-ctx.Done():
 				}
+				continue
+			}
+
+			historySet, alreadyTracked := visitedStatePaths[stateHash]
+			if !alreadyTracked {
+				historySet = make(map[string]struct{})
+				visitedStatePaths[stateHash] = historySet
+			}
+			if _, seenPath := historySet[normalizedHistory]; seenPath {
+				logger.V(1).WithValues(
+					"StateHash", stateHash,
+					"PathSignature", normalizedHistory,
+				).Info("skipping duplicate state reached via equivalent mutation history")
+				continue
 			} else {
 				// enqueue the new state to explore
+				historySet[normalizedHistory] = struct{}{}
 				queue = e.addStateToExplore(queue, newState)
 			}
 		}

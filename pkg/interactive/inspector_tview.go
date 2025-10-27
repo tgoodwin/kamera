@@ -10,7 +10,6 @@ import (
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/pkg/util"
-	"sigs.k8s.io/yaml"
 )
 
 type inspectorMode int
@@ -30,13 +29,15 @@ const (
 )
 
 type stateObjectEntry struct {
-	key  snapshot.CompositeKey
-	hash snapshot.VersionHash
+	key   snapshot.CompositeKey
+	hash  snapshot.VersionHash
+	cache *objectCache
 }
 
 type effectEntry struct {
 	effect tracecheck.Effect
 	diff   string
+	cache  *objectCache
 }
 
 // RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
@@ -47,6 +48,19 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 
 	if len(states) == 0 {
 		return fmt.Errorf("no converged states supplied")
+	}
+
+	resolverCaches := make(map[tracecheck.VersionManager]*objectCache)
+	getCache := func(resolver tracecheck.VersionManager) *objectCache {
+		if resolver == nil {
+			return nil
+		}
+		if cache, ok := resolverCaches[resolver]; ok {
+			return cache
+		}
+		cache := newObjectCache(resolver)
+		resolverCaches[resolver] = cache
+		return cache
 	}
 
 	app := tview.NewApplication()
@@ -232,7 +246,16 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 	showObjectYAML := func(entry stateObjectEntry) {
 		row := stateDetailRow
 		title := fmt.Sprintf("Object %s", entry.key.String())
-		body := jsonToYAMLString(entry.hash.Value)
+		var body string
+		if entry.cache != nil {
+			if yamlStr, err := entry.cache.YAML(entry.hash); err == nil {
+				body = yamlStr
+			} else {
+				body = formatResolveError(entry.hash, err)
+			}
+		} else {
+			body = formatResolverUnavailable(entry.hash)
+		}
 		showDetailText(title, body, stateDescribeStatus)
 		returnFromText = func() {
 			stateDetailRow = row
@@ -248,7 +271,15 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 		title := fmt.Sprintf("%s %s/%s/%s", string(entry.effect.OpType), key.ResourceKey.Kind, key.ResourceKey.Namespace, key.ResourceKey.Name)
 		diff := entry.diff
 		if strings.TrimSpace(diff) == "" {
-			diff = jsonToYAMLString(entry.effect.Version.Value)
+			if entry.cache != nil {
+				if yamlStr, err := entry.cache.YAML(entry.effect.Version); err == nil {
+					diff = yamlStr
+				} else {
+					diff = formatResolveError(entry.effect.Version, err)
+				}
+			} else {
+				diff = formatResolverUnavailable(entry.effect.Version)
+			}
 		}
 		showDetailText(title, diff, stepDescribeStatus)
 		returnFromText = func() {
@@ -269,6 +300,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 
 		state := states[selectedState]
 		objects := state.State.Objects()
+		cache := getCache(state.Resolver)
 		keys := make([]snapshot.CompositeKey, 0, len(objects))
 		for key := range objects {
 			keys = append(keys, key)
@@ -280,8 +312,9 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 		stateObjects = stateObjects[:0]
 		for _, key := range keys {
 			stateObjects = append(stateObjects, stateObjectEntry{
-				key:  key,
-				hash: objects[key],
+				key:   key,
+				hash:  objects[key],
+				cache: cache,
 			})
 		}
 
@@ -374,16 +407,26 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState) error {
 		}
 		step := path[selectedStep]
 
+		cache := getCache(state.Resolver)
 		stepEffects = stepEffects[:0]
 		if step != nil {
 			for _, eff := range step.Changes.Effects {
 				diff := string(step.Deltas[eff.Key])
 				if strings.TrimSpace(diff) == "" {
-					diff = jsonToYAMLString(eff.Version.Value)
+					if cache != nil {
+						if yamlStr, err := cache.YAML(eff.Version); err == nil {
+							diff = yamlStr
+						} else {
+							diff = formatResolveError(eff.Version, err)
+						}
+					} else {
+						diff = formatResolverUnavailable(eff.Version)
+					}
 				}
 				stepEffects = append(stepEffects, effectEntry{
 					effect: eff,
 					diff:   diff,
+					cache:  cache,
 				})
 			}
 		}
@@ -818,13 +861,10 @@ func formatObjectVersions(objects tracecheck.ObjectVersions, indent string) stri
 	return b.String()
 }
 
-func jsonToYAMLString(jsonStr string) string {
-	if strings.TrimSpace(jsonStr) == "" {
-		return "(empty)"
-	}
-	out, err := yaml.JSONToYAML([]byte(jsonStr))
-	if err != nil {
-		return fmt.Sprintf("error converting to yaml: %v", err)
-	}
-	return string(out)
+func formatResolverUnavailable(hash snapshot.VersionHash) string {
+	return fmt.Sprintf("object content unavailable; strategy=%s hash=%s (%s)", hash.Strategy, util.ShortenHash(hash.Value), hash.Value)
+}
+
+func formatResolveError(hash snapshot.VersionHash, err error) string {
+	return fmt.Sprintf("error retrieving object (%s, %s): %v\nfull hash: %s", hash.Strategy, util.ShortenHash(hash.Value), err, hash.Value)
 }

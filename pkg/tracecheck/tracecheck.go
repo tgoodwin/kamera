@@ -315,6 +315,7 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		),
 
 		knowledgeManager: knowledgeManager,
+		versionManager:   tc.manager.versionStore,
 	}
 }
 
