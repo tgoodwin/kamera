@@ -540,6 +540,8 @@ func (e *Explorer) explore(
 			newState, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
 			if err != nil {
 				// if we encounter an error during reconciliation, just abandon this branch
+				stepLogger.Error(err, "error taking reconcile step; abandoning branch")
+				e.stats.AbortedPaths++
 				continue
 
 			}
