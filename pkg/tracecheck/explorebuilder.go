@@ -175,6 +175,27 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDep("DaemonSet", "PodLifecycleController")
 	b.WithResourceDep("Job", "PodLifecycleController")
 	b.WithResourceDep("CronJob", "PodLifecycleController")
+
+	b.WithReconciler("ServiceController", func(c Client) Reconciler {
+		return &controller.ServiceReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
+	b.AssignReconcilerToKind("ServiceController", "Service")
+	b.WithResourceDep("Service", "ServiceController")
+	b.WithResourceDep("Endpoints", "ServiceController")
+
+	// endpoints controller
+	b.WithReconciler("EndpointsController", func(c Client) Reconciler {
+		return &controller.EndpointsReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
+	b.AssignReconcilerToKind("EndpointsController", "Endpoints")
+	b.WithResourceDep("Endpoints", "EndpointsController")
+	b.WithResourceDep("Service", "EndpointsController")
 }
 
 func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*ReconcilerContainer {
