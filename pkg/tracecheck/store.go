@@ -20,6 +20,11 @@ func newVersionStore(store *snapshot.Store) *versionStore {
 	}
 }
 
+// NewVersionStore constructs a VersionManager backed by the provided snapshot store.
+func NewVersionStore(store *snapshot.Store) VersionManager {
+	return newVersionStore(store)
+}
+
 func (vs *versionStore) DebugKey(key string) {
 	vs.Store.DebugKey(key)
 }

@@ -67,5 +67,5 @@ func main() {
 		return
 	}
 
-	interactive.RunStateInspectorTUIView(states)
+	interactive.RunStateInspectorTUIView(states, true)
 }

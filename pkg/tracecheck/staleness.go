@@ -31,7 +31,8 @@ type StateSnapshot struct {
 	stateEvents []StateEvent // the changes that led to the current objectVersions
 }
 
-func newStateSnapshot(contents ObjectVersions, kindSequences KindSequences, stateEvents []StateEvent) StateSnapshot {
+// NewStateSnapshot constructs a StateSnapshot from the provided contents and kind sequences.
+func NewStateSnapshot(contents ObjectVersions, kindSequences KindSequences, stateEvents []StateEvent) StateSnapshot {
 	if len(contents) > 0 && len(kindSequences) == 0 {
 		panic("kind sequences must be non-empty if contents are non-empty")
 	}
@@ -100,7 +101,7 @@ func (s *StateSnapshot) FixAt(ks KindSequences) StateSnapshot {
 	// using causal cause 'FixAt' is usually used when parsing traces.
 	// TODO refactor to better encapusalte the causal OOO / regular replay logic
 	fixedView := replayCausalEventSequenceToState(filtered)
-	ss := newStateSnapshot(fixedView.contents, ks, s.stateEvents)
+	ss := NewStateSnapshot(fixedView.contents, ks, s.stateEvents)
 	return ss
 }
 
@@ -498,7 +499,7 @@ func getAllPossibleViews(baseState *StateSnapshot, relevantKinds []string, kindB
 		// we preserve the original state but adjust the sequence numbers
 		// to reflect the new view among all possible stale views.
 		// the stale view must be "observed" via the Observe() method
-		out := newStateSnapshot(baseState.contents, staleSequences, baseState.stateEvents)
+		out := NewStateSnapshot(baseState.contents, staleSequences, baseState.stateEvents)
 		staleViews = append(staleViews, &out)
 		logger.V(2).WithValues(
 			"lookbackLimits", kindBounds,

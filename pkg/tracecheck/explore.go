@@ -744,7 +744,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	reconcileResult.KindSeqAfter = afterSequences
 
 	child := StateNode{
-		Contents:          newStateSnapshot(prevState, newSequences, newStateEvents),
+		Contents:          NewStateSnapshot(prevState, newSequences, newStateEvents),
 		PendingReconciles: newPendingReconciles,
 		parent:            &state,
 		action:            reconcileResult,

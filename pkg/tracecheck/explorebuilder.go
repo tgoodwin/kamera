@@ -335,7 +335,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 
 	return StateNode{
-		Contents: newStateSnapshot(
+		Contents: NewStateSnapshot(
 			ObjectVersions{key: vHash},
 			KindSequences{
 				ikey.Kind: 1,

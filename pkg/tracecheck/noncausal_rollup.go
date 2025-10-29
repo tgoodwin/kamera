@@ -64,6 +64,6 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 		KindSequences[iKey.Kind] = e.Sequence
 		stateEvents = append(stateEvents, e)
 	}
-	out := newStateSnapshot(contents, KindSequences, stateEvents)
+	out := NewStateSnapshot(contents, KindSequences, stateEvents)
 	return &out
 }
