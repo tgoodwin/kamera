@@ -84,6 +84,7 @@ type ReconcileResult struct {
 	FrameType    FrameType
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
 	Deltas       map[snapshot.CompositeKey]Delta
+	Error        string
 
 	StateBefore   ObjectVersions
 	StateAfter    ObjectVersions
@@ -98,10 +99,14 @@ type ExecutionHistory []*ReconcileResult
 func (eh ExecutionHistory) UniqueKey() string {
 	// first filter out no-ops
 	filterNoOps := lo.Filter(eh, func(r *ReconcileResult, _ int) bool {
-		return len(r.Changes.ObjectVersions) > 0
+		return len(r.Changes.ObjectVersions) > 0 || r.Error != ""
 	})
 	strComponents := lo.Map(filterNoOps, func(r *ReconcileResult, _ int) string {
-		return fmt.Sprintf("%s@%d", r.ControllerID, len(r.Changes.Effects))
+		suffix := ""
+		if r.Error != "" {
+			suffix = "!"
+		}
+		return fmt.Sprintf("%s@%d%s", r.ControllerID, len(r.Changes.Effects), suffix)
 	})
 	return strings.Join(strComponents, ",")
 }
@@ -111,6 +116,11 @@ func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 		_, err := fmt.Fprintf(file, "\t%s:%s (%s) - #changes=%d\n", r.ControllerID, util.Shorter(r.FrameID), r.FrameType, len(r.Changes.ObjectVersions))
 		if err != nil {
 			return err
+		}
+		if r.Error != "" {
+			if _, err := fmt.Fprintf(file, "\tError: %s\n", r.Error); err != nil {
+				return err
+			}
 		}
 		for _, effect := range r.Changes.Effects {
 			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.Key); err != nil {
@@ -137,7 +147,7 @@ func (eh ExecutionHistory) Summarize() {
 func (eh ExecutionHistory) FilterNoOps() ExecutionHistory {
 	var filtered ExecutionHistory
 	for _, r := range eh {
-		if len(r.Changes.ObjectVersions) > 0 {
+		if len(r.Changes.ObjectVersions) > 0 || r.Error != "" {
 			filtered = append(filtered, r)
 		}
 	}

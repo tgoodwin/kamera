@@ -552,6 +552,9 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		if state.Reason != "" {
 			title = fmt.Sprintf("%s (%s)", title, state.Reason)
 		}
+		if state.Error != "" {
+			title = fmt.Sprintf("%s – %s", title, truncateString(state.Error, 64))
+		}
 		detailTable.SetTitle(title)
 		showDetailTable()
 		if stateDetailRow > 0 && len(stateObjects) > 0 {
@@ -1203,7 +1206,16 @@ func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 		table.SetCell(row+1, 1, tview.NewTableCell(util.ShortenHash(hash)))
 		table.SetCell(row+1, 2, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
 		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
-		table.SetCell(row+1, 4, tview.NewTableCell(state.Reason))
+		reason := state.Reason
+		if state.Error != "" {
+			snippet := truncateString(state.Error, 48)
+			if reason == "" {
+				reason = snippet
+			} else {
+				reason = fmt.Sprintf("%s (%s)", reason, snippet)
+			}
+		}
+		table.SetCell(row+1, 4, tview.NewTableCell(reason))
 	}
 }
 
@@ -1280,7 +1292,11 @@ func summarizePath(path tracecheck.ExecutionHistory) string {
 			parts[i] = "(nil)"
 			continue
 		}
-		parts[i] = fmt.Sprintf("%s[%d]", step.ControllerID, len(step.Changes.ObjectVersions))
+		suffix := ""
+		if step.Error != "" {
+			suffix = "!"
+		}
+		parts[i] = fmt.Sprintf("%s[%d]%s", step.ControllerID, len(step.Changes.ObjectVersions), suffix)
 	}
 	return strings.Join(parts, " -> ")
 }
@@ -1303,6 +1319,19 @@ func formatPathSummary(state tracecheck.ResultState, pathIdx int) string {
 		}
 		fmt.Fprintf(&b, "  [%d] %s\n", idx, step.ControllerID)
 	}
+	if state.Reason != "" || state.Error != "" || state.FailedReconcile != nil {
+		b.WriteString("\nOutcome:\n")
+		if state.Reason != "" {
+			fmt.Fprintf(&b, "  Reason: %s\n", state.Reason)
+		}
+		if state.Error != "" {
+			fmt.Fprintf(&b, "  Error: %s\n", state.Error)
+		}
+		if state.FailedReconcile != nil {
+			req := state.FailedReconcile.Request.NamespacedName
+			fmt.Fprintf(&b, "  Failed Reconcile: %s %s/%s\n", state.FailedReconcile.ReconcilerID, req.Namespace, req.Name)
+		}
+	}
 	return b.String()
 }
 
@@ -1313,6 +1342,9 @@ func formatStepSummary(step *tracecheck.ReconcileResult, stepIdx int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Controller: %s\nFrame: %s\nType: %s\n", step.ControllerID, util.Shorter(step.FrameID), step.FrameType)
 	fmt.Fprintf(&b, "Writes: %d\n", len(step.Changes.Effects))
+	if step.Error != "" {
+		fmt.Fprintf(&b, "Error: %s\n", step.Error)
+	}
 
 	if len(step.Changes.ObjectVersions) > 0 {
 		b.WriteString("\nObjects:\n")
@@ -1352,6 +1384,20 @@ func formatStepSummary(step *tracecheck.ReconcileResult, stepIdx int) string {
 		}
 	}
 	return b.String()
+}
+
+func truncateString(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max <= 3 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-3]) + "..."
 }
 
 func formatObjectVersions(objects tracecheck.ObjectVersions, indent string) string {

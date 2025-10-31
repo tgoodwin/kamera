@@ -90,11 +90,13 @@ type Explorer struct {
 }
 
 type ResultState struct {
-	ID       string
-	State    StateNode
-	Paths    []ExecutionHistory
-	Reason   string
-	Resolver VersionManager
+	ID              string
+	State           StateNode
+	Paths           []ExecutionHistory
+	Reason          string
+	Error           string
+	FailedReconcile *PendingReconcile
+	Resolver        VersionManager
 }
 
 func (e *Explorer) shouldExploreDownstream(frameID string) bool {
@@ -296,7 +298,8 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	for i := range result.AbortedStates {
 		stateKey := result.AbortedStates[i].State.Hash()
 		if paths, ok := executionPathsToState[stateKey]; ok && len(paths) > 0 {
-			result.AbortedStates[i].Paths = paths
+			mergedPaths := append(result.AbortedStates[i].Paths, paths...)
+			result.AbortedStates[i].Paths = GetUniquePaths(mergedPaths)
 		}
 	}
 	summarize(result)
@@ -502,13 +505,15 @@ func (e *Explorer) explore(
 			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 			abortReason := fmt.Sprintf("no eligible views for %s", pendingReconcile.ReconcilerID)
 
+			reconcileCopy := pendingReconcile
 			select {
 			case abortedStatesCh <- ResultState{
-				ID:       fmt.Sprintf("aborted-%s", stateKey),
-				State:    currentState,
-				Paths:    []ExecutionHistory{currentState.ExecutionHistory},
-				Reason:   abortReason,
-				Resolver: e.versionManager,
+				ID:              fmt.Sprintf("aborted-%s", stateKey),
+				State:           currentState,
+				Paths:           []ExecutionHistory{currentState.ExecutionHistory},
+				Reason:          abortReason,
+				FailedReconcile: &reconcileCopy,
+				Resolver:        e.versionManager,
 			}:
 			case <-ctx.Done():
 				return nil
@@ -537,13 +542,32 @@ func (e *Explorer) explore(
 			).Info("Taking reconcile step")
 
 			// for each view, create a new branch in exploration
-			newState, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+			newState, stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
 			if err != nil {
 				// if we encounter an error during reconciliation, just abandon this branch
 				stepLogger.Error(err, "error taking reconcile step; abandoning branch")
 				e.stats.AbortedPaths++
+				failurePath := stateView.ExecutionHistory
+				if stepResult != nil {
+					failurePath = append(slices.Clone(stateView.ExecutionHistory), stepResult)
+				}
+				stateKey := stateView.Hash()
+				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], failurePath)
+				reconcileCopy := pendingReconcile
+				select {
+				case abortedStatesCh <- ResultState{
+					ID:              fmt.Sprintf("aborted-%s", stateKey),
+					State:           stateView,
+					Paths:           []ExecutionHistory{failurePath},
+					Reason:          "error",
+					Error:           err.Error(),
+					FailedReconcile: &reconcileCopy,
+					Resolver:        e.versionManager,
+				}:
+				case <-ctx.Done():
+					return nil
+				}
 				continue
-
 			}
 			logger.V(1).WithValues("Depth", currentState.depth, "NewPendingReconciles", newState.PendingReconciles).Info("reconcile step completed")
 			if e.config.debug {
@@ -606,7 +630,7 @@ func (e *Explorer) explore(
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
-func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (StateNode, error) {
+func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (StateNode, *ReconcileResult, error) {
 	stepLog := log.FromContext(ctx)
 
 	// defensive validation
@@ -631,7 +655,27 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	if err != nil {
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")
 		// return the pre-reconcile state if the controller errored
-		return state, err
+		beforeState := make(ObjectVersions)
+		maps.Copy(beforeState, state.Objects())
+		beforeSequences := make(KindSequences)
+		maps.Copy(beforeSequences, state.Contents.KindSequences)
+		afterState := make(ObjectVersions)
+		maps.Copy(afterState, beforeState)
+		afterSequences := make(KindSequences)
+		maps.Copy(afterSequences, beforeSequences)
+
+		failure := &ReconcileResult{
+			ControllerID:  pr.ReconcilerID,
+			FrameID:       frameID,
+			FrameType:     FrameTypeReplay,
+			Changes:       Changes{ObjectVersions: make(ObjectVersions)},
+			StateBefore:   beforeState,
+			StateAfter:    afterState,
+			KindSeqBefore: beforeSequences,
+			KindSeqAfter:  afterSequences,
+			Error:         err.Error(),
+		}
+		return state, failure, err
 	}
 	stepLog.V(1).WithValues(
 		"Result", reconcileResult.ctrlRes,
@@ -704,7 +748,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			// at this part of the code we are only working with write effects
 			err := fmt.Errorf("unknown effect type: %s", effect.OpType)
 			logger.Error(err, "effect", effect)
-			return StateNode{}, err
+			return StateNode{}, nil, err
 		}
 
 		// Find the highest Sequence value globally for newStateEvents
@@ -760,7 +804,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		ExecutionHistory: append(currHistory, reconcileResult),
 	}
 	child.ID = string(child.Hash())
-	return child, nil
+	return child, child.action, nil
 }
 
 // TODO figure out if we need to append to the front if using DFS
