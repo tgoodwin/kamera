@@ -72,7 +72,7 @@ func TestExhaustiveInterleavings(t *testing.T) {
 			},
 		},
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "appsv1",
+			APIVersion: "webapp.discrete.events/v1",
 			Kind:       "Foo",
 		},
 		Spec: appsv1.FooSpec{
@@ -100,22 +100,15 @@ func TestExhaustiveInterleavings(t *testing.T) {
 		t.Fatalf("expected 1 result, got %d", len(result.ConvergedStates))
 	}
 	convergedState := result.ConvergedStates[0]
-	if len(convergedState.Paths) != 8 {
-		t.Errorf("expected 8 paths, got %d", len(convergedState.Paths))
+	if len(convergedState.Paths) != 4 {
+		t.Errorf("expected 4 paths, got %d", len(convergedState.Paths))
 	}
 
 	expected := [][]string{
-		{"FooController@1", "BarController@1", "FooController@0", "BarController@0"},
 		{"FooController@1", "BarController@1", "BarController@0", "FooController@0"},
-
 		{"FooController@1", "FooController@1", "BarController@0", "FooController@0"},
-		{"FooController@1", "FooController@1", "FooController@0", "BarController@0"},
-
-		{"BarController@1", "FooController@1", "FooController@0", "BarController@0"},
-		{"BarController@1", "FooController@1", "BarController@0", "FooController@0"},
-
 		{"BarController@1", "BarController@1", "BarController@0", "FooController@0"},
-		{"BarController@1", "BarController@1", "FooController@0", "BarController@0"},
+		{"BarController@1", "FooController@1", "BarController@0", "FooController@0"},
 	}
 	actual := formatResults(convergedState.Paths)
 
@@ -155,7 +148,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 			},
 		},
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "appsv1",
+			APIVersion: "webapp.discrete.events/v1",
 			Kind:       "Foo",
 		},
 		Spec: appsv1.FooSpec{
@@ -180,9 +173,9 @@ func TestConvergedStateIdentification(t *testing.T) {
 	}{
 		{
 			objects: tracecheck.ObjectVersions{
-				snapshot.NewCompositeKey("Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
+				snapshot.NewCompositeKeyWithGroup("webapp.discrete.events", "Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
 					`{
-						"apiVersion": "appsv1",
+						"apiVersion": "webapp.discrete.events/v1",
 						"kind": "Foo",
 						"metadata": {
 							"creationTimestamp": null,
@@ -213,9 +206,9 @@ func TestConvergedStateIdentification(t *testing.T) {
 		},
 		{
 			objects: tracecheck.ObjectVersions{
-				snapshot.NewCompositeKey("Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
+				snapshot.NewCompositeKeyWithGroup("webapp.discrete.events", "Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
 					`{
-						"apiVersion": "appsv1",
+						"apiVersion": "webapp.discrete.events/v1",
 						"kind": "Foo",
 						"metadata": {
 							"annotations": {

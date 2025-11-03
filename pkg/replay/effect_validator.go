@@ -25,6 +25,7 @@ func NewResourceConflictManager(keyStore map[snapshot.ResourceKey]struct{}) *Res
 func ValidateAgainstKeys(op event.OperationType, obj client.Object, keys map[snapshot.ResourceKey]struct{}) error {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	key := snapshot.ResourceKey{
+		Group:     gvk.Group,
 		Kind:      gvk.Kind,
 		Namespace: obj.GetNamespace(),
 		Name:      obj.GetName(),

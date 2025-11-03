@@ -763,7 +763,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		newRV := highestSequence + 1
 
 		// increment resourceversion for the kind
-		newSequences[effect.Key.IdentityKey.Kind] = newRV
+		newSequences[effect.Key.IdentityKey.CanonicalGroupKind()] = newRV
 		stateEvent := StateEvent{
 			ReconcileID: reconcileResult.FrameID,
 			Sequence:    newRV,
@@ -941,6 +941,16 @@ func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput
 		return pending != reconcileInput
 	})
 
+	containsGroupKind := func(list []string, group, kind string) bool {
+		canonical := util.CanonicalGroupKind(group, kind)
+		for _, item := range list {
+			if item == canonical {
+				return true
+			}
+		}
+		return false
+	}
+
 	// after processing the reconcile, we need to determine which controllers
 	// were triggered by the changes in the state.
 	triggeredByChanges := e.getTriggeredReconcilers(result.Changes)
@@ -954,10 +964,9 @@ func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput
 				resourceDeps, _ := e.triggerManager.KindDepsForReconciler(pending.ReconcilerID)
 				couldSeeChange := false
 				for changeKey := range result.Changes.ObjectVersions {
-					if _, ok := stuckKinds[changeKey.ResourceKey.Kind]; !ok {
-						// if the reconciler subscribes to the change's kind and the kind
-						// is not in the stuck set, it could see the change
-						if subscribes := lo.Contains(resourceDeps, changeKey.ResourceKey.Kind); subscribes {
+					canonicalKind := util.CanonicalGroupKind(changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind)
+					if _, stuckOnKind := stuckKinds[canonicalKind]; !stuckOnKind {
+						if containsGroupKind(resourceDeps, changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind) {
 							couldSeeChange = true
 						}
 					}

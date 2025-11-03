@@ -48,7 +48,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 			contents[e.Effect.Key] = e.Effect.Version
 
 			e.Sequence = globalRV
-			KindSequences[iKey.Kind] = e.Sequence
+			KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 			stateEvents = append(stateEvents, e)
 
 			if correspondingRemoveEvt, ok := removalChangeIDs[event.ChangeID(changeID)]; ok {
@@ -60,7 +60,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 				delete(contents, e.Effect.Key)
 				removals[e.Effect.Key] = true
 				globalRV++
-				KindSequences[iKey.Kind] = globalRV
+				KindSequences[iKey.CanonicalGroupKind()] = globalRV
 				correspondingRemoveEvt.Sequence = globalRV
 				stateEvents = append(stateEvents, correspondingRemoveEvt)
 			}
@@ -80,7 +80,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 				delete(contents, e.Effect.Key)
 				removals[e.Effect.Key] = true
 				e.Sequence = globalRV
-				KindSequences[iKey.Kind] = e.Sequence
+				KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 				stateEvents = append(stateEvents, e)
 			} else if e.Event != nil && e.Event.ControllerID == util.GarbageCollectorName {
 				// garbage collection is a special case where there are no causally preceding
@@ -90,7 +90,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 				globalRV++
 				e.Sequence = globalRV
 				removals[e.Effect.Key] = true
-				KindSequences[iKey.Kind] = e.Sequence
+				KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 				stateEvents = append(stateEvents, e)
 			} else {
 				logger.WithValues(
@@ -107,7 +107,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 			globalRV++
 			e.Sequence = globalRV
 			contents[e.Effect.Key] = e.Effect.Version
-			KindSequences[iKey.Kind] = e.Sequence
+			KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 
 			seenChangeIDs[e.MustGetChangeID()] = e.Effect.Version.Value
 			stateEvents = append(stateEvents, e)
@@ -123,7 +123,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 				contents[e.Effect.Key] = e.Effect.Version
 				globalRV++
 				e.Sequence = globalRV
-				KindSequences[iKey.Kind] = e.Sequence
+				KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 				stateEvents = append(stateEvents, e)
 
 				// we need to increment the sequence number for the removal event
@@ -132,7 +132,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 				globalRV++
 				removalEvent.Sequence = globalRV
 				removals[removalEvent.Effect.Key] = true
-				KindSequences[removalEvent.Effect.Key.IdentityKey.Kind] = removalEvent.Sequence
+				KindSequences[removalEvent.Effect.Key.IdentityKey.CanonicalGroupKind()] = removalEvent.Sequence
 				stateEvents = append(stateEvents, removalEvent)
 			} else {
 				// happy case - we've already seen the causally preceding update/delete event
@@ -140,7 +140,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 				contents[e.Effect.Key] = e.Effect.Version
 				globalRV++
 				e.Sequence = globalRV
-				KindSequences[iKey.Kind] = e.Sequence
+				KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 				stateEvents = append(stateEvents, e)
 			}
 			// if _, wasRemoved := removals[e.Effect.Key]; wasRemoved {
@@ -171,7 +171,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 					contents[e.Effect.Key] = e.Effect.Version
 					globalRV++
 					e.Sequence = globalRV
-					KindSequences[iKey.Kind] = e.Sequence
+					KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 					stateEvents = append(stateEvents, e)
 					appliedReads[currValue] = struct{}{}
 				}
@@ -180,7 +180,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 			panic(fmt.Sprintf("unknown op type: %s", e.Effect.OpType))
 		}
 
-		// KindSequences[iKey.Kind] = e.Sequence
+		// KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 		// stateEvents = append(stateEvents, e)
 	}
 	out := NewStateSnapshot(contents, KindSequences, stateEvents)

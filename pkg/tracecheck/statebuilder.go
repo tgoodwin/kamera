@@ -64,7 +64,8 @@ func (b *StateEventBuilder) AddStateEvent(kind, sleeveObjectID string, obj *unst
 	}
 
 	// Create effect
-	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+	gvk := util.GetGroupVersionKind(obj)
+	key := snapshot.NewCompositeKeyWithGroup(gvk.Group, kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 	effect := newEffect(key, versionHash, opType)
 
 	// Increment sequence
@@ -74,12 +75,14 @@ func (b *StateEventBuilder) AddStateEvent(kind, sleeveObjectID string, obj *unst
 	stateEvent := StateEvent{
 		// TODO refactor
 		Event: &event.Event{
+			APIVersion:   gvk.GroupVersion().String(),
+			Group:        gvk.Group,
+			Kind:         kind,
 			ID:           fmt.Sprintf("%s-%d", kind, b.sequence),
 			ReconcileID:  reconcileID,
 			ControllerID: controllerID,
 			RootEventID:  "",
 			OpType:       string(opType),
-			Kind:         kind,
 			ObjectID:     sleeveObjectID,
 			Version:      obj.GetResourceVersion(),
 			Labels:       tag.GetSleeveLabels(obj),
@@ -115,7 +118,8 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 	}
 	vHash := b.store.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
-	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
+	gvk := util.GetGroupVersionKind(obj)
+	ikey := snapshot.IdentityKey{Group: gvk.Group, Kind: gvk.Kind, ObjectID: sleeveObjectID}
 
 	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {
 		return PendingReconcile{
@@ -129,13 +133,13 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 		}
 	})
 
-	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+	key := snapshot.NewCompositeKeyWithGroup(gvk.Group, ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 
 	return StateNode{
 		Contents: StateSnapshot{
 			contents: ObjectVersions{key: vHash},
 			KindSequences: KindSequences{
-				ikey.Kind: 1,
+				util.CanonicalGroupKind(ikey.Group, ikey.Kind): 1,
 			},
 			stateEvents: []StateEvent{
 				{

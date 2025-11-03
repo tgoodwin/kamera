@@ -118,8 +118,8 @@ func (rw *ResultWriter) writeStateSummary(state ResultState, outPath string) {
 	objectKeys := lo.Keys(state.State.Objects())
 	sort.Slice(objectKeys, func(i, j int) bool {
 		// first sort by kind, then by objectID
-		if objectKeys[i].IdentityKey.Kind != objectKeys[j].IdentityKey.Kind {
-			return objectKeys[i].IdentityKey.Kind < objectKeys[j].IdentityKey.Kind
+		if objectKeys[i].CanonicalGroupKind() != objectKeys[j].CanonicalGroupKind() {
+			return objectKeys[i].CanonicalGroupKind() < objectKeys[j].CanonicalGroupKind()
 		}
 		return objectKeys[i].ObjectID < objectKeys[j].ObjectID
 	})

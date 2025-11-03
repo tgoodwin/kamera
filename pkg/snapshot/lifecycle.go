@@ -6,6 +6,7 @@ import (
 )
 
 type IdentityKey struct {
+	Group    string
 	Kind     string
 	ObjectID string // sleeve object ID
 }

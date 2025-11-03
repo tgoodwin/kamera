@@ -360,6 +360,10 @@ func buildReplicaSetForDeployment(dep *appsv1.Deployment, hash string) *appsv1.R
 	}
 
 	rs := &appsv1.ReplicaSet{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: appsv1.SchemeGroupVersion.String(),
+			Kind:       "ReplicaSet",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-%s", dep.Name, hash),
 			Namespace: dep.Namespace,

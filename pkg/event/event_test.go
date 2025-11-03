@@ -7,6 +7,7 @@ import (
 )
 
 var mockEventJSON = `{
+	"apiVersion": "v1",
 	"id": "event-id",
 	"timestamp": "2021-08-02T15:04:05Z",
 	"reconcile_id": "reconcile-id",
@@ -24,13 +25,14 @@ var mockEventJSON = `{
 
 func TestUnmarshal(t *testing.T) {
 	expected := &Event{
+		APIVersion: "v1",
+		Kind:       "Foo",
 		ID:           "event-id",
 		Timestamp:    "2021-08-02T15:04:05Z",
 		ReconcileID:  "reconcile-id",
 		ControllerID: "controller-id",
 		RootEventID:  "root-event-id",
 		OpType:       "GET",
-		Kind:         "Foo",
 		ObjectID:     "foo-1",
 		Version:      "1",
 		Labels: map[string]string{
@@ -52,13 +54,14 @@ func TestUnmarshal(t *testing.T) {
 func TestMarshal(t *testing.T) {
 	expected := mockEventJSON
 	actual := &Event{
+		APIVersion: "v1",
+		Kind:       "Foo",
 		ID:           "event-id",
 		Timestamp:    "2021-08-02T15:04:05Z",
 		ReconcileID:  "reconcile-id",
 		ControllerID: "controller-id",
 		RootEventID:  "root-event-id",
 		OpType:       "GET",
-		Kind:         "Foo",
 		ObjectID:     "foo-1",
 		Version:      "1",
 		Labels: map[string]string{

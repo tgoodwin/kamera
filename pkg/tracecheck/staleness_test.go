@@ -29,7 +29,6 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 			ReconcileID:  "r1",
 			ControllerID: "controller-1",
 			OpType:       "CREATE",
-			Kind:         "TestKind",
 			ObjectID:     "obj-1",
 			Labels: map[string]string{
 				tag.TraceyWebhookLabel: "root-1",
@@ -41,7 +40,6 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 			ReconcileID:  "r1",
 			ControllerID: "controller-1",
 			OpType:       "UPDATE",
-			Kind:         "TestKind",
 			ObjectID:     "obj-1",
 			Labels: map[string]string{
 				tag.TraceyRootID: "root-1",
@@ -54,7 +52,6 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 			ReconcileID:  "r1",
 			ControllerID: "controller-1",
 			OpType:       "DELETE",
-			Kind:         "TestKind",
 			ObjectID:     "obj-1",
 			Labels: map[string]string{
 				tag.TraceyRootID: "root-1",

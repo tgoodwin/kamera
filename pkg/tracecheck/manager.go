@@ -105,7 +105,8 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	logger := log.FromContext(ctx)
 	logger.V(2).Info("recording effect", "opType", opType, "kind", util.GetKind(obj))
 
-	kind := util.GetKind(obj)
+	gvk := util.GetGroupVersionKind(obj)
+	kind := gvk.Kind
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 
 	// TODO SLE-28 figure out why this can happen.
@@ -130,7 +131,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		}
 	}
 
-	key := snapshot.NewCompositeKey(kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+	key := snapshot.NewCompositeKeyWithGroup(gvk.Group, kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 	eff := newEffectWithPrecondition(key, versionHash, opType, precondition)
 	if opType == event.GET || opType == event.LIST {
 		reffects.reads = append(reffects.reads, eff)
@@ -197,18 +198,19 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 	if !ok {
 		return fmt.Errorf("no effect context found for frameID %s", frameID)
 	}
-	gvk := obj.GetObjectKind().GroupVersionKind()
-
+	gvk := util.GetGroupVersionKind(obj)
 	// as objects may be created under simulation,
 	// we need to use reflection to infer the kind
 	safeKind := util.GetKind(obj)
 
 	rKey := snapshot.ResourceKey{
+		Group:     gvk.Group,
 		Kind:      safeKind,
 		Namespace: obj.GetNamespace(),
 		Name:      obj.GetName(),
 	}
 	iKey := snapshot.IdentityKey{
+		Group:    gvk.Group,
 		Kind:     safeKind,
 		ObjectID: tag.GetSleeveObjectID(obj),
 	}

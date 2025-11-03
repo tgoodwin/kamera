@@ -61,7 +61,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 			panic("unknown op type")
 		}
 
-		KindSequences[iKey.Kind] = e.Sequence
+		KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 		stateEvents = append(stateEvents, e)
 	}
 	out := NewStateSnapshot(contents, KindSequences, stateEvents)
