@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 
@@ -246,7 +247,7 @@ func endpointIP(pod *corev1.Pod) string {
 	if len(pod.Status.PodIPs) > 0 {
 		return pod.Status.PodIPs[0].IP
 	}
-	return ""
+	return syntheticPodIPv4(pod)
 }
 
 func endpointAddressForPod(pod *corev1.Pod) corev1.EndpointAddress {
@@ -392,6 +393,33 @@ func sortEndpointSubsets(subsets []corev1.EndpointSubset) {
 			return subsets[i].Ports[a].Port < subsets[i].Ports[b].Port
 		})
 	}
+}
+
+func syntheticPodIPv4(pod *corev1.Pod) string {
+	key := string(pod.UID)
+	if key == "" {
+		key = pod.Namespace + "/" + pod.Name
+	}
+
+	hasher := fnv.New32a()
+	_, _ = hasher.Write([]byte(key))
+	sum := hasher.Sum32()
+
+	octet1 := byte(sum >> 16)
+	octet2 := byte(sum >> 8)
+	octet3 := byte(sum)
+
+	if octet1 == 0 {
+		octet1 = 1
+	}
+	if octet2 == 0 {
+		octet2 = 1
+	}
+	if octet3 == 0 {
+		octet3 = 1
+	}
+
+	return fmt.Sprintf("10.%d.%d.%d", octet1, octet2, octet3)
 }
 
 // SetupWithManager wires the controller into the manager.

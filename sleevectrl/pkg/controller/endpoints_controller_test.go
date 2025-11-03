@@ -183,3 +183,51 @@ func TestBuildEndpointSubsetsPublishNotReady(t *testing.T) {
 		t.Fatalf("expected resolved port 50051, got %d", subset.Ports[0].Port)
 	}
 }
+
+func TestBuildEndpointSubsetsSyntheticIP(t *testing.T) {
+	t.Parallel()
+
+	reconciler := &EndpointsReconciler{}
+	logger := testr.NewWithOptions(t, testr.Options{Verbosity: 1})
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "svc",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": "demo"},
+		},
+	}
+
+	pod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pod-1",
+			Namespace: "default",
+			Labels:    map[string]string{"app": "demo"},
+			UID:       "12345",
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			Conditions: []corev1.PodCondition{
+				{
+					Type:   corev1.PodReady,
+					Status: corev1.ConditionTrue,
+				},
+			},
+		},
+	}
+
+	subsets := reconciler.buildEndpointSubsets(context.Background(), svc, []corev1.Pod{pod}, logger)
+	if len(subsets) != 1 {
+		t.Fatalf("expected 1 subset, got %d", len(subsets))
+	}
+	if len(subsets[0].Addresses) != 1 {
+		t.Fatalf("expected 1 ready address, got %d", len(subsets[0].Addresses))
+	}
+
+	expectedIP := syntheticPodIPv4(&pod)
+	if subsets[0].Addresses[0].IP != expectedIP {
+		t.Fatalf("expected synthetic IP %s, got %s", expectedIP, subsets[0].Addresses[0].IP)
+	}
+}
