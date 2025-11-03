@@ -67,6 +67,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		// Service not found, likely deleted, return
 		return ctrl.Result{}, nil
 	}
+	service.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Service"))
 
 	// Check if the Service is being deleted
 	if !service.DeletionTimestamp.IsZero() {
@@ -81,10 +82,17 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		log.Error(err, "failed to get endpoints")
 		return ctrl.Result{}, err
 	}
+	if err == nil {
+		endpoints.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Endpoints"))
+	}
 
 	// If endpoints don't exist and this is not a headless service or ExternalName service, create them
 	if errors.IsNotFound(err) && service.Spec.ClusterIP != "None" && service.Spec.Type != corev1.ServiceTypeExternalName {
 		endpoints = &corev1.Endpoints{
+			TypeMeta: metav1.TypeMeta{
+				APIVersion: corev1.SchemeGroupVersion.String(),
+				Kind:       "Endpoints",
+			},
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      service.Name,
 				Namespace: service.Namespace,

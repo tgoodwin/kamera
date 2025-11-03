@@ -150,6 +150,7 @@ func (r *PodLifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.Get(ctx, req.NamespacedName, pod); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+	pod.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Pod"))
 
 	if !pod.DeletionTimestamp.IsZero() {
 		r.deleteMachine(req.NamespacedName)
@@ -167,6 +168,7 @@ func (r *PodLifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	updated := pod.DeepCopy()
+	updated.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Pod"))
 	if applyStatusStep(updated, step) {
 		if err := r.Status().Update(ctx, updated); err != nil {
 			return ctrl.Result{}, fmt.Errorf("updating pod status: %w", err)

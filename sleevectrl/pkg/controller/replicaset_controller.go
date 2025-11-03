@@ -62,6 +62,7 @@ func (r *ReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		// ReplicaSet not found, likely deleted, return
 		return ctrl.Result{}, nil
 	}
+	rs.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("ReplicaSet"))
 
 	// Check if the ReplicaSet is being deleted
 	if !rs.DeletionTimestamp.IsZero() {
@@ -177,6 +178,10 @@ func (r *ReplicaSetReconciler) createPodFromTemplate(rs *appsv1.ReplicaSet, ordi
 	template := rs.Spec.Template.DeepCopy()
 	podName := fmt.Sprintf("%s-%d", rs.Name, ordinal)
 	pod := &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: corev1.SchemeGroupVersion.String(),
+			Kind:       "Pod",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        podName,
 			Namespace:   rs.Namespace,

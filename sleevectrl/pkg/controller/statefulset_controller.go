@@ -78,6 +78,7 @@ func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 		// StatefulSet not found, likely deleted, return
 		return ctrl.Result{}, nil
 	}
+	statefulSet.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("StatefulSet"))
 
 	intendedReplicas := int(*statefulSet.Spec.Replicas)
 	if statefulSet.GetDeletionTimestamp() != nil {
@@ -299,6 +300,10 @@ func createDummyPod(podName, namespace string, template *corev1.PodTemplateSpec)
 	// Create a new pod based on the StatefulSet's pod template
 	// restart := corev1.ContainerRestartPolicyAlways
 	pod := &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: corev1.SchemeGroupVersion.String(),
+			Kind:       "Pod",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        podName,
 			Namespace:   namespace,
@@ -354,6 +359,10 @@ func createPodForStatefulSet(statefulSet *appsv1.StatefulSet, ordinal int) (*cor
 
 	// Continue with pod creation...
 	pod := &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: corev1.SchemeGroupVersion.String(),
+			Kind:       "Pod",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-%d", statefulSet.Name, ordinal),
 			Namespace: statefulSet.Namespace,
@@ -416,6 +425,7 @@ func createPVCIfNotExists(ctx context.Context, cli client.Client, mountName stri
 	// Check if the PVC already exists
 	existingPVC := &corev1.PersistentVolumeClaim{}
 	if err := cli.Get(ctx, pvcName, existingPVC); err == nil {
+		existingPVC.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim"))
 		// PVC already exists, no need to create
 		return nil
 	} else if client.IgnoreNotFound(err) != nil {
@@ -427,6 +437,10 @@ func createPVCIfNotExists(ctx context.Context, cli client.Client, mountName stri
 
 	// Create a new PVC
 	pvc := &corev1.PersistentVolumeClaim{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: corev1.SchemeGroupVersion.String(),
+			Kind:       "PersistentVolumeClaim",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pvcName.Name,
 			Namespace: pvcName.Namespace,

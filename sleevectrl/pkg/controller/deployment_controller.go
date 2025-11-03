@@ -61,6 +61,7 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	logger := log.FromContext(ctx)
 
 	deployment := &appsv1.Deployment{}
+	deployment.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("Deployment"))
 	if err := r.Get(ctx, req.NamespacedName, deployment); err != nil {
 		if client.IgnoreNotFound(err) != nil {
 			logger.Error(err, "unable to fetch Deployment")
@@ -406,6 +407,10 @@ func (r *DeploymentReconciler) getOrCreateReplicaSet(
 	templateCopy.Labels = podLabels
 
 	newRS := &appsv1.ReplicaSet{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: appsv1.SchemeGroupVersion.String(),
+			Kind:       "ReplicaSet",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      fmt.Sprintf("%s-%s", deployment.Name, podTemplateHash),
 			Namespace: deployment.Namespace,
