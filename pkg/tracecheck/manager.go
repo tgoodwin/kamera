@@ -13,6 +13,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -65,13 +66,15 @@ type manager struct {
 
 	snapStore *snapshot.Store
 
+	scheme *runtime.Scheme
+
 	// need to add frame data to the manager as well for reconciler reads
 	*converterImpl
 
 	// populated by RecordEffect
 	effects map[string]reconcileEffects
 
-	effectRKeys map[string]util.Set[snapshot.ResourceKey]
+	effectRKeys map[string]util.Set[string]
 	effectIKeys map[string]util.Set[snapshot.IdentityKey]
 
 	keysMarkedForDeletion map[string]util.Set[snapshot.IdentityKey]
@@ -79,11 +82,19 @@ type manager struct {
 	mu sync.RWMutex
 }
 
+func canonicalResourceKeyString(group, kind, namespace, name string) string {
+	return fmt.Sprintf("%s/%s/%s", util.CanonicalGroupKind(group, kind), namespace, name)
+}
+
 func (m *manager) Summary() {
 	store := m.versionStore.GetVersionMap(snapshot.AnonymizedHash)
 	for k, v := range store {
 		fmt.Printf("Key: %s, Value: %s\n", k, v)
 	}
+}
+
+func (m *manager) Scheme() *runtime.Scheme {
+	return m.scheme
 }
 
 // ensure that manager implements the necessary interfaces
@@ -102,11 +113,11 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		return err
 	}
 
-	logger := log.FromContext(ctx)
-	logger.V(2).Info("recording effect", "opType", opType, "kind", util.GetKind(obj))
-
-	gvk := util.GetGroupVersionKind(obj)
+	gvk := ensureObjectGVK(obj, m.scheme)
 	kind := gvk.Kind
+
+	logger := log.FromContext(ctx)
+	logger.V(2).Info("recording effect", "opType", opType, "kind", kind)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 
 	// TODO SLE-28 figure out why this can happen.
@@ -153,11 +164,12 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 	})
 
 	// holds kind/namespace/name
-	rKeys := lo.Map(cKeys, func(k snapshot.CompositeKey, _ int) snapshot.ResourceKey {
-		return k.ResourceKey
-	})
-
-	m.effectRKeys[frameID] = util.NewSet(rKeys...)
+	rKeySet := util.NewSet[string]()
+	for _, ck := range cKeys {
+		primary := canonicalResourceKeyString(ck.ResourceKey.Group, ck.ResourceKey.Kind, ck.ResourceKey.Namespace, ck.ResourceKey.Name)
+		rKeySet.Add(primary)
+	}
+	m.effectRKeys[frameID] = rKeySet
 	m.effectIKeys[frameID] = util.NewSet(iKeys...)
 	return nil
 }
@@ -192,6 +204,7 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	return changes, nil
 }
 
+// validateEffect checks that the effect operation is valid given the current tracked state with respect to Kubernetes API semantics.
 func (m *manager) validateEffect(ctx context.Context, op event.OperationType, obj client.Object, precondition *replay.PreconditionInfo) error {
 	frameID := replay.FrameIDFromContext(ctx)
 	rKeys, ok := m.effectRKeys[frameID]
@@ -199,27 +212,33 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		return fmt.Errorf("no effect context found for frameID %s", frameID)
 	}
 	gvk := util.GetGroupVersionKind(obj)
+	if (gvk.Kind == "" || gvk.Group == "") && obj != nil && m.scheme != nil {
+		if gvks, _, err := m.scheme.ObjectKinds(obj); err == nil && len(gvks) > 0 {
+			if gvk.Kind == "" {
+				gvk.Kind = gvks[0].Kind
+			}
+			if gvk.Group == "" {
+				gvk.Group = gvks[0].Group
+			}
+		}
+	}
 	// as objects may be created under simulation,
 	// we need to use reflection to infer the kind
 	safeKind := util.GetKind(obj)
 
-	rKey := snapshot.ResourceKey{
-		Group:     gvk.Group,
-		Kind:      safeKind,
-		Namespace: obj.GetNamespace(),
-		Name:      obj.GetName(),
-	}
+	resourceKey := canonicalResourceKeyString(gvk.Group, safeKind, obj.GetNamespace(), obj.GetName())
+	rKeyExists := rKeys.Contains(resourceKey)
 	iKey := snapshot.IdentityKey{
 		Group:    gvk.Group,
 		Kind:     safeKind,
 		ObjectID: tag.GetSleeveObjectID(obj),
 	}
 
-	// object with same kind/namespace/name already exists
-	_, rKeyExists := rKeys[rKey]
-
 	// objecty with same kind/objectID already exists
 	_, iKeyExists := m.effectIKeys[frameID][iKey]
+
+	logger := log.FromContext(ctx)
+	logger.V(2).Info("[validateEffect] frame=%s op=%s key=%s exists=%v\n", frameID, op, resourceKey, rKeyExists)
 
 	switch op {
 	// there are no UID preconditions for create.
@@ -231,10 +250,12 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 				obj.GetName())
 		}
 		// Automatically track the resource if CREATE is valid
-		rKeys[rKey] = struct{}{}
+		rKeys.Add(resourceKey)
+		fmt.Printf("[validateEffect] added key=%s (CREATE)\n", resourceKey)
 
 	case event.GET:
 		if !rKeyExists {
+			fmt.Printf("[validateEffect] GET miss key=%s tracked=%v\n", resourceKey, rKeys.List())
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
@@ -248,9 +269,8 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 
 	case event.UPDATE, event.PATCH:
 		if !rKeyExists {
-			return apierrors.NewNotFound(
-				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
-				obj.GetName())
+			fmt.Printf("\n[validateEffect] UPDATE/PATCH miss key=%s tracked=%v\n", resourceKey, rKeys.List())
+			panic("Object not found for UPDATE/PATCH: probably a serious logic error in the tracecheck manager")
 		}
 		// No need to change tracking state for UPDATE/PATCH
 
@@ -272,8 +292,9 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		if precondition == nil {
 			// case 2
 			// Automatically remove tracking if DELETE is valid
-			delete(rKeys, rKey)
+			rKeys.Delete(resourceKey)
 			delete(m.effectIKeys[frameID], iKey)
+			fmt.Printf("[validateEffect] deleted key=%s (MARK)\n", resourceKey)
 			return nil
 		}
 
@@ -289,8 +310,9 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 			if iKeyExists {
 				// case 5
 				// Automatically remove tracking if DELETE is valid
-				delete(rKeys, rKey)
+				rKeys.Delete(resourceKey)
 				delete(m.effectIKeys[frameID], iKey)
+				fmt.Printf("[validateEffect] deleted key=%s (MARK w/UID)\n", resourceKey)
 				return nil
 			}
 		}
@@ -299,13 +321,15 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		// APPLY implements upsert semantics - creates or updates as needed
 		if !rKeyExists {
 			// Add it for a new resource
-			rKeys[rKey] = struct{}{}
+			rKeys.Add(resourceKey)
 		}
 		// Existing resource just gets updated, no change to tracking state
 
 	case event.REMOVE:
 		// need to ensure the object being removed is already marked for deletion
 		// TODO remove tracking rKeys and iKeys here...
+	default:
+		panic("unhandled operation type in validateEffect: " + string(op))
 	}
 
 	return nil

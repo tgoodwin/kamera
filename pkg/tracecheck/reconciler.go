@@ -40,6 +40,7 @@ type ControllerRuntimeStrategy struct {
 	frameInserter
 	reconcilerName string
 	effectReader
+	scheme *runtime.Scheme
 }
 
 func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er effectReader, name string) *ControllerRuntimeStrategy {
@@ -89,6 +90,16 @@ func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, name t
 func (s *ControllerRuntimeStrategy) toFrameData(objects []runtime.Object) replay.CacheFrame {
 	out := make(replay.CacheFrame)
 	for _, obj := range objects {
+		if obj == nil {
+			continue
+		}
+
+		if gvk := obj.GetObjectKind().GroupVersionKind(); gvk.Empty() && s.scheme != nil {
+			if gvks, _, err := s.scheme.ObjectKinds(obj); err == nil && len(gvks) > 0 {
+				obj.GetObjectKind().SetGroupVersionKind(gvks[0])
+			}
+		}
+
 		u, err := util.ConvertToUnstructured(obj.(client.Object))
 		if err != nil {
 			// This should ideally not happen if the input is valid
@@ -97,14 +108,28 @@ func (s *ControllerRuntimeStrategy) toFrameData(objects []runtime.Object) replay
 		}
 
 		kind := u.GetKind()
-		if _, ok := out[kind]; !ok {
-			out[kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
+		gvk := u.GroupVersionKind()
+		if gvk.Kind == "" {
+			gvk.Kind = kind
 		}
+
+	canonicalKind := util.CanonicalGroupKind(gvk.Group, gvk.Kind)
+	if canonicalKind == "" {
+		canonicalKind = util.CanonicalGroupKind("", kind)
+	}
+
+	fmt.Printf("[toFrameData] canonical=%s legacy=%s namespace=%s name=%s\n",
+		canonicalKind, kind, u.GetNamespace(), u.GetName())
+
+	if _, ok := out[canonicalKind]; !ok {
+		out[canonicalKind] = make(map[types.NamespacedName]*unstructured.Unstructured)
+		}
+
 		namespacedName := types.NamespacedName{
 			Name:      u.GetName(),
 			Namespace: u.GetNamespace(),
 		}
-		out[kind][namespacedName] = u
+		out[canonicalKind][namespacedName] = u
 	}
 	return out
 }
@@ -185,11 +210,19 @@ func (r *ReconcilerContainer) replayReconcile(ctx context.Context, request recon
 }
 
 func Wrap(name string, r reconcile.Reconciler, vm VersionManager, fi frameInserter, er effectReader) *ReconcilerContainer {
+	var scheme *runtime.Scheme
+	if scProvider, ok := vm.(interface {
+		Scheme() *runtime.Scheme
+	}); ok {
+		scheme = scProvider.Scheme()
+	}
+
 	strategy := &ControllerRuntimeStrategy{
 		Reconciler:     r,
 		frameInserter:  fi,
 		reconcilerName: name,
 		effectReader:   er,
+		scheme:         scheme,
 	}
 	return &ReconcilerContainer{
 		Name:           name,

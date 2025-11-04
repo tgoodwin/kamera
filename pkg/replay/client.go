@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -15,7 +16,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -40,7 +43,29 @@ type Client struct {
 	scheme *runtime.Scheme
 }
 
-var _ client.Client = (*Client)(nil)
+func (c *Client) objectGVK(obj runtime.Object) schema.GroupVersionKind {
+	if obj == nil {
+		return schema.GroupVersionKind{}
+	}
+	if c.scheme != nil {
+		if gvk, err := apiutil.GVKForObject(obj, c.scheme); err == nil {
+			return gvk
+		}
+	}
+	return util.GetGroupVersionKind(obj)
+}
+
+func (c *Client) canonicalKindFor(obj runtime.Object, fallback string) string {
+	gvk := c.objectGVK(obj)
+	kind := gvk.Kind
+	if strings.HasSuffix(kind, "List") {
+		kind = strings.TrimSuffix(kind, "List")
+	}
+	if kind == "" {
+		kind = fallback
+	}
+	return util.CanonicalGroupKind(gvk.Group, kind)
+}
 
 func NewClient(reconcilerID string, scheme *runtime.Scheme, frameReader frameReader, recorder EffectRecorder) *Client {
 	return &Client{
@@ -76,69 +101,98 @@ func (c *Client) copyInto(obj client.Object, from *unstructured.Unstructured) er
 
 func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	logger = log.FromContext(ctx)
-	gvk := obj.GetObjectKind().GroupVersionKind()
-
 	frameID := FrameIDFromContext(ctx)
 	kind := util.GetKind(obj)
-	logger.V(2).Info("client:get", "Key", key, "Kind", kind)
-	if frame, err := c.GetCacheFrame(frameID); err == nil {
-		if frozenObj, ok := frame[kind][key]; ok {
-			if err := c.handleEffect(ctx, frozenObj, event.GET, nil); err != nil {
-				return err
-			}
+	canonicalKind := c.canonicalKindFor(obj, kind)
+	if canonicalKind == "" {
+		return fmt.Errorf("unable to determine canonical kind for object %T", obj)
+	}
+	logger.V(2).Info("client:get", "Key", key, "Kind", kind, "CanonicalKind", canonicalKind)
 
-			if err := c.copyInto(obj, frozenObj); err != nil {
-				return fmt.Errorf("convert cached object: %w", err)
-			}
-		} else {
-			return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
-		}
-	} else {
+	frame, err := c.GetCacheFrame(frameID)
+	if err != nil {
 		logger.V(2).Info("frame NOT found!", "FrameID", frameID)
 		return fmt.Errorf("frame %s not found", frameID)
 	}
+
+	gvk := c.objectGVK(obj)
+	if gvk.Kind == "" {
+		gvk.Kind = kind
+	}
+
+	nn := types.NamespacedName{Namespace: key.Namespace, Name: key.Name}
+	objsForKind := frame[canonicalKind]
+	frozenObj, ok := objsForKind[nn]
+	if !ok {
+		logger.V(1).Info("client:get cache miss",
+			"canonicalKind", canonicalKind,
+			"namespace", key.Namespace,
+			"name", key.Name)
+		return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
+	}
+
+	if err := c.handleEffect(ctx, frozenObj, event.GET, nil); err != nil {
+		logger.V(1).Error(err,
+			"canonicalKind", canonicalKind,
+			"namespace", key.Namespace,
+			"name", key.Name)
+		return err
+	}
+
+	if err := c.copyInto(obj, frozenObj); err != nil {
+		return fmt.Errorf("converting cached object: %w", err)
+	}
+
 	return nil
 }
 
 func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	frameID := FrameIDFromContext(ctx)
 	kind := util.InferListKind(list)
-
-	if frame, err := c.GetCacheFrame(frameID); err == nil {
-		if objsForKind, ok := frame[kind]; ok {
-			// get the Items field of the list object
-			itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
-			if !itemsValue.IsValid() {
-				return fmt.Errorf("List object does not have Items field")
-			}
-
-			// create a new slice of the correct type
-			itemType := itemsValue.Type().Elem()
-			newSlice := reflect.MakeSlice(reflect.SliceOf(itemType), 0, len(objsForKind))
-
-			for _, obj := range objsForKind {
-				if err := c.handleEffect(ctx, obj, event.LIST, nil); err != nil {
-					return err
-				}
-
-				// create a new object of the correct type
-				newObj := reflect.New(itemType).Interface().(client.Object)
-
-				if err := c.copyInto(newObj, obj); err != nil {
-					return fmt.Errorf("convert cached object: %w", err)
-				}
-
-				// append the new object to the slice
-				newSlice = reflect.Append(newSlice, reflect.ValueOf(newObj).Elem())
-			}
-
-			// set the Items field of the list object to the new slice
-			itemsValue.Set(newSlice)
-		}
-		return nil
+	canonicalKind := c.canonicalKindFor(list.(runtime.Object), kind)
+	if canonicalKind == "" {
+		return fmt.Errorf("unable to determine canonical kind for list %T", list)
 	}
 
-	return fmt.Errorf("frame %s not found", frameID)
+	frame, err := c.GetCacheFrame(frameID)
+	if err != nil {
+		return fmt.Errorf("frame %s not found", frameID)
+	}
+
+	itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
+	if !itemsValue.IsValid() {
+		return fmt.Errorf("List object does not have Items field")
+	}
+
+	itemType := itemsValue.Type().Elem()
+	objsForKind := frame[canonicalKind]
+	newSlice := reflect.MakeSlice(reflect.SliceOf(itemType), 0, len(objsForKind))
+
+	if logger.V(5).Enabled() {
+		keys := make([]types.NamespacedName, 0, len(objsForKind))
+		for nk := range objsForKind {
+			keys = append(keys, nk)
+		}
+		logger.V(5).Info("client:list frame keys",
+			"canonicalKind", canonicalKind,
+			"keys", keys)
+	}
+
+	for _, obj := range objsForKind {
+		if err := c.handleEffect(ctx, obj, event.LIST, nil); err != nil {
+			return err
+		}
+
+		newObj := reflect.New(itemType).Interface().(client.Object)
+		if err := c.copyInto(newObj, obj); err != nil {
+			return fmt.Errorf("converting cached object: %w", err)
+		}
+
+		newSlice = reflect.Append(newSlice, reflect.ValueOf(newObj).Elem())
+	}
+
+	itemsValue.Set(newSlice)
+	return nil
 }
 
 // TODO create or set an ObjectID here

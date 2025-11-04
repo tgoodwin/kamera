@@ -691,6 +691,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	newSequences := make(KindSequences)
 	maps.Copy(newSequences, state.Contents.KindSequences)
+	for key, seq := range newSequences {
+		if !strings.Contains(key, "/") {
+			stepLog.V(1).Info("kind sequence key lacks group info", "key", key, "sequence", seq, "existingKeys", maps.Keys(newSequences))
+		}
+	}
 	effects := reconcileResult.Changes.Effects
 	stepLog.V(1).Info("completed step", "frameID", frameID, "controller", pr.ReconcilerID, "numEffects", len(effects))
 

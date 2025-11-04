@@ -10,6 +10,8 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -21,15 +23,17 @@ type StateEventBuilder struct {
 	events       []StateEvent
 	sequence     int64
 	currentTime  time.Time
+	scheme       *runtime.Scheme
 	reconcileIDs map[string]int
 }
 
-func NewStateEventBuilder(store *snapshot.Store) *StateEventBuilder {
+func NewStateEventBuilder(store *snapshot.Store, scheme *runtime.Scheme) *StateEventBuilder {
 	return &StateEventBuilder{
 		store:        store,
 		events:       []StateEvent{},
 		sequence:     0,
 		currentTime:  time.Now(),
+		scheme:       scheme,
 		reconcileIDs: make(map[string]int),
 	}
 }
@@ -107,7 +111,36 @@ func (b *StateEventBuilder) Build() StateNode {
 	}
 }
 
+func ensureObjectGVK(obj client.Object, scheme *runtime.Scheme) schema.GroupVersionKind {
+	if obj == nil {
+		return schema.GroupVersionKind{}
+	}
+
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Kind != "" && gvk.Version != "" && gvk.Group != "" {
+		return gvk
+	}
+
+	if scheme != nil {
+		if gvks, _, err := scheme.ObjectKinds(obj); err == nil {
+			for _, candidate := range gvks {
+				if candidate.Kind == "" || candidate.Version == "" {
+					continue
+				}
+				obj.GetObjectKind().SetGroupVersionKind(candidate)
+				return candidate
+			}
+		}
+	}
+
+	gvk = util.GetGroupVersionKind(obj)
+	obj.GetObjectKind().SetGroupVersionKind(gvk)
+	return gvk
+}
+
 func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentControllers ...string) StateNode {
+	gvk := ensureObjectGVK(obj, b.scheme)
+
 	r, err := snapshot.AsRecord(obj, "start")
 	if err != nil {
 		panic("converting to unstructured: " + err.Error())
@@ -118,7 +151,6 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 	}
 	vHash := b.store.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
-	gvk := util.GetGroupVersionKind(obj)
 	ikey := snapshot.IdentityKey{Group: gvk.Group, Kind: gvk.Kind, ObjectID: sleeveObjectID}
 
 	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {

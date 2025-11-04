@@ -309,7 +309,7 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 }
 
 func (b *ExplorerBuilder) NewStateEventBuilder() *StateEventBuilder {
-	return NewStateEventBuilder(b.snapStore)
+	return NewStateEventBuilder(b.snapStore, b.scheme)
 }
 
 func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
@@ -319,6 +319,8 @@ func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
 }
 
 func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...string) StateNode {
+	gvk := ensureObjectGVK(obj, b.scheme)
+
 	r, err := snapshot.AsRecord(obj, "start")
 	if err != nil {
 		panic("converting to unstructured: " + err.Error())
@@ -329,7 +331,6 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	}
 	vHash := b.snapStore.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
-	gvk := util.GetGroupVersionKind(obj)
 	ikey := snapshot.IdentityKey{Group: gvk.Group, Kind: gvk.Kind, ObjectID: sleeveObjectID}
 
 	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {
@@ -350,7 +351,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 		Contents: NewStateSnapshot(
 			ObjectVersions{key: vHash},
 			KindSequences{
-				ikey.Kind: 1,
+				util.CanonicalGroupKind(gvk.Group, gvk.Kind): 1,
 			},
 			[]StateEvent{
 				{
@@ -388,11 +389,12 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		effects:      make(map[string]reconcileEffects),
 
 		snapStore: b.snapStore,
+		scheme:   b.scheme,
 
 		// effectContext tracks the state of the world at the time of reconcile
 		// and this is separate from snapshot store because we want this context
 		// to not be shared across branches of the exploration tree.
-		effectRKeys: make(map[string]util.Set[snapshot.ResourceKey]),
+		effectRKeys: make(map[string]util.Set[string]),
 
 		// effectIKeys tracks the identity keys that were read or written
 		// during a reconcile operation.
@@ -457,7 +459,8 @@ func (b *ExplorerBuilder) BuildLensManager(traceFilePath string) (*LensManager, 
 		versionStore: newVersionStore(b.snapStore),
 		effects:      make(map[string]reconcileEffects),
 		snapStore:    b.snapStore,
-		effectRKeys:  make(map[string]util.Set[snapshot.ResourceKey]),
+		scheme:       b.scheme,
+		effectRKeys:  make(map[string]util.Set[string]),
 		effectIKeys:  make(map[string]util.Set[snapshot.IdentityKey]),
 	}
 

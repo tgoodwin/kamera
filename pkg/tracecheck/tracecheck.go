@@ -57,6 +57,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	mgr := &manager{
 		versionStore: vStore,
 		effects:      make(map[string]reconcileEffects),
+		scheme:       scheme,
 	}
 
 	return &TraceChecker{
@@ -141,6 +142,8 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		versionStore:  vStore,
 		effects:       make(map[string]reconcileEffects),
 		converterImpl: converter,
+		// TODO handle scheme properly
+		scheme: nil,
 	}
 
 	return &TraceChecker{
