@@ -693,7 +693,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	maps.Copy(newSequences, state.Contents.KindSequences)
 	for key, seq := range newSequences {
 		if !strings.Contains(key, "/") {
-			stepLog.V(1).Info("kind sequence key lacks group info", "key", key, "sequence", seq, "existingKeys", maps.Keys(newSequences))
+			stepLog.V(1).Info("kind sequence key lacks group info", "key", key, "sequence", seq)
 		}
 	}
 	effects := reconcileResult.Changes.Effects
@@ -780,6 +780,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	}
 
 	newPendingReconciles := e.determineNewPendingReconciles(state, pr, reconcileResult)
+	stepLog.V(1).Info("pending reconciles after step", "count", len(newPendingReconciles), "items", newPendingReconciles)
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)

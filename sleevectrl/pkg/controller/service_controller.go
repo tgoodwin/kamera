@@ -20,11 +20,7 @@ import (
 	"context"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -43,17 +39,7 @@ type ServiceReconciler struct {
 // For Service controller:
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=endpoints,verbs=get;list;watch;create;update;patch;delete
-
-// Reconcile is part of the main kubernetes reconciliation loop which aims to
-// move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the Service object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.18.4/pkg/reconcile
+// Reconcile is part of the main kubernetes reconciliation loop.
 func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -75,79 +61,6 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	// Get endpoints or create if they don't exist
-	endpoints := &corev1.Endpoints{}
-	err := r.Get(ctx, types.NamespacedName{Name: service.Name, Namespace: service.Namespace}, endpoints)
-	if client.IgnoreNotFound(err) != nil {
-		log.Error(err, "failed to get endpoints")
-		return ctrl.Result{}, err
-	}
-	if err == nil {
-		endpoints.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Endpoints"))
-	}
-
-	// If endpoints don't exist and this is not a headless service or ExternalName service, create them
-	if errors.IsNotFound(err) && service.Spec.ClusterIP != "None" && service.Spec.Type != corev1.ServiceTypeExternalName {
-		endpoints = &corev1.Endpoints{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: corev1.SchemeGroupVersion.String(),
-				Kind:       "Endpoints",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      service.Name,
-				Namespace: service.Namespace,
-				OwnerReferences: []metav1.OwnerReference{
-					*metav1.NewControllerRef(service, corev1.SchemeGroupVersion.WithKind("Service")),
-				},
-			},
-		}
-		if err := r.Create(ctx, endpoints); err != nil {
-			log.Error(err, "failed to create empty endpoints")
-			return ctrl.Result{}, err
-		}
-		log.Info("Created new Endpoints", "name", endpoints.Name)
-	}
-
-	// Skip headless and ExternalName services for endpoint management
-	if service.Spec.ClusterIP == "None" || service.Spec.Type == corev1.ServiceTypeExternalName {
-		return ctrl.Result{}, nil
-	}
-
-	// Get pods matching service selector
-	if len(service.Spec.Selector) == 0 {
-		// Service doesn't select any pods, keep endpoints empty
-		if len(endpoints.Subsets) > 0 {
-			endpoints.Subsets = nil
-			if err := r.Update(ctx, endpoints); err != nil {
-				log.Error(err, "failed to clear endpoints")
-				return ctrl.Result{}, err
-			}
-		}
-		return ctrl.Result{}, nil
-	}
-
-	// List pods matching the service selector
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList,
-		client.InNamespace(service.Namespace),
-		client.MatchingLabels(service.Spec.Selector)); err != nil {
-		log.Error(err, "failed to list pods")
-		return ctrl.Result{}, err
-	}
-
-	// Build new endpoint subsets from matching pods
-	subsets := buildSubsets(service, podList.Items)
-
-	// Update endpoints if necessary
-	if !equality.Semantic.DeepEqual(endpoints.Subsets, subsets) {
-		endpoints.Subsets = subsets
-		if err := r.Update(ctx, endpoints); err != nil {
-			log.Error(err, "failed to update endpoints")
-			return ctrl.Result{}, err
-		}
-		log.Info("Updated Endpoints", "name", endpoints.Name)
-	}
-
 	// For LoadBalancer services, update status with external IP (simulated here)
 	if service.Spec.Type == corev1.ServiceTypeLoadBalancer && len(service.Status.LoadBalancer.Ingress) == 0 {
 		service.Status.LoadBalancer.Ingress = []corev1.LoadBalancerIngress{
@@ -165,64 +78,17 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	return ctrl.Result{}, nil
 }
 
-// Helper function to build Endpoints subsets from pods
-func buildSubsets(service *corev1.Service, pods []corev1.Pod) []corev1.EndpointSubset {
-	if len(pods) == 0 {
-		return nil
-	}
-
-	// Create address slice from ready pods
-	addresses := []corev1.EndpointAddress{}
-	for _, pod := range pods {
-		if !isPodReady(&pod) || pod.DeletionTimestamp != nil || pod.Status.PodIP == "" {
-			continue
-		}
-
-		address := corev1.EndpointAddress{
-			IP: pod.Status.PodIP,
-			TargetRef: &corev1.ObjectReference{
-				Kind:            "Pod",
-				Namespace:       pod.Namespace,
-				Name:            pod.Name,
-				UID:             pod.UID,
-				ResourceVersion: pod.ResourceVersion,
-			},
-		}
-		addresses = append(addresses, address)
-	}
-
-	if len(addresses) == 0 {
-		return nil
-	}
-
-	// Create ports from service spec
-	ports := []corev1.EndpointPort{}
-	for _, servicePort := range service.Spec.Ports {
-		endpointPort := corev1.EndpointPort{
-			Name:     servicePort.Name,
-			Port:     servicePort.Port,
-			Protocol: servicePort.Protocol,
-		}
-		ports = append(ports, endpointPort)
-	}
-
-	return []corev1.EndpointSubset{
-		{
-			Addresses: addresses,
-			Ports:     ports,
-		},
-	}
-}
-
-// isPodReady checks if a pod is in the Ready state
+// isPodReady is shared by several reconcilers that need to filter pods.
 func isPodReady(pod *corev1.Pod) bool {
+	if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
+		return false
+	}
 	for _, condition := range pod.Status.Conditions {
 		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
 			return true
 		}
 	}
 	return false
-
 }
 
 // SetupWithManager sets up the controller with the Manager.
