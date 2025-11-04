@@ -52,8 +52,13 @@ func main() {
 		builder.Debug()
 	}
 
-	builder.AssignReconcilerToKind("RPodReconciler", "RPod")
-	builder.AssignReconcilerToKind("FelixReconciler", "RouteConfig")
+	const (
+		rpodKind        = "apps.discrete.events/RPod"
+		routeConfigKind = "apps.discrete.events/RouteConfig"
+	)
+
+	builder.AssignReconcilerToKind("RPodReconciler", rpodKind)
+	builder.AssignReconcilerToKind("FelixReconciler", routeConfigKind)
 
 	if *reconcileID != "" {
 		builder.AnalyzeReconcile(*reconcileID)
@@ -81,16 +86,13 @@ func main() {
 	km.Load(events)
 	tc := tracecheck.FromBuilder(builder)
 
-	tc.AssignReconcilerToKind("RPodReconciler", "RPod")
-	tc.AssignReconcilerToKind("FelixReconciler", "RouteConfig")
+	tc.AssignReconcilerToKind("RPodReconciler", rpodKind)
+	tc.AssignReconcilerToKind("FelixReconciler", routeConfigKind)
 
 	deps := make(tracecheck.ResourceDeps)
-	deps["RPod"] = make(util.Set[string])
-	deps["RPod"].Add("RPodReconciler")
-	deps["RPod"].Add("FelixReconciler")
+	deps[rpodKind] = util.NewSet("RPodReconciler", "FelixReconciler")
 
-	deps["RouteConfig"] = make(util.Set[string])
-	deps["RouteConfig"].Add("FelixReconciler")
+	deps[routeConfigKind] = util.NewSet("FelixReconciler")
 	tc.ResourceDeps = deps
 
 	tc.AddReconciler("RPodReconciler", func(c tracecheck.Client) tracecheck.Reconciler {

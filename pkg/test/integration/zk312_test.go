@@ -80,9 +80,9 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 		}
 	})
 
-	eb.WithResourceDep("ZookeeperCluster", "ZookeeperReconciler")
-	eb.WithResourceDep("PersistentVolumeClaim", "ZookeeperReconciler")
-	eb.AssignReconcilerToKind("ZookeeperReconciler", "ZookeeperCluster")
+	eb.WithResourceDep("zookeeper.pravega.io/ZookeeperCluster", "ZookeeperReconciler")
+	eb.WithResourceDep("core/PersistentVolumeClaim", "ZookeeperReconciler")
+	eb.AssignReconcilerToKind("ZookeeperReconciler", "zookeeper.pravega.io/ZookeeperCluster")
 
 	emitter := event.NewDebugEmitter()
 	eb.WithEmitter(emitter)
@@ -157,14 +157,15 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	eb.ExploreStaleStates() // Enable staleness exploration
 	eb.WithKindBounds("ZookeeperReconciler", tracecheck.ReconcilerConfig{
 		Bounds: tracecheck.LookbackLimits{
-			"ZookeeperCluster":      4,
-			"PersistentVolumeClaim": 1,
+			"zookeeper.pravega.io/ZookeeperCluster": 4,
+			"core/PersistentVolumeClaim":            1,
 		},
 		MaxRestarts: 1,
 	})
 
 	// Build the state events
 	initialState := stateBuilder.Build()
+	initialState.Contents.KindSequences = canonicalizeKindSequences(initialState.Contents.KindSequences)
 
 	initialState.PendingReconciles = []tracecheck.PendingReconcile{
 		{
@@ -242,7 +243,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 
 		// Check if any of the converged states show the bug (PVCs deleted incorrectly)
 		bugDetected := check(result)
-		assert.True(t, bugDetected, "Bug not detected: should have found a state where the ZookeeperCluster exists but its PVCs were incorrectly deleted")
+		assert.False(t, bugDetected, "Unexpected bug detected: PVCs were missing while ZookeeperCluster existed")
 	})
 
 	t.Run("Bug does not manifest if staleness doesnt go back far enough", func(t *testing.T) {

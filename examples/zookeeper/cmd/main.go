@@ -97,9 +97,14 @@ func main() {
 		}
 	})
 
-	eb.WithResourceDep("ZookeeperCluster", "ZookeeperReconciler")
-	eb.WithResourceDep("PersistentVolumeClaim", "ZookeeperReconciler")
-	eb.AssignReconcilerToKind("ZookeeperReconciler", "ZookeeperCluster")
+	const (
+		zkClusterKind = "zookeeper.pravega.io/ZookeeperCluster"
+		pvcKind       = "core/PersistentVolumeClaim"
+	)
+
+	eb.WithResourceDep(zkClusterKind, "ZookeeperReconciler")
+	eb.WithResourceDep(pvcKind, "ZookeeperReconciler")
+	eb.AssignReconcilerToKind("ZookeeperReconciler", zkClusterKind)
 
 	emitter := event.NewDebugEmitter()
 	eb.WithEmitter(emitter)

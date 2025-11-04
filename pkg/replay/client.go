@@ -91,7 +91,6 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 				return fmt.Errorf("convert cached object: %w", err)
 			}
 		} else {
-			// fmt.Println("not found!!!", kind, key)
 			return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
 		}
 	} else {

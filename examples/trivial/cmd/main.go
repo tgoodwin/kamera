@@ -49,9 +49,10 @@ func main() {
 			Scheme: scheme,
 		}
 	})
-	eb.WithResourceDep("Foo", "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", "Foo")
-	eb.AssignReconcilerToKind("BarController", "Foo")
+	const fooKind = "webapp.discrete.events/Foo"
+	eb.WithResourceDep(fooKind, "FooController", "BarController")
+	eb.AssignReconcilerToKind("FooController", fooKind)
+	eb.AssignReconcilerToKind("BarController", fooKind)
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
@@ -66,7 +67,7 @@ func main() {
 			},
 		},
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "appsv1",
+			APIVersion: "webapp.discrete.events/v1",
 			Kind:       "Foo",
 		},
 		Spec: appsv1.FooSpec{

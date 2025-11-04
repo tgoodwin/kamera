@@ -152,7 +152,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			Scheme: b.scheme,
 		}
 	})
-	b.AssignReconcilerToKind(deploymentControllerID, "Deployment")
+	b.AssignReconcilerToKind(deploymentControllerID, "apps/Deployment")
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, deploymentControllerID)
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, deploymentControllerID)
 
@@ -163,7 +163,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			Scheme: b.scheme,
 		}
 	})
-	b.AssignReconcilerToKind("ReplicaSetController", "ReplicaSet")
+	b.AssignReconcilerToKind("ReplicaSetController", "apps/ReplicaSet")
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, "ReplicaSetController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "ReplicaSetController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, "ReplicaSetController")
