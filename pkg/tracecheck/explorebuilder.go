@@ -204,9 +204,10 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			Scheme: b.scheme,
 		}
 	})
-	b.AssignReconcilerToKind("EndpointsController", "Endpoints")
+	b.AssignReconcilerToKind("EndpointsController", "Service")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "EndpointsController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")
 }
 
 func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*ReconcilerContainer {
