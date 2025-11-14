@@ -122,6 +122,7 @@ func (b *ExplorerBuilder) WithMaxDepth(depth int) *ExplorerBuilder {
 	return b
 }
 
+// Deprecated: ExploreStaleStates is deprecated and will be removed in a future release.
 func (b *ExplorerBuilder) ExploreStaleStates() *ExplorerBuilder {
 	b.config.useStaleness = 1
 	return b
@@ -142,6 +143,7 @@ func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBu
 	return b
 }
 
+// AssignReconcilerToKind configures which resource a reconciler "owns"
 // TODO make how we handle kinds more type safe
 func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *ExplorerBuilder {
 	gk := parseKindString(kind)
@@ -243,18 +245,6 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 			frameManager,
 			mgr,
 		)
-
-		// Create wrapped client
-		// wrappedClient := tracegen.New(
-		// 	replayClient,
-		// 	reconcilerID,
-		// 	b.emitter,
-		// 	tracegen.NewContextTracker(
-		// 		reconcilerID,
-		// 		b.emitter,
-		// 		replay.FrameIDFromContext,
-		// 	),
-		// )
 
 		// Create reconciler
 		r := constructor(replayClient)
