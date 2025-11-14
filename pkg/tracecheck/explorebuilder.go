@@ -54,6 +54,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		recorderInjectedStrategies: make(map[string]func(recorder replay.EffectRecorder) Strategy),
 		resourceDeps:               make(ResourceDeps),
 		scheme:                     scheme,
+		emitter:                    event.NewInMemoryEmitter(),
 		snapStore:                  snapshot.NewStore(),
 		reconcilerToKind:           make(map[string]string),
 
@@ -78,6 +79,10 @@ func (b *ExplorerBuilder) WithCustomStrategy(id string, strategyFunc func(record
 		b.recorderInjectedStrategies[id] = strategyFunc
 		return b
 	}
+}
+
+func (b *ExplorerBuilder) WithStrategy(id string, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
+	return b.WithCustomStrategy(id, strategyFunc)
 }
 
 func (b *ExplorerBuilder) WithDebug() {
@@ -371,7 +376,13 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	}
 }
 
-func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
+func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
+	// TODO just pull out a dedicated 'BuildFromTraceFile' type of thing
+	// to keep that concept separate.
+	mode := "standalone"
+	if len(modes) > 0 && modes[0] != "" {
+		mode = modes[0]
+	}
 	// Validate configuration
 	if len(b.resourceDeps) == 0 {
 		return nil, fmt.Errorf("no resource dependencies defined")
@@ -390,7 +401,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		effects:      make(map[string]reconcileEffects),
 
 		snapStore: b.snapStore,
-		scheme:   b.scheme,
+		scheme:    b.scheme,
 
 		// effectContext tracks the state of the world at the time of reconcile
 		// and this is separate from snapshot store because we want this context
@@ -444,12 +455,15 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		effectContextManager: mgr,
 		versionManager:       vStore,
 
+		// for prioritizing 'interesting' (potentially bug-causing) states to explore
 		priorityHandler: b.priorityBuilder.Build(b.snapStore),
 	}
 
 	return explorer, nil
 }
 
+// BuildLensManager builds a LensManager which can be used to explore and interact with the contents
+// of traces produced by the tracing instrumentation portion of this project.
 func (b *ExplorerBuilder) BuildLensManager(traceFilePath string) (*LensManager, error) {
 	traces, err := b.ParseJSONLTrace(traceFilePath)
 	if err != nil {
