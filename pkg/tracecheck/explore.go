@@ -708,9 +708,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	changeOV := reconcileResult.Changes.ObjectVersions
 	newStateEvents := slices.Clone(state.Contents.stateEvents)
 	for _, effect := range effects {
+		existingKey, exists := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey)
+
 		switch effect.OpType {
 		case event.CREATE:
-			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); ok {
+			if exists {
 				// the effect validation mechanism should prevent a create effect from going through
 				// if an object with the same kind/namespace/name already exists, so panic if it does happen
 				panic("create effect object already exists in prev state: " + effect.Key.String())
@@ -719,36 +721,40 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 				prevState[effect.Key] = changeOV[effect.Key]
 			}
 		case event.UPDATE, event.PATCH:
-			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !ok {
+			if !exists {
 				// it is possible that a stale read will cause a controller to update an object
 				// that no longer exists in the global state. The effect validation mechanism
 				// should cause the client operation to 404 and prevent the update effect from
 				// going through. If it does go through, we should panic cause something broke.
 				panic("update effect object not found in prev state: " + effect.Key.String())
 			}
+			if exists && existingKey != effect.Key {
+				delete(prevState, existingKey)
+			}
 			prevState[effect.Key] = changeOV[effect.Key]
 
 		// need to determine how to update state based on preconditions
 		case event.MARK_FOR_DELETION:
-			if _, ok := prevState[effect.Key]; !ok {
-				if _, nsNameExists := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !nsNameExists {
-					// We should never get here (effect validation should fail if there is no object matching the namespace/name in the state)
-					// but if we do, we should panic because something is wrong.
-					logger.Info("warning: deleted key absent in state", "effectKey", effect.Key, "frameID", frameID)
-					panic("deleted key is not present in prev state. effect validation should have prevented this")
-				}
+			if !exists {
+				// We should never get here (effect validation should fail if there is no object matching the namespace/name in the state)
+				// but if we do, we should panic because something is wrong.
+				logger.Info("warning: deleted key absent in state", "effectKey", effect.Key, "frameID", frameID)
+				panic("deleted key is not present in prev state. effect validation should have prevented this")
 			}
 			stepLog.WithValues("Key", effect.Key).V(2).Info("marked object for deletion")
+			if existingKey != effect.Key {
+				delete(prevState, existingKey)
+			}
 			// the delete effect is valid, so we should add it to the state
 			prevState[effect.Key] = changeOV[effect.Key]
 
 		case event.REMOVE:
-			if _, ok := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey); !ok {
+			if !exists {
 				stepLog.Error(nil, "warning: removed key absent in state", "effectKey", effect.Key, "frameID", frameID)
 				panic("removed key is not present in prev state. effect validation should have prevented this")
 			}
 			stepLog.V(2).Info("removing object from state", "key", effect.Key)
-			delete(prevState, effect.Key)
+			delete(prevState, existingKey)
 		default:
 			// at this part of the code we are only working with write effects
 			err := fmt.Errorf("unknown effect type: %s", effect.OpType)

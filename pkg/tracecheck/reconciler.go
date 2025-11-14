@@ -113,16 +113,13 @@ func (s *ControllerRuntimeStrategy) toFrameData(objects []runtime.Object) replay
 			gvk.Kind = kind
 		}
 
-	canonicalKind := util.CanonicalGroupKind(gvk.Group, gvk.Kind)
-	if canonicalKind == "" {
-		canonicalKind = util.CanonicalGroupKind("", kind)
-	}
+		canonicalKind := util.CanonicalGroupKind(gvk.Group, gvk.Kind)
+		if canonicalKind == "" {
+			canonicalKind = util.CanonicalGroupKind("", kind)
+		}
 
-	fmt.Printf("[toFrameData] canonical=%s legacy=%s namespace=%s name=%s\n",
-		canonicalKind, kind, u.GetNamespace(), u.GetName())
-
-	if _, ok := out[canonicalKind]; !ok {
-		out[canonicalKind] = make(map[types.NamespacedName]*unstructured.Unstructured)
+		if _, ok := out[canonicalKind]; !ok {
+			out[canonicalKind] = make(map[types.NamespacedName]*unstructured.Unstructured)
 		}
 
 		namespacedName := types.NamespacedName{
