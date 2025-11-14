@@ -115,9 +115,13 @@ func (f *replayStore) AllOfKind(kind string) []*unstructured.Unstructured {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
+	target := util.ParseGroupKind(kind)
+	targetCanonical := util.CanonicalGroupKind(target.Group, target.Kind)
+
 	var objs []*unstructured.Unstructured
 	for _, obj := range f.store {
-		if obj.GetKind() == kind {
+		gvk := util.GetGroupVersionKind(obj)
+		if util.CanonicalGroupKind(gvk.Group, gvk.Kind) == targetCanonical {
 			objs = append(objs, obj)
 		}
 	}

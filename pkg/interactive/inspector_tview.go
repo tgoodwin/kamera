@@ -35,6 +35,7 @@ type stateObjectEntry struct {
 	key   snapshot.CompositeKey
 	hash  snapshot.VersionHash
 	cache *objectCache
+	gvk   string
 }
 
 type effectEntry struct {
@@ -44,6 +45,7 @@ type effectEntry struct {
 	delta    string
 	cacheRef *stepCache
 	cacheIdx int
+	gvk      string
 }
 
 func (e *effectEntry) ensureDiff() string {
@@ -231,11 +233,24 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		statusBar.SetText(text)
 	}
 
-	kindFor := func(key snapshot.CompositeKey) string {
-		if key.ResourceKey.Kind != "" {
-			return key.ResourceKey.Kind
+	fallbackGVK := func(key snapshot.CompositeKey) string {
+		kind := strings.TrimSpace(key.ResourceKey.Kind)
+		if kind == "" {
+			kind = strings.TrimSpace(key.IdentityKey.Kind)
 		}
-		return key.IdentityKey.Kind
+		if kind == "" {
+			kind = "?"
+		}
+		return fmt.Sprintf("?/?/%s", kind)
+	}
+
+	resolveGVK := func(cache *objectCache, hash snapshot.VersionHash, key snapshot.CompositeKey) string {
+		if cache != nil {
+			if gvk, ok := cache.GVKString(hash); ok && strings.TrimSpace(gvk) != "" {
+				return gvk
+			}
+		}
+		return fallbackGVK(key)
 	}
 	if allowDump {
 		promptDump := func() {
@@ -441,7 +456,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 
 	buildEffectDetail := func(entry *effectEntry) (string, string) {
 		key := entry.effect.Key
-		title := fmt.Sprintf("%s %s/%s/%s", string(entry.effect.OpType), key.ResourceKey.Kind, key.ResourceKey.Namespace, key.ResourceKey.Name)
+		title := fmt.Sprintf("%s %s %s/%s", string(entry.effect.OpType), entry.gvk, key.ResourceKey.Namespace, key.ResourceKey.Name)
 		diff := entry.ensureDiff()
 		return title, diff
 	}
@@ -461,7 +476,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 
 	showObjectYAML := func(entry stateObjectEntry) {
 		row := stateDetailRow
-		title := fmt.Sprintf("Object %s", formatResourceTitle(entry.key))
+		title := fmt.Sprintf("Object %s", formatResourceTitle(entry.key, entry.gvk))
 		var body string
 		if entry.cache != nil {
 			if yamlStr, err := entry.cache.YAML(entry.hash); err == nil {
@@ -512,15 +527,17 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 
 		stateObjects = stateObjects[:0]
 		for _, key := range keys {
+			hash := objects[key]
 			stateObjects = append(stateObjects, stateObjectEntry{
 				key:   key,
-				hash:  objects[key],
+				hash:  hash,
 				cache: cache,
+				gvk:   resolveGVK(cache, hash, key),
 			})
 		}
 
 		detailTable.Clear()
-		headers := []string{"Idx", "Kind", "Namespace", "Name", "Hash"}
+		headers := []string{"Idx", "GVK", "Namespace", "Name", "Hash"}
 		for col, val := range headers {
 			detailTable.SetCell(0, col, headerCell(val))
 		}
@@ -541,7 +558,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			for idx, entry := range stateObjects {
 				key := entry.key
 				detailTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
-				detailTable.SetCell(idx+1, 1, valueCell(kindFor(key)))
+				detailTable.SetCell(idx+1, 1, valueCell(entry.gvk))
 				detailTable.SetCell(idx+1, 2, valueCell(key.ResourceKey.Namespace))
 				detailTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Name))
 				detailTable.SetCell(idx+1, 4, valueCell(util.ShortenHash(entry.hash.Value)))
@@ -680,16 +697,18 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		if len(stateKeys) > 0 {
 			resolverCache := getCache(state.Resolver)
 			for _, key := range stateKeys {
+				hash := stateMap[key]
 				stateObjects = append(stateObjects, stateObjectEntry{
 					key:   key,
-					hash:  stateMap[key],
+					hash:  hash,
 					cache: resolverCache,
+					gvk:   resolveGVK(resolverCache, hash, key),
 				})
 			}
 		}
 
 		detailTable.Clear()
-		headers := []string{"Idx", "Kind", "Namespace", "Name", "Hash"}
+		headers := []string{"Idx", "GVK", "Namespace", "Name", "Hash"}
 		for col, val := range headers {
 			detailTable.SetCell(0, col, headerCell(val))
 		}
@@ -709,7 +728,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			for idx, entry := range stateObjects {
 				key := entry.key
 				detailTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
-				detailTable.SetCell(idx+1, 1, valueCell(kindFor(key)))
+				detailTable.SetCell(idx+1, 1, valueCell(entry.gvk))
 				detailTable.SetCell(idx+1, 2, valueCell(key.ResourceKey.Namespace))
 				detailTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Name))
 				detailTable.SetCell(idx+1, 4, valueCell(util.ShortenHash(entry.hash.Value)))
@@ -742,11 +761,13 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		resolverCache := getCache(state.Resolver)
 		if step != nil {
 			for idx, eff := range step.Changes.Effects {
+				gvk := resolveGVK(resolverCache, eff.Version, eff.Key)
 				entry := effectEntry{
 					effect:   eff,
 					cache:    resolverCache,
 					cacheRef: stepCache,
 					cacheIdx: idx,
+					gvk:      gvk,
 				}
 				if stepCache != nil && idx < len(stepCache.effectDiffs) && stepCache.effectDiffsCached[idx] {
 					entry.diff = stepCache.effectDiffs[idx]
@@ -765,7 +786,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			effectsTable.SetSelectedFunc(nil)
 			stepDetailRow = 0
 		} else {
-			headers := []string{"Idx", "Verb", "Kind", "Namespace", "Name"}
+			headers := []string{"Idx", "Verb", "GVK", "Namespace", "Name"}
 			for col, val := range headers {
 				effectsTable.SetCell(0, col, headerCell(val))
 			}
@@ -776,7 +797,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 				key := entry.effect.Key
 				effectsTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
 				effectsTable.SetCell(idx+1, 1, valueCell(string(entry.effect.OpType)))
-				effectsTable.SetCell(idx+1, 2, valueCell(kindFor(key)))
+				effectsTable.SetCell(idx+1, 2, valueCell(entry.gvk))
 				effectsTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Namespace))
 				effectsTable.SetCell(idx+1, 4, valueCell(key.ResourceKey.Name))
 			}
@@ -840,7 +861,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			return
 		}
 
-		headers := []string{"Idx", "Verb", "Kind", "Namespace", "Name"}
+		headers := []string{"Idx", "Verb", "GVK", "Namespace", "Name"}
 		for col, val := range headers {
 			effectsTable.SetCell(0, col, headerCell(val))
 		}
@@ -851,7 +872,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			key := entry.effect.Key
 			effectsTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
 			effectsTable.SetCell(idx+1, 1, valueCell(string(entry.effect.OpType)))
-			effectsTable.SetCell(idx+1, 2, valueCell(kindFor(key)))
+			effectsTable.SetCell(idx+1, 2, valueCell(entry.gvk))
 			effectsTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Namespace))
 			effectsTable.SetCell(idx+1, 4, valueCell(key.ResourceKey.Name))
 		}
@@ -1427,12 +1448,12 @@ func formatResolveError(hash snapshot.VersionHash, err error) string {
 	return fmt.Sprintf("error retrieving object (%s, %s): %v\nfull hash: %s", hash.Strategy, util.ShortenHash(hash.Value), err, hash.Value)
 }
 
-func formatResourceTitle(key snapshot.CompositeKey) string {
+func formatResourceTitle(key snapshot.CompositeKey, gvk string) string {
 	namespace := key.ResourceKey.Namespace
 	if namespace != "" {
-		return fmt.Sprintf("%s %s/%s", key.ResourceKey.Kind, namespace, key.ResourceKey.Name)
+		return fmt.Sprintf("%s %s/%s", gvk, namespace, key.ResourceKey.Name)
 	}
-	return fmt.Sprintf("%s %s", key.ResourceKey.Kind, key.ResourceKey.Name)
+	return fmt.Sprintf("%s %s", gvk, key.ResourceKey.Name)
 }
 
 // TODO : this is a bit of a hack to clean up the delta presentation

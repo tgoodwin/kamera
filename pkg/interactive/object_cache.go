@@ -15,6 +15,7 @@ import (
 type objectCache struct {
 	resolver  tracecheck.VersionManager
 	jsonCache map[string]string
+	gvkCache  map[string]string
 	mu        sync.RWMutex
 }
 
@@ -22,6 +23,7 @@ func newObjectCache(resolver tracecheck.VersionManager) *objectCache {
 	return &objectCache{
 		resolver:  resolver,
 		jsonCache: make(map[string]string),
+		gvkCache:  make(map[string]string),
 	}
 }
 
@@ -76,4 +78,77 @@ func (c *objectCache) YAML(hash snapshot.VersionHash) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+func (c *objectCache) GVKString(hash snapshot.VersionHash) (string, bool) {
+	if c == nil {
+		return "", false
+	}
+	key := cacheKeyFor(hash)
+
+	c.mu.RLock()
+	if val, ok := c.gvkCache[key]; ok && val != "" {
+		c.mu.RUnlock()
+		return val, true
+	}
+	c.mu.RUnlock()
+
+	if c.resolver == nil {
+		return "", false
+	}
+
+	obj := c.resolver.Resolve(hash)
+	if obj == nil {
+		return "", false
+	}
+
+	gvk := obj.GroupVersionKind()
+	if gvk.Kind == "" {
+		gvk.Kind = obj.GetKind()
+	}
+	if apiVersion := obj.GetAPIVersion(); apiVersion != "" {
+		parts := strings.Split(apiVersion, "/")
+		switch len(parts) {
+		case 2:
+			if gvk.Group == "" {
+				gvk.Group = parts[0]
+			}
+			if gvk.Version == "" {
+				gvk.Version = parts[1]
+			}
+		case 1:
+			if gvk.Version == "" {
+				gvk.Version = parts[0]
+			}
+		}
+	}
+
+	group := gvk.Group
+	version := gvk.Version
+	kind := gvk.Kind
+
+	if kind == "" {
+		kind = obj.GetKind()
+	}
+	if kind == "" {
+		return "", false
+	}
+	if version == "" {
+		version = "?"
+	}
+	if group == "" {
+		if version != "?" {
+			group = "core"
+		} else {
+			group = "?"
+		}
+	}
+
+	gvkStr := fmt.Sprintf("%s/%s/%s", group, version, kind)
+
+	c.mu.Lock()
+	c.gvkCache[key] = gvkStr
+	c.mu.Unlock()
+
+	return gvkStr, true
 }

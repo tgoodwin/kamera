@@ -17,28 +17,28 @@ limitations under the License.
 package controller
 
 import (
-	"context"
-	"fmt"
-	"hash/fnv"
-	"sort"
-	"strings"
+    "context"
+    "fmt"
+    "hash/fnv"
+    "sort"
+    "strings"
 
-	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/utils/ptr"
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+    "github.com/go-logr/logr"
+    corev1 "k8s.io/api/core/v1"
+    apierrs "k8s.io/apimachinery/pkg/api/errors"
+    "k8s.io/apimachinery/pkg/api/equality"
+    "k8s.io/apimachinery/pkg/labels"
+    metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+    "k8s.io/apimachinery/pkg/runtime"
+    "k8s.io/apimachinery/pkg/types"
+    "k8s.io/apimachinery/pkg/util/intstr"
+    "k8s.io/utils/ptr"
+    ctrl "sigs.k8s.io/controller-runtime"
+    "sigs.k8s.io/controller-runtime/pkg/client"
+    "sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+    "sigs.k8s.io/controller-runtime/pkg/handler"
+    "sigs.k8s.io/controller-runtime/pkg/log"
+    "sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // EndpointsReconciler reconciles Services and keeps the corresponding Endpoints in sync.
@@ -80,7 +80,7 @@ func (r *EndpointsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	switch {
 	case err == nil:
 		endpoints.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Endpoints"))
-	case errors.IsNotFound(err):
+	case apierrs.IsNotFound(err):
 		endpoints = &corev1.Endpoints{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: corev1.SchemeGroupVersion.String(),
@@ -96,8 +96,16 @@ func (r *EndpointsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 			return ctrl.Result{}, err
 		}
 		if err := r.Create(ctx, endpoints); err != nil {
-			logger.Error(err, "failed to create Endpoints")
-			return ctrl.Result{}, err
+			if apierrs.IsAlreadyExists(err) {
+				if err := r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, endpoints); err != nil {
+					logger.Error(err, "failed to fetch Endpoints after AlreadyExists")
+					return ctrl.Result{}, err
+				}
+				endpoints.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Endpoints"))
+			} else {
+				logger.Error(err, "failed to create Endpoints")
+				return ctrl.Result{}, err
+			}
 		}
 	default:
 		logger.Error(err, "failed to get Endpoints")
@@ -153,7 +161,7 @@ func (r *EndpointsReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 func (r *EndpointsReconciler) ensureEndpointsAbsent(ctx context.Context, svc *corev1.Service, logger logr.Logger) (ctrl.Result, error) {
 	endpoints := &corev1.Endpoints{}
 	err := r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, endpoints)
-	if errors.IsNotFound(err) {
+	if apierrs.IsNotFound(err) {
 		return ctrl.Result{}, nil
 	}
 	if err != nil {

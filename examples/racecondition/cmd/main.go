@@ -36,9 +36,10 @@ func main() {
 		return &controller.ToggleController{Client: c, Scheme: scheme, ControllerID: "beta"}
 	})
 
-	builder.AssignReconcilerToKind("AlphaController", "Toggle")
-	builder.AssignReconcilerToKind("BetaController", "Toggle")
-	builder.WithResourceDep("Toggle", "AlphaController", "BetaController")
+	const toggleKind = rcv1.Group + "/Toggle"
+	builder.AssignReconcilerToKind("AlphaController", toggleKind)
+	builder.AssignReconcilerToKind("BetaController", toggleKind)
+	builder.WithResourceDep(toggleKind, "AlphaController", "BetaController")
 
 	explorer, err := builder.Build("standalone")
 	if err != nil {
@@ -52,6 +53,7 @@ func main() {
 		},
 		Spec: rcv1.ToggleSpec{Desired: "alpha"},
 	}
+	toggle.SetGroupVersionKind(rcv1.SchemeGroupVersion.WithKind("Toggle"))
 
 	tag.AddSleeveObjectID(toggle)
 

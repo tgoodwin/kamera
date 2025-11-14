@@ -124,6 +124,11 @@ type PredicateBuilder struct {
 	resolver VersionManager
 }
 
+func canonicalKindSpec(kind string) string {
+	gk := util.ParseGroupKind(kind)
+	return util.CanonicalGroupKind(gk.Group, gk.Kind)
+}
+
 // NewPredicateBuilder creates a new predicate builder with the given resolver
 func NewPredicateBuilder(resolver VersionManager) *PredicateBuilder {
 	return &PredicateBuilder{
@@ -133,28 +138,30 @@ func NewPredicateBuilder(resolver VersionManager) *PredicateBuilder {
 
 // ObjectExists creates a predicate that checks if an object exists
 func (b *PredicateBuilder) ObjectExists(kind, objectID string) StatePredicate {
+	targetKind := canonicalKindSpec(kind)
 	return func(state StateNode) (bool, string) {
 		for key := range state.Objects() {
-			if key.IdentityKey.Kind == kind && key.IdentityKey.ObjectID == objectID {
+			if key.CanonicalGroupKind() == targetKind && key.IdentityKey.ObjectID == objectID {
 				return true, ""
 			}
 		}
-		return false, fmt.Sprintf("Object %s/%s does not exist", kind, objectID)
+		return false, fmt.Sprintf("Object %s/%s does not exist", targetKind, objectID)
 	}
 }
 
 // ObjectsCountOfKind creates a predicate that checks the count of objects of a given kind
 func (b *PredicateBuilder) ObjectsCountOfKind(kind string, expectedCount int) StatePredicate {
+	targetKind := canonicalKindSpec(kind)
 	return func(state StateNode) (bool, string) {
 		count := 0
 		for key := range state.Objects() {
-			if key.IdentityKey.Kind == kind {
+			if key.CanonicalGroupKind() == targetKind {
 				count++
 			}
 		}
 
 		if count != expectedCount {
-			return false, fmt.Sprintf("Found %d objects of kind %s, expected %d", count, kind, expectedCount)
+			return false, fmt.Sprintf("Found %d objects of kind %s, expected %d", count, targetKind, expectedCount)
 		}
 		return true, ""
 	}
@@ -162,35 +169,36 @@ func (b *PredicateBuilder) ObjectsCountOfKind(kind string, expectedCount int) St
 
 // ObjectField creates a predicate that checks a specific field in an object
 func (b *PredicateBuilder) ObjectField(kind, objectID string, fieldPath []string, expectedValue interface{}) StatePredicate {
+	targetKind := canonicalKindSpec(kind)
 	return func(state StateNode) (bool, string) {
 		exists := false
 		var versionHash snapshot.VersionHash
 		for key, vHash := range state.Objects() {
-			if key.IdentityKey.Kind == kind && key.IdentityKey.ObjectID == objectID {
+			if key.CanonicalGroupKind() == targetKind && key.IdentityKey.ObjectID == objectID {
 				exists = true
 				versionHash = vHash
 				break
 			}
 		}
 		if !exists {
-			return false, fmt.Sprintf("Object %s/%s does not exist", kind, objectID)
+			return false, fmt.Sprintf("Object %s/%s does not exist", targetKind, objectID)
 		}
 
 		// Resolve the object
 		obj := b.resolver.Resolve(versionHash)
 		if obj == nil {
-			return false, fmt.Sprintf("Failed to resolve object %s/%s", kind, objectID)
+			return false, fmt.Sprintf("Failed to resolve object %s/%s", targetKind, objectID)
 		}
 
 		// Navigate and check field
 		value, found, err := unstructured.NestedFieldNoCopy(obj.Object, fieldPath...)
 		if err != nil || !found {
-			return false, fmt.Sprintf("Field %s not found in %s/%s", strings.Join(fieldPath, "."), kind, objectID)
+			return false, fmt.Sprintf("Field %s not found in %s/%s", strings.Join(fieldPath, "."), targetKind, objectID)
 		}
 
 		if !reflect.DeepEqual(value, expectedValue) {
 			return false, fmt.Sprintf("Field %s in %s/%s is %v, expected %v",
-				strings.Join(fieldPath, "."), kind, objectID, value, expectedValue)
+				strings.Join(fieldPath, "."), targetKind, objectID, value, expectedValue)
 		}
 
 		return true, ""

@@ -31,9 +31,10 @@ func (b *Builder) FindMissedObservations(controllerID string) (map[string]util.S
 	paStates := make(map[string]struct{})
 	for _, effects := range harness.tracedEffects {
 		for _, e := range effects.Reads {
-			readDependencies[e.Kind] = struct{}{}
-			if _, ok := knowledgeByKind[e.Kind]; !ok {
-				knowledgeByKind[e.Kind] = make(map[event.CausalKey]struct{})
+			kindKey := e.CanonicalGroupKind()
+			readDependencies[kindKey] = struct{}{}
+			if _, ok := knowledgeByKind[kindKey]; !ok {
+				knowledgeByKind[kindKey] = make(map[event.CausalKey]struct{})
 			}
 
 			// TODO this is a hack due to the fact that my faknative code
@@ -41,10 +42,10 @@ func (b *Builder) FindMissedObservations(controllerID string) (map[string]util.S
 			// if the object's creationTimestamp is before or after a certain time
 			// so "missed observations" do in fact appear in the trace data
 			if len(effects.Writes) > 0 {
-				knowledgeByKind[e.Kind][e.CausalKey()] = struct{}{}
+				knowledgeByKind[kindKey][e.CausalKey()] = struct{}{}
 			}
 
-			if e.Kind == "FakePodAutoscaler" {
+			if kindKey == util.CanonicalGroupKind("", "FakePodAutoscaler") {
 				k := e.VersionKey()
 				cid := e.MustGetChangeID()
 				str := fmt.Sprintf("read %s:%s:%s@%s", k.Kind, k.ObjectID, k.Version, cid)
@@ -53,17 +54,18 @@ func (b *Builder) FindMissedObservations(controllerID string) (map[string]util.S
 		}
 
 		for _, e := range effects.Writes {
-			if _, ok := knowledgeByKind[e.Kind]; !ok {
-				knowledgeByKind[e.Kind] = make(map[event.CausalKey]struct{})
+			kindKey := e.CanonicalGroupKind()
+			if _, ok := knowledgeByKind[kindKey]; !ok {
+				knowledgeByKind[kindKey] = make(map[event.CausalKey]struct{})
 			}
-			if e.Kind == "FakePodAutoscaler" {
+			if kindKey == util.CanonicalGroupKind("", "FakePodAutoscaler") {
 				k := e.VersionKey()
 				cid := e.MustGetChangeID()
 				str := fmt.Sprintf("wrote %s:%s:%s@%s", k.Kind, k.ObjectID, k.Version, cid)
 				paStates[str] = struct{}{}
 			}
 
-			knowledgeByKind[e.Kind][e.CausalKey()] = struct{}{}
+			knowledgeByKind[kindKey][e.CausalKey()] = struct{}{}
 		}
 	}
 
@@ -195,9 +197,9 @@ func asKnowledge(elems []*unstructured.Unstructured) util.Set[event.CausalKey] {
 	for _, elem := range elems {
 		cid, _ := event.GetChangeID(elem)
 		key := event.CausalKey{
-			Kind:     elem.GetKind(),
-			ObjectID: string(elem.GetUID()),
-			ChangeID: cid,
+			GroupVersionKind: util.GetGroupVersionKind(elem),
+			ObjectID:         string(elem.GetUID()),
+			ChangeID:         cid,
 		}
 		versions[key] = struct{}{}
 	}

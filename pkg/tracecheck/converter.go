@@ -7,6 +7,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -45,7 +46,7 @@ func newConverter(things []joinRecord) *converterImpl {
 	for reconcileID, reads := range byReconcileID {
 		out := make(ObjectVersions)
 		for _, r := range reads {
-			cKey := snapshot.NewCompositeKey(r.ikey.Kind, r.nsName.Namespace, r.nsName.Name, r.ikey.ObjectID)
+			cKey := snapshot.NewCompositeKeyWithGroup(r.ikey.Group, r.ikey.Kind, r.nsName.Namespace, r.nsName.Name, r.ikey.ObjectID)
 			out[cKey] = r.versionHash
 		}
 		reconcileIDToReads[reconcileID] = out
@@ -115,7 +116,7 @@ func (c *converterImpl) getStart() StateNode {
 		Contents: StateSnapshot{
 			contents: firstOV,
 			KindSequences: KindSequences{
-				firstRecord.ikey.Kind: 1,
+				util.CanonicalGroupKind(firstRecord.ikey.Group, firstRecord.ikey.Kind): 1,
 			},
 		},
 		PendingReconciles: []PendingReconcile{

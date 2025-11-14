@@ -18,6 +18,7 @@ const (
 // ResourceKey represents the granularity at which
 // we can uniquely identify a resource in the store
 type ResourceKey struct {
+	Group     string
 	Kind      string
 	Namespace string
 	Name      string
@@ -42,8 +43,19 @@ func NewCompositeKey(kind, namespace, name, sleeveObjectID string) CompositeKey 
 	}
 }
 
+func NewCompositeKeyWithGroup(group, kind, namespace, name, sleeveObjectID string) CompositeKey {
+	ck := NewCompositeKey(kind, namespace, name, sleeveObjectID)
+	ck.IdentityKey.Group = group
+	ck.ResourceKey.Group = group
+	return ck
+}
+
 func (ck CompositeKey) String() string {
-	return fmt.Sprintf("{%s/%s/%s:%s}", ck.IdentityKey.Kind, ck.Namespace, ck.Name, ck.ObjectID)
+	groupPart := ck.IdentityKey.Group
+	if groupPart == "" {
+		groupPart = "core"
+	}
+	return fmt.Sprintf("{%s/%s/%s/%s:%s}", groupPart, ck.IdentityKey.Kind, ck.Namespace, ck.Name, ck.ObjectID)
 }
 
 type Hasher interface {
@@ -113,8 +125,13 @@ func (s *Store) DebugKey(key string) {
 
 // Get object identity key (could be namespace/name or another unique identifier)
 func getObjectKey(obj *unstructured.Unstructured) string {
-	kind := util.GetKind(obj)
-	return fmt.Sprintf("%s/%s/%s", kind, obj.GetNamespace(), obj.GetName())
+	gvk := util.GetGroupVersionKind(obj)
+	group := gvk.Group
+	if group == "" {
+		group = "core"
+	}
+	kind := gvk.Kind
+	return fmt.Sprintf("%s/%s/%s/%s", group, kind, obj.GetNamespace(), obj.GetName())
 }
 
 func (s *Store) indexObject(obj *unstructured.Unstructured) error {

@@ -11,6 +11,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // SaveInspectorDump serializes the supplied inspector states to the provided path.
@@ -422,9 +423,19 @@ func ensureKeyKindWithObject(key snapshot.CompositeKey, hash snapshot.VersionHas
 	}
 	if objIndex != nil {
 		if obj, ok := objIndex[hashKey(hash)]; ok {
-			if kind := kindFromObjectData(obj.Object); kind != "" {
-				key.ResourceKey.Kind = kind
-				key.IdentityKey.Kind = kind
+			if gk := groupKindFromObjectData(obj.Object); gk.Kind != "" {
+				if key.ResourceKey.Kind == "" {
+					key.ResourceKey.Kind = gk.Kind
+				}
+				if key.IdentityKey.Kind == "" {
+					key.IdentityKey.Kind = gk.Kind
+				}
+				if key.ResourceKey.Group == "" {
+					key.ResourceKey.Group = gk.Group
+				}
+				if key.IdentityKey.Group == "" {
+					key.IdentityKey.Group = gk.Group
+				}
 				return key
 			}
 		}
@@ -467,7 +478,12 @@ func normalizeCompositeKey(key snapshot.CompositeKey) snapshot.CompositeKey {
 	if kind == "" {
 		return key
 	}
-	return snapshot.NewCompositeKey(
+	group := key.ResourceKey.Group
+	if group == "" {
+		group = key.IdentityKey.Group
+	}
+	return snapshot.NewCompositeKeyWithGroup(
+		group,
 		kind,
 		key.ResourceKey.Namespace,
 		key.ResourceKey.Name,
@@ -476,9 +492,9 @@ func normalizeCompositeKey(key snapshot.CompositeKey) snapshot.CompositeKey {
 }
 
 type dumpKeyResolver struct {
-	hashKinds     map[string]string
-	objectIDKinds map[string]string
-	resourceKinds map[string]string
+	hashKinds     map[string]schema.GroupKind
+	objectIDKinds map[string]schema.GroupKind
+	resourceKinds map[string]schema.GroupKind
 }
 
 func newDumpKeyResolver(objects []dumpObject) *dumpKeyResolver {
@@ -487,18 +503,18 @@ func newDumpKeyResolver(objects []dumpObject) *dumpKeyResolver {
 	}
 
 	resolver := &dumpKeyResolver{
-		hashKinds:     make(map[string]string, len(objects)),
-		objectIDKinds: make(map[string]string),
-		resourceKinds: make(map[string]string),
+		hashKinds:     make(map[string]schema.GroupKind, len(objects)),
+		objectIDKinds: make(map[string]schema.GroupKind),
+		resourceKinds: make(map[string]schema.GroupKind),
 	}
 
 	for _, obj := range objects {
-		kind := kindFromObjectData(obj.Object)
-		if kind == "" {
+		gk := groupKindFromObjectData(obj.Object)
+		if gk.Kind == "" {
 			continue
 		}
 		if obj.Hash.Value != "" {
-			resolver.hashKinds[hashKey(obj.Hash)] = kind
+			resolver.hashKinds[hashKey(obj.Hash)] = gk
 		}
 
 		metadata := asMap(obj.Object["metadata"])
@@ -508,11 +524,11 @@ func newDumpKeyResolver(objects []dumpObject) *dumpKeyResolver {
 
 		if name := stringFromMap(metadata, "name"); name != "" {
 			namespace := stringFromMap(metadata, "namespace")
-			resolver.addResourceKind(namespace, name, kind)
+			resolver.addResourceKind(namespace, name, gk)
 		}
 
 		if objectID := resolveObjectID(metadata); objectID != "" {
-			resolver.addObjectIDKind(objectID, kind)
+			resolver.addObjectIDKind(objectID, gk)
 		}
 	}
 
@@ -531,22 +547,41 @@ func (r *dumpKeyResolver) fixKey(key snapshot.CompositeKey, hash snapshot.Versio
 	if kind == "" {
 		kind = key.IdentityKey.Kind
 	}
+	group := key.ResourceKey.Group
+	if group == "" {
+		group = key.IdentityKey.Group
+	}
 
 	if kind == "" && hash.Value != "" {
-		if resolved, ok := r.hashKinds[hashKey(hash)]; ok && resolved != "" {
-			kind = resolved
+		if resolved, ok := r.hashKinds[hashKey(hash)]; ok && resolved.Kind != "" {
+			if kind == "" {
+				kind = resolved.Kind
+			}
+			if group == "" {
+				group = resolved.Group
+			}
 		}
 	}
 
 	if kind == "" && key.IdentityKey.ObjectID != "" {
-		if resolved, ok := r.objectIDKinds[key.IdentityKey.ObjectID]; ok && resolved != "" {
-			kind = resolved
+		if resolved, ok := r.objectIDKinds[key.IdentityKey.ObjectID]; ok && resolved.Kind != "" {
+			if kind == "" {
+				kind = resolved.Kind
+			}
+			if group == "" {
+				group = resolved.Group
+			}
 		}
 	}
 
 	if kind == "" && key.ResourceKey.Name != "" {
-		if resolved, ok := r.resourceKinds[namespacedNameKey(key.ResourceKey.Namespace, key.ResourceKey.Name)]; ok && resolved != "" {
-			kind = resolved
+		if resolved, ok := r.resourceKinds[namespacedNameKey(key.ResourceKey.Namespace, key.ResourceKey.Name)]; ok && resolved.Kind != "" {
+			if kind == "" {
+				kind = resolved.Kind
+			}
+			if group == "" {
+				group = resolved.Group
+			}
 		}
 	}
 
@@ -560,31 +595,37 @@ func (r *dumpKeyResolver) fixKey(key snapshot.CompositeKey, hash snapshot.Versio
 	if key.IdentityKey.Kind == "" {
 		key.IdentityKey.Kind = kind
 	}
+	if key.ResourceKey.Group == "" {
+		key.ResourceKey.Group = group
+	}
+	if key.IdentityKey.Group == "" {
+		key.IdentityKey.Group = group
+	}
 
 	return key
 }
 
-func (r *dumpKeyResolver) addObjectIDKind(id, kind string) {
-	if r == nil || id == "" || kind == "" {
+func (r *dumpKeyResolver) addObjectIDKind(id string, gk schema.GroupKind) {
+	if r == nil || id == "" || gk.Kind == "" {
 		return
 	}
-	if existing, ok := r.objectIDKinds[id]; ok && existing != "" && existing != kind {
-		r.objectIDKinds[id] = ""
+	if existing, ok := r.objectIDKinds[id]; ok && existing.Kind != "" && existing != gk {
+		r.objectIDKinds[id] = schema.GroupKind{}
 		return
 	}
-	r.objectIDKinds[id] = kind
+	r.objectIDKinds[id] = gk
 }
 
-func (r *dumpKeyResolver) addResourceKind(namespace, name, kind string) {
-	if r == nil || name == "" || kind == "" {
+func (r *dumpKeyResolver) addResourceKind(namespace, name string, gk schema.GroupKind) {
+	if r == nil || name == "" || gk.Kind == "" {
 		return
 	}
 	key := namespacedNameKey(namespace, name)
-	if existing, ok := r.resourceKinds[key]; ok && existing != "" && existing != kind {
-		r.resourceKinds[key] = ""
+	if existing, ok := r.resourceKinds[key]; ok && existing.Kind != "" && existing != gk {
+		r.resourceKinds[key] = schema.GroupKind{}
 		return
 	}
-	r.resourceKinds[key] = kind
+	r.resourceKinds[key] = gk
 }
 
 func namespacedNameKey(namespace, name string) string {
@@ -636,22 +677,36 @@ func stringFromNestedMap(m map[string]interface{}, key, nestedKey string) string
 	return ""
 }
 
-func kindFromObjectData(obj map[string]interface{}) string {
+func groupKindFromObjectData(obj map[string]interface{}) schema.GroupKind {
+	var gk schema.GroupKind
 	if obj == nil {
-		return ""
+		return gk
 	}
 	if kind, ok := obj["kind"].(string); ok && kind != "" {
-		return kind
+		gk.Kind = kind
+	}
+	if apiVersion, ok := obj["apiVersion"].(string); ok && apiVersion != "" {
+		if gv, err := schema.ParseGroupVersion(apiVersion); err == nil {
+			gk.Group = gv.Group
+		}
 	}
 	metadata := asMap(obj["metadata"])
 	if metadata == nil {
-		return ""
+		return gk
 	}
-	if kind := stringFromNestedMap(metadata, "annotations", "kind"); kind != "" {
-		return kind
+	if gk.Kind == "" {
+		if kind := stringFromNestedMap(metadata, "annotations", "kind"); kind != "" {
+			gk.Kind = kind
+		} else if kind := stringFromNestedMap(metadata, "labels", "kind"); kind != "" {
+			gk.Kind = kind
+		}
 	}
-	if kind := stringFromNestedMap(metadata, "labels", "kind"); kind != "" {
-		return kind
+	if gk.Group == "" {
+		if apiVersion := stringFromMap(metadata, "apiVersion"); apiVersion != "" {
+			if gv, err := schema.ParseGroupVersion(apiVersion); err == nil {
+				gk.Group = gv.Group
+			}
+		}
 	}
-	return ""
+	return gk
 }
