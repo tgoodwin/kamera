@@ -3,11 +3,13 @@ package replay
 import (
 	"context"
 
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Handles recording of effects (reads/writes) performed by a reconciler
+// during a simulated execution
 type EffectRecorder interface {
 	RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, precondition *PreconditionInfo) error
 }
@@ -35,6 +37,7 @@ func (ec EffectContainer) AddEffect(frameID string, e *event.Event) {
 	ec[frameID] = de
 }
 
+// Deprecated: This type is deprecated and will be removed in a future version.
 type Recorder struct {
 	reconcilerID    string
 	effectContainer EffectContainer
@@ -44,7 +47,7 @@ type Recorder struct {
 
 var _ EffectRecorder = (*Recorder)(nil)
 
-// TODO delete this legacy code
+// Deprecated: This method is deprecated and will be removed in a future version.
 func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, _ *PreconditionInfo) error {
 	reconcileID := FrameIDFromContext(ctx)
 	e, err := event.NewOperation(obj, reconcileID, r.reconcilerID, "<REPLAY>", opType)

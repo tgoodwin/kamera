@@ -58,6 +58,7 @@ func (r *PersistentVolumeClaimReconciler) Reconcile(ctx context.Context, req ctr
 		// PVC not found, likely deleted, return
 		return ctrl.Result{}, nil
 	}
+	pvc.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim"))
 
 	// Check if the PVC is being deleted
 	if !pvc.DeletionTimestamp.IsZero() {
@@ -88,6 +89,7 @@ func (r *PersistentVolumeClaimReconciler) Reconcile(ctx context.Context, req ctr
 			log.Error(err, "failed to get PV", "pv", pvc.Spec.VolumeName)
 			return ctrl.Result{}, err
 		}
+		pv.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("PersistentVolume"))
 
 		// Bind PVC to PV
 		return r.bindPVCToPV(ctx, pvc, pv)
@@ -192,6 +194,7 @@ func (r *PersistentVolumeClaimReconciler) bindPVCToPV(
 	log := log.FromContext(ctx)
 
 	// Update PV
+	pv.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("PersistentVolume"))
 	pv.Spec.ClaimRef = &corev1.ObjectReference{
 		Kind:       "PersistentVolumeClaim",
 		Namespace:  pvc.Namespace,
@@ -207,6 +210,7 @@ func (r *PersistentVolumeClaimReconciler) bindPVCToPV(
 	}
 
 	// Update PVC
+	pvc.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim"))
 	pvc.Spec.VolumeName = pv.Name
 	if err := r.Update(ctx, pvc); err != nil {
 		log.Error(err, "failed to update PVC with volume name", "pvc", pvc.Name)
@@ -238,6 +242,10 @@ func (r *PersistentVolumeClaimReconciler) createPVForPVC(pvc *corev1.PersistentV
 
 	// Create a new PV
 	pv := &corev1.PersistentVolume{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: corev1.SchemeGroupVersion.String(),
+			Kind:       "PersistentVolume",
+		},
 		ObjectMeta: metav1.ObjectMeta{
 			Name: pvName,
 			// sleeve code assumes every object has a namespace/name. This is not true for PVs

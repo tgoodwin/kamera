@@ -5,11 +5,12 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -24,10 +25,23 @@ func (m *mockHashResolver) GetByHash(hash snapshot.VersionHash, strategy snapsho
 	return obj, exists
 }
 
-// Helper function to create test unstructured objects
+func gvkForKind(kind string) schema.GroupVersionKind {
+	switch kind {
+	case "Pod", "Service", "Node", "Namespace", "RouteConfig":
+		return schema.GroupVersionKind{Group: "", Version: "v1", Kind: kind}
+	case "ReplicaSet", "Deployment":
+		return schema.GroupVersionKind{Group: "apps", Version: "v1", Kind: kind}
+	case "Job":
+		return schema.GroupVersionKind{Group: "batch", Version: "v1", Kind: kind}
+	default:
+		return schema.GroupVersionKind{Group: "", Version: "v1", Kind: kind}
+	}
+}
+
 func createTestObject(kind, namespace, name string, ownerRefs []metav1.OwnerReference) *unstructured.Unstructured {
+	gvk := gvkForKind(kind)
 	obj := &unstructured.Unstructured{}
-	obj.SetKind(kind)
+	obj.SetGroupVersionKind(gvk)
 	obj.SetNamespace(namespace)
 	obj.SetName(name)
 	if len(ownerRefs) > 0 {
@@ -52,16 +66,19 @@ func sortPendingReconciles(reconciles []PendingReconcile) []PendingReconcile {
 
 func TestGetTriggeredBasicCase(t *testing.T) {
 	// Set up dependencies
+	podKind := canonical("", "Pod")
+	nodeKind := canonical("", "Node")
+	namespaceKind := canonical("", "Namespace")
 	deps := ResourceDeps{
-		"Pod":       util.NewSet("podController"),
-		"Node":      util.NewSet("nodeController"),
-		"Namespace": util.NewSet("nsController"),
+		podKind:       util.NewSet("podController"),
+		nodeKind:      util.NewSet("nodeController"),
+		namespaceKind: util.NewSet("nsController"),
 	}
 
 	owners := PrimariesByKind{
-		"Pod":       util.NewSet("podController"),
-		"Node":      util.NewSet("nodeController"),
-		"Namespace": util.NewSet("nsController"),
+		podKind:       util.NewSet("podController"),
+		nodeKind:      util.NewSet("nodeController"),
+		namespaceKind: util.NewSet("nsController"),
 	}
 
 	// Create test objects
@@ -86,7 +103,7 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Key:     compositeKey("Pod", "default", "test-pod", "test-pod"),
 				Version: podHash,
 			},
 		},
@@ -112,16 +129,19 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 
 func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 	// Set up dependencies
+	podKind := canonical("", "Pod")
+	deploymentKind := canonical("apps", "Deployment")
+	replicaSetKind := canonical("apps", "ReplicaSet")
 	deps := ResourceDeps{
-		"Pod":        util.NewSet("podController"),
-		"Deployment": util.NewSet("deploymentController"),
-		"ReplicaSet": util.NewSet("replicaSetController"),
+		podKind:        util.NewSet("podController"),
+		deploymentKind: util.NewSet("deploymentController"),
+		replicaSetKind: util.NewSet("replicaSetController"),
 	}
 
 	owners := PrimariesByKind{
-		"Pod":        util.NewSet("podController"),
-		"Deployment": util.NewSet("deploymentController"),
-		"ReplicaSet": util.NewSet("replicaSetController"),
+		podKind:        util.NewSet("podController"),
+		deploymentKind: util.NewSet("deploymentController"),
+		replicaSetKind: util.NewSet("replicaSetController"),
 	}
 
 	// Create owner references
@@ -165,7 +185,7 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Key:     compositeKey("Pod", "default", "test-pod", "test-pod"),
 				Version: podHash,
 			},
 		},
@@ -199,7 +219,7 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("ReplicaSet", "default", "test-rs", "test-rs"),
+				Key:     compositeKey("ReplicaSet", "default", "test-rs", "test-rs"),
 				Version: rsHash,
 			},
 		},
@@ -231,14 +251,16 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 
 func TestGetTriggeredMultipleObjects(t *testing.T) {
 	// Set up dependencies
+	podKind := canonical("", "Pod")
+	serviceKind := canonical("", "Service")
 	deps := ResourceDeps{
-		"Pod":     util.NewSet("podController"),
-		"Service": util.NewSet("serviceController"),
+		podKind:     util.NewSet("podController"),
+		serviceKind: util.NewSet("serviceController"),
 	}
 
 	owners := PrimariesByKind{
-		"Pod":     util.NewSet("podController"),
-		"Service": util.NewSet("serviceController"),
+		podKind:     util.NewSet("podController"),
+		serviceKind: util.NewSet("serviceController"),
 	}
 
 	// Create test objects
@@ -269,17 +291,17 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+				Key:     compositeKey("Pod", "default", "pod-1", "pod-1"),
 				Version: pod1Hash,
 			},
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
+				Key:     compositeKey("Pod", "default", "pod-2", "pod-2"),
 				Version: pod2Hash,
 			},
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+				Key:     compositeKey("Service", "default", "svc-1", "svc-1"),
 				Version: svcHash,
 			},
 		},
@@ -318,14 +340,16 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 }
 
 func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
+	podKind := canonical("", "Pod")
+	routeConfigKind := canonical("", "RouteConfig")
 	deps := ResourceDeps{
-		"Pod":         util.NewSet("podController"),
-		"RouteConfig": util.NewSet("routeConfigController", "podController"),
+		podKind:         util.NewSet("podController"),
+		routeConfigKind: util.NewSet("routeConfigController", "podController"),
 	}
 
 	owners := PrimariesByKind{
-		"Pod":         util.NewSet("podController"),
-		"RouteConfig": util.NewSet("routeConfigController"),
+		podKind:         util.NewSet("podController"),
+		routeConfigKind: util.NewSet("routeConfigController"),
 	}
 
 	// Create owner references
@@ -350,7 +374,7 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("RouteConfig", "default", "route-config-1", "route-config-1"),
+				Key:     compositeKey("RouteConfig", "default", "route-config-1", "route-config-1"),
 				Version: rcHash,
 			},
 		},
@@ -376,14 +400,16 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 
 func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 	// Set up dependencies with missing reconciler for Job
+	podKind := canonical("", "Pod")
+	jobKind := canonical("batch", "Job")
 	deps := ResourceDeps{
-		"Pod": util.NewSet("podController"),
-		// No entry for "Job"
+		podKind: util.NewSet("podController"),
+		// No entry for Job
 	}
 
 	owners := PrimariesByKind{
-		"Pod": util.NewSet("podController"),
-		"Job": util.NewSet("jobController"), // This exists in owners but not in deps
+		podKind: util.NewSet("podController"),
+		jobKind: util.NewSet("jobController"), // This exists in owners but not in deps
 	}
 
 	// Create test objects
@@ -409,7 +435,7 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("Job", "default", "test-job", "test-job"),
+				Key:     compositeKey("Job", "default", "test-job", "test-job"),
 				Version: jobHash,
 			},
 		},
@@ -434,13 +460,14 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 
 func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 	// Set up dependencies
+	podKind := canonical("", "Pod")
 	deps := ResourceDeps{
-		"Pod": util.NewSet("podController"),
+		podKind: util.NewSet("podController"),
 		// No entry for "CustomResource"
 	}
 
 	owners := PrimariesByKind{
-		"Pod": util.NewSet("podController"),
+		podKind: util.NewSet("podController"),
 		// No entry for "CustomResource"
 	}
 
@@ -471,7 +498,7 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Key:     compositeKey("Pod", "default", "test-pod", "test-pod"),
 				Version: podHash,
 			},
 		},
@@ -517,7 +544,7 @@ func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 		Effects: []Effect{
 			{
 				OpType:  event.CREATE,
-				Key:     snapshot.NewCompositeKey("Pod", "default", "test-pod", "test-pod"),
+				Key:     compositeKey("Pod", "default", "test-pod", "test-pod"),
 				Version: snapshot.NewDefaultHash("non-existent-hash"),
 			},
 		},

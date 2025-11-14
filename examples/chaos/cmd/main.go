@@ -10,10 +10,10 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 
-	appsv1 "github.com/tgoodwin/sleeve/examples/chaos/api/v1"
-	controller "github.com/tgoodwin/sleeve/examples/chaos/internal/controller"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	tracecheck "github.com/tgoodwin/sleeve/pkg/tracecheck"
+	appsv1 "github.com/tgoodwin/kamera/examples/chaos/api/v1"
+	controller "github.com/tgoodwin/kamera/examples/chaos/internal/controller"
+	"github.com/tgoodwin/kamera/pkg/event"
+	tracecheck "github.com/tgoodwin/kamera/pkg/tracecheck"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
@@ -43,9 +43,10 @@ func main() {
 		}
 	})
 
-	eb.AssignReconcilerToKind("OrchestrationReconciler", "Orchestration")
-	eb.AssignReconcilerToKind("HealthReconciler", "Orchestration")
-	eb.WithResourceDep("Orchestration", "OrchestrationReconciler", "HealthReconciler")
+	const orchestrationKind = "apps.my.domain/Orchestration"
+	eb.AssignReconcilerToKind("OrchestrationReconciler", orchestrationKind)
+	eb.AssignReconcilerToKind("HealthReconciler", orchestrationKind)
+	eb.WithResourceDep(orchestrationKind, "OrchestrationReconciler", "HealthReconciler")
 
 	logger := zap.New(zap.UseDevMode(true))
 	log.SetLogger(logger)
@@ -62,7 +63,7 @@ func main() {
 			},
 		},
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "appsv1",
+			APIVersion: "apps.my.domain/v1",
 			Kind:       "Orchestration",
 		},
 		Spec: appsv1.OrchestrationSpec{

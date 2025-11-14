@@ -8,9 +8,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -115,9 +115,13 @@ func (f *replayStore) AllOfKind(kind string) []*unstructured.Unstructured {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
 
+	target := util.ParseGroupKind(kind)
+	targetCanonical := util.CanonicalGroupKind(target.Group, target.Kind)
+
 	var objs []*unstructured.Unstructured
 	for _, obj := range f.store {
-		if obj.GetKind() == kind {
+		gvk := util.GetGroupVersionKind(obj)
+		if util.CanonicalGroupKind(gvk.Group, gvk.Kind) == targetCanonical {
 			objs = append(objs, obj)
 		}
 	}

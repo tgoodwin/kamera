@@ -2,12 +2,14 @@ package tracecheck
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/util"
 )
 
 type MockVersionResolver struct{}
@@ -18,30 +20,160 @@ func (m *MockVersionResolver) ResolveVersion(key event.CausalKey) (snapshot.Vers
 	return snapshot.NewDefaultHash(str), nil
 }
 
+func canonical(group, kind string) string {
+	return util.CanonicalGroupKind(group, kind)
+}
+
+func assignGVK(events []event.Event, group, version string, kinds ...string) {
+	kindSet := make(map[string]struct{}, len(kinds))
+	for _, k := range kinds {
+		kindSet[k] = struct{}{}
+	}
+	apiVersion := formatAPIVersion(group, version)
+	for i := range events {
+		if len(kindSet) == 0 {
+			events[i].Group = group
+			events[i].APIVersion = apiVersion
+			continue
+		}
+		if _, ok := kindSet[events[i].Kind]; ok {
+			events[i].Group = group
+			events[i].APIVersion = apiVersion
+		}
+	}
+}
+
+func formatAPIVersion(group, version string) string {
+	if version == "" {
+		version = "v1"
+	}
+	if group == "" {
+		return version
+	}
+	return group + "/" + version
+}
+
+var (
+	appsDeployment = canonical("apps", "Deployment")
+	appsReplicaSet = canonical("apps", "ReplicaSet")
+	corePod        = canonical("", "Pod")
+	coreService    = canonical("", "Service")
+	coreEndpoints  = canonical("", "Endpoints")
+	exampleParent  = canonical("example.dev", "Parent")
+	exampleChild   = canonical("example.dev", "Child")
+)
+
+type gvSpec struct {
+	group   string
+	version string
+}
+
+func assignGVKByKind(events []event.Event, specs map[string]gvSpec) {
+	for i := range events {
+		if spec, ok := specs[events[i].Kind]; ok {
+			events[i].Group = spec.group
+			events[i].APIVersion = formatAPIVersion(spec.group, spec.version)
+		}
+	}
+}
+
+func groupForKind(kind string) string {
+	switch kind {
+	case "Pod", "Service", "Endpoints":
+		return ""
+	case "Deployment", "ReplicaSet", "StatefulSet", "DaemonSet":
+		return "apps"
+	case "Job":
+		return "batch"
+	case "Parent", "Child":
+		return "example.dev"
+	default:
+		return ""
+	}
+}
+
+func compositeKey(kind, namespace, name, objectID string) snapshot.CompositeKey {
+	return snapshot.NewCompositeKeyWithGroup(groupForKind(kind), kind, namespace, name, objectID)
+}
+
+func canonicalizeSeq(seq KindSequences) KindSequences {
+	if seq == nil {
+		return nil
+	}
+	out := make(KindSequences, len(seq))
+	for k, v := range seq {
+		if strings.Contains(k, "/") {
+			out[k] = v
+			continue
+		}
+		out[canonical(groupForKind(k), k)] = v
+	}
+	return out
+}
+
+func canonicalSeqSlices(seq map[string][]int64) map[string][]int64 {
+	if seq == nil {
+		return nil
+	}
+	out := make(map[string][]int64, len(seq))
+	for k, v := range seq {
+		key := k
+		if !strings.Contains(k, "/") {
+			key = canonical(groupForKind(k), k)
+		}
+		out[key] = v
+	}
+	return out
+}
+
+func canonicalLookbackLimits(l LookbackLimits) LookbackLimits {
+	if l == nil {
+		return nil
+	}
+	out := make(LookbackLimits, len(l))
+	for k, v := range l {
+		key := k
+		if !strings.Contains(k, "/") {
+			key = canonical(groupForKind(k), k)
+		}
+		out[key] = v
+	}
+	return out
+}
+
 // TODO cleanup this approach is deprecated
 func TestKindKnowledge_AddEvent(t *testing.T) {
+	const (
+		testGroup = "example.dev"
+		testKind  = "Widget"
+	)
+
 	kindKnowledge := NewKindKnowledge()
 
 	events := []event.Event{
 		{
+			APIVersion:   testGroup + "/v1",
 			ID:           "evt-1",
 			Timestamp:    "2024-02-21T10:00:01Z",
 			ReconcileID:  "r1",
 			ControllerID: "controller-1",
 			OpType:       "CREATE",
-			Kind:         "TestKind",
+			Group:        testGroup,
+			Kind:         testKind,
 			ObjectID:     "obj-1",
 			Labels: map[string]string{
 				tag.TraceyWebhookLabel: "root-1",
 			},
 		},
 		{
+			APIVersion:   testGroup + "/v1",
 			ID:           "evt-2",
 			Timestamp:    "2024-02-21T10:00:02Z",
 			ReconcileID:  "r1",
 			ControllerID: "controller-1",
 			OpType:       "UPDATE",
-			Kind:         "TestKind",
+			Group:        testGroup,
+			Kind:         testKind,
 			ObjectID:     "obj-1",
 			Labels: map[string]string{
 				tag.TraceyRootID: "root-1",
@@ -49,12 +181,14 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 			},
 		},
 		{
+			APIVersion:   testGroup + "/v1",
 			ID:           "evt-3",
 			Timestamp:    "2024-02-21T10:00:03Z",
 			ReconcileID:  "r1",
 			ControllerID: "controller-1",
 			OpType:       "DELETE",
-			Kind:         "TestKind",
+			Group:        testGroup,
+			Kind:         testKind,
 			ObjectID:     "obj-1",
 			Labels: map[string]string{
 				tag.TraceyRootID: "root-1",
@@ -63,10 +197,11 @@ func TestKindKnowledge_AddEvent(t *testing.T) {
 			},
 		},
 	}
+	assignGVK(events, testGroup, "v1", testKind)
 
 	for i, e := range events {
 		effect := newEffect(
-			snapshot.NewCompositeKey(e.Kind, "TODO", "TODO", e.ObjectID),
+			snapshot.NewCompositeKeyWithGroup(e.Group, e.Kind, "TODO", "TODO", e.ObjectID),
 			snapshot.NewDefaultHash("blah"),
 			event.OperationType(e.OpType),
 		)
@@ -157,6 +292,10 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 		}
 
 		// Create a mock version resolver for testing
+		assignGVKByKind(testEvents, map[string]gvSpec{
+			"Parent": {group: "example.dev", version: "v1"},
+			"Child":  {group: "example.dev", version: "v1"},
+		})
 		mockResolver := &MockVersionResolver{}
 		g := NewEventKnowledge(mockResolver)
 		err := g.Load(testEvents)
@@ -165,15 +304,18 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 		}
 
 		// Test that sequences were assigned correctly
-		if len(g.Kinds["Parent"].EventLog) != 1 {
-			t.Errorf("Expected 1 Parent events, got %d", len(g.Kinds["Parent"].EventLog))
+		parentKey := canonical("example.dev", "Parent")
+		childKey := canonical("example.dev", "Child")
+
+		if len(g.Kinds[parentKey].EventLog) != 1 {
+			t.Errorf("Expected 1 Parent events, got %d", len(g.Kinds[parentKey].EventLog))
 		}
-		firstParent := g.Kinds["Parent"].EventLog[0]
+		firstParent := g.Kinds[parentKey].EventLog[0]
 		if firstParent.Sequence != 1 {
 			t.Errorf("Expected Parent GET to have sequence 1, got %d", firstParent.Sequence)
 		}
-		if len(g.Kinds["Child"].EventLog) != 3 {
-			t.Errorf("Expected 3 Child events, got %d", len(g.Kinds["Child"].EventLog))
+		if len(g.Kinds[childKey].EventLog) != 3 {
+			t.Errorf("Expected 3 Child events, got %d", len(g.Kinds[childKey].EventLog))
 		}
 	})
 
@@ -260,28 +402,36 @@ func TestGlobalKnowledgeLoad(t *testing.T) {
 				},
 			},
 		}
+		assignGVK(events, "example.dev", "v1", "Parent", "Child")
 
 		g := NewEventKnowledge(&MockVersionResolver{})
+		assignGVKByKind(events, map[string]gvSpec{
+			"Parent": {group: "example.dev", version: "v1"},
+			"Child":  {group: "example.dev", version: "v1"},
+		})
 		err := g.Load(events)
 		if err != nil {
 			t.Fatalf("Load failed: %v", err)
 		}
 
 		// Verify sequences only reflect state changes
-		if len(g.Kinds["Parent"].EventLog) != 1 {
-			t.Errorf("Expected 1 Parent state change, got %d", len(g.Kinds["Parent"].EventLog))
+		parentKey := canonical("example.dev", "Parent")
+		childKey := canonical("example.dev", "Child")
+
+		if len(g.Kinds[parentKey].EventLog) != 1 {
+			t.Errorf("Expected 1 Parent state change, got %d", len(g.Kinds[parentKey].EventLog))
 		}
-		if len(g.Kinds["Child"].EventLog) != 3 {
-			t.Errorf("Expected 3 Child state changes, got %d", len(g.Kinds["Child"].EventLog))
+		if len(g.Kinds[childKey].EventLog) != 3 {
+			t.Errorf("Expected 3 Child state changes, got %d", len(g.Kinds[childKey].EventLog))
 		}
 
 		// Check sequence numbers
-		if g.Kinds["Parent"].EventLog[0].Sequence != 1 {
+		if g.Kinds[parentKey].EventLog[0].Sequence != 1 {
 			t.Errorf("Expected Parent CREATE to have sequence 0, got %d",
-				g.Kinds["Parent"].EventLog[0].Sequence)
+				g.Kinds[parentKey].EventLog[0].Sequence)
 		}
 
-		childEvents := g.Kinds["Child"].EventLog
+		childEvents := g.Kinds[childKey].EventLog
 		if childEvents[0].Sequence != 1 || childEvents[1].Sequence != 2 || childEvents[2].Sequence != 3 {
 			t.Error("Child events have incorrect sequences")
 		}
@@ -521,10 +671,10 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		assert.Equal(t, 2, len(afterState.All()))
 
 		expectedKeys := []snapshot.CompositeKey{
-			snapshot.NewCompositeKey("Deployment", "default", "dep-1", "dep-1"),
-			snapshot.NewCompositeKey("Deployment", "default", "dep-2", "dep-2"),
+			compositeKey("Deployment", "default", "dep-1", "dep-1"),
+			compositeKey("Deployment", "default", "dep-2", "dep-2"),
 			// Pod 1 was REMOVEd
-			snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"),
+			compositeKey("Pod", "default", "pod-2", "pod-2"),
 		}
 		for _, key := range expectedKeys {
 			if _, exists := state.All()[key]; !exists {
@@ -532,11 +682,11 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			}
 		}
 		// check kind sequence
-		if state.KindSequences["Deployment"] != 2 {
-			t.Errorf("Expected Deployment sequence 2, got %d", state.KindSequences["Deployment"])
+		if state.KindSequences[appsDeployment] != 2 {
+			t.Errorf("Expected Deployment sequence 2, got %d", state.KindSequences[appsDeployment])
 		}
-		if state.KindSequences["Pod"] != 6 {
-			t.Errorf("Expected Pod sequence 6, got %d", state.KindSequences["Pod"])
+		if state.KindSequences[corePod] != 6 {
+			t.Errorf("Expected Pod sequence 6, got %d", state.KindSequences[corePod])
 		}
 	})
 	t.Run("reply half the events", func(t *testing.T) {
@@ -550,15 +700,15 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 			t.Errorf("Expected 4 objects in state, got %d", len(state.All()))
 		}
 		// ensure the correct objects are in the state
-		if _, exists := state.All()[snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1")]; !exists {
+		if _, exists := state.All()[compositeKey("Pod", "default", "pod-1", "pod-1")]; !exists {
 			t.Error("Expected pod-1 in state")
 		}
-		if _, exists := state.All()[snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2")]; !exists {
+		if _, exists := state.All()[compositeKey("Pod", "default", "pod-2", "pod-2")]; !exists {
 			t.Error("Expected pod-2 in state")
 		}
 		// check kind sequence
-		if state.KindSequences["Pod"] != 2 {
-			t.Errorf("Expected Pod sequence 2, got %d", state.KindSequences["Pod"])
+		if state.KindSequences[corePod] != 2 {
+			t.Errorf("Expected Pod sequence 2, got %d", state.KindSequences[corePod])
 		}
 	})
 	t.Run("rewind knowledge", func(t *testing.T) {
@@ -581,7 +731,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		if countPods(state) != 1 {
 			t.Errorf("Expected 1 pods in state, got %d", len(state.All()))
 		}
-		rewind, err := g.AdjustKnowledgeForResourceType(state, "Pod", -1)
+		rewind, err := g.AdjustKnowledgeForResourceType(state, corePod, -1)
 		if err != nil {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}
@@ -590,7 +740,7 @@ func TestGlobalKnowledge_replayEventsToState(t *testing.T) {
 		}
 
 		// advance forward to apply the deletion as well as the removal
-		ff, err := g.AdjustKnowledgeForResourceType(state, "Pod", 2)
+		ff, err := g.AdjustKnowledgeForResourceType(state, corePod, 2)
 		if err != nil {
 			t.Fatalf("AdjustKnowledgeForKind failed: %v", err)
 		}
@@ -613,7 +763,7 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
 					Effect: Effect{
-						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Key:     compositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
 					},
@@ -621,11 +771,9 @@ func TestReplayEventsToState(t *testing.T) {
 				},
 			},
 			expectedState: map[snapshot.CompositeKey]snapshot.VersionHash{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v1"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v1"),
 			},
-			expectedSeq: KindSequences{
-				"Pod": 1,
-			},
+			expectedSeq: KindSequences{corePod: 1},
 		},
 		{
 			name: "create and deleteevent",
@@ -634,7 +782,7 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
 					Effect: Effect{
-						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Key:     compositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
 					},
@@ -644,7 +792,7 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
 					Effect: Effect{
-						Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Key:    compositeKey("Pod", "default", "pod-1", "pod-1"),
 						OpType: event.MARK_FOR_DELETION,
 					},
 					Sequence: 2,
@@ -653,16 +801,14 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r3",
 					Timestamp:   "2024-02-21T10:00:03Z",
 					Effect: Effect{
-						Key:    snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Key:    compositeKey("Pod", "default", "pod-1", "pod-1"),
 						OpType: event.REMOVE,
 					},
 					Sequence: 3,
 				},
 			},
 			expectedState: map[snapshot.CompositeKey]snapshot.VersionHash{},
-			expectedSeq: KindSequences{
-				"Pod": 3,
-			},
+			expectedSeq:   KindSequences{corePod: 3},
 		},
 		{
 			name: "multiple kinds",
@@ -671,7 +817,7 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
 					Effect: Effect{
-						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Key:     compositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
 					},
@@ -681,7 +827,7 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
 					Effect: Effect{
-						Key:     snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"),
+						Key:     compositeKey("Service", "default", "svc-1", "svc-1"),
 						Version: snapshot.NewDefaultHash("v2"),
 						OpType:  event.CREATE,
 					},
@@ -689,11 +835,10 @@ func TestReplayEventsToState(t *testing.T) {
 				},
 			},
 			expectedState: map[snapshot.CompositeKey]snapshot.VersionHash{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
-				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
+				compositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
 			},
-			expectedSeq: KindSequences{
-				"Pod":     1,
+			expectedSeq: KindSequences{corePod: 1,
 				"Service": 2,
 			},
 		},
@@ -704,7 +849,7 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r1",
 					Timestamp:   "2024-02-21T10:00:01Z",
 					Effect: Effect{
-						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Key:     compositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v1"),
 						OpType:  event.CREATE,
 					},
@@ -714,7 +859,7 @@ func TestReplayEventsToState(t *testing.T) {
 					ReconcileID: "r2",
 					Timestamp:   "2024-02-21T10:00:02Z",
 					Effect: Effect{
-						Key:     snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"),
+						Key:     compositeKey("Pod", "default", "pod-1", "pod-1"),
 						Version: snapshot.NewDefaultHash("v2"),
 						OpType:  event.UPDATE,
 					},
@@ -722,11 +867,9 @@ func TestReplayEventsToState(t *testing.T) {
 				},
 			},
 			expectedState: map[snapshot.CompositeKey]snapshot.VersionHash{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
 			},
-			expectedSeq: KindSequences{
-				"Pod": 2,
-			},
+			expectedSeq: KindSequences{corePod: 2},
 		},
 	}
 
@@ -735,7 +878,7 @@ func TestReplayEventsToState(t *testing.T) {
 			state := replayEventSequenceToState(tt.events)
 
 			assert.Equal(t, tt.expectedState, state.All())
-			assert.Equal(t, tt.expectedSeq, state.KindSequences)
+			assert.Equal(t, canonicalizeSeq(tt.expectedSeq), state.KindSequences)
 			assert.Equal(t, tt.events, state.stateEvents)
 		})
 	}
@@ -749,7 +892,7 @@ func TestReplyaEventsAtSequence_DeletionSemantics(t *testing.T) {
 			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
 			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
 			Effect: Effect{
-				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
+				Key:     compositeKey(kind, "default", name, name),
 				Version: snapshot.NewDefaultHash(version),
 				OpType:  op,
 			},
@@ -774,22 +917,22 @@ func TestReplyaEventsAtSequence_DeletionSemantics(t *testing.T) {
 	}{
 		{
 			name:      "pod-1 fully deleted",
-			sequences: KindSequences{"Pod": 4},
+			sequences: KindSequences{corePod: 4},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v1"),
+				compositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v1"),
 			},
 		},
 		{
 			name:      "pod-1 marked for deletion",
-			sequences: KindSequences{"Pod": 3},
+			sequences: KindSequences{corePod: 3},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
-				snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v1"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
+				compositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v1"),
 			},
 		},
 		{
 			name:        "pod-2 not marked for deletion",
-			sequences:   KindSequences{"Pod": 5},
+			sequences:   KindSequences{corePod: 5},
 			expectError: true,
 		},
 	}
@@ -804,7 +947,7 @@ func TestReplyaEventsAtSequence_DeletionSemantics(t *testing.T) {
 					t.Error("Expected a panic but did not get one")
 				}
 			}()
-			state := replayEventsAtSequence(events, tc.sequences)
+			state := replayEventsAtSequence(events, canonicalizeSeq(tc.sequences))
 			for k, v := range state.All() {
 				assert.Equal(t, v, tc.expectedState[k])
 			}
@@ -820,7 +963,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
 			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
 			Effect: Effect{
-				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
+				Key:     compositeKey(kind, "default", name, name),
 				Version: snapshot.NewDefaultHash(version),
 				OpType:  op,
 			},
@@ -853,8 +996,7 @@ func TestReplayEventsAtSequence(t *testing.T) {
 	}{
 		{
 			name: "initial state",
-			sequencesByKind: KindSequences{
-				"Pod":     0,
+			sequencesByKind: KindSequences{corePod: 0,
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{},
@@ -862,146 +1004,120 @@ func TestReplayEventsAtSequence(t *testing.T) {
 		},
 		{
 			name: "after first pod create",
-			sequencesByKind: KindSequences{
-				"Pod":     1,
+			sequencesByKind: KindSequences{corePod: 1,
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v1"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v1"),
 			},
-			expectedSeq: KindSequences{
-				"Pod": 1,
-			},
+			expectedSeq: KindSequences{corePod: 1},
 		},
 		{
 			name: "after first pod update",
-			sequencesByKind: KindSequences{
-				"Pod":     2,
+			sequencesByKind: KindSequences{corePod: 2,
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
 			},
-			expectedSeq: KindSequences{
-				"Pod": 2,
-			},
+			expectedSeq: KindSequences{corePod: 2},
 		},
 		{
 			name: "after first pod marked for deletion",
-			sequencesByKind: KindSequences{
-				"Pod":     3,
+			sequencesByKind: KindSequences{corePod: 3,
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
 				// marked for deletion, but still here
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v3"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v3"),
 			},
-			expectedSeq: KindSequences{
-				"Pod": 3,
-			},
+			expectedSeq: KindSequences{corePod: 3},
 		},
 		{
 			name: "after second pod create",
-			sequencesByKind: KindSequences{
-				"Pod":     4,
+			sequencesByKind: KindSequences{corePod: 4,
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v3"),
-				snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v1"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v3"),
+				compositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v1"),
 			},
-			expectedSeq: KindSequences{
-				"Pod": 4,
-			},
+			expectedSeq: KindSequences{corePod: 4},
 		},
 		{
 			name: "after second pod update",
-			sequencesByKind: KindSequences{
-				"Pod":     5,
+			sequencesByKind: KindSequences{corePod: 5,
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v3"),
-				snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v2"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v3"),
+				compositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v2"),
 			},
-			expectedSeq: KindSequences{
-				"Pod": 5,
-			},
+			expectedSeq: KindSequences{corePod: 5},
 		},
 		{
 			name: "after second pod marked for deletion",
-			sequencesByKind: KindSequences{
-				"Pod":     6,
+			sequencesByKind: KindSequences{corePod: 6,
 				"Service": 0,
 			},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v3"),
-				snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v3"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v3"),
+				compositeKey("Pod", "default", "pod-2", "pod-2"): snapshot.NewDefaultHash("v3"),
 			},
-			expectedSeq: KindSequences{
-				"Pod": 6,
-			},
+			expectedSeq: KindSequences{corePod: 6},
 		},
 		{
 			name: "after first service create",
-			sequencesByKind: KindSequences{
-				"Pod":     1,
+			sequencesByKind: KindSequences{corePod: 1,
 				"Service": 7,
 			},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
-				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v1"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v1"),
+				compositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v1"),
 			},
-			expectedSeq: KindSequences{
-				"Pod":     1,
+			expectedSeq: KindSequences{corePod: 1,
 				"Service": 7,
 			},
 		},
 		{
 			name: "multi object update",
-			sequencesByKind: KindSequences{
-				"Pod":     2,
+			sequencesByKind: KindSequences{corePod: 2,
 				"Service": 8,
 			},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
-				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
+				compositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v2"),
 			},
-			expectedSeq: KindSequences{
-				"Pod":     2,
+			expectedSeq: KindSequences{corePod: 2,
 				"Service": 8,
 			},
 		},
 		{
 			name: "after second service create",
-			sequencesByKind: KindSequences{
-				"Pod":     2,
+			sequencesByKind: KindSequences{corePod: 2,
 				"Service": 10,
 			},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"): snapshot.NewDefaultHash("v2"),
 				// not deleted yet
-				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v3"),
-				snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"): snapshot.NewDefaultHash("v1"),
+				compositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v3"),
+				compositeKey("Service", "default", "svc-2", "svc-2"): snapshot.NewDefaultHash("v1"),
 			},
-			expectedSeq: KindSequences{
-				"Pod":     2,
+			expectedSeq: KindSequences{corePod: 2,
 				"Service": 10,
 			},
 		},
 		{
 			name: "after second service update",
-			sequencesByKind: KindSequences{
-				"Pod":     2,
+			sequencesByKind: KindSequences{corePod: 2,
 				"Service": 11,
 			},
 			expectedState: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
-				snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v3"),
-				snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2"): snapshot.NewDefaultHash("v2"),
+				compositeKey("Pod", "default", "pod-1", "pod-1"):     snapshot.NewDefaultHash("v2"),
+				compositeKey("Service", "default", "svc-1", "svc-1"): snapshot.NewDefaultHash("v3"),
+				compositeKey("Service", "default", "svc-2", "svc-2"): snapshot.NewDefaultHash("v2"),
 			},
-			expectedSeq: KindSequences{
-				"Pod":     2,
+			expectedSeq: KindSequences{corePod: 2,
 				"Service": 11,
 			},
 		},
@@ -1009,10 +1125,10 @@ func TestReplayEventsAtSequence(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			state := replayEventsAtSequence(events, tt.sequencesByKind)
+			state := replayEventsAtSequence(events, canonicalizeSeq(tt.sequencesByKind))
 
 			assert.Equal(t, tt.expectedState, state.All())
-			assert.Equal(t, tt.expectedSeq, state.KindSequences)
+			assert.Equal(t, canonicalizeSeq(tt.expectedSeq), state.KindSequences)
 		})
 	}
 }
@@ -1025,7 +1141,7 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
 			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
 			Effect: Effect{
-				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
+				Key:     compositeKey(kind, "default", name, name),
 				Version: snapshot.NewDefaultHash(version),
 				OpType:  op,
 			},
@@ -1036,10 +1152,10 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 	}
 
 	// Define reusable keys and values
-	pod1Key := snapshot.NewCompositeKey("Pod", "default", "pod-1", "pod-1")
-	pod2Key := snapshot.NewCompositeKey("Pod", "default", "pod-2", "pod-2")
-	svc1Key := snapshot.NewCompositeKey("Service", "default", "svc-1", "svc-1")
-	svc2Key := snapshot.NewCompositeKey("Service", "default", "svc-2", "svc-2")
+	pod1Key := compositeKey("Pod", "default", "pod-1", "pod-1")
+	pod2Key := compositeKey("Pod", "default", "pod-2", "pod-2")
+	svc1Key := compositeKey("Service", "default", "svc-1", "svc-1")
+	svc2Key := compositeKey("Service", "default", "svc-2", "svc-2")
 	v1 := snapshot.NewDefaultHash("v1")
 	v2 := snapshot.NewDefaultHash("v2")
 
@@ -1061,10 +1177,8 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 			pod1Key: v2, pod2Key: v2,
 			svc1Key: v2, svc2Key: v2,
 		},
-		KindSequences: KindSequences{
-			"Pod": 4, "Service": 8,
-		},
-		stateEvents: events,
+		KindSequences: KindSequences{corePod: 4, coreService: 8},
+		stateEvents:   events,
 	}
 
 	tests := []struct {
@@ -1078,8 +1192,8 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 		{
 			name: "no bounds",
 			kindBounds: LookbackLimits{
-				"Pod":     NoLimit,
-				"Service": NoLimit,
+				corePod:     NoLimit,
+				coreService: NoLimit,
 			},
 			expectedStates: []struct {
 				versions ObjectVersions
@@ -1087,75 +1201,75 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 			}{
 				{
 					versions: ObjectVersions{pod1Key: v1, svc1Key: v1},
-					seqs:     KindSequences{"Pod": 1, "Service": 5},
+					seqs:     KindSequences{corePod: 1, coreService: 5},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v1, svc1Key: v2},
-					seqs:     KindSequences{"Pod": 1, "Service": 6},
+					seqs:     KindSequences{corePod: 1, coreService: 6},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v1, svc1Key: v2, svc2Key: v1},
-					seqs:     KindSequences{"Pod": 1, "Service": 7},
+					seqs:     KindSequences{corePod: 1, coreService: 7},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v1, svc1Key: v2, svc2Key: v2},
-					seqs:     KindSequences{"Pod": 1, "Service": 8},
+					seqs:     KindSequences{corePod: 1, coreService: 8},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, svc1Key: v1},
-					seqs:     KindSequences{"Pod": 2, "Service": 5},
+					seqs:     KindSequences{corePod: 2, coreService: 5},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, svc1Key: v2},
-					seqs:     KindSequences{"Pod": 2, "Service": 6},
+					seqs:     KindSequences{corePod: 2, coreService: 6},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, svc1Key: v2, svc2Key: v1},
-					seqs:     KindSequences{"Pod": 2, "Service": 7},
+					seqs:     KindSequences{corePod: 2, coreService: 7},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, svc1Key: v2, svc2Key: v2},
-					seqs:     KindSequences{"Pod": 2, "Service": 8},
+					seqs:     KindSequences{corePod: 2, coreService: 8},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v1},
-					seqs:     KindSequences{"Pod": 3, "Service": 5},
+					seqs:     KindSequences{corePod: 3, coreService: 5},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2},
-					seqs:     KindSequences{"Pod": 3, "Service": 6},
+					seqs:     KindSequences{corePod: 3, coreService: 6},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2, svc2Key: v1},
-					seqs:     KindSequences{"Pod": 3, "Service": 7},
+					seqs:     KindSequences{corePod: 3, coreService: 7},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2, svc2Key: v2},
-					seqs:     KindSequences{"Pod": 3, "Service": 8},
+					seqs:     KindSequences{corePod: 3, coreService: 8},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v1},
-					seqs:     KindSequences{"Pod": 4, "Service": 5},
+					seqs:     KindSequences{corePod: 4, coreService: 5},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2},
-					seqs:     KindSequences{"Pod": 4, "Service": 6},
+					seqs:     KindSequences{corePod: 4, coreService: 6},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2, svc2Key: v1},
-					seqs:     KindSequences{"Pod": 4, "Service": 7},
+					seqs:     KindSequences{corePod: 4, coreService: 7},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2, svc2Key: v2},
-					seqs:     KindSequences{"Pod": 4, "Service": 8},
+					seqs:     KindSequences{corePod: 4, coreService: 8},
 				},
 			},
 		},
 		{
 			name: "limit = 2 for Pods and Services",
 			kindBounds: LookbackLimits{
-				"Pod":     2,
-				"Service": 2,
+				corePod:     2,
+				coreService: 2,
 			},
 			expectedStates: []struct {
 				versions ObjectVersions
@@ -1163,19 +1277,19 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 			}{
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2, svc2Key: v1},
-					seqs:     KindSequences{"Pod": 3, "Service": 7},
+					seqs:     KindSequences{corePod: 3, coreService: 7},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v1, svc1Key: v2, svc2Key: v2},
-					seqs:     KindSequences{"Pod": 3, "Service": 8},
+					seqs:     KindSequences{corePod: 3, coreService: 8},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2, svc2Key: v1},
-					seqs:     KindSequences{"Pod": 4, "Service": 7},
+					seqs:     KindSequences{corePod: 4, coreService: 7},
 				},
 				{
 					versions: ObjectVersions{pod1Key: v2, pod2Key: v2, svc1Key: v2, svc2Key: v2},
-					seqs:     KindSequences{"Pod": 4, "Service": 8},
+					seqs:     KindSequences{corePod: 4, coreService: 8},
 				},
 			},
 		},
@@ -1183,7 +1297,7 @@ func TestGetAllPossibleViewsWithKindBounds(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			staleViews := getAllPossibleViews(state, []string{"Pod", "Service"}, tt.kindBounds)
+			staleViews := getAllPossibleViews(state, []string{corePod, coreService}, canonicalLookbackLimits(tt.kindBounds))
 
 			assert.Equal(t, len(tt.expectedStates), len(staleViews))
 			for _, expected := range tt.expectedStates {
@@ -1316,8 +1430,8 @@ func TestLimitEventHistory(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := limitEventHistory(tt.seqByKind, tt.limit)
-			assert.Equal(t, tt.expectedResult, result)
+			result := limitEventHistory(canonicalSeqSlices(tt.seqByKind), canonicalLookbackLimits(tt.limit))
+			assert.Equal(t, canonicalSeqSlices(tt.expectedResult), result)
 		})
 	}
 }
@@ -1329,7 +1443,7 @@ func TestFilterEventsAtSequence(t *testing.T) {
 			ReconcileID: fmt.Sprintf("r%d", reconcileInt),
 			Timestamp:   fmt.Sprintf("t%d", reconcileInt),
 			Effect: Effect{
-				Key:     snapshot.NewCompositeKey(kind, "default", name, name),
+				Key:     compositeKey(kind, "default", name, name),
 				Version: snapshot.NewDefaultHash(version),
 				OpType:  op,
 			},
@@ -1356,9 +1470,8 @@ func TestFilterEventsAtSequence(t *testing.T) {
 	}{
 		{
 			name: "filter events for Pod up to sequence 2",
-			sequencesByKind: KindSequences{
-				"Pod":     2,
-				"Service": 6,
+			sequencesByKind: KindSequences{corePod: 2,
+				coreService: 6,
 			},
 			expectedEvents: []StateEvent{
 				events[0],
@@ -1370,9 +1483,8 @@ func TestFilterEventsAtSequence(t *testing.T) {
 		},
 		{
 			name: "filter events for Service up to sequence 5",
-			sequencesByKind: KindSequences{
-				"Pod":     3,
-				"Service": 5,
+			sequencesByKind: KindSequences{corePod: 3,
+				coreService: 5,
 			},
 			expectedEvents: []StateEvent{
 				events[0],
@@ -1384,9 +1496,8 @@ func TestFilterEventsAtSequence(t *testing.T) {
 		},
 		{
 			name: "filter events for both Pod and Service",
-			sequencesByKind: KindSequences{
-				"Pod":     2,
-				"Service": 5,
+			sequencesByKind: KindSequences{corePod: 2,
+				coreService: 5,
 			},
 			expectedEvents: []StateEvent{
 				events[0],
@@ -1396,11 +1507,9 @@ func TestFilterEventsAtSequence(t *testing.T) {
 			},
 		},
 		{
-			name: "no sequence for a kind",
-			sequencesByKind: KindSequences{
-				"Pod": 2,
-			},
-			expectPanic: true,
+			name:            "no sequence for a kind",
+			sequencesByKind: KindSequences{corePod: 2},
+			expectPanic:     true,
 		},
 	}
 
@@ -1416,7 +1525,7 @@ func TestFilterEventsAtSequence(t *testing.T) {
 				}
 			}()
 
-			filteredEvents := filterEventsAtSequence(events, tt.sequencesByKind)
+			filteredEvents := filterEventsAtSequence(events, canonicalizeSeq(tt.sequencesByKind))
 			assert.Equal(t, tt.expectedEvents, filteredEvents)
 		})
 	}

@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	webappv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
+	webappv1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
 )
 
 // FooReconciler reconciles a Foo object

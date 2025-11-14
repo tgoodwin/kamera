@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
 )
 
 // DiffResult represents the differences between two ObjectVersions maps
@@ -21,7 +21,7 @@ type DiffResult struct {
 }
 
 // DiffObjectVersions compares two ObjectVersions maps and returns their differences
-func (tc *TraceChecker) DiffObjectVersions(first, second ConvergedState) DiffResult {
+func (tc *TraceChecker) DiffObjectVersions(first, second ResultState) DiffResult {
 	result := DiffResult{
 		BaseID:         first.ID,
 		OtherID:        second.ID,

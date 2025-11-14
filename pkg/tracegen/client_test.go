@@ -7,8 +7,8 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
-	"github.com/tgoodwin/sleeve/mocks"
-	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/kamera/mocks"
+	"github.com/tgoodwin/kamera/pkg/tag"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"

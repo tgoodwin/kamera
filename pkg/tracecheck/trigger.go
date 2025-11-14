@@ -6,15 +6,16 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// ResourceDeps is a map of resource kinds to the reconcilers that depend on them
+// ResourceDeps is a map of canonical resource identifiers (group/kind) to the reconcilers that depend on them.
 type ResourceDeps map[string]util.Set[string]
 
 func (rd ResourceDeps) ForReconciler(reconcilerID string) ([]string, error) {
@@ -57,15 +58,25 @@ type TriggerManager struct {
 	resolver hashResolver
 }
 
+func canonicalKindKeyFromGroupKind(gk schema.GroupKind) string {
+	return util.CanonicalGroupKind(gk.Group, gk.Kind)
+}
+
+func canonicalKindKey(group, kind string) string {
+	return util.CanonicalGroupKind(group, kind)
+}
+
 // NewTriggerManager creates a new instance of TriggerManager
 func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPrimaryKind map[string]string, resolver hashResolver) *TriggerManager {
 
 	primariesByKind := make(PrimariesByKind)
-	for reconcilerID, kind := range reconcilerToPrimaryKind {
-		if _, exists := primariesByKind[kind]; !exists {
-			primariesByKind[kind] = make(util.Set[string])
+	for reconcilerID, kindSpec := range reconcilerToPrimaryKind {
+		gk := util.ParseGroupKind(kindSpec)
+		canonical := canonicalKindKeyFromGroupKind(gk)
+		if _, exists := primariesByKind[canonical]; !exists {
+			primariesByKind[canonical] = make(util.Set[string])
 		}
-		primariesByKind[kind].Add(reconcilerID)
+		primariesByKind[canonical].Add(reconcilerID)
 	}
 	return &TriggerManager{
 		deps:     subscribingReconcilersByKind,
@@ -117,7 +128,8 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 		}
 
 		// Add primary reconcilers if available
-		if primaries, exists := tm.owners[objKey.Kind]; exists {
+		ownerKey := canonicalKindKey(objKey.Group, objKey.Kind)
+		if primaries, exists := tm.owners[ownerKey]; exists {
 			for primaryReconcilerID := range primaries {
 				reconcileKey := fmt.Sprintf("%s:%s:%s", primaryReconcilerID, nsName.Namespace, nsName.Name)
 				uniqueReconciles[reconcileKey] = PendingReconcile{
@@ -133,7 +145,9 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 		if objectVal.GetOwnerReferences() != nil {
 			for _, ownerRef := range objectVal.GetOwnerReferences() {
 				// Only process if we have a registered reconciler for this owner kind
-				if primaries, exists := tm.owners[ownerRef.Kind]; exists {
+				ownerGV := schema.FromAPIVersionAndKind(ownerRef.APIVersion, ownerRef.Kind)
+				ownerKey := canonicalKindKey(ownerGV.Group, ownerGV.Kind)
+				if primaries, exists := tm.owners[ownerKey]; exists {
 					for ownerReconcilerID := range primaries {
 						ownerNSName := types.NamespacedName{
 							// Making a reasonable assumption here that the owner

@@ -4,8 +4,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // ChangeID corresponds to the discrete.events/change-id label on a k8s object
@@ -16,17 +17,17 @@ type ChangeID string
 // lets us track the causal history of an object at "sleeve granularity", ignoring any object version changes
 // produced by k8s-internal controllers/mechanisms that are not instrumented by sleeve.
 type CausalKey struct {
-	Kind     string
+	schema.GroupVersionKind
 	ObjectID string
 	ChangeID ChangeID
 }
 
 func (c CausalKey) String() string {
-	return fmt.Sprintf("%s:%s@%s", c.Kind, c.ObjectID, c.ChangeID)
+	return fmt.Sprintf("%s:%s@%s", util.CanonicalGroupKind(c.Group, c.Kind), c.ObjectID, c.ChangeID)
 }
 
 func (c CausalKey) Short() string {
-	return fmt.Sprintf("%s:%s@%s", c.Kind, util.Shorter(c.ObjectID), util.Shorter(string(c.ChangeID)))
+	return fmt.Sprintf("%s:%s@%s", util.CanonicalGroupKind(c.Group, c.Kind), util.Shorter(c.ObjectID), util.Shorter(string(c.ChangeID)))
 }
 
 func GetCausalKey(obj *unstructured.Unstructured) (CausalKey, error) {
@@ -36,7 +37,7 @@ func GetCausalKey(obj *unstructured.Unstructured) (CausalKey, error) {
 	}
 
 	k := CausalKey{
-		Kind: obj.GetKind(),
+		GroupVersionKind: util.GetGroupVersionKind(obj),
 		// TODO use sleeve ID?
 		ObjectID: string(obj.GetUID()),
 		ChangeID: cid,

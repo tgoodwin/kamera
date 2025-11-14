@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/tgoodwin/sleeve/pkg/diff"
+	"github.com/tgoodwin/kamera/pkg/diff"
 )
 
 type NormalizedObject struct {

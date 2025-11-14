@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/tag"
 )
 
 func TestFilterSleeveLines(t *testing.T) {

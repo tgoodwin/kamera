@@ -9,8 +9,8 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -84,6 +84,12 @@ type ReconcileResult struct {
 	FrameType    FrameType
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
 	Deltas       map[snapshot.CompositeKey]Delta
+	Error        string
+
+	StateBefore   ObjectVersions
+	StateAfter    ObjectVersions
+	KindSeqBefore KindSequences
+	KindSeqAfter  KindSequences
 
 	ctrlRes reconcile.Result
 }
@@ -93,10 +99,14 @@ type ExecutionHistory []*ReconcileResult
 func (eh ExecutionHistory) UniqueKey() string {
 	// first filter out no-ops
 	filterNoOps := lo.Filter(eh, func(r *ReconcileResult, _ int) bool {
-		return len(r.Changes.ObjectVersions) > 0
+		return len(r.Changes.ObjectVersions) > 0 || r.Error != ""
 	})
 	strComponents := lo.Map(filterNoOps, func(r *ReconcileResult, _ int) string {
-		return fmt.Sprintf("%s@%d", r.ControllerID, len(r.Changes.Effects))
+		suffix := ""
+		if r.Error != "" {
+			suffix = "!"
+		}
+		return fmt.Sprintf("%s@%d%s", r.ControllerID, len(r.Changes.Effects), suffix)
 	})
 	return strings.Join(strComponents, ",")
 }
@@ -106,6 +116,11 @@ func (eh ExecutionHistory) SummarizeToFile(file *os.File) error {
 		_, err := fmt.Fprintf(file, "\t%s:%s (%s) - #changes=%d\n", r.ControllerID, util.Shorter(r.FrameID), r.FrameType, len(r.Changes.ObjectVersions))
 		if err != nil {
 			return err
+		}
+		if r.Error != "" {
+			if _, err := fmt.Fprintf(file, "\tError: %s\n", r.Error); err != nil {
+				return err
+			}
 		}
 		for _, effect := range r.Changes.Effects {
 			if _, err := fmt.Fprintf(file, "\t%s: %s\n", effect.OpType, effect.Key); err != nil {
@@ -132,7 +147,7 @@ func (eh ExecutionHistory) Summarize() {
 func (eh ExecutionHistory) FilterNoOps() ExecutionHistory {
 	var filtered ExecutionHistory
 	for _, r := range eh {
-		if len(r.Changes.ObjectVersions) > 0 {
+		if len(r.Changes.ObjectVersions) > 0 || r.Error != "" {
 			filtered = append(filtered, r)
 		}
 	}
@@ -150,14 +165,9 @@ func DebugPaths(paths []ExecutionHistory) {
 }
 
 func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
-	unique := lo.UniqBy(paths, func(path ExecutionHistory) string {
+	return lo.UniqBy(paths, func(path ExecutionHistory) string {
 		return path.UniqueKey()
 	})
-	for _, path := range unique {
-		key := path.UniqueKey()
-		fmt.Println("Unique Key: ", key)
-	}
-	return unique
 }
 
 func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
@@ -324,6 +334,25 @@ func (sn StateNode) Hash() StateHash {
 	return StateHash(util.ShortenHash(s))
 }
 
+func (sn *StateSnapshot) trimForInspection() {
+	if sn == nil {
+		return
+	}
+	sn.stateEvents = nil
+}
+
+func (sn *StateNode) TrimForInspection() {
+	if sn == nil {
+		return
+	}
+	sn.parent = nil
+	sn.action = nil
+	sn.PendingReconciles = nil
+	sn.ExecutionHistory = nil
+	sn.stuckReconcilerPositions = nil
+	sn.Contents.trimForInspection()
+}
+
 // OrderHash represents the contents of the state node and the order of pending reconciles.
 type OrderHash string
 
@@ -362,7 +391,7 @@ func (sn StateNode) ReconcileLineage() string {
 
 	if sn.action != nil {
 		id = sn.action.ControllerID
-		frameID = util.Shorter(sn.action.FrameID)
+		frameID = util.Shorter(sn.action.FrameID) // TODO this is not robust
 		numChanges = len(sn.action.Changes.ObjectVersions)
 	} else {
 		id = "root"

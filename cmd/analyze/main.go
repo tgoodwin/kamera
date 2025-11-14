@@ -8,12 +8,12 @@ import (
 
 	"slices"
 
-	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
-	controller "github.com/tgoodwin/sleeve/examples/robinhood/controller"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/replay"
-	"github.com/tgoodwin/sleeve/pkg/tracecheck"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	appsv1 "github.com/tgoodwin/kamera/examples/robinhood/api/v1"
+	controller "github.com/tgoodwin/kamera/examples/robinhood/controller"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/replay"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -52,8 +52,13 @@ func main() {
 		builder.Debug()
 	}
 
-	builder.AssignReconcilerToKind("RPodReconciler", "RPod")
-	builder.AssignReconcilerToKind("FelixReconciler", "RouteConfig")
+	const (
+		rpodKind        = "apps.discrete.events/RPod"
+		routeConfigKind = "apps.discrete.events/RouteConfig"
+	)
+
+	builder.AssignReconcilerToKind("RPodReconciler", rpodKind)
+	builder.AssignReconcilerToKind("FelixReconciler", routeConfigKind)
 
 	if *reconcileID != "" {
 		builder.AnalyzeReconcile(*reconcileID)
@@ -81,16 +86,13 @@ func main() {
 	km.Load(events)
 	tc := tracecheck.FromBuilder(builder)
 
-	tc.AssignReconcilerToKind("RPodReconciler", "RPod")
-	tc.AssignReconcilerToKind("FelixReconciler", "RouteConfig")
+	tc.AssignReconcilerToKind("RPodReconciler", rpodKind)
+	tc.AssignReconcilerToKind("FelixReconciler", routeConfigKind)
 
 	deps := make(tracecheck.ResourceDeps)
-	deps["RPod"] = make(util.Set[string])
-	deps["RPod"].Add("RPodReconciler")
-	deps["RPod"].Add("FelixReconciler")
+	deps[rpodKind] = util.NewSet("RPodReconciler", "FelixReconciler")
 
-	deps["RouteConfig"] = make(util.Set[string])
-	deps["RouteConfig"].Add("FelixReconciler")
+	deps[routeConfigKind] = util.NewSet("FelixReconciler")
 	tc.ResourceDeps = deps
 
 	tc.AddReconciler("RPodReconciler", func(c tracecheck.Client) tracecheck.Reconciler {

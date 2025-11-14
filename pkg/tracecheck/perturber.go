@@ -2,7 +2,7 @@ package tracecheck
 
 import (
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
 )
 
 type PriorityStrategyBuilder struct {

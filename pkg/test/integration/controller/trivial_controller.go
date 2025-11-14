@@ -26,7 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/go-logr/logr"
-	webappv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
+	webappv1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
 )
 
 var logger logr.Logger

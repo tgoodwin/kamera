@@ -10,7 +10,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -37,19 +40,89 @@ func ShortenHash(input string) string {
 	return hash
 }
 
-// GetKind returns the kind of the object. It uses reflection to determine the kind if the client.Object instance
-// does not have a GroupVersionKind set yet. This happens during object creation before the object is sent to the
-// Kubernetes API server.
-func GetKind(obj client.Object) string {
-	kind := obj.GetObjectKind().GroupVersionKind().Kind
-	if kind == "" {
+// GetGroupVersionKind attempts to retrieve a fully populated GroupVersionKind for the object.
+// It inspects the object's typed metadata, falling back to reflection when necessary.
+func GetGroupVersionKind(obj runtime.Object) schema.GroupVersionKind {
+	if obj == nil {
+		return schema.GroupVersionKind{}
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+
+	typeAccessor, err := meta.TypeAccessor(obj)
+	if err == nil {
+		if gvk.Kind == "" {
+			gvk.Kind = typeAccessor.GetKind()
+		}
+		if (gvk.Group == "" || gvk.Version == "") && typeAccessor.GetAPIVersion() != "" {
+			if gv, err := schema.ParseGroupVersion(typeAccessor.GetAPIVersion()); err == nil {
+				if gvk.Group == "" {
+					gvk.Group = gv.Group
+				}
+				if gvk.Version == "" {
+					gvk.Version = gv.Version
+				}
+			}
+		}
+	}
+
+	if gvk.Kind == "" {
 		t := reflect.TypeOf(obj)
 		for t.Kind() == reflect.Ptr {
 			t = t.Elem()
 		}
-		kind = t.Name()
+		gvk.Kind = t.Name()
 	}
-	return kind
+
+	return gvk
+}
+
+func GroupVersionKindFromTypeMeta(tm metav1.TypeMeta) schema.GroupVersionKind {
+	gvk := schema.FromAPIVersionAndKind(tm.APIVersion, tm.Kind)
+	return gvk
+}
+
+func CanonicalGroupKind(group, kind string) string {
+	if group == "" {
+		group = "core"
+	}
+	return group + "/" + kind
+}
+
+func CanonicalGroupKindFromAPIVersion(apiVersion, kind string) string {
+	gvk := schema.FromAPIVersionAndKind(apiVersion, kind)
+	return CanonicalGroupKind(gvk.Group, gvk.Kind)
+}
+
+func CanonicalGroupKindFromGVK(gvk schema.GroupVersionKind) string {
+	return CanonicalGroupKind(gvk.Group, gvk.Kind)
+}
+
+func CanonicalGroupKindFromTypeMeta(tm metav1.TypeMeta) string {
+	return CanonicalGroupKindFromGVK(GroupVersionKindFromTypeMeta(tm))
+}
+
+func ParseGroupKind(spec string) schema.GroupKind {
+	if spec == "" {
+		return schema.GroupKind{}
+	}
+	if strings.Contains(spec, "/") {
+		parts := strings.SplitN(spec, "/", 2)
+		group := parts[0]
+		if group == "core" {
+			group = ""
+		}
+		return schema.GroupKind{Group: group, Kind: parts[1]}
+	}
+	if strings.Contains(spec, ".") {
+		_, gk := schema.ParseKindArg(spec)
+		return gk
+	}
+	return schema.GroupKind{Kind: spec}
+}
+
+// GetKind returns the Kind component of the object's GroupVersionKind.
+func GetKind(obj runtime.Object) string {
+	return GetGroupVersionKind(obj).Kind
 }
 
 func UUID() string {
@@ -75,17 +148,11 @@ func InferListKind(list client.ObjectList) string {
 	return itemType.Name()
 }
 
-func ConvertToUnstructured(obj client.Object) (*unstructured.Unstructured, error) {
+func ConvertToUnstructured(obj runtime.Object) (*unstructured.Unstructured, error) {
 	// Get the GroupVersionKind (GVK) using reflection or Scheme
-	gvk := obj.GetObjectKind().GroupVersionKind()
-	if gvk.Kind == "" {
-		// Fallback: use reflection to infer GVK if not set
-		typ := reflect.TypeOf(obj).Elem()
-		gvk = schema.GroupVersionKind{
-			Group:   "", // Update as needed if group can be inferred
-			Version: "v1",
-			Kind:    typ.Name(),
-		}
+	gvk := GetGroupVersionKind(obj)
+	if gvk.Version == "" {
+		gvk.Version = "v1"
 	}
 
 	// Serialize the object to JSON

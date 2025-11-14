@@ -3,8 +3,8 @@ package tracegen
 import (
 	"context"
 
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/tag"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 

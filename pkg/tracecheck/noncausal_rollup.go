@@ -1,9 +1,9 @@
 package tracecheck
 
 import (
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 )
 
 func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
@@ -12,7 +12,9 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 	stateEvents := make([]StateEvent, 0)
 
 	// track which objects were marked for deletion
-	deletions := make(map[snapshot.CompositeKey]bool)
+	deletions := make(map[snapshot.ResourceKey]bool)
+	// ensure we only keep a single entry per resource identity (group/kind/ns/name)
+	resourceIndex := make(map[snapshot.ResourceKey]snapshot.CompositeKey)
 
 	for _, e := range events {
 		// ensure that we are only applying write ops
@@ -20,50 +22,52 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 		// 	continue
 		// }
 		iKey := e.Effect.Key.IdentityKey
-		// if _, wasMarkedForDeletion := deletions[e.Effect.Key]; wasMarkedForDeletion {
-		// 	// if the object was deleted, don't need to apply any more changes.
-		// 	// TODO its unclear what to do when we observe update events after
-		// 	// a deletion event. For now, ignore them.
-		// 	if e.Effect.OpType != event.REMOVE {
-		// 		if e.Effect.OpType == event.MARK_FOR_DELETION {
-		// 			logger.V(2).Info("object being marked for deletion again", "Key", iKey)
-		// 			continue
-		// 		}
-		// 		continue
-		// 	}
-		// }
+
+		resourceKey := e.Effect.Key.ResourceKey
+		if existingKey, ok := resourceIndex[resourceKey]; ok && existingKey != e.Effect.Key {
+			delete(contents, existingKey)
+		}
 
 		switch e.Effect.OpType {
 		case event.MARK_FOR_DELETION:
-			deletions[e.Effect.Key] = true
+			deletions[resourceKey] = true
 			version := e.Effect.Version
 			contents[e.Effect.Key] = version
+			resourceIndex[resourceKey] = e.Effect.Key
 		case event.REMOVE:
-			if _, wasMarkedForDeletion := deletions[e.Effect.Key]; !wasMarkedForDeletion {
+			if _, wasMarkedForDeletion := deletions[resourceKey]; !wasMarkedForDeletion {
 				// special case, we treat GarbageCollector REMOVEs as a DELETE + REMOVE
 				// since it cleans up things that nobody explicitly marked for deletion
 				isGarbageCollector := e.Event != nil && e.Event.ControllerID == util.GarbageCollectorName
 				if !isGarbageCollector {
 					logger.WithValues(
-						"Key", e.Effect.Key.ResourceKey,
+						"Key", resourceKey,
 					).Error(nil, "attempting to remove an object that was not marked for deletion first")
 					panic("removing object that was not marked for deletion")
 				}
 			}
-			delete(contents, e.Effect.Key)
+			if existingKey, ok := resourceIndex[resourceKey]; ok {
+				delete(contents, existingKey)
+			} else {
+				delete(contents, e.Effect.Key)
+			}
+			delete(resourceIndex, resourceKey)
+			delete(deletions, resourceKey)
 		case event.CREATE, event.UPDATE, event.PATCH:
 			version := e.Effect.Version
 			contents[e.Effect.Key] = version
+			resourceIndex[resourceKey] = e.Effect.Key
 
 		case event.GET, event.LIST:
 			contents[e.Effect.Key] = e.Effect.Version
+			resourceIndex[resourceKey] = e.Effect.Key
 		default:
 			panic("unknown op type")
 		}
 
-		KindSequences[iKey.Kind] = e.Sequence
+		KindSequences[iKey.CanonicalGroupKind()] = e.Sequence
 		stateEvents = append(stateEvents, e)
 	}
-	out := newStateSnapshot(contents, KindSequences, stateEvents)
+	out := NewStateSnapshot(contents, KindSequences, stateEvents)
 	return &out
 }

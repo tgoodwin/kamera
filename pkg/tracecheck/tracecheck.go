@@ -5,12 +5,12 @@ import (
 	"time"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/replay"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/tag"
-	"github.com/tgoodwin/sleeve/pkg/tracegen"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/replay"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/tracegen"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -57,6 +57,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	mgr := &manager{
 		versionStore: vStore,
 		effects:      make(map[string]reconcileEffects),
+		scheme:       scheme,
 	}
 
 	return &TraceChecker{
@@ -105,7 +106,7 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		}
 
 		vHash := vStore.Publish(unstructuredObj)
-		ikey := snapshot.IdentityKey{Kind: ckey.Kind, ObjectID: ckey.ObjectID}
+		ikey := snapshot.IdentityKey{Group: ckey.Group, Kind: ckey.Kind, ObjectID: ckey.ObjectID}
 		nsName := types.NamespacedName{Namespace: unstructuredObj.GetNamespace(), Name: unstructuredObj.GetName()}
 
 		// this is logically representing a "join" between the sleeve event model
@@ -141,6 +142,8 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		versionStore:  vStore,
 		effects:       make(map[string]reconcileEffects),
 		converterImpl: converter,
+		// TODO handle scheme properly
+		scheme: nil,
 	}
 
 	return &TraceChecker{
@@ -167,7 +170,8 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 	}
 	vHash := tc.manager.versionStore.Publish(u)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
-	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
+	gvk := util.GetGroupVersionKind(obj)
+	ikey := snapshot.IdentityKey{Group: gvk.Group, Kind: gvk.Kind, ObjectID: sleeveObjectID}
 
 	// HACK TODO REFACTOR
 	if tc.builder == nil {
@@ -186,13 +190,13 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 		}
 	})
 
-	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+	key := snapshot.NewCompositeKeyWithGroup(gvk.Group, ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 
 	return StateNode{
 		Contents: StateSnapshot{
 			contents: ObjectVersions{key: vHash},
 			KindSequences: KindSequences{
-				ikey.Kind: 1,
+				util.CanonicalGroupKind(ikey.Group, ikey.Kind): 1,
 			},
 			stateEvents: []StateEvent{
 				{
@@ -212,7 +216,8 @@ func (tc *TraceChecker) AddReconciler(reconcilerID string, constructor Reconcile
 }
 
 func (tc *TraceChecker) AssignReconcilerToKind(reconcilerID, kind string) {
-	tc.reconcilerToKind[reconcilerID] = kind
+	gk := util.ParseGroupKind(kind)
+	tc.reconcilerToKind[reconcilerID] = util.CanonicalGroupKind(gk.Group, gk.Kind)
 }
 
 func (tc *TraceChecker) AddEmitter(emitter testEmitter) {
@@ -251,18 +256,11 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]*ReconcilerContainer
 		)
 		r := constructor(wrappedClient)
 
-		kindforReconciler, ok := tc.reconcilerToKind[reconcilerID]
-		if !ok {
-			panic(fmt.Sprintf("No kind assigned to reconciler: %s", reconcilerID))
-		}
-
 		container := &ReconcilerContainer{
 			Name:           reconcilerID,
-			For:            kindforReconciler,
-			Reconciler:     r,
+			Strategy:       NewControllerRuntimeStrategy(r, frameManager, tc.manager, reconcilerID),
 			versionManager: tc.manager,
 			effectReader:   tc.manager,
-			frameInserter:  frameManager,
 		}
 		out[reconcilerID] = container
 
@@ -288,6 +286,7 @@ func (tc *TraceChecker) PrintState(s StateNode) {
 	fmt.Println("Pending Reconciles: ", s.PendingReconciles)
 }
 
+// Deprecated: NewExplorer is deprecated. Use ExplorerBuilder instead.
 func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 	if len(tc.ResourceDeps) == 0 {
 		panic("Warning: No resource dependencies found")
@@ -321,6 +320,7 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		),
 
 		knowledgeManager: knowledgeManager,
+		versionManager:   tc.manager.versionStore,
 	}
 }
 
@@ -340,9 +340,9 @@ func (tc *TraceChecker) SummarizeResults(result *Result) {
 func (tc *TraceChecker) DiffStates(a, b StateNode) []string {
 	diffs := make([]string, 0)
 	for key, vHash := range a.Objects() {
-		currKind := key.IdentityKey.Kind
+		currKind := key.CanonicalGroupKind()
 		for otherKey, otherHash := range b.Objects() {
-			if otherKey.IdentityKey.Kind == currKind {
+			if otherKey.CanonicalGroupKind() == currKind {
 				// disregarding ID, let's identify the difference between teh two objects of kind
 				if diff := tc.manager.Diff(&vHash, &otherHash); diff != "" {
 					diffs = append(diffs, diff)

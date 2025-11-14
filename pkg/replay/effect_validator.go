@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -25,6 +25,7 @@ func NewResourceConflictManager(keyStore map[snapshot.ResourceKey]struct{}) *Res
 func ValidateAgainstKeys(op event.OperationType, obj client.Object, keys map[snapshot.ResourceKey]struct{}) error {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	key := snapshot.ResourceKey{
+		Group:     gvk.Group,
 		Kind:      gvk.Kind,
 		Namespace: obj.GetNamespace(),
 		Name:      obj.GetName(),

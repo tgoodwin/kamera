@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -41,13 +41,13 @@ func (s *StateClassifier) computeSignature(contents ObjectVersions) string {
 	return util.ShortenHash(strings.Join(anonHashes, "|"))
 }
 
-func (s *StateClassifier) GroupBySignature(states []ConvergedState) map[string][]ConvergedState {
-	statesBySignature := make(map[string][]ConvergedState)
+func (s *StateClassifier) GroupBySignature(states []ResultState) map[string][]ResultState {
+	statesBySignature := make(map[string][]ResultState)
 	for _, converged := range states {
 		contents := converged.State.Contents.All()
 		signature := s.computeSignature(contents)
 		if _, ok := statesBySignature[signature]; !ok {
-			statesBySignature[signature] = []ConvergedState{}
+			statesBySignature[signature] = []ResultState{}
 		}
 		statesBySignature[signature] = append(statesBySignature[signature], converged)
 	}
@@ -55,7 +55,7 @@ func (s *StateClassifier) GroupBySignature(states []ConvergedState) map[string][
 	return statesBySignature
 }
 
-func (s *StateClassifier) ClassifyResults(states []ConvergedState, predicate StatePredicate) []ClassifiedState {
+func (s *StateClassifier) ClassifyResults(states []ResultState, predicate StatePredicate) []ClassifiedState {
 	happyCount := 0
 	badCount := 0
 	classified := []ClassifiedState{}
@@ -110,7 +110,7 @@ type ClassifiedResult struct {
 
 // ClassifiedState holds a state with its classification information
 type ClassifiedState struct {
-	State          ConvergedState
+	State          ResultState
 	Signature      string   // a hash representing the state "shape"
 	ID             string   // something we produce to facilitate bookkeeping during analysis
 	Classification string   // "happy" or "bad"
@@ -124,6 +124,11 @@ type PredicateBuilder struct {
 	resolver VersionManager
 }
 
+func canonicalKindSpec(kind string) string {
+	gk := util.ParseGroupKind(kind)
+	return util.CanonicalGroupKind(gk.Group, gk.Kind)
+}
+
 // NewPredicateBuilder creates a new predicate builder with the given resolver
 func NewPredicateBuilder(resolver VersionManager) *PredicateBuilder {
 	return &PredicateBuilder{
@@ -133,28 +138,30 @@ func NewPredicateBuilder(resolver VersionManager) *PredicateBuilder {
 
 // ObjectExists creates a predicate that checks if an object exists
 func (b *PredicateBuilder) ObjectExists(kind, objectID string) StatePredicate {
+	targetKind := canonicalKindSpec(kind)
 	return func(state StateNode) (bool, string) {
 		for key := range state.Objects() {
-			if key.IdentityKey.Kind == kind && key.IdentityKey.ObjectID == objectID {
+			if key.CanonicalGroupKind() == targetKind && key.IdentityKey.ObjectID == objectID {
 				return true, ""
 			}
 		}
-		return false, fmt.Sprintf("Object %s/%s does not exist", kind, objectID)
+		return false, fmt.Sprintf("Object %s/%s does not exist", targetKind, objectID)
 	}
 }
 
 // ObjectsCountOfKind creates a predicate that checks the count of objects of a given kind
 func (b *PredicateBuilder) ObjectsCountOfKind(kind string, expectedCount int) StatePredicate {
+	targetKind := canonicalKindSpec(kind)
 	return func(state StateNode) (bool, string) {
 		count := 0
 		for key := range state.Objects() {
-			if key.IdentityKey.Kind == kind {
+			if key.CanonicalGroupKind() == targetKind {
 				count++
 			}
 		}
 
 		if count != expectedCount {
-			return false, fmt.Sprintf("Found %d objects of kind %s, expected %d", count, kind, expectedCount)
+			return false, fmt.Sprintf("Found %d objects of kind %s, expected %d", count, targetKind, expectedCount)
 		}
 		return true, ""
 	}
@@ -162,35 +169,36 @@ func (b *PredicateBuilder) ObjectsCountOfKind(kind string, expectedCount int) St
 
 // ObjectField creates a predicate that checks a specific field in an object
 func (b *PredicateBuilder) ObjectField(kind, objectID string, fieldPath []string, expectedValue interface{}) StatePredicate {
+	targetKind := canonicalKindSpec(kind)
 	return func(state StateNode) (bool, string) {
 		exists := false
 		var versionHash snapshot.VersionHash
 		for key, vHash := range state.Objects() {
-			if key.IdentityKey.Kind == kind && key.IdentityKey.ObjectID == objectID {
+			if key.CanonicalGroupKind() == targetKind && key.IdentityKey.ObjectID == objectID {
 				exists = true
 				versionHash = vHash
 				break
 			}
 		}
 		if !exists {
-			return false, fmt.Sprintf("Object %s/%s does not exist", kind, objectID)
+			return false, fmt.Sprintf("Object %s/%s does not exist", targetKind, objectID)
 		}
 
 		// Resolve the object
 		obj := b.resolver.Resolve(versionHash)
 		if obj == nil {
-			return false, fmt.Sprintf("Failed to resolve object %s/%s", kind, objectID)
+			return false, fmt.Sprintf("Failed to resolve object %s/%s", targetKind, objectID)
 		}
 
 		// Navigate and check field
 		value, found, err := unstructured.NestedFieldNoCopy(obj.Object, fieldPath...)
 		if err != nil || !found {
-			return false, fmt.Sprintf("Field %s not found in %s/%s", strings.Join(fieldPath, "."), kind, objectID)
+			return false, fmt.Sprintf("Field %s not found in %s/%s", strings.Join(fieldPath, "."), targetKind, objectID)
 		}
 
 		if !reflect.DeepEqual(value, expectedValue) {
 			return false, fmt.Sprintf("Field %s in %s/%s is %v, expected %v",
-				strings.Join(fieldPath, "."), kind, objectID, value, expectedValue)
+				strings.Join(fieldPath, "."), targetKind, objectID, value, expectedValue)
 		}
 
 		return true, ""

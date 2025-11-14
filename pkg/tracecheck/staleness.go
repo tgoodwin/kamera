@@ -7,9 +7,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 )
 
 type KindSequences map[string]int64
@@ -31,13 +31,14 @@ type StateSnapshot struct {
 	stateEvents []StateEvent // the changes that led to the current objectVersions
 }
 
-func newStateSnapshot(contents ObjectVersions, kindSequences KindSequences, stateEvents []StateEvent) StateSnapshot {
+// NewStateSnapshot constructs a StateSnapshot from the provided contents and kind sequences.
+func NewStateSnapshot(contents ObjectVersions, kindSequences KindSequences, stateEvents []StateEvent) StateSnapshot {
 	if len(contents) > 0 && len(kindSequences) == 0 {
 		panic("kind sequences must be non-empty if contents are non-empty")
 	}
 	// do some validation
 	stateKinds := lo.Map(stateEvents, func(e StateEvent, _ int) string {
-		return e.Effect.Key.IdentityKey.Kind
+		return e.Effect.Key.IdentityKey.CanonicalGroupKind()
 	})
 	stateKindSet := util.NewSet(stateKinds...)
 	seqKinds := lo.Keys(kindSequences)
@@ -100,14 +101,14 @@ func (s *StateSnapshot) FixAt(ks KindSequences) StateSnapshot {
 	// using causal cause 'FixAt' is usually used when parsing traces.
 	// TODO refactor to better encapusalte the causal OOO / regular replay logic
 	fixedView := replayCausalEventSequenceToState(filtered)
-	ss := newStateSnapshot(fixedView.contents, ks, s.stateEvents)
+	ss := NewStateSnapshot(fixedView.contents, ks, s.stateEvents)
 	return ss
 }
 
 func (s *StateSnapshot) DumpContents() {
 	keys := lo.Keys(s.contents)
 	sort.Slice(keys, func(i, j int) bool {
-		return keys[i].IdentityKey.Kind < keys[j].IdentityKey.Kind
+		return keys[i].CanonicalGroupKind() < keys[j].CanonicalGroupKind()
 	})
 	for _, key := range keys {
 		val := s.contents[key]
@@ -119,7 +120,15 @@ func (s *StateSnapshot) Debug() {
 	fmt.Println("State events:")
 	for _, e := range s.stateEvents {
 		sleeveObjectID := e.Effect.Key.IdentityKey.ObjectID
-		fmt.Printf("ts:%s (%d) frameID:%s controller=%s op=%s item=%s:%s %s\n", e.Timestamp, e.Sequence, util.Shorter(e.ReconcileID), e.ControllerID, e.OpType, e.Kind, util.Shorter(sleeveObjectID), util.ShortenHash(e.Effect.Version.Value))
+		fmt.Printf("ts:%s (%d) frameID:%s controller=%s op=%s item=%s:%s %s\n",
+			e.Timestamp,
+			e.Sequence,
+			util.Shorter(e.ReconcileID),
+			e.ControllerID,
+			e.OpType,
+			e.Effect.Key.IdentityKey.CanonicalGroupKind(),
+			util.Shorter(sleeveObjectID),
+			util.ShortenHash(e.Effect.Version.Value))
 	}
 	fmt.Println("contents:")
 	s.DumpContents()
@@ -170,7 +179,7 @@ func (s *StateSnapshot) Adjust(kind string, steps int64) (*StateSnapshot, error)
 	currSeqForKind := currSequences[kind]
 
 	eventsForKind := lo.Filter(s.stateEvents, func(e StateEvent, _ int) bool {
-		return e.Effect.Key.IdentityKey.Kind == kind
+		return e.Effect.Key.IdentityKey.CanonicalGroupKind() == kind
 	})
 	earlierEventsForKind := lo.Filter(eventsForKind, func(e StateEvent, _ int) bool {
 		return e.Sequence < currSeqForKind
@@ -347,8 +356,11 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 
 	// first pass -- ensure KindKnowledge exists for each kind we encounter
 	for _, e := range events {
-		if _, exists := g.Kinds[e.Kind]; !exists {
-			g.Kinds[e.Kind] = NewKindKnowledge()
+		kindKey := e.CanonicalGroupKind()
+		if _, exists := g.Kinds[kindKey]; !exists {
+			kk := NewKindKnowledge()
+			kk.Kind = kindKey
+			g.Kinds[kindKey] = kk
 		}
 	}
 
@@ -366,12 +378,14 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 
 	// process each event
 	for _, e := range changeEvents {
+		kindKey := e.CanonicalGroupKind()
 		version, err := g.resolver.ResolveVersion(e.CausalKey())
 		if err != nil {
 			return errors.Wrap(err, "resolving version")
 		}
 		// TODO fix the whole ResolveVersion business THIS IS A BLOODY HACK
-		key := snapshot.NewCompositeKey(
+		key := snapshot.NewCompositeKeyWithGroup(
+			e.Group,
 			e.Kind,
 			"default",
 			e.ObjectID, // this is supposed to be NAME
@@ -384,7 +398,7 @@ func (g *EventKnowledge) Load(events []event.Event) error {
 		)
 
 		g.globalResourceVersion++
-		g.Kinds[e.Kind].AddEvent(e, effect, g.globalResourceVersion)
+		g.Kinds[kindKey].AddEvent(e, effect, g.globalResourceVersion)
 	}
 
 	return nil
@@ -402,7 +416,7 @@ func CausalRollup(events []StateEvent) *StateSnapshot {
 
 func filterEventsAtSequence(events []StateEvent, sequencesForEachKind KindSequences) []StateEvent {
 	eventsByKind := lo.GroupBy(events, func(e StateEvent) string {
-		return e.Effect.Key.IdentityKey.Kind
+		return e.Effect.Key.IdentityKey.CanonicalGroupKind()
 	})
 	for kind := range eventsByKind {
 		_, exists := sequencesForEachKind[kind]
@@ -411,12 +425,12 @@ func filterEventsAtSequence(events []StateEvent, sequencesForEachKind KindSequen
 		}
 	}
 	toReplay := lo.Filter(events, func(e StateEvent, _ int) bool {
-		kindLimit := sequencesForEachKind[e.Effect.Key.IdentityKey.Kind]
+		kindLimit := sequencesForEachKind[e.Effect.Key.IdentityKey.CanonicalGroupKind()]
 		keep := e.Sequence <= kindLimit
 		if !keep {
 			logger.V(2).WithValues(
 				"Sequence", e.Sequence,
-				"Kind", e.Effect.Key.IdentityKey.Kind,
+				"Kind", e.Effect.Key.IdentityKey.CanonicalGroupKind(),
 				"KindLimit", kindLimit,
 			).Info("Dropping event")
 		}
@@ -462,7 +476,7 @@ type LookbackLimits map[string]LookbackLimit
 
 func getAllPossibleViews(baseState *StateSnapshot, relevantKinds []string, kindBounds LookbackLimits) []*StateSnapshot {
 	eventsByKind := lo.GroupBy(baseState.stateEvents, func(e StateEvent) string {
-		return e.Effect.Key.IdentityKey.Kind
+		return e.Effect.Key.IdentityKey.CanonicalGroupKind()
 	})
 	seqByKind := lo.MapValues(eventsByKind, func(events []StateEvent, key string) []int64 {
 		return lo.Map(events, func(e StateEvent, _ int) int64 {
@@ -498,7 +512,7 @@ func getAllPossibleViews(baseState *StateSnapshot, relevantKinds []string, kindB
 		// we preserve the original state but adjust the sequence numbers
 		// to reflect the new view among all possible stale views.
 		// the stale view must be "observed" via the Observe() method
-		out := newStateSnapshot(baseState.contents, staleSequences, baseState.stateEvents)
+		out := NewStateSnapshot(baseState.contents, staleSequences, baseState.stateEvents)
 		staleViews = append(staleViews, &out)
 		logger.V(2).WithValues(
 			"lookbackLimits", kindBounds,

@@ -3,7 +3,7 @@ package tracecheck
 import (
 	"sync"
 
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -18,6 +18,11 @@ func newVersionStore(store *snapshot.Store) *versionStore {
 	return &versionStore{
 		Store: store,
 	}
+}
+
+// NewVersionStore constructs a VersionManager backed by the provided snapshot store.
+func NewVersionStore(store *snapshot.Store) VersionManager {
+	return newVersionStore(store)
 }
 
 func (vs *versionStore) DebugKey(key string) {

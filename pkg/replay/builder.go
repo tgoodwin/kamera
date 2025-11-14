@@ -7,9 +7,9 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -50,7 +50,8 @@ func (b *Builder) AssignReconcilerToKind(reconcilerID, kind string) {
 	if b.reconcilerToKind == nil {
 		b.reconcilerToKind = make(map[string]string)
 	}
-	b.reconcilerToKind[reconcilerID] = kind
+	gk := util.ParseGroupKind(kind)
+	b.reconcilerToKind[reconcilerID] = util.CanonicalGroupKind(gk.Group, gk.Kind)
 }
 
 func (b *Builder) Store() Store {
@@ -293,10 +294,11 @@ func (r *Builder) generateCacheFrame(events []event.Event) (CacheFrame, error) {
 	for _, e := range events {
 		key := e.CausalKey()
 		if obj, ok := r.store[key]; ok {
-			if _, ok := cacheFrame[e.Kind]; !ok {
-				cacheFrame[e.Kind] = make(map[types.NamespacedName]*unstructured.Unstructured)
+			eventKindKey := e.CanonicalGroupKind()
+			if _, ok := cacheFrame[eventKindKey]; !ok {
+				cacheFrame[eventKindKey] = make(map[types.NamespacedName]*unstructured.Unstructured)
 			}
-			cacheFrame[e.Kind][types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}] = obj
+			cacheFrame[eventKindKey][types.NamespacedName{Namespace: obj.GetNamespace(), Name: obj.GetName()}] = obj
 		} else {
 			return nil, fmt.Errorf("object not found in store: %#v", key)
 		}
@@ -311,7 +313,8 @@ func (r *Builder) inferReconcileRequestFromReadset(controllerID string, readset 
 		// Assumption: reconcile routines are invoked upon a Resource that shares the same name (Kind)
 		// as the controller that is managing it.
 		kindForController := r.reconcilerToKind[controllerID]
-		if e.Kind == kindForController || e.Kind == controllerID {
+		eventKindKey := e.CanonicalGroupKind()
+		if eventKindKey == kindForController || e.Kind == controllerID {
 			if obj, ok := r.store[e.CausalKey()]; ok {
 				name := obj.GetName()
 				namespace := obj.GetNamespace()

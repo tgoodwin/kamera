@@ -19,16 +19,19 @@ package controller
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"sort"
+	"strconv"
+	"strings"
+	"time"
 
-	"github.com/tgoodwin/sleeve/pkg/tag"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -41,14 +44,13 @@ import (
 type ReplicaSetReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
-
-	KWOKMode bool
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
 func (r *ReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
+	now := metav1.Now()
 
 	// Fetch the ReplicaSet instance
 	rs := &appsv1.ReplicaSet{}
@@ -60,6 +62,7 @@ func (r *ReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		// ReplicaSet not found, likely deleted, return
 		return ctrl.Result{}, nil
 	}
+	rs.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("ReplicaSet"))
 
 	// Check if the ReplicaSet is being deleted
 	if !rs.DeletionTimestamp.IsZero() {
@@ -69,9 +72,14 @@ func (r *ReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// List existing pods for this ReplicaSet
 	podList := &corev1.PodList{}
+	selector, err := metav1.LabelSelectorAsSelector(rs.Spec.Selector)
+	if err != nil {
+		log.Error(err, "unable to parse ReplicaSet selector")
+		return ctrl.Result{}, err
+	}
 	if err := r.List(ctx, podList,
 		client.InNamespace(rs.Namespace),
-		client.MatchingLabels(rs.Spec.Selector.MatchLabels)); err != nil {
+		client.MatchingLabelsSelector{Selector: selector}); err != nil {
 		log.Error(err, "unable to list Pods")
 		return ctrl.Result{}, err
 	}
@@ -102,8 +110,12 @@ func (r *ReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Create pods if needed
 	if diff > 0 {
 		log.Info("Creating pods", "count", diff)
+		existingOrdinals := collectReplicaSetOrdinals(filteredPods, rs.Name)
 		for i := 0; i < diff; i++ {
-			pod, err := r.createPodFromTemplate(rs)
+			ordinal := nextAvailableOrdinal(existingOrdinals)
+			existingOrdinals[ordinal] = struct{}{}
+
+			pod, err := r.createPodFromTemplate(rs, ordinal)
 			if err != nil {
 				log.Error(err, "failed to create pod from template")
 				return ctrl.Result{}, err
@@ -135,13 +147,21 @@ func (r *ReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// Update ReplicaSet status
+	fullyLabeledReplicas := r.countFullyLabeledPods(filteredPods, &rs.Spec.Template)
+	readyReplicas := r.countReadyPods(filteredPods)
+	availableReplicas := r.countAvailablePods(filteredPods, rs.Spec.MinReadySeconds, now)
+
 	if rs.Status.Replicas != int32(len(filteredPods)) ||
-		rs.Status.ReadyReplicas != r.countReadyPods(filteredPods) ||
-		rs.Status.AvailableReplicas != r.countAvailablePods(filteredPods, rs) {
+		rs.Status.ReadyReplicas != readyReplicas ||
+		rs.Status.AvailableReplicas != availableReplicas ||
+		rs.Status.FullyLabeledReplicas != fullyLabeledReplicas ||
+		rs.Status.ObservedGeneration != rs.Generation {
 
 		rs.Status.Replicas = int32(len(filteredPods))
-		rs.Status.ReadyReplicas = r.countReadyPods(filteredPods)
-		rs.Status.AvailableReplicas = r.countAvailablePods(filteredPods, rs)
+		rs.Status.ReadyReplicas = readyReplicas
+		rs.Status.AvailableReplicas = availableReplicas
+		rs.Status.FullyLabeledReplicas = fullyLabeledReplicas
+		rs.Status.ObservedGeneration = rs.Generation
 
 		if err := r.Status().Update(ctx, rs); err != nil {
 			log.Error(err, "failed to update ReplicaSet status")
@@ -154,50 +174,28 @@ func (r *ReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 // createPodFromTemplate creates a new Pod based on the ReplicaSet's pod template
-func (r *ReplicaSetReconciler) createPodFromTemplate(rs *appsv1.ReplicaSet) (*corev1.Pod, error) {
-	// Generate a unique name for the pod
-	podName := fmt.Sprintf("%s-%s", rs.Name, generateRandomSuffix(5))
-
-	outLabels := make(map[string]string)
-	for k, v := range rs.Spec.Template.Labels {
-		if k == tag.TraceyObjectID {
-			continue
-		}
-		outLabels[k] = v
-	}
-
-	if r.KWOKMode {
-		pod, err := createDummyPod(podName, rs.Namespace, nil)
-		if err != nil {
-			return nil, err
-		}
-		return pod, nil
-	}
-
-	// Create a new pod based on the template
+func (r *ReplicaSetReconciler) createPodFromTemplate(rs *appsv1.ReplicaSet, ordinal int) (*corev1.Pod, error) {
+	template := rs.Spec.Template.DeepCopy()
+	podName := fmt.Sprintf("%s-%d", rs.Name, ordinal)
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: rs.Namespace,
-			Labels:    rs.Spec.Template.Labels,
-			OwnerReferences: []metav1.OwnerReference{
-				*metav1.NewControllerRef(rs, appsv1.SchemeGroupVersion.WithKind("ReplicaSet")),
-			},
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: corev1.SchemeGroupVersion.String(),
+			Kind:       "Pod",
 		},
-		Spec: rs.Spec.Template.Spec,
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        podName,
+			Namespace:   rs.Namespace,
+			Labels:      template.Labels,
+			Annotations: template.Annotations,
+		},
+		Spec: template.Spec,
+	}
+
+	if err := controllerutil.SetControllerReference(rs, pod, r.Scheme); err != nil {
+		return nil, err
 	}
 
 	return pod, nil
-}
-
-// generateRandomSuffix creates a random string of given length for use in pod names
-func generateRandomSuffix(length int) string {
-	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	result := make([]byte, length)
-	for i := range result {
-		result[i] = charset[rand.Intn(len(charset))]
-	}
-	return string(result)
 }
 
 // countReadyPods counts the number of pods that are in the Ready state
@@ -211,12 +209,91 @@ func (r *ReplicaSetReconciler) countReadyPods(pods []corev1.Pod) int32 {
 	return count
 }
 
+func (r *ReplicaSetReconciler) countFullyLabeledPods(pods []corev1.Pod, template *corev1.PodTemplateSpec) int32 {
+	if template == nil {
+		return 0
+	}
+	selector := labelsFromTemplate(template)
+	var count int32
+	for _, pod := range pods {
+		if selector.Matches(labels.Set(pod.Labels)) {
+			count++
+		}
+	}
+	return count
+}
+
 // countAvailablePods counts the number of pods that have been running and ready
 // for at least minReadySeconds
-func (r *ReplicaSetReconciler) countAvailablePods(pods []corev1.Pod, rs *appsv1.ReplicaSet) int32 {
-	// In a real implementation, you would check how long the pod has been ready
-	// For simplicity, we'll just return the number of ready pods
-	return r.countReadyPods(pods)
+func (r *ReplicaSetReconciler) countAvailablePods(pods []corev1.Pod, minReadySeconds int32, now metav1.Time) int32 {
+	var count int32
+	for i := range pods {
+		if isPodAvailable(&pods[i], minReadySeconds, now) {
+			count++
+		}
+	}
+	return count
+}
+
+func labelsFromTemplate(template *corev1.PodTemplateSpec) labels.Selector {
+	if template == nil {
+		return labels.Everything()
+	}
+	if len(template.Labels) == 0 {
+		return labels.Everything()
+	}
+	return labels.SelectorFromSet(template.Labels)
+}
+
+func isPodAvailable(pod *corev1.Pod, minReadySeconds int32, now metav1.Time) bool {
+	if !isPodReady(pod) {
+		return false
+	}
+	if minReadySeconds == 0 {
+		return true
+	}
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+			readySince := condition.LastTransitionTime
+			if readySince.IsZero() {
+				return false
+			}
+			minReadyTime := readySince.Time.Add(time.Duration(minReadySeconds) * time.Second)
+			return !now.Time.Before(minReadyTime)
+		}
+	}
+	return false
+}
+
+func collectReplicaSetOrdinals(pods []corev1.Pod, replicaSetName string) map[int]struct{} {
+	ordinals := make(map[int]struct{})
+	if replicaSetName == "" {
+		return ordinals
+	}
+	prefix := replicaSetName + "-"
+	for _, pod := range pods {
+		if !strings.HasPrefix(pod.Name, prefix) {
+			continue
+		}
+		suffix := strings.TrimPrefix(pod.Name, prefix)
+		if suffix == "" {
+			continue
+		}
+		if ordinal, err := strconv.Atoi(suffix); err == nil && ordinal >= 0 {
+			ordinals[ordinal] = struct{}{}
+		}
+	}
+	return ordinals
+}
+
+func nextAvailableOrdinal(existing map[int]struct{}) int {
+	ordinal := 0
+	for {
+		if _, ok := existing[ordinal]; !ok {
+			return ordinal
+		}
+		ordinal++
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

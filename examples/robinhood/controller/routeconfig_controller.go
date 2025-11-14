@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
+	appsv1 "github.com/tgoodwin/kamera/examples/robinhood/api/v1"
 )
 
 // FelixReconciler reconciles a RouteConfig object

@@ -3,7 +3,8 @@ package tracecheck
 import "fmt"
 
 type Result struct {
-	ConvergedStates []ConvergedState
+	ConvergedStates []ResultState
+	AbortedStates   []ResultState
 }
 
 func (r *Result) Summarize() {

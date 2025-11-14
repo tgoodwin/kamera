@@ -9,19 +9,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/tag"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/util"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type Event struct {
+	APIVersion   string            `json:"apiVersion,omitempty"`
 	ID           string            `json:"id"`
 	Timestamp    string            `json:"timestamp"`
 	ReconcileID  string            `json:"reconcile_id"`
 	ControllerID string            `json:"controller_id"`
 	RootEventID  string            `json:"root_event_id"`
 	OpType       string            `json:"op_type"`
+	Group        string            `json:"group,omitempty"`
 	Kind         string            `json:"kind"`
 	ObjectID     string            `json:"object_id"`
 	Version      string            `json:"version"`
@@ -34,14 +37,17 @@ var _ json.Unmarshaler = (*Event)(nil)
 
 func NewOperation(obj client.Object, reconcileID, controllerID, rootEventID string, op OperationType) (*Event, error) {
 	id := uuid.New().String()
+	gvk := util.GetGroupVersionKind(obj)
 	e := &Event{
+		APIVersion:   gvk.GroupVersion().String(),
+		Group:        gvk.Group,
+		Kind:         gvk.Kind,
 		ID:           id,
 		Timestamp:    FormatTimeStr(time.Now()),
 		ReconcileID:  reconcileID,
 		ControllerID: controllerID,
 		RootEventID:  rootEventID,
 		OpType:       string(op),
-		Kind:         util.GetKind(obj),
 
 		// TODO CHANGE TO SLEEVE OBJECT ID
 		ObjectID: string(obj.GetUID()),
@@ -57,9 +63,9 @@ func NewOperation(obj client.Object, reconcileID, controllerID, rootEventID stri
 
 func (e *Event) CausalKey() CausalKey {
 	return CausalKey{
-		Kind:     e.Kind,
-		ObjectID: e.ObjectID,
-		ChangeID: e.MustGetChangeID(),
+		GroupVersionKind: schema.FromAPIVersionAndKind(e.APIVersion, e.Kind),
+		ObjectID:         e.ObjectID,
+		ChangeID:         e.MustGetChangeID(),
 	}
 }
 
@@ -129,6 +135,9 @@ func (e *Event) UnmarshalJSON(data []byte) error {
 	}
 
 	e.Labels = aux.Labels
+	if e.Group == "" {
+		e.Group = schema.FromAPIVersionAndKind(e.APIVersion, e.Kind).Group
+	}
 	return nil
 }
 
@@ -169,10 +178,18 @@ func (e Event) MarshalJSON() ([]byte, error) {
 
 func (e Event) VersionKey() snapshot.VersionKey {
 	return snapshot.VersionKey{
-		Kind:     e.Kind,
+		Kind:     util.CanonicalGroupKind(e.Group, e.Kind),
 		ObjectID: e.ObjectID,
 		Version:  string(e.MustGetChangeID()),
 	}
+}
+
+func (e Event) GroupKind() schema.GroupKind {
+	return schema.FromAPIVersionAndKind(e.APIVersion, e.Kind).GroupKind()
+}
+
+func (e Event) CanonicalGroupKind() string {
+	return util.CanonicalGroupKind(e.Group, e.Kind)
 }
 
 func Earliest(events []Event) Event {

@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/samber/lo"
-	appsv1 "github.com/tgoodwin/sleeve/examples/robinhood/api/v1"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
-	"github.com/tgoodwin/sleeve/pkg/tracecheck"
-	sleevelog "github.com/tgoodwin/sleeve/pkg/util/logger"
+	appsv1 "github.com/tgoodwin/kamera/examples/robinhood/api/v1"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
+	sleevelog "github.com/tgoodwin/kamera/pkg/util/logger"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -97,9 +97,14 @@ func main() {
 		}
 	})
 
-	eb.WithResourceDep("ZookeeperCluster", "ZookeeperReconciler")
-	eb.WithResourceDep("PersistentVolumeClaim", "ZookeeperReconciler")
-	eb.AssignReconcilerToKind("ZookeeperReconciler", "ZookeeperCluster")
+	const (
+		zkClusterKind = "zookeeper.pravega.io/ZookeeperCluster"
+		pvcKind       = "core/PersistentVolumeClaim"
+	)
+
+	eb.WithResourceDep(zkClusterKind, "ZookeeperReconciler")
+	eb.WithResourceDep(pvcKind, "ZookeeperReconciler")
+	eb.AssignReconcilerToKind("ZookeeperReconciler", zkClusterKind)
 
 	emitter := event.NewDebugEmitter()
 	eb.WithEmitter(emitter)

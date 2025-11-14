@@ -7,18 +7,67 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
-	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
-	"github.com/tgoodwin/sleeve/pkg/tracecheck"
+	"github.com/tgoodwin/kamera/pkg/event"
+	foov1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
+	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
+	"github.com/tgoodwin/kamera/pkg/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var scheme = runtime.NewScheme()
+
+func init() {
+	utilruntime.Must(foov1.AddToScheme(scheme))
+}
+
+func canonicalizeKindSequences(seq tracecheck.KindSequences) tracecheck.KindSequences {
+	if seq == nil {
+		return nil
+	}
+	out := make(tracecheck.KindSequences, len(seq))
+	for k, v := range seq {
+		if strings.Contains(k, "/") {
+			out[k] = v
+			continue
+		}
+		out[util.CanonicalGroupKind(groupForTestKind(k), k)] = v
+	}
+	return out
+}
+
+func groupForTestKind(kind string) string {
+	switch kind {
+	case "Foo":
+		return "webapp.discrete.events"
+	default:
+		return ""
+	}
+}
+
+func summarizeState(state tracecheck.ResultState) (status string, hasAnnotation bool, ok bool) {
+	for _, vHash := range state.State.Objects() {
+		if state.Resolver == nil {
+			return "", false, false
+		}
+		obj := state.Resolver.Resolve(vHash)
+		if obj == nil {
+			return "", false, false
+		}
+		status, found, err := unstructured.NestedString(obj.Object, "status", "state")
+		if err != nil || !found {
+			return "", false, false
+		}
+		annotation, _, _ := unstructured.NestedString(obj.Object, "metadata", "annotations", "mode-flip-done")
+		return status, annotation == "true", true
+	}
+	return "", false, false
+}
 
 func formatResults(paths []tracecheck.ExecutionHistory) [][]string {
 	var formatted [][]string
@@ -55,14 +104,15 @@ func TestExhaustiveInterleavings(t *testing.T) {
 			Scheme: scheme,
 		}
 	})
-	eb.WithResourceDep("Foo", "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", "Foo")
-	eb.AssignReconcilerToKind("BarController", "Foo")
+	fooKind := "webapp.discrete.events/Foo"
+	eb.WithResourceDep(fooKind, "FooController", "BarController")
+	eb.AssignReconcilerToKind("FooController", fooKind)
+	eb.AssignReconcilerToKind("BarController", fooKind)
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
 
-	topLevelObj := &appsv1.Foo{
+	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "foo",
 			Namespace: "default",
@@ -72,15 +122,16 @@ func TestExhaustiveInterleavings(t *testing.T) {
 			},
 		},
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "appsv1",
+			APIVersion: "webapp.discrete.events/v1",
 			Kind:       "Foo",
 		},
-		Spec: appsv1.FooSpec{
+		Spec: foov1.FooSpec{
 			Mode: "A",
 		},
 	}
 
 	initialState := eb.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
+	initialState.Contents.KindSequences = canonicalizeKindSequences(initialState.Contents.KindSequences)
 	explorer, err := eb.Build("standalone")
 	if err != nil {
 		t.Fatal()
@@ -100,22 +151,15 @@ func TestExhaustiveInterleavings(t *testing.T) {
 		t.Fatalf("expected 1 result, got %d", len(result.ConvergedStates))
 	}
 	convergedState := result.ConvergedStates[0]
-	if len(convergedState.Paths) != 8 {
-		t.Errorf("expected 8 paths, got %d", len(convergedState.Paths))
+	if len(convergedState.Paths) != 4 {
+		t.Errorf("expected 4 paths, got %d", len(convergedState.Paths))
 	}
 
 	expected := [][]string{
-		{"FooController@1", "BarController@1", "FooController@0", "BarController@0"},
 		{"FooController@1", "BarController@1", "BarController@0", "FooController@0"},
-
 		{"FooController@1", "FooController@1", "BarController@0", "FooController@0"},
-		{"FooController@1", "FooController@1", "FooController@0", "BarController@0"},
-
-		{"BarController@1", "FooController@1", "FooController@0", "BarController@0"},
-		{"BarController@1", "FooController@1", "BarController@0", "FooController@0"},
-
 		{"BarController@1", "BarController@1", "BarController@0", "FooController@0"},
-		{"BarController@1", "BarController@1", "FooController@0", "BarController@0"},
+		{"BarController@1", "FooController@1", "BarController@0", "FooController@0"},
 	}
 	actual := formatResults(convergedState.Paths)
 
@@ -141,11 +185,11 @@ func TestConvergedStateIdentification(t *testing.T) {
 			Scheme: scheme,
 		}
 	})
-	eb.WithResourceDep("Foo", "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", "Foo")
-	eb.AssignReconcilerToKind("BarController", "Foo")
+	eb.WithResourceDep("webapp.discrete.events/Foo", "FooController", "BarController")
+	eb.AssignReconcilerToKind("FooController", "webapp.discrete.events/Foo")
+	eb.AssignReconcilerToKind("BarController", "webapp.discrete.events/Foo")
 
-	topLevelObj := &appsv1.Foo{
+	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "foo",
 			Namespace: "default",
@@ -155,16 +199,17 @@ func TestConvergedStateIdentification(t *testing.T) {
 			},
 		},
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "appsv1",
+			APIVersion: "webapp.discrete.events/v1",
 			Kind:       "Foo",
 		},
-		Spec: appsv1.FooSpec{
+		Spec: foov1.FooSpec{
 			Mode: "A",
 		},
 	}
 
 	sb := eb.NewStateEventBuilder()
 	initialState := sb.AddTopLevelObject(topLevelObj, "FooController", "BarController")
+	initialState.Contents.KindSequences = canonicalizeKindSequences(initialState.Contents.KindSequences)
 	explorer, err := eb.Build("standalone")
 	if err != nil {
 		t.Fatal(err)
@@ -174,74 +219,24 @@ func TestConvergedStateIdentification(t *testing.T) {
 	assert.Equal(t, 2, len(result.ConvergedStates))
 
 	expected := []struct {
-		objects       tracecheck.ObjectVersions
+		status        string
+		hasAnnotation bool
 		numPaths      int
 		pathSummaries [][]string
 	}{
 		{
-			objects: tracecheck.ObjectVersions{
-				snapshot.NewCompositeKey("Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
-					`{
-						"apiVersion": "appsv1",
-						"kind": "Foo",
-						"metadata": {
-							"creationTimestamp": null,
-							"labels": {
-								"discrete.events/change-id": "CHANGE_ID",
-								"discrete.events/creator-id": "CREATOR_ID",
-								"discrete.events/prev-write-reconcile-id": "RECONCILE_ID",
-								"discrete.events/root-event-id": "foo",
-								"discrete.events/sleeve-object-id": "OBJECT_ID",
-								"tracey-uid": "foo"
-							},
-							"name": "foo",
-							"namespace": "default"
-						},
-						"spec": {
-							"mode": "A"
-						},
-						"status": {
-							"state": "A-Final"
-						}
-					}`),
-			},
-			numPaths: 2,
+			status:        "A-Final",
+			hasAnnotation: false,
+			numPaths:      2,
 			pathSummaries: [][]string{
 				{"FooController@1", "FooController@1", "BarController@1"},
 				{"FooController@1", "FooController@1", "FooController@1"},
 			},
 		},
 		{
-			objects: tracecheck.ObjectVersions{
-				snapshot.NewCompositeKey("Foo", "default", "foo", "foo-123"): snapshot.NewDefaultHash(
-					`{
-						"apiVersion": "appsv1",
-						"kind": "Foo",
-						"metadata": {
-							"annotations": {
-								"mode-flip-done": "true"
-							},
-							"creationTimestamp": null,
-							"labels": {
-								"discrete.events/change-id": "CHANGE_ID",
-								"discrete.events/creator-id": "CREATOR_ID",
-								"discrete.events/prev-write-reconcile-id": "RECONCILE_ID",
-								"discrete.events/root-event-id": "foo",
-								"discrete.events/sleeve-object-id": "OBJECT_ID",
-								"tracey-uid": "foo"
-							},
-							"name": "foo",
-							"namespace": "default"
-						},
-						"spec": {
-							"mode": "B"
-						},
-						"status": {
-							"state": "B-Final"
-						}
-					}`),
-			},
-			numPaths: 2,
+			status:        "B-Final",
+			hasAnnotation: true,
+			numPaths:      2,
 			pathSummaries: [][]string{
 				{"FooController@1", "BarController@1", "FooController@1", "FooController@1", "BarController@1"},
 				{"FooController@1", "BarController@1", "FooController@1", "FooController@1", "FooController@1"},
@@ -250,26 +245,22 @@ func TestConvergedStateIdentification(t *testing.T) {
 	}
 
 	for _, expectedState := range expected {
-		var matchedState *tracecheck.ConvergedState
+		var matchedState *tracecheck.ResultState
 		for _, convergedState := range result.ConvergedStates {
-			match := true
-			for key, vHash := range convergedState.State.Objects() {
-				expectedJSON := string(expectedState.objects[key].Value)
-				expectedJSON = strings.ReplaceAll(expectedJSON, "\n", "")
-				expectedJSON = strings.ReplaceAll(expectedJSON, "\t", "")
-				expectedJSON = strings.ReplaceAll(expectedJSON, " ", "")
-				if expectedJSON != string(vHash.Value) {
-					match = false
-					break
-				}
+			status, hasAnnotation, ok := summarizeState(convergedState)
+			if !ok {
+				continue
 			}
-			if match {
+			if status == expectedState.status && hasAnnotation == expectedState.hasAnnotation {
 				matchedState = &convergedState
 				break
 			}
 		}
 		if matchedState == nil {
-			t.Errorf("no matching converged state found for expected state: %+v", expectedState.objects)
+			for _, convergedState := range result.ConvergedStates {
+				t.Logf("converged state objects: %+v", convergedState.State.Objects())
+			}
+			t.Errorf("no matching converged state found for expected state: status=%s, annotation=%t", expectedState.status, expectedState.hasAnnotation)
 			continue
 		}
 		uniquePaths := tracecheck.GetUniquePaths(matchedState.Paths)

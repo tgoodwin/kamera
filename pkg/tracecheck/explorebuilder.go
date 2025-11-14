@@ -5,28 +5,37 @@ import (
 	"time"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/replay"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/tag"
-	"github.com/tgoodwin/sleeve/pkg/tracegen"
-	"github.com/tgoodwin/sleeve/pkg/util"
-	"github.com/tgoodwin/sleeve/sleevectrl/pkg/controller"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/replay"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/tracegen"
+	"github.com/tgoodwin/kamera/pkg/util"
+	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 var CleanupReconcilerID = "CleanupReconciler"
 
+const (
+	deploymentControllerID = "DeploymentController"
+)
+
 type ExplorerBuilder struct {
-	reconcilers      map[string]ReconcilerConstructor
-	resourceDeps     ResourceDeps
-	scheme           *runtime.Scheme
-	emitter          testEmitter
-	snapStore        *snapshot.Store
-	reconcilerToKind map[string]string
+	reconcilers                map[string]ReconcilerConstructor
+	recorderInjectedStrategies map[string]func(recorder replay.EffectRecorder) Strategy
+	resourceDeps               ResourceDeps
+	scheme                     *runtime.Scheme
+	emitter                    testEmitter
+	snapStore                  *snapshot.Store
+	reconcilerToKind           map[string]string
 
 	priorityBuilder *PriorityStrategyBuilder
 
@@ -37,23 +46,38 @@ type ExplorerBuilder struct {
 }
 
 func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
-	return &ExplorerBuilder{
-		reconcilers:      make(map[string]ReconcilerConstructor),
-		resourceDeps:     make(ResourceDeps),
-		scheme:           scheme,
-		snapStore:        snapshot.NewStore(),
-		reconcilerToKind: make(map[string]string),
+	utilruntime.Must(appsv1.AddToScheme(scheme))
+	utilruntime.Must(corev1.AddToScheme(scheme))
+
+	builder := &ExplorerBuilder{
+		reconcilers:                make(map[string]ReconcilerConstructor),
+		recorderInjectedStrategies: make(map[string]func(recorder replay.EffectRecorder) Strategy),
+		resourceDeps:               make(ResourceDeps),
+		scheme:                     scheme,
+		snapStore:                  snapshot.NewStore(),
+		reconcilerToKind:           make(map[string]string),
 
 		config: &ExploreConfig{
 			MaxDepth:                10,
 			KindBoundsPerReconciler: make(map[string]ReconcilerConfig),
 		},
 	}
+
+	builder.registerCoreControllers()
+
+	return builder
 }
 
 func (b *ExplorerBuilder) WithReconciler(id string, constructor ReconcilerConstructor) *ExplorerBuilder {
 	b.reconcilers[id] = constructor
 	return b
+}
+
+func (b *ExplorerBuilder) WithCustomStrategy(id string, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
+	{
+		b.recorderInjectedStrategies[id] = strategyFunc
+		return b
+	}
 }
 
 func (b *ExplorerBuilder) WithDebug() {
@@ -65,13 +89,22 @@ func (b *ExplorerBuilder) BreakEarly() {
 }
 
 func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) *ExplorerBuilder {
-	if _, ok := b.resourceDeps[kind]; !ok {
-		b.resourceDeps[kind] = util.NewSet[string]()
+	return b.WithResourceDepGK(parseKindString(kind), reconcilerIDs...)
+}
+
+func (b *ExplorerBuilder) WithResourceDepGK(gk schema.GroupKind, reconcilerIDs ...string) *ExplorerBuilder {
+	key := util.CanonicalGroupKind(gk.Group, gk.Kind)
+	if _, ok := b.resourceDeps[key]; !ok {
+		b.resourceDeps[key] = util.NewSet[string]()
 	}
 	for _, id := range reconcilerIDs {
-		b.resourceDeps[kind].Add(id)
+		b.resourceDeps[key].Add(id)
 	}
 	return b
+}
+
+func parseKindString(kind string) schema.GroupKind {
+	return util.ParseGroupKind(kind)
 }
 
 func (b *ExplorerBuilder) WithPriorityStrategy(p *PriorityStrategyBuilder) *ExplorerBuilder {
@@ -104,9 +137,77 @@ func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBu
 	return b
 }
 
+// TODO make how we handle kinds more type safe
 func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *ExplorerBuilder {
-	b.reconcilerToKind[reconcilerID] = kind
+	gk := parseKindString(kind)
+	b.reconcilerToKind[reconcilerID] = util.CanonicalGroupKind(gk.Group, gk.Kind)
 	return b
+}
+
+func (b *ExplorerBuilder) registerCoreControllers() {
+	// Deployment Controller
+	b.WithReconciler("DeploymentController", func(c Client) Reconciler {
+		return &controller.DeploymentReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
+	b.AssignReconcilerToKind(deploymentControllerID, "apps/Deployment")
+	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, deploymentControllerID)
+	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, deploymentControllerID)
+
+	// ReplicaSet Controller
+	b.WithReconciler("ReplicaSetController", func(c Client) Reconciler {
+		return &controller.ReplicaSetReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
+	b.AssignReconcilerToKind("ReplicaSetController", "apps/ReplicaSet")
+	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, "ReplicaSetController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "ReplicaSetController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, "ReplicaSetController")
+
+	// Pod Lifecycle Controller, e.g. "fake kubelet"
+	b.WithReconciler("PodLifecycleController", func(c Client) Reconciler {
+		return controller.NewPodLifecycleReconciler(
+			c,
+			b.scheme,
+			controller.NewDefaultPodLifecycleFactory(),
+			0,
+		)
+	})
+	b.AssignReconcilerToKind("PodLifecycleController", "Pod")
+	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "PodLifecycleController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "PodTemplate"}, "PodLifecycleController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, "PodLifecycleController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, "PodLifecycleController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "StatefulSet"}, "PodLifecycleController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "DaemonSet"}, "PodLifecycleController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "batch", Kind: "Job"}, "PodLifecycleController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "batch", Kind: "CronJob"}, "PodLifecycleController")
+
+	b.WithReconciler("ServiceController", func(c Client) Reconciler {
+		return &controller.ServiceReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
+	b.AssignReconcilerToKind("ServiceController", "Service")
+	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "ServiceController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "ServiceController")
+
+	// endpoints controller
+	b.WithReconciler("EndpointsController", func(c Client) Reconciler {
+		return &controller.EndpointsReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
+	b.AssignReconcilerToKind("EndpointsController", "Service")
+	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "EndpointsController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "EndpointsController")
+	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")
 }
 
 func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*ReconcilerContainer {
@@ -139,39 +240,36 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 		)
 
 		// Create wrapped client
-		wrappedClient := tracegen.New(
-			replayClient,
-			reconcilerID,
-			b.emitter,
-			tracegen.NewContextTracker(
-				reconcilerID,
-				b.emitter,
-				replay.FrameIDFromContext,
-			),
-		)
+		// wrappedClient := tracegen.New(
+		// 	replayClient,
+		// 	reconcilerID,
+		// 	b.emitter,
+		// 	tracegen.NewContextTracker(
+		// 		reconcilerID,
+		// 		b.emitter,
+		// 		replay.FrameIDFromContext,
+		// 	),
+		// )
 
 		// Create reconciler
-		r := constructor(wrappedClient)
-
-		// Get kind for reconciler
-		kindForReconciler, ok := b.reconcilerToKind[reconcilerID]
-		if !ok {
-			// Skip or handle error
-			panic(fmt.Sprintf("No kind assigned to reconciler: %s", reconcilerID))
-		}
+		r := constructor(replayClient)
 
 		// Create reconciler implementation
-		rImpl := &ReconcilerContainer{
-			Name: reconcilerID,
-			// TODO remove this. We no longer need to "infer" the reconcile request
-			For:            kindForReconciler,
-			Reconciler:     r,
-			versionManager: mgr,
-			effectReader:   mgr,
-			frameInserter:  frameManager,
-		}
+		rImpl := Wrap(reconcilerID, r, mgr, frameManager, mgr)
 
 		containers[reconcilerID] = rImpl
+	}
+
+	// for strategies where we need to inject the recorder directly (e.g. Knative)
+	for name, constructor := range b.recorderInjectedStrategies {
+		strategy := constructor(mgr)
+		container := &ReconcilerContainer{
+			Name:           name,
+			Strategy:       strategy,
+			effectReader:   mgr,
+			versionManager: mgr,
+		}
+		containers[container.Name] = container
 	}
 
 	return containers
@@ -203,18 +301,16 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 		Recorder: mgr,
 	}
 	container := &ReconcilerContainer{
-		Name: CleanupReconcilerID,
-		// For:  "Finalizer",
-		Reconciler:     r,
-		versionManager: mgr,
+		Name:           CleanupReconcilerID,
+		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, reconcilerName: CleanupReconcilerID, effectReader: mgr},
 		effectReader:   mgr,
-		frameInserter:  fm,
+		versionManager: mgr,
 	}
 	return container
 }
 
 func (b *ExplorerBuilder) NewStateEventBuilder() *StateEventBuilder {
-	return NewStateEventBuilder(b.snapStore)
+	return NewStateEventBuilder(b.snapStore, b.scheme)
 }
 
 func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
@@ -224,6 +320,8 @@ func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
 }
 
 func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...string) StateNode {
+	gvk := ensureObjectGVK(obj, b.scheme)
+
 	r, err := snapshot.AsRecord(obj, "start")
 	if err != nil {
 		panic("converting to unstructured: " + err.Error())
@@ -234,7 +332,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	}
 	vHash := b.snapStore.PublishWithStrategy(u, snapshot.AnonymizedHash)
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
-	ikey := snapshot.IdentityKey{Kind: util.GetKind(obj), ObjectID: sleeveObjectID}
+	ikey := snapshot.IdentityKey{Group: gvk.Group, Kind: gvk.Kind, ObjectID: sleeveObjectID}
 
 	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {
 		return PendingReconcile{
@@ -248,13 +346,13 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 		}
 	})
 
-	key := snapshot.NewCompositeKey(ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
+	key := snapshot.NewCompositeKeyWithGroup(gvk.Group, ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 
 	return StateNode{
-		Contents: newStateSnapshot(
+		Contents: NewStateSnapshot(
 			ObjectVersions{key: vHash},
 			KindSequences{
-				ikey.Kind: 1,
+				util.CanonicalGroupKind(gvk.Group, gvk.Kind): 1,
 			},
 			[]StateEvent{
 				{
@@ -280,7 +378,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 	}
 
 	if b.emitter == nil {
-		return nil, fmt.Errorf("no emitter specified")
+		b.emitter = event.NewInMemoryEmitter()
 	}
 
 	// Create version store and knowledge manager
@@ -292,11 +390,12 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		effects:      make(map[string]reconcileEffects),
 
 		snapStore: b.snapStore,
+		scheme:   b.scheme,
 
 		// effectContext tracks the state of the world at the time of reconcile
 		// and this is separate from snapshot store because we want this context
 		// to not be shared across branches of the exploration tree.
-		effectRKeys: make(map[string]util.Set[snapshot.ResourceKey]),
+		effectRKeys: make(map[string]util.Set[string]),
 
 		// effectIKeys tracks the identity keys that were read or written
 		// during a reconcile operation.
@@ -343,6 +442,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		knowledgeManager:     knowledgeManager,
 		config:               b.config,
 		effectContextManager: mgr,
+		versionManager:       vStore,
 
 		priorityHandler: b.priorityBuilder.Build(b.snapStore),
 	}
@@ -360,7 +460,8 @@ func (b *ExplorerBuilder) BuildLensManager(traceFilePath string) (*LensManager, 
 		versionStore: newVersionStore(b.snapStore),
 		effects:      make(map[string]reconcileEffects),
 		snapStore:    b.snapStore,
-		effectRKeys:  make(map[string]util.Set[snapshot.ResourceKey]),
+		scheme:       b.scheme,
+		effectRKeys:  make(map[string]util.Set[string]),
 		effectIKeys:  make(map[string]util.Set[snapshot.IdentityKey]),
 	}
 

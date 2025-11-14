@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/tgoodwin/sleeve/pkg/event"
-	appsv1 "github.com/tgoodwin/sleeve/pkg/test/integration/api/v1"
-	"github.com/tgoodwin/sleeve/pkg/test/integration/controller"
-	"github.com/tgoodwin/sleeve/pkg/tracecheck"
-	sleevelog "github.com/tgoodwin/sleeve/pkg/util/logger"
+	"github.com/tgoodwin/kamera/pkg/event"
+	appsv1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
+	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
+	sleevelog "github.com/tgoodwin/kamera/pkg/util/logger"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -49,9 +49,10 @@ func main() {
 			Scheme: scheme,
 		}
 	})
-	eb.WithResourceDep("Foo", "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", "Foo")
-	eb.AssignReconcilerToKind("BarController", "Foo")
+	const fooKind = "webapp.discrete.events/Foo"
+	eb.WithResourceDep(fooKind, "FooController", "BarController")
+	eb.AssignReconcilerToKind("FooController", fooKind)
+	eb.AssignReconcilerToKind("BarController", fooKind)
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
@@ -66,7 +67,7 @@ func main() {
 			},
 		},
 		TypeMeta: metav1.TypeMeta{
-			APIVersion: "appsv1",
+			APIVersion: "webapp.discrete.events/v1",
 			Kind:       "Foo",
 		},
 		Spec: appsv1.FooSpec{

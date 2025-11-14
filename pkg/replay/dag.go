@@ -1,8 +1,8 @@
 package replay
 
 import (
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/util"
 )
 
 type Node struct {
@@ -20,7 +20,7 @@ func FindReadDeps(events []event.Event) map[string]util.Set[string] {
 			if _, ok := reads[e.ControllerID]; !ok {
 				reads[e.ControllerID] = util.NewSet[string]()
 			}
-			reads[e.ControllerID].Add(e.Kind)
+			reads[e.ControllerID].Add(e.CanonicalGroupKind())
 		}
 	}
 	return reads
@@ -34,7 +34,7 @@ func FindWriteDeps(events []event.Event) map[string]util.Set[string] {
 			if _, ok := writes[e.ControllerID]; !ok {
 				writes[e.ControllerID] = util.NewSet[string]()
 			}
-			writes[e.ControllerID].Add(e.Kind)
+			writes[e.ControllerID].Add(e.CanonicalGroupKind())
 		}
 	}
 	return writes

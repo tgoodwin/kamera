@@ -6,8 +6,8 @@ import (
 
 	"maps"
 
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/util"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -198,10 +198,11 @@ func formatEventList(events []event.Event) string {
 	}
 	s := ""
 	for _, e := range events {
+		kindKey := e.CanonicalGroupKind()
 		if event.IsReadOp(event.OperationType(e.OpType)) {
-			s += fmt.Sprintf("\t{kind: %s, id: %s, ver: %s}\n", e.Kind, util.Shorter(e.ObjectID), e.Version)
+			s += fmt.Sprintf("\t{kind: %s, id: %s, ver: %s}\n", kindKey, util.Shorter(e.ObjectID), e.Version)
 		} else {
-			s += fmt.Sprintf("\t{kind: %s, id: %s, op: %s}\n", e.Kind, util.Shorter(e.ObjectID), e.OpType)
+			s += fmt.Sprintf("\t{kind: %s, id: %s, op: %s}\n", kindKey, util.Shorter(e.ObjectID), e.OpType)
 		}
 
 	}

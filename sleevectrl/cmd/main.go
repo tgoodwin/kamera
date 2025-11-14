@@ -36,9 +36,9 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	"github.com/tgoodwin/sleeve"
-	"github.com/tgoodwin/sleeve/pkg/util"
-	"github.com/tgoodwin/sleeve/sleevectrl/pkg/controller"
+	sleeve "github.com/tgoodwin/kamera"
+	"github.com/tgoodwin/kamera/pkg/util"
+	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -187,6 +187,18 @@ func main() {
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ReplicaSet")
+		os.Exit(1)
+	}
+	podLifecycleFactory := controller.NewDefaultPodLifecycleFactory()
+
+	podLifecycleReconciler := controller.NewPodLifecycleReconciler(
+		sleeve.Wrap(mgr.GetClient(), "PodLifecycleReconciler"),
+		mgr.GetScheme(),
+		podLifecycleFactory,
+		0,
+	)
+	if err = podLifecycleReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "PodLifecycle")
 		os.Exit(1)
 	}
 	if err = (&controller.PersistentVolumeClaimReconciler{

@@ -14,9 +14,10 @@ import (
 	"slices"
 
 	"github.com/pkg/errors"
-	"github.com/tgoodwin/sleeve/pkg/event"
-	"github.com/tgoodwin/sleeve/pkg/snapshot"
-	"github.com/tgoodwin/sleeve/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/tag"
+	"github.com/tgoodwin/kamera/pkg/util"
 )
 
 // ParseJSONLFile reads a JSONL file and parses each record into either a snapshot.Record or an event.Event.
@@ -108,12 +109,13 @@ func (b *ExplorerBuilder) ParseJSONLTrace(filePath string) ([]StateEvent, error)
 		ns := obj.GetNamespace()
 		name := obj.GetName()
 		sleeveObjectID := tag.GetSleeveObjectID(obj)
+		gvk := util.GetGroupVersionKind(obj)
 		stateEvent := StateEvent{
 			Event:       evt,
 			ReconcileID: evt.ReconcileID,
 			Timestamp:   evt.Timestamp,
 			Effect: newEffect(
-				snapshot.NewCompositeKey(obj.GetKind(), ns, name, sleeveObjectID),
+				snapshot.NewCompositeKeyWithGroup(gvk.Group, gvk.Kind, ns, name, sleeveObjectID),
 				snapshot.NewDefaultHash(string(record.Value)),
 				event.OperationType(evt.OpType),
 			),
