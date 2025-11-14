@@ -95,6 +95,27 @@ eb.WithResourceDep("mygroup.example.com/Foo", "MyCustomController")
 
 `WithStrategy` receives the effect recorder so your implementation can publish write sets just like the controller-runtime-based `tracecheck.Client` does automatically. You'll use the effect recorder to implement your own write set recording. Everything else—state tracking, pending reconcile management, and path exploration—works exactly the same, which makes it straightforward to mix and match controller-runtime reconcilers with bespoke logic in the same Explorer setup.
 
+### Inspecting exploration results
+
+Kamera ships with a terminal inspector that lets you interactively browse converged states, execution paths, and per-step effects. After running an exploration you can launch it inline:
+
+```go
+states := result.ConvergedStates
+if err := interactive.RunStateInspectorTUIView(states, true); err != nil {
+    log.Fatal(err)
+}
+```
+
+You can also save a snapshot for later review:
+
+```go
+if err := interactive.SaveInspectorDump(states, "camera_inspector_dump.json"); err != nil {
+    log.Fatal(err)
+}
+```
+
+Dump files can be reopened at any time via `go run ./cmd/inspect --dump camera_inspector_dump.json`, which restores the same UI. The inspector provides keyboard shortcuts (shown in the status bar) to switch between states, examine individual reconcile steps, and export dumps from within the UI.
+
 ## License
 
 This project is licensed under the terms of the [MIT License](LICENSE).
