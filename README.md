@@ -18,7 +18,82 @@ Kamera provides a set of tools to:
 
 ## Getting Started
 
-*(To be added)*
+
+1. **Install Kamera as a module dependency** (e.g., `go get github.com/tgoodwin/kamera@latest`).
+
+2. **Initialize a scheme with your APIs.**
+
+    ```go
+    scheme := runtime.NewScheme()
+    utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+    utilruntime.Must(myapiv1.AddToScheme(scheme)) // register your CRDs
+    ```
+
+3. **Create an ExplorerBuilder.** It automatically wires a default in-memory emitter, so no extra plumbing is needed unless you want to stream traces elsewhere.
+
+    ```go
+    eb := tracecheck.NewExplorerBuilder(scheme)
+    eb.WithMaxDepth(100) // optional
+    ```
+
+4. **Register each controller-runtime reconciler.** Supply a factory that accepts the Kamera client interface. Instantiate the reconciler with the scheme from earlier.
+
+    ```go
+    eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
+        return &fooctrl.FooReconciler{Client: c, Scheme: scheme}
+    })
+    eb.WithReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
+        return &barctrl.BarReconciler{Client: c, Scheme: scheme}
+    })
+    ```
+
+5. **Describe controller dependencies and ownership.** `WithResourceDep` declares which reconcilers subscribe to watch/read a kind, while `AssignReconcilerToKind` identifies the primary owners that should be triggered when objects of that kind change.
+
+    ```go
+    const fooKind = "mygroup.example.com/Foo"
+    const barKind = "mygroup.example.com/Bar"
+    eb.AssignReconcilerToKind("FooController", fooKind)          // FooController owns Foo resources
+    eb.AssignReconcilerToKind("BarController", barKind)          // BarController  owns Bar resources
+    eb.WithResourceDep(fooKind, "FooController", "BarController") // both controllers watch Foo objects
+    ```
+
+6. **Seed the initial cluster state.** Use the state builder helpers to create a `StateNode` that includes your top-level objects and pending reconciles.
+
+    ```go
+    sb := eb.NewStateEventBuilder()
+    initial := sb.AddTopLevelObject(fooObj, "FooController", "BarController")
+    ```
+
+7. **Build and run the explorer.**
+
+    ```go
+    explorer, err := eb.Build()
+    if err != nil {
+        log.Fatal(err)
+    }
+    result := explorer.Explore(context.Background(), initial)
+    for _, converged := range result.ConvergedStates {
+        fmt.Printf("paths to converged state: %d\n", len(converged.Paths))
+    }
+    ```
+
+That’s enough to start evaluating how your controllers interact across different interleavings.
+
+### Using non-controller-runtime controllers
+
+If your controllers aren’t built with `controller-runtime`, implement the `tracecheck.Strategy` interface (the same contract Kamera uses internally) and register it with the builder:
+
+```go
+eb.WithStrategy("MyCustomController", func(recorder replay.EffectRecorder) tracecheck.Strategy {
+    return &MyStrategy{
+        Recorder: recorder,
+        // ...inject whatever your reconciler needs...
+    }
+})
+eb.WithResourceDep("mygroup.example.com/Foo", "MyCustomController")
+```
+
+`WithStrategy` receives the effect recorder so your implementation can publish write sets just like the controller-runtime-based `tracecheck.Client` does automatically. You'll use the effect recorder to implement your own write set recording. Everything else—state tracking, pending reconcile management, and path exploration—works exactly the same, which makes it straightforward to mix and match controller-runtime reconcilers with bespoke logic in the same Explorer setup.
 
 ## License
 
