@@ -8,18 +8,23 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/kamera/pkg/event"
-	appsv1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
+	foov1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/pkg/util"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var scheme = runtime.NewScheme()
+
+func init() {
+	utilruntime.Must(foov1.AddToScheme(scheme))
+}
 
 func canonicalizeKindSequences(seq tracecheck.KindSequences) tracecheck.KindSequences {
 	if seq == nil {
@@ -107,7 +112,7 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
 
-	topLevelObj := &appsv1.Foo{
+	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "foo",
 			Namespace: "default",
@@ -120,7 +125,7 @@ func TestExhaustiveInterleavings(t *testing.T) {
 			APIVersion: "webapp.discrete.events/v1",
 			Kind:       "Foo",
 		},
-		Spec: appsv1.FooSpec{
+		Spec: foov1.FooSpec{
 			Mode: "A",
 		},
 	}
@@ -184,7 +189,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	eb.AssignReconcilerToKind("FooController", "webapp.discrete.events/Foo")
 	eb.AssignReconcilerToKind("BarController", "webapp.discrete.events/Foo")
 
-	topLevelObj := &appsv1.Foo{
+	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "foo",
 			Namespace: "default",
@@ -197,7 +202,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 			APIVersion: "webapp.discrete.events/v1",
 			Kind:       "Foo",
 		},
-		Spec: appsv1.FooSpec{
+		Spec: foov1.FooSpec{
 			Mode: "A",
 		},
 	}
