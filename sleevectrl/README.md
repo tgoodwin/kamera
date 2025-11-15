@@ -1,5 +1,5 @@
 # sleeve-core-controllers
-// TODO(user): Add simple overview of use/purpose
+This is a Kubebuilder-based reimplementation of the Kubernetes core controllers that run in `controller-manager`. Was used for research purposes.
 
 ## Description
 // TODO(user): An in-depth paragraph about your project and overview of use

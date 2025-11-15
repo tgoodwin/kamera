@@ -68,7 +68,7 @@ func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, name t
 	// our cleanup reconciler implementation needs to know what kind of object it is reconciling
 	// as reconcile.Request is only namespace/name. so we inject it through the context.
 	// TODO factor this cleanup-specific stuff out into a dedicated strategy
-	if s.reconcilerName == CleanupReconcilerID {
+	if s.reconcilerName == cleanupReconcilerID {
 		frameID := replay.FrameIDFromContext(ctx)
 		frameData, err := s.frameInserter.(*replay.FrameManager).GetCacheFrame(frameID)
 		if err != nil {

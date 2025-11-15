@@ -23,7 +23,6 @@ import (
 var inFile = flag.String("logfile", "default.log", "path to the log file")
 var objectID = flag.String("objectID", "", "object ID to analyze")
 var reconcileID = flag.String("reconcileID", "", "object ID to analyze")
-var debug = flag.Bool("debug", false, "enable debug logging")
 
 var scheme = runtime.NewScheme()
 
@@ -47,9 +46,6 @@ func main() {
 	builder, err := replay.ParseTrace(data)
 	if err != nil {
 		panic(err.Error())
-	}
-	if *debug {
-		builder.Debug()
 	}
 
 	const (
