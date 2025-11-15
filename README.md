@@ -79,6 +79,25 @@ Kamera provides a set of tools to:
 
 That’s enough to start evaluating how your controllers interact across different interleavings.
 
+### Knative Serving example
+
+For a full-featured sample, check `examples/knative-explore`. It wires Kamera into the Knative Serving control plane by:
+
+1. Reusing the same `ExplorerBuilder` steps as above.
+2. Registering Knative’s controllers via custom `Strategy` adapters (see `examples/knative-explore/knative`).
+3. Launching the interactive inspector once exploration completes.
+
+Each example has its own `go.mod`, so you can run it independently:
+
+```bash
+cd examples/knative-explore
+# if needed, point Go to a writable build cache and tidy dependencies
+GOCACHE=$(pwd)/.gocache go mod tidy
+GO111MODULE=on go run .
+```
+
+You’ll need network access to download Knative Serving and its dependencies the first time.
+
 ### Using non-controller-runtime controllers
 
 If your controllers aren’t built with `controller-runtime`, implement the `tracecheck.Strategy` interface (the same contract Kamera uses internally) and register it with the builder:
