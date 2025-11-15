@@ -22,9 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-var CleanupReconcilerID = "CleanupReconciler"
-
 const (
+	cleanupReconcilerID    = "CleanupReconciler"
 	deploymentControllerID = "DeploymentController"
 )
 
@@ -276,17 +275,17 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *ReconcilerContainer {
 	fm := replay.NewFrameManager(nil)
 	replayClient := replay.NewClient(
-		CleanupReconcilerID,
+		cleanupReconcilerID,
 		b.scheme,
 		fm,
 		mgr,
 	)
 	wrappedClient := tracegen.New(
 		replayClient,
-		CleanupReconcilerID,
+		cleanupReconcilerID,
 		b.emitter,
 		tracegen.NewContextTracker(
-			CleanupReconcilerID,
+			cleanupReconcilerID,
 			b.emitter,
 			replay.FrameIDFromContext,
 		),
@@ -296,8 +295,8 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 		Recorder: mgr,
 	}
 	container := &ReconcilerContainer{
-		Name:           CleanupReconcilerID,
-		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, reconcilerName: CleanupReconcilerID, effectReader: mgr},
+		Name:           cleanupReconcilerID,
+		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, reconcilerName: cleanupReconcilerID, effectReader: mgr},
 		effectReader:   mgr,
 		versionManager: mgr,
 	}
@@ -413,7 +412,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 	// Initialize reconcilers with appropriate clients
 	reconcilers := b.instantiateReconcilers(mgr)
 	cleanupReconciler := b.instantiateCleanupReconciler(mgr)
-	reconcilers[CleanupReconcilerID] = cleanupReconciler
+	reconcilers[cleanupReconcilerID] = cleanupReconciler
 
 	// Create knowledge manager if using replay builder
 	var knowledgeManager *EventKnowledge

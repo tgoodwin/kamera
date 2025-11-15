@@ -118,9 +118,9 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 				return nil, fmt.Errorf("object %s marked for deletion but has no deletion timestamp", nsName)
 			}
 			// queue up the CleanupReconciler to handle the actual removal
-			reconcileKey := fmt.Sprintf("%s:%s:%s", CleanupReconcilerID, nsName.Namespace, nsName.Name)
+			reconcileKey := fmt.Sprintf("%s:%s:%s", cleanupReconcilerID, nsName.Namespace, nsName.Name)
 			uniqueReconciles[reconcileKey] = PendingReconcile{
-				ReconcilerID: CleanupReconcilerID,
+				ReconcilerID: cleanupReconcilerID,
 				Request: reconcile.Request{
 					NamespacedName: nsName,
 				},
