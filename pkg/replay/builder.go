@@ -61,29 +61,6 @@ func (b *Builder) Store() Store {
 func (b *Builder) Events() []event.Event {
 	return b.events
 }
-func (b *Builder) Debug() {
-	fmt.Println("--- store contents ---")
-	b.DumpKeys()
-	fmt.Println("--- end store contents ---")
-	fmt.Println("--- events ---")
-	seenKeys := make(util.Set[event.CausalKey])
-	eventsMissingRecords := make(util.Set[event.CausalKey])
-	for _, e := range b.events {
-		seenKeys.Add(e.CausalKey())
-		if _, ok := b.Store()[e.CausalKey()]; !ok {
-			eventsMissingRecords.Add(e.CausalKey())
-		}
-	}
-	for key := range seenKeys {
-		fmt.Println(key)
-	}
-	fmt.Println("--- end events ---")
-	fmt.Println("--- events missing records ---")
-	for key := range eventsMissingRecords {
-		fmt.Println(key)
-	}
-	fmt.Println("--- end events missing records ---")
-}
 
 func (b *Builder) AnalyzeReconcile(reconcileID string) {
 	reconcileEvents := lo.Filter(b.events, func(e event.Event, _ int) bool {
