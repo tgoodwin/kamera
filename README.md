@@ -6,6 +6,18 @@
 
 The primary goal of Kamera is to help platform developers understand complex interactions within the control plane by capturing detailed execution traces, enabling offline analysis and functional replay. To ensure control plane reliability, Kamera also employs implementation-level model checking and simulation testing of control plane deployments, enabling developers to proactively catch problematic behaviors that only manifest under certain conditions before deploying their code.
 
+## Try it out first!
+
+Kick the tires with the Knative Serving explorer under `examples/knative-serving`. It wires the Knative Serving control plane up to Kamera and lets you inspect how Knative reconciles a `serving.knative.dev/v1/Service` across different interleavings.
+
+```bash
+cd examples/knative-serving
+# first run: fetch deps (needs outbound network) and cache them locally
+GOCACHE=$(pwd)/.gocache go mod tidy
+# launch the explorer + interactive inspector UI
+GOCACHE=$(pwd)/.gocache go run .
+```
+
 ## Core Capabilities
 
 Kamera provides a set of tools to:
@@ -78,6 +90,25 @@ Kamera provides a set of tools to:
     ```
 
 That’s enough to start evaluating how your controllers interact across different interleavings.
+
+### Knative Serving example
+
+For a full-featured sample, check `examples/knative-serving`. It wires Kamera into the Knative Serving control plane by:
+
+1. Reusing the same `ExplorerBuilder` steps as above.
+2. Registering Knative’s controllers via custom `Strategy` adapters (see `examples/knative-serving/knative`).
+3. Launching the interactive inspector once exploration completes.
+
+Each example has its own `go.mod`, so you can run it independently:
+
+```bash
+cd examples/knative-serving
+# if needed, point Go to a writable build cache and tidy dependencies
+GOCACHE=$(pwd)/.gocache go mod tidy
+GOCACHE=$(pwd)/.gocache go run .
+```
+
+You’ll need network access to download Knative Serving and its dependencies the first time.
 
 ### Using non-controller-runtime controllers
 
