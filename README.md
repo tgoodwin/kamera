@@ -24,22 +24,32 @@ go run .
 
 1. **Install Kamera as a module dependency** (e.g., `go get github.com/tgoodwin/kamera@latest`).
 
+    ```go
+    import (
+        "github.com/tgoodwin/kamera/pkg/tracecheck"
+        "sigs.k8s.io/controller-runtime/pkg/client"
+        "k8s.io/apimachinery/pkg/runtime"
+        corev1 "k8s.io/api/core/v1"
+    )
+    // ...
+    ```
+
 2. **Initialize a scheme with your APIs.**
 
     ```go
     scheme := runtime.NewScheme()
-    utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-    utilruntime.Must(myapiv1.AddToScheme(scheme)) // register your CRDs
+    myapiv1.AddToScheme(scheme) // register your CRDs
+    corev1.AddToScheme(scheme) // register any related resource dependencies
     ```
 
-3. **Create an ExplorerBuilder.** It lets you assemble reconcilers with the appropriate resource dependencies and lets you tune exploration parameters.
+3. **Create an ExplorerBuilder.** It lets you register reconciler implementations with the appropriate resource dependencies and lets you tune exploration parameters.
 
     ```go
     eb := tracecheck.NewExplorerBuilder(scheme)
     eb.WithMaxDepth(100) // optional
     ```
 
-4. **Register each controller-runtime reconciler.** Supply a factory that accepts a controller-runtime `client.Client`. Kamera automatically injects its instrumented client before invoking your constructor.
+4. **Register each controller-runtime reconciler.** Supply a factory that accepts a controller-runtime `client.Client`. For alternative controller implementations, see [below](#using-non-controller-runtime-controllers).
 
     ```go
     eb.WithReconciler("FooController", func(c client.Client) tracecheck.Reconciler {
@@ -82,25 +92,6 @@ go run .
     ```
 
 That’s enough to start evaluating how your controllers interact across different interleavings.
-
-### Knative Serving example
-
-For a full-featured sample, check `examples/knative-serving`. It wires Kamera into the Knative Serving control plane by:
-
-1. Reusing the same `ExplorerBuilder` steps as above.
-2. Registering Knative’s controllers via custom `Strategy` adapters (see `examples/knative-serving/knative`).
-3. Launching the interactive inspector once exploration completes.
-
-Each example has its own `go.mod`, so you can run it independently:
-
-```bash
-cd examples/knative-serving
-# if needed, point Go to a writable build cache and tidy dependencies
-GOCACHE=$(pwd)/.gocache go mod tidy
-GOCACHE=$(pwd)/.gocache go run .
-```
-
-You’ll need network access to download Knative Serving and its dependencies the first time.
 
 ### Using non-controller-runtime controllers
 
