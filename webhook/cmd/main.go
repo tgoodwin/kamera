@@ -118,19 +118,15 @@ type Handler struct {
 	emitter event.Emitter
 }
 
-// TODO de-hardcode
 func NewHandler() (*Handler, error) {
-	clientCfg := event.MinioConfig{
-		Endpoint:        event.ClusterInternalEndpoint,
-		AccessKeyID:     "myaccesskey",
-		SecretAccessKey: "mysecretkey",
-		UseSSL:          false,
-		BucketName:      event.DefaultBucketName,
+	clientCfg, err := event.ObjectStoreConfigFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load object store config: %w", err)
 	}
 
-	emitter, err := event.NewMinioEmitter(clientCfg)
+	emitter, err := event.NewObjectStoreEmitter(clientCfg)
 	if err != nil {
-		return nil, fmt.Errorf("failed to initialize Minio emitter")
+		return nil, fmt.Errorf("failed to initialize object store emitter: %w", err)
 	}
 
 	sh := &Handler{
