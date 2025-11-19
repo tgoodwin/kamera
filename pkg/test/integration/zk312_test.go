@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -73,7 +74,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	scheme := runtime.NewScheme()
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
-	eb.WithReconciler("ZookeeperReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("ZookeeperReconciler", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.ZookeeperReconciler{
 			Client: c,
 			Scheme: scheme,

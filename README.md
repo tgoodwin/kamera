@@ -24,33 +24,43 @@ go run .
 
 1. **Install Kamera as a module dependency** (e.g., `go get github.com/tgoodwin/kamera@latest`).
 
+    ```go
+    import (
+        "github.com/tgoodwin/kamera/pkg/tracecheck"
+        "sigs.k8s.io/controller-runtime/pkg/client"
+        "k8s.io/apimachinery/pkg/runtime"
+        corev1 "k8s.io/api/core/v1"
+    )
+    // ...
+    ```
+
 2. **Initialize a scheme with your APIs.**
 
     ```go
     scheme := runtime.NewScheme()
-    utilruntime.Must(clientgoscheme.AddToScheme(scheme))
-    utilruntime.Must(myapiv1.AddToScheme(scheme)) // register your CRDs
+    myapiv1.AddToScheme(scheme) // register your CRDs
+    corev1.AddToScheme(scheme) // register any related resource dependencies
     ```
 
-3. **Create an ExplorerBuilder.** It automatically wires a default in-memory emitter, so no extra plumbing is needed unless you want to stream traces elsewhere.
+3. **Create an ExplorerBuilder.** It lets you register reconciler implementations with the appropriate resource dependencies and lets you tune exploration parameters.
 
     ```go
     eb := tracecheck.NewExplorerBuilder(scheme)
     eb.WithMaxDepth(100) // optional
     ```
 
-4. **Register each controller-runtime reconciler.** Supply a factory that accepts the Kamera client interface. Instantiate the reconciler with the scheme from earlier.
+4. **Register each controller-runtime reconciler.** Supply a factory that accepts a controller-runtime `client.Client`. For alternative controller implementations, see [below](#using-non-controller-runtime-controllers).
 
     ```go
-    eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
+    eb.WithReconciler("FooController", func(c client.Client) tracecheck.Reconciler {
         return &fooctrl.FooReconciler{Client: c, Scheme: scheme}
     })
-    eb.WithReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
+    eb.WithReconciler("BarController", func(c client.Client) tracecheck.Reconciler {
         return &barctrl.BarReconciler{Client: c, Scheme: scheme}
     })
     ```
 
-5. **Describe controller dependencies and ownership.** `WithResourceDep` declares which reconcilers subscribe to watch/read a kind, while `AssignReconcilerToKind` identifies the primary owners that should be triggered when objects of that kind change.
+5. **Describe controller dependencies and ownership.** `WithResourceDep` declares which reconcilers subscribe to watch/read a kind, while `AssignReconcilerToKind` identifies the primary owners that should be triggered when objects of that kind change. These dependencies determine which controllers will be queued to reconcile in response to resource state changes during the exploration process.
 
     ```go
     const fooKind = "mygroup.example.com/Foo"
@@ -60,11 +70,12 @@ go run .
     eb.WithResourceDep(fooKind, "FooController", "BarController") // both controllers watch Foo objects
     ```
 
-6. **Seed the initial cluster state.** Use the state builder helpers to create a `StateNode` that includes your top-level objects and pending reconciles.
+6. **Seed the initial cluster state.** Use the state builder helpers to create a `StateNode` that includes your top-level objects and the initial pending reconciles for that state.
 
     ```go
     sb := eb.NewStateEventBuilder()
-    initial := sb.AddTopLevelObject(fooObj, "FooController", "BarController")
+    // add an object along with the initial pending reconciles
+    initialState := sb.AddTopLevelObject(fooObj, "FooController", "BarController")
     ```
 
 7. **Build and run the explorer.**
@@ -74,7 +85,7 @@ go run .
     if err != nil {
         log.Fatal(err)
     }
-    result := explorer.Explore(context.Background(), initial)
+    result := explorer.Explore(context.Background(), initialState)
     for _, converged := range result.ConvergedStates {
         fmt.Printf("paths to converged state: %d\n", len(converged.Paths))
     }
@@ -82,46 +93,28 @@ go run .
 
 That’s enough to start evaluating how your controllers interact across different interleavings.
 
-### Knative Serving example
-
-For a full-featured sample, check `examples/knative-serving`. It wires Kamera into the Knative Serving control plane by:
-
-1. Reusing the same `ExplorerBuilder` steps as above.
-2. Registering Knative’s controllers via custom `Strategy` adapters (see `examples/knative-serving/knative`).
-3. Launching the interactive inspector once exploration completes.
-
-Each example has its own `go.mod`, so you can run it independently:
-
-```bash
-cd examples/knative-serving
-# if needed, point Go to a writable build cache and tidy dependencies
-GOCACHE=$(pwd)/.gocache go mod tidy
-GOCACHE=$(pwd)/.gocache go run .
-```
-
-You’ll need network access to download Knative Serving and its dependencies the first time.
-
 ### Using non-controller-runtime controllers
 
 If your controllers aren’t built with `controller-runtime`, implement the `tracecheck.Strategy` interface (the same contract Kamera uses internally) and register it with the builder:
 
 ```go
 eb.WithStrategy("MyCustomController", func(recorder replay.EffectRecorder) tracecheck.Strategy {
-    return &MyStrategy{
+    return &MyStrategyImpl{
         Recorder: recorder,
-        // ...inject whatever your reconciler needs...
+        // ...inject whatever else your reconciler needs...
     }
 })
 eb.WithResourceDep("mygroup.example.com/Foo", "MyCustomController")
 ```
 
-`WithStrategy` receives the effect recorder so your implementation can publish write sets just like the controller-runtime-based `tracecheck.Client` does automatically. You'll use the effect recorder to implement your own write set recording. Everything else—state tracking, pending reconcile management, and path exploration—works exactly the same, which makes it straightforward to mix and match controller-runtime reconcilers with bespoke logic in the same Explorer setup.
+`WithStrategy` receives a `replay.EffectRecorder` so your custom strategy can record controller actions like the controller-runtime strategy does automatically. You'll use the effect recorder to implement your own write set recording. Everything else (state tracking, pending reconcile management, and path exploration) works the same, which makes it straightforward to mix and match controller-runtime reconcilers with bespoke logic in the same Explorer setup.
 
 ### Inspecting exploration results
 
 Kamera ships with a terminal inspector that lets you interactively browse converged states, execution paths, and per-step effects. After running an exploration you can launch it inline:
 
 ```go
+result := explorer.Explore(context.Background(), initialState)
 states := result.ConvergedStates
 if err := interactive.RunStateInspectorTUIView(states, true); err != nil {
     log.Fatal(err)

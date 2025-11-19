@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
@@ -92,13 +93,13 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	eb.WithMaxDepth(10)
 	// eb.WithDebug()
 	eb.WithEmitter(event.NewInMemoryEmitter())
-	eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
-	eb.WithReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
@@ -173,13 +174,13 @@ func TestConvergedStateIdentification(t *testing.T) {
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
-	eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.FooReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
-	eb.WithReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.BarReconciler{
 			Client: c,
 			Scheme: scheme,

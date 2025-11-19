@@ -38,7 +38,7 @@ func NewStateEventBuilder(store *snapshot.Store, scheme *runtime.Scheme) *StateE
 	}
 }
 
-// AddStateEvent adds a new state event with a specific object
+// AddStateEvent records a per-object delta that will later be replayed to synthesize the cluster state.
 func (b *StateEventBuilder) AddStateEvent(kind, sleeveObjectID string, obj *unstructured.Unstructured,
 	opType event.OperationType, controllerID string) {
 	// Set unique reconcileID

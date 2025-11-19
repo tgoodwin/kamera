@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -90,7 +91,7 @@ func init() {
 
 func main() {
 	eb := tracecheck.NewExplorerBuilder(scheme)
-	eb.WithReconciler("ZookeeperReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("ZookeeperReconciler", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.ZookeeperReconciler{
 			Client: c,
 			Scheme: scheme,

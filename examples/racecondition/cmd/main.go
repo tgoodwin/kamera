@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func main() {
@@ -29,10 +30,10 @@ func main() {
 	builder.WithEmitter(event.NewInMemoryEmitter())
 	builder.WithMaxDepth(6)
 
-	builder.WithReconciler("AlphaController", func(c tracecheck.Client) tracecheck.Reconciler {
+	builder.WithReconciler("AlphaController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.ToggleController{Client: c, Scheme: scheme, ControllerID: "alpha"}
 	})
-	builder.WithReconciler("BetaController", func(c tracecheck.Client) tracecheck.Reconciler {
+	builder.WithReconciler("BetaController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.ToggleController{Client: c, Scheme: scheme, ControllerID: "beta"}
 	})
 

@@ -19,10 +19,9 @@ import (
 
 var MaxDepth int
 
-type Client client.Client
 type Reconciler reconcile.Reconciler
 
-type ReconcilerConstructor func(client Client) Reconciler
+type ReconcilerConstructor func(client client.Client) Reconciler
 
 type testEmitter interface {
 	event.Emitter
