@@ -152,7 +152,7 @@ func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *Exp
 
 func (b *ExplorerBuilder) registerCoreControllers() {
 	// Deployment Controller
-	b.WithReconciler("DeploymentController", func(c Client) Reconciler {
+	b.WithReconciler("DeploymentController", func(c client.Client) Reconciler {
 		return &controller.DeploymentReconciler{
 			Client: c,
 			Scheme: b.scheme,
@@ -163,7 +163,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, deploymentControllerID)
 
 	// ReplicaSet Controller
-	b.WithReconciler("ReplicaSetController", func(c Client) Reconciler {
+	b.WithReconciler("ReplicaSetController", func(c client.Client) Reconciler {
 		return &controller.ReplicaSetReconciler{
 			Client: c,
 			Scheme: b.scheme,
@@ -175,7 +175,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, "ReplicaSetController")
 
 	// Pod Lifecycle Controller, e.g. "fake kubelet"
-	b.WithReconciler("PodLifecycleController", func(c Client) Reconciler {
+	b.WithReconciler("PodLifecycleController", func(c client.Client) Reconciler {
 		return controller.NewPodLifecycleReconciler(
 			c,
 			b.scheme,
@@ -193,7 +193,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "batch", Kind: "Job"}, "PodLifecycleController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "batch", Kind: "CronJob"}, "PodLifecycleController")
 
-	b.WithReconciler("ServiceController", func(c Client) Reconciler {
+	b.WithReconciler("ServiceController", func(c client.Client) Reconciler {
 		return &controller.ServiceReconciler{
 			Client: c,
 			Scheme: b.scheme,
@@ -204,7 +204,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "ServiceController")
 
 	// endpoints controller
-	b.WithReconciler("EndpointsController", func(c Client) Reconciler {
+	b.WithReconciler("EndpointsController", func(c client.Client) Reconciler {
 		return &controller.EndpointsReconciler{
 			Client: c,
 			Scheme: b.scheme,

@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
@@ -91,14 +92,14 @@ func main() {
 	deps[routeConfigKind] = util.NewSet("FelixReconciler")
 	tc.ResourceDeps = deps
 
-	tc.AddReconciler("RPodReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	tc.AddReconciler("RPodReconciler", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.RPodReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
 
-	tc.AddReconciler("FelixReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	tc.AddReconciler("FelixReconciler", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.FelixReconciler{
 			Client: c,
 			Scheme: scheme,

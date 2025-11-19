@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var scheme = runtime.NewScheme()
@@ -37,13 +38,13 @@ func main() {
 	eb.WithMaxDepth(10)
 	// eb.WithDebug()
 	eb.WithEmitter(event.NewInMemoryEmitter())
-	eb.WithReconciler("FooController", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
-	eb.WithReconciler("BarController", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,

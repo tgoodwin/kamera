@@ -14,6 +14,7 @@ import (
 	controller "github.com/tgoodwin/kamera/examples/chaos/internal/controller"
 	"github.com/tgoodwin/kamera/pkg/event"
 	tracecheck "github.com/tgoodwin/kamera/pkg/tracecheck"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
@@ -30,13 +31,13 @@ func init() {
 func main() {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 
-	eb.WithReconciler("OrchestrationReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("OrchestrationReconciler", func(c client.Client) tracecheck.Reconciler {
 		return &controller.OrchestrationReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
-	eb.WithReconciler("HealthReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("HealthReconciler", func(c client.Client) tracecheck.Reconciler {
 		return &controller.HealthReconciler{
 			Client: c,
 			Scheme: scheme,
