@@ -25,7 +25,7 @@ import (
 	"knative.dev/pkg/reconciler"
 	reconcilertesting "knative.dev/pkg/reconciler/testing"
 
-	kamerascheme "github.com/tgoodwin/kamera/examples/knative-explore/knative/scheme"
+	kamerascheme "github.com/tgoodwin/kamera/examples/knative-serving/knative/scheme"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"

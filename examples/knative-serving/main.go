@@ -14,8 +14,8 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn/k8schain"
 	"github.com/google/go-containerregistry/pkg/name"
-	knativeharness "github.com/tgoodwin/kamera/examples/knative-explore/knative"
-	knativescheme "github.com/tgoodwin/kamera/examples/knative-explore/knative/scheme"
+	knativeharness "github.com/tgoodwin/kamera/examples/knative-serving/knative"
+	knativescheme "github.com/tgoodwin/kamera/examples/knative-serving/knative/scheme"
 	"github.com/tgoodwin/kamera/pkg/interactive"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/tag"

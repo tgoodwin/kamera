@@ -1,4 +1,4 @@
-module github.com/tgoodwin/kamera/examples/knative-explore
+module github.com/tgoodwin/kamera/examples/knative-serving
 
 go 1.24.0
 
