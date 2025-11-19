@@ -14,8 +14,8 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn/k8schain"
 	"github.com/google/go-containerregistry/pkg/name"
-	"github.com/tgoodwin/kamera/examples/knative-explore/knative"
-	kamerascheme "github.com/tgoodwin/kamera/examples/knative-explore/knative/scheme"
+	knativeharness "github.com/tgoodwin/kamera/examples/knative-explore/knative"
+	knativescheme "github.com/tgoodwin/kamera/examples/knative-explore/knative/scheme"
 	"github.com/tgoodwin/kamera/pkg/interactive"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/tag"
@@ -43,7 +43,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-var scheme = kamerascheme.Default
+var scheme = knativescheme.Default
 
 type digestBypassResolver struct{}
 
@@ -185,7 +185,7 @@ func main() {
 			overrideRevisionResolver(impl)
 			return impl
 		}
-		strategy, err := kamera.NewKnativeStrategy(factory, r)
+		strategy, err := knativeharness.NewKnativeStrategy(factory, r)
 		if err != nil {
 			panic(err)
 		}
@@ -194,10 +194,10 @@ func main() {
 	})
 	eb.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-			multiScaler := kamera.NewFakeMultiScaler(ctx.Done(), logging.FromContext(ctx))
+			multiScaler := knativeharness.NewFakeMultiScaler(ctx.Done(), logging.FromContext(ctx))
 			return kpareconciler.NewController(ctx, cmw, multiScaler)
 		}
-		strategy, err := kamera.NewKnativeStrategy(factory, r, serving.RevisionUID)
+		strategy, err := knativeharness.NewKnativeStrategy(factory, r, serving.RevisionUID)
 		if err != nil {
 			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
 		}
@@ -205,7 +205,7 @@ func main() {
 		return strategy
 	})
 	eb.WithCustomStrategy("ServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := kamera.NewKnativeStrategy(servicecontroller.NewController, r)
+		strategy, err := knativeharness.NewKnativeStrategy(servicecontroller.NewController, r)
 		if err != nil {
 			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
 		}
@@ -213,7 +213,7 @@ func main() {
 		return strategy
 	})
 	eb.WithCustomStrategy("RouteReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := kamera.NewKnativeStrategy(routecontroller.NewController, r)
+		strategy, err := knativeharness.NewKnativeStrategy(routecontroller.NewController, r)
 		if err != nil {
 			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
 		}
@@ -222,7 +222,7 @@ func main() {
 	})
 
 	eb.WithCustomStrategy("ServerlessServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := kamera.NewKnativeStrategy(serverlessservicecontroller.NewController, r)
+		strategy, err := knativeharness.NewKnativeStrategy(serverlessservicecontroller.NewController, r)
 		if err != nil {
 			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
 		}
@@ -233,7 +233,7 @@ func main() {
 	eb.WithResourceDep("networking.internal.knative.dev/ServerlessService", "ServerlessServiceReconciler", "KPA")
 
 	eb.WithCustomStrategy("ConfigurationReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := kamera.NewKnativeStrategy(configuration.NewController, r)
+		strategy, err := knativeharness.NewKnativeStrategy(configuration.NewController, r)
 		if err != nil {
 			panic(err)
 		}
@@ -254,7 +254,7 @@ func main() {
 	eb.AssignReconcilerToKind("RevisionDigestStub", "serving.knative.dev/Revision")
 
 	eb.WithReconciler("IngressStatusStub", func(c tracecheck.Client) tracecheck.Reconciler {
-		return &kamera.IngressStatusStub{Client: c}
+		return &knativeharness.IngressStatusStub{Client: c}
 	})
 	eb.AssignReconcilerToKind("IngressStatusStub", "networking.internal.knative.dev/Ingress")
 
