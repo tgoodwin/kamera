@@ -36,7 +36,8 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
-	sleeve "github.com/tgoodwin/kamera"
+	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/tracegen"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
 	// +kubebuilder:scaffold:imports
@@ -161,29 +162,48 @@ func main() {
 		os.Exit(1)
 	}
 
+	var objectStoreEmitter event.Emitter
+	if cfg, err := event.ObjectStoreConfigFromEnv(); err != nil {
+		setupLog.Info("object store emitter not configured; using log-only emission", "reason", err.Error())
+	} else {
+		objectStoreEmitter, err = event.NewObjectStoreEmitter(cfg)
+		if err != nil {
+			setupLog.Error(err, "unable to create object store emitter")
+			os.Exit(1)
+		}
+	}
+
+	wrapClient := func(name string) *tracegen.Client {
+		client := tracegen.Wrap(mgr.GetClient(), name).WithEnvConfig()
+		if objectStoreEmitter != nil {
+			client = client.WithEmitter(objectStoreEmitter)
+		}
+		return client
+	}
+
 	if err = (&controller.StatefulSetReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "StatefulSetReconciler"),
+		Client: wrapClient("StatefulSetReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "StatefulSet")
 		os.Exit(1)
 	}
 	if err = (&controller.ServiceReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "ServiceReconciler"),
+		Client: wrapClient("ServiceReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Service")
 		os.Exit(1)
 	}
 	if err = (&controller.DeploymentReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "DeploymentReconciler"),
+		Client: wrapClient("DeploymentReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Deployment")
 		os.Exit(1)
 	}
 	if err = (&controller.ReplicaSetReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "ReplicaSetReconciler"),
+		Client: wrapClient("ReplicaSetReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ReplicaSet")
@@ -192,7 +212,7 @@ func main() {
 	podLifecycleFactory := controller.NewDefaultPodLifecycleFactory()
 
 	podLifecycleReconciler := controller.NewPodLifecycleReconciler(
-		sleeve.Wrap(mgr.GetClient(), "PodLifecycleReconciler"),
+		wrapClient("PodLifecycleReconciler"),
 		mgr.GetScheme(),
 		podLifecycleFactory,
 		0,
@@ -202,7 +222,7 @@ func main() {
 		os.Exit(1)
 	}
 	if err = (&controller.PersistentVolumeClaimReconciler{
-		Client: sleeve.Wrap(mgr.GetClient(), "PersistentVolumeClaimReconciler"),
+		Client: wrapClient("PersistentVolumeClaimReconciler"),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PersistentVolumeClaim")

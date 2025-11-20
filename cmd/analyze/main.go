@@ -17,13 +17,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var inFile = flag.String("logfile", "default.log", "path to the log file")
 var objectID = flag.String("objectID", "", "object ID to analyze")
 var reconcileID = flag.String("reconcileID", "", "object ID to analyze")
-var debug = flag.Bool("debug", false, "enable debug logging")
 
 var scheme = runtime.NewScheme()
 
@@ -47,9 +47,6 @@ func main() {
 	builder, err := replay.ParseTrace(data)
 	if err != nil {
 		panic(err.Error())
-	}
-	if *debug {
-		builder.Debug()
 	}
 
 	const (
@@ -95,14 +92,14 @@ func main() {
 	deps[routeConfigKind] = util.NewSet("FelixReconciler")
 	tc.ResourceDeps = deps
 
-	tc.AddReconciler("RPodReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	tc.AddReconciler("RPodReconciler", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.RPodReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	})
 
-	tc.AddReconciler("FelixReconciler", func(c tracecheck.Client) tracecheck.Reconciler {
+	tc.AddReconciler("FelixReconciler", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.FelixReconciler{
 			Client: c,
 			Scheme: scheme,

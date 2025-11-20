@@ -22,9 +22,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-var CleanupReconcilerID = "CleanupReconciler"
-
 const (
+	cleanupReconcilerID    = "CleanupReconciler"
 	deploymentControllerID = "DeploymentController"
 )
 
@@ -54,6 +53,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		recorderInjectedStrategies: make(map[string]func(recorder replay.EffectRecorder) Strategy),
 		resourceDeps:               make(ResourceDeps),
 		scheme:                     scheme,
+		emitter:                    event.NewInMemoryEmitter(),
 		snapStore:                  snapshot.NewStore(),
 		reconcilerToKind:           make(map[string]string),
 
@@ -78,6 +78,10 @@ func (b *ExplorerBuilder) WithCustomStrategy(id string, strategyFunc func(record
 		b.recorderInjectedStrategies[id] = strategyFunc
 		return b
 	}
+}
+
+func (b *ExplorerBuilder) WithStrategy(id string, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
+	return b.WithCustomStrategy(id, strategyFunc)
 }
 
 func (b *ExplorerBuilder) WithDebug() {
@@ -117,6 +121,7 @@ func (b *ExplorerBuilder) WithMaxDepth(depth int) *ExplorerBuilder {
 	return b
 }
 
+// Deprecated: ExploreStaleStates is deprecated and will be removed in a future release.
 func (b *ExplorerBuilder) ExploreStaleStates() *ExplorerBuilder {
 	b.config.useStaleness = 1
 	return b
@@ -137,6 +142,7 @@ func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBu
 	return b
 }
 
+// AssignReconcilerToKind configures which resource a reconciler "owns"
 // TODO make how we handle kinds more type safe
 func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *ExplorerBuilder {
 	gk := parseKindString(kind)
@@ -146,7 +152,7 @@ func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *Exp
 
 func (b *ExplorerBuilder) registerCoreControllers() {
 	// Deployment Controller
-	b.WithReconciler("DeploymentController", func(c Client) Reconciler {
+	b.WithReconciler("DeploymentController", func(c client.Client) Reconciler {
 		return &controller.DeploymentReconciler{
 			Client: c,
 			Scheme: b.scheme,
@@ -157,7 +163,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, deploymentControllerID)
 
 	// ReplicaSet Controller
-	b.WithReconciler("ReplicaSetController", func(c Client) Reconciler {
+	b.WithReconciler("ReplicaSetController", func(c client.Client) Reconciler {
 		return &controller.ReplicaSetReconciler{
 			Client: c,
 			Scheme: b.scheme,
@@ -169,7 +175,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, "ReplicaSetController")
 
 	// Pod Lifecycle Controller, e.g. "fake kubelet"
-	b.WithReconciler("PodLifecycleController", func(c Client) Reconciler {
+	b.WithReconciler("PodLifecycleController", func(c client.Client) Reconciler {
 		return controller.NewPodLifecycleReconciler(
 			c,
 			b.scheme,
@@ -187,7 +193,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "batch", Kind: "Job"}, "PodLifecycleController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "batch", Kind: "CronJob"}, "PodLifecycleController")
 
-	b.WithReconciler("ServiceController", func(c Client) Reconciler {
+	b.WithReconciler("ServiceController", func(c client.Client) Reconciler {
 		return &controller.ServiceReconciler{
 			Client: c,
 			Scheme: b.scheme,
@@ -198,7 +204,7 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "ServiceController")
 
 	// endpoints controller
-	b.WithReconciler("EndpointsController", func(c Client) Reconciler {
+	b.WithReconciler("EndpointsController", func(c client.Client) Reconciler {
 		return &controller.EndpointsReconciler{
 			Client: c,
 			Scheme: b.scheme,
@@ -239,18 +245,6 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 			mgr,
 		)
 
-		// Create wrapped client
-		// wrappedClient := tracegen.New(
-		// 	replayClient,
-		// 	reconcilerID,
-		// 	b.emitter,
-		// 	tracegen.NewContextTracker(
-		// 		reconcilerID,
-		// 		b.emitter,
-		// 		replay.FrameIDFromContext,
-		// 	),
-		// )
-
 		// Create reconciler
 		r := constructor(replayClient)
 
@@ -281,17 +275,17 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *ReconcilerContainer {
 	fm := replay.NewFrameManager(nil)
 	replayClient := replay.NewClient(
-		CleanupReconcilerID,
+		cleanupReconcilerID,
 		b.scheme,
 		fm,
 		mgr,
 	)
 	wrappedClient := tracegen.New(
 		replayClient,
-		CleanupReconcilerID,
+		cleanupReconcilerID,
 		b.emitter,
 		tracegen.NewContextTracker(
-			CleanupReconcilerID,
+			cleanupReconcilerID,
 			b.emitter,
 			replay.FrameIDFromContext,
 		),
@@ -301,8 +295,8 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 		Recorder: mgr,
 	}
 	container := &ReconcilerContainer{
-		Name:           CleanupReconcilerID,
-		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, reconcilerName: CleanupReconcilerID, effectReader: mgr},
+		Name:           cleanupReconcilerID,
+		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, reconcilerName: cleanupReconcilerID, effectReader: mgr},
 		effectReader:   mgr,
 		versionManager: mgr,
 	}
@@ -371,7 +365,13 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	}
 }
 
-func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
+func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
+	// TODO just pull out a dedicated 'BuildFromTraceFile' type of thing
+	// to keep that concept separate.
+	mode := "standalone"
+	if len(modes) > 0 && modes[0] != "" {
+		mode = modes[0]
+	}
 	// Validate configuration
 	if len(b.resourceDeps) == 0 {
 		return nil, fmt.Errorf("no resource dependencies defined")
@@ -390,7 +390,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		effects:      make(map[string]reconcileEffects),
 
 		snapStore: b.snapStore,
-		scheme:   b.scheme,
+		scheme:    b.scheme,
 
 		// effectContext tracks the state of the world at the time of reconcile
 		// and this is separate from snapshot store because we want this context
@@ -412,7 +412,7 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 	// Initialize reconcilers with appropriate clients
 	reconcilers := b.instantiateReconcilers(mgr)
 	cleanupReconciler := b.instantiateCleanupReconciler(mgr)
-	reconcilers[CleanupReconcilerID] = cleanupReconciler
+	reconcilers[cleanupReconcilerID] = cleanupReconciler
 
 	// Create knowledge manager if using replay builder
 	var knowledgeManager *EventKnowledge
@@ -444,12 +444,15 @@ func (b *ExplorerBuilder) Build(mode string) (*Explorer, error) {
 		effectContextManager: mgr,
 		versionManager:       vStore,
 
+		// for prioritizing 'interesting' (potentially bug-causing) states to explore
 		priorityHandler: b.priorityBuilder.Build(b.snapStore),
 	}
 
 	return explorer, nil
 }
 
+// BuildLensManager builds a LensManager which can be used to explore and interact with the contents
+// of traces produced by the tracing instrumentation portion of this project.
 func (b *ExplorerBuilder) BuildLensManager(traceFilePath string) (*LensManager, error) {
 	traces, err := b.ParseJSONLTrace(traceFilePath)
 	if err != nil {
