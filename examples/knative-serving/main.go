@@ -14,29 +14,16 @@ import (
 
 	"github.com/google/go-containerregistry/pkg/authn/k8schain"
 	"github.com/google/go-containerregistry/pkg/name"
-	knativeharness "github.com/tgoodwin/kamera/examples/knative-serving/knative"
 	knativescheme "github.com/tgoodwin/kamera/examples/knative-serving/knative/scheme"
 	"github.com/tgoodwin/kamera/pkg/interactive"
-	"github.com/tgoodwin/kamera/pkg/replay"
-	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
-	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
-	"knative.dev/pkg/logging"
-	"knative.dev/serving/pkg/apis/serving"
 	v1 "knative.dev/serving/pkg/apis/serving/v1"
-	kpareconciler "knative.dev/serving/pkg/reconciler/autoscaling/kpa"
-	"knative.dev/serving/pkg/reconciler/configuration"
 	revisionreconciler "knative.dev/serving/pkg/reconciler/revision"
-	routecontroller "knative.dev/serving/pkg/reconciler/route"
-	serverlessservicecontroller "knative.dev/serving/pkg/reconciler/serverlessservice"
-	servicecontroller "knative.dev/serving/pkg/reconciler/service"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -161,6 +148,7 @@ func (r *revisionDigestStub) Reconcile(ctx context.Context, req reconcile.Reques
 
 func main() {
 	logLevel := flag.String("log-level", "info", "logging level (debug, info, warn, error)")
+	searchDepth := flag.Int("depth", 10, "exploration search depth")
 	interactiveFlag := flag.Bool("interactive", true, "launch interactive trace inspector")
 	flag.Parse()
 
@@ -177,127 +165,11 @@ func main() {
 
 	tracecheck.SetLogger(logf.Log.WithName("tracecheck"))
 
-	eb := tracecheck.NewExplorerBuilder(scheme)
-	// instantiate reconcilers
-	eb.WithCustomStrategy("RevisionReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-			impl := revisionreconciler.NewController(ctx, cmw)
-			overrideRevisionResolver(impl)
-			return impl
-		}
-		strategy, err := knativeharness.NewKnativeStrategy(factory, r)
-		if err != nil {
-			panic(err)
-		}
-		strategy.SetLogger(logf.Log.WithName("RevisionReconciler"))
-		return strategy
-	})
-	eb.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
-		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-			multiScaler := knativeharness.NewFakeMultiScaler(ctx.Done(), logging.FromContext(ctx))
-			return kpareconciler.NewController(ctx, cmw, multiScaler)
-		}
-		strategy, err := knativeharness.NewKnativeStrategy(factory, r, serving.RevisionUID)
-		if err != nil {
-			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
-		}
-		strategy.SetLogger(logf.Log.WithName("KPAReconciler"))
-		return strategy
-	})
-	eb.WithCustomStrategy("ServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := knativeharness.NewKnativeStrategy(servicecontroller.NewController, r)
-		if err != nil {
-			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
-		}
-		strategy.SetLogger(logf.Log.WithName("ServiceReconciler"))
-		return strategy
-	})
-	eb.WithCustomStrategy("RouteReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := knativeharness.NewKnativeStrategy(routecontroller.NewController, r)
-		if err != nil {
-			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
-		}
-		strategy.SetLogger(logf.Log.WithName("RouteReconciler"))
-		return strategy
-	})
-
-	eb.WithCustomStrategy("ServerlessServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := knativeharness.NewKnativeStrategy(serverlessservicecontroller.NewController, r)
-		if err != nil {
-			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
-		}
-		strategy.SetLogger(logf.Log.WithName("ServerlessServiceReconciler"))
-		return strategy
-	})
-	eb.AssignReconcilerToKind("ServerlessServiceReconciler", "networking.internal.knative.dev/ServerlessService")
-	eb.WithResourceDep("networking.internal.knative.dev/ServerlessService", "ServerlessServiceReconciler", "KPA")
-
-	eb.WithCustomStrategy("ConfigurationReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := knativeharness.NewKnativeStrategy(configuration.NewController, r)
-		if err != nil {
-			panic(err)
-		}
-		strategy.SetLogger(logf.Log.WithName("ConfigurationReconciler"))
-		return strategy
-	})
-	eb.AssignReconcilerToKind("ConfigurationReconciler", "serving.knative.dev/Configuration")
-	eb.WithResourceDep("Configuration", "ConfigurationReconciler", "RevisionReconciler")
-
-	eb.AssignReconcilerToKind("RevisionReconciler", "serving.knative.dev/Revision")
-	eb.AssignReconcilerToKind("KPA", "autoscaling.internal.knative.dev/PodAutoscaler")
-	eb.AssignReconcilerToKind("ServiceReconciler", "serving.knative.dev/Service")
-	eb.AssignReconcilerToKind("RouteReconciler", "serving.knative.dev/Route")
-
-	eb.WithReconciler("RevisionDigestStub", func(c client.Client) tracecheck.Reconciler {
-		return &revisionDigestStub{Client: c}
-	})
-	eb.AssignReconcilerToKind("RevisionDigestStub", "serving.knative.dev/Revision")
-
-	eb.WithReconciler("IngressStatusStub", func(c client.Client) tracecheck.Reconciler {
-		return &knativeharness.IngressStatusStub{Client: c}
-	})
-	eb.AssignReconcilerToKind("IngressStatusStub", "networking.internal.knative.dev/Ingress")
-
-	eb.WithResourceDep("serving.knative.dev/Revision", "RevisionDigestStub", "RevisionReconciler", "KPA", "ServiceReconciler")
-	eb.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "KPA", "ServerlessServiceReconciler")
-	eb.WithResourceDep("serving.knative.dev/Service", "ServiceReconciler")
-	eb.WithResourceDep("serving.knative.dev/Configuration", "ServiceReconciler", "RevisionReconciler")
-	eb.WithResourceDep("serving.knative.dev/Route", "RouteReconciler", "ServiceReconciler")
-	eb.WithResourceDep("networking.internal.knative.dev/Ingress", "RouteReconciler", "ServerlessServiceReconciler")
-
-	eb.WithMaxDepth(100)
-
-	explorer, err := eb.Build("standalone")
+	explorer, initialState, err := newKnativeExplorerAndState(*searchDepth)
 	if err != nil {
 		panic(fmt.Sprintf("Build() error = %v", err))
 	}
-	stateBuilder := eb.NewStateEventBuilder()
-	svc := &v1.Service{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "demo",
-			Namespace: "default",
-		},
-		Spec: v1.ServiceSpec{
-			ConfigurationSpec: v1.ConfigurationSpec{
-				Template: v1.RevisionTemplateSpec{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: "kamera-test",
-					},
-					Spec: v1.RevisionSpec{
-						PodSpec: corev1.PodSpec{
-							Containers: []corev1.Container{{
-								Image: "dev.local/test", // this bypasses digest resolution
-							}},
-						},
-					},
-				},
-			},
-		},
-	}
 
-	tag.AddSleeveObjectID(svc)
-	serviceState := stateBuilder.AddTopLevelObject(svc, "ServiceReconciler")
-	initialState := mergeStateNodes(serviceState)
 	fmt.Printf("[main] initial pending: %v\n", initialState.PendingReconciles)
 
 	res := explorer.Explore(context.Background(), initialState)

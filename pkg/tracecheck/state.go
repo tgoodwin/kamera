@@ -300,25 +300,62 @@ func (sn StateNode) Clone() StateNode {
 }
 
 func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
-	var objectPairs = make([]string, len(sn.Objects()))
-	for objKey, version := range sn.Objects() {
-		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objKey.ObjectID, version.Value))
+	// collect and sort object keys for deterministic ordering
+	objectKeys := make([]snapshot.CompositeKey, 0, len(sn.Objects()))
+	for objKey := range sn.Objects() {
+		objectKeys = append(objectKeys, objKey)
 	}
-	sort.Strings(objectPairs)
+	sort.Slice(objectKeys, func(i, j int) bool {
+		return objectKeys[i].ObjectID < objectKeys[j].ObjectID
+	})
 
-	prStrs := make([]string, 0, len(sn.PendingReconciles))
-	for _, pr := range sn.PendingReconciles {
-		prStrs = append(prStrs, pr.String())
+	// collect pending reconciles (and sort if not order-sensitive)
+	pending := sn.PendingReconciles
+	if !reconcileOrderSensitive && len(pending) > 1 {
+		pending = slices.Clone(pending)
+		sort.Slice(pending, func(i, j int) bool {
+			pi, pj := pending[i], pending[j]
+			if pi.ReconcilerID != pj.ReconcilerID {
+				return pi.ReconcilerID < pj.ReconcilerID
+			}
+			if pi.Request.Namespace != pj.Request.Namespace {
+				return pi.Request.Namespace < pj.Request.Namespace
+			}
+			return pi.Request.Name < pj.Request.Name
+		})
 	}
 
-	// Sort the pending reconciles if we're not order sensitive
-	if !reconcileOrderSensitive && len(prStrs) > 1 {
-		sort.Strings(prStrs)
+	// Rough capacity hint: each object contributes ~len(ObjectID)+len(hash)+2 (for '=' and ',')
+	// plus pending reconciles and separator.
+	builder := strings.Builder{}
+	if l := len(objectKeys); l > 0 {
+		builder.Grow(l * 32)
 	}
 
-	objectStr := strings.Join(objectPairs, ",")
-	prStr := strings.Join(prStrs, ",")
-	return fmt.Sprintf("%s|%s", objectStr, prStr)
+	for idx, objKey := range objectKeys {
+		if idx > 0 {
+			builder.WriteByte(',')
+		}
+		builder.WriteString(objKey.ObjectID)
+		builder.WriteByte('=')
+		builder.WriteString(sn.Contents.contents[objKey].Value)
+	}
+
+	builder.WriteByte('|')
+
+	for idx, pr := range pending {
+		if idx > 0 {
+			builder.WriteByte(',')
+		}
+		// inline PendingReconcile.String to avoid fmt.Sprintf allocations
+		builder.WriteString(pr.ReconcilerID)
+		builder.WriteByte(':')
+		builder.WriteString(pr.Request.Namespace)
+		builder.WriteByte('/')
+		builder.WriteString(pr.Request.Name)
+	}
+
+	return builder.String()
 }
 
 func (sn StateNode) Serialize() string {

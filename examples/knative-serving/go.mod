@@ -4,6 +4,7 @@ go 1.24.0
 
 require (
 	github.com/go-logr/logr v1.4.3
+	github.com/go-logr/zapr v1.3.0
 	github.com/google/go-containerregistry v0.20.3
 	github.com/google/go-containerregistry/pkg/authn/k8schain v0.0.0-20250115185438-c4dd792fa06c
 	github.com/tgoodwin/kamera v0.0.0
@@ -11,9 +12,10 @@ require (
 	k8s.io/api v0.33.4
 	k8s.io/apimachinery v0.33.4
 	k8s.io/client-go v0.33.4
-	knative.dev/caching v0.0.0-20250821143751-b982aa0cd1c1
-	knative.dev/networking v0.0.0-20250821144952-042b64d7bbde
-	knative.dev/pkg v0.0.0-20250821143151-4ffdcf6b3fa5
+	k8s.io/klog/v2 v2.130.1
+	knative.dev/caching v0.0.0-20250909014531-e918af7eb00b
+	knative.dev/networking v0.0.0-20250909015233-e3b68fc57bea
+	knative.dev/pkg v0.0.0-20250909010931-8c9c1d368e4b
 	knative.dev/serving v0.46.5
 	sigs.k8s.io/controller-runtime v0.19.0
 )
@@ -67,7 +69,6 @@ require (
 	github.com/gdamore/tcell/v2 v2.8.1 // indirect
 	github.com/go-ini/ini v1.67.0 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-logr/zapr v1.3.0 // indirect
 	github.com/go-openapi/jsonpointer v0.21.0 // indirect
 	github.com/go-openapi/jsonreference v0.21.0 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
@@ -154,7 +155,6 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	k8s.io/apiextensions-apiserver v0.33.4 // indirect
-	k8s.io/klog/v2 v2.130.1 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
 	k8s.io/utils v0.0.0-20241210054802-24370beab758 // indirect
 	sigs.k8s.io/gateway-api v1.1.0 // indirect
@@ -165,3 +165,6 @@ require (
 )
 
 replace github.com/tgoodwin/kamera => ../..
+
+// TODO un-point from local fork
+replace knative.dev/serving => /Users/tgoodwin/projects/knative-serving

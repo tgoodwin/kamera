@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/cache"
+	"k8s.io/client-go/tools/record"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/injection"
 	"knative.dev/pkg/injection/clients/dynamicclient"
@@ -236,6 +237,8 @@ func (ks *KnativeStrategy) PrepareState(ctx context.Context, state []runtime.Obj
 		return nil, cancel, err
 	}
 	ctx = log.IntoContext(ctx, ks.logger)
+	// Provide a no-op event recorder to avoid spinning up the default broadcaster goroutine.
+	ctx = controller.WithEventRecorder(ctx, record.NewFakeRecorder(100))
 	return ctx, cancel, nil
 }
 

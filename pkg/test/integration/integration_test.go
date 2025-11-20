@@ -3,15 +3,20 @@ package test
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/kamera/pkg/event"
 	foov1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/pkg/util"
+	gozap "go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -268,5 +273,81 @@ func TestConvergedStateIdentification(t *testing.T) {
 		assert.Equal(t, expectedState.numPaths, len(uniquePaths))
 		actualPathSummaries := formatResults(uniquePaths)
 		assert.ElementsMatch(t, expectedState.pathSummaries, actualPathSummaries)
+	}
+}
+
+func BenchmarkExhaustiveInterleavingsExplore(b *testing.B) {
+	ctrl.SetLogger(zap.New(
+		zap.UseDevMode(false),
+		zap.WriteTo(io.Discard),
+		zap.Level(gozap.NewAtomicLevelAt(zapcore.ErrorLevel)),
+	))
+	tracecheck.SetLogger(logr.Discard())
+
+	eb := tracecheck.NewExplorerBuilder(scheme)
+	eb.WithMaxDepth(10)
+	eb.WithEmitter(event.NewInMemoryEmitter())
+	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
+		return &controller.TestReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	})
+	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
+		return &controller.TestReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	})
+	fooKind := "webapp.discrete.events/Foo"
+	eb.WithResourceDep(fooKind, "FooController", "BarController")
+	eb.AssignReconcilerToKind("FooController", fooKind)
+	eb.AssignReconcilerToKind("BarController", fooKind)
+
+	topLevelObj := &foov1.Foo{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foo",
+			Namespace: "default",
+			Labels: map[string]string{
+				"tracey-uid":                       "foo",
+				"discrete.events/sleeve-object-id": "foo-123",
+			},
+		},
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "webapp.discrete.events/v1",
+			Kind:       "Foo",
+		},
+		Spec: foov1.FooSpec{
+			Mode: "A",
+		},
+	}
+
+	initialState := eb.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
+	initialState.Contents.KindSequences = canonicalizeKindSequences(initialState.Contents.KindSequences)
+	explorer, err := eb.Build("standalone")
+	if err != nil {
+		b.Fatalf("build explorer: %v", err)
+	}
+
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	// Silence stdout for the benchmark run to keep output clean.
+	devnull, _ := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	stdout := os.Stdout
+	stderr := os.Stderr
+	os.Stdout = devnull
+	os.Stderr = devnull
+	defer func() {
+		_ = devnull.Close()
+		os.Stdout = stdout
+		os.Stderr = stderr
+	}()
+	for i := 0; i < b.N; i++ {
+		state := initialState.Clone()
+		result := explorer.Explore(ctx, state)
+		if len(result.ConvergedStates) == 0 {
+			b.Fatal("no converged states")
+		}
 	}
 }
