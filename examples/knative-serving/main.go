@@ -248,12 +248,12 @@ func main() {
 	eb.AssignReconcilerToKind("ServiceReconciler", "serving.knative.dev/Service")
 	eb.AssignReconcilerToKind("RouteReconciler", "serving.knative.dev/Route")
 
-	eb.WithReconciler("RevisionDigestStub", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("RevisionDigestStub", func(c client.Client) tracecheck.Reconciler {
 		return &revisionDigestStub{Client: c}
 	})
 	eb.AssignReconcilerToKind("RevisionDigestStub", "serving.knative.dev/Revision")
 
-	eb.WithReconciler("IngressStatusStub", func(c tracecheck.Client) tracecheck.Reconciler {
+	eb.WithReconciler("IngressStatusStub", func(c client.Client) tracecheck.Reconciler {
 		return &knativeharness.IngressStatusStub{Client: c}
 	})
 	eb.AssignReconcilerToKind("IngressStatusStub", "networking.internal.knative.dev/Ingress")
