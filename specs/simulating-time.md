@@ -7,7 +7,7 @@
 Provide a deterministic, depth-aware simulation clock that controllers use instead of `time.Now()`, so explore runs yield stable timestamps (e.g., per-depth fixed values) and reproducible converged states.
 
 # Plan
-- Add a `simtime` package that exposes `Now()` and a depth setter; `Now()` returns `base + depth*step` with a sane default (e.g., Unix epoch + 1h per depth).
+- [x] Add a `simtime` package that exposes `Now()` and a depth setter; `Now()` returns `base + depth*step` with a sane default (e.g., Unix epoch + 1h per depth).
 - In `Explorer` reconcile paths, set the current depth in `simtime` before invoking a controller, restore afterward.
 - Fork/replace the knative controller code we use, swapping `time.Now()`/`metav1.Now()` call sites to `simtime.Now()` (or a helper that returns `metav1.Time`), minimal blast radius.
 - Wire a `replace` in go.mod to point at the patched knative fork.
@@ -15,4 +15,4 @@ Provide a deterministic, depth-aware simulation clock that controllers use inste
 - Use an automated AST rewriter to replace `time.Now` → `simclock.Now` and `metav1.Now` → `simclock.NowMeta` across the knative fork, adding the import, then `goimports` to clean up.
 
 # Work Log
-- TODO
+- 11-20-25 added a ScrubTime utility to iterate over an arbitrarily structured object and replace things that "look like" timestamps with a deterministic value. This fixed some nondeterministic behavior I was seeing in the knative explore test. This helped me verify that the nondeterminism was caused by timestamp values and not something else in the code. Now that we know that the rest of the DFS is sound, we can proceed with instrumenting controller code to use simtime.
