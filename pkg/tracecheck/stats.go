@@ -38,6 +38,15 @@ func (s *ExploreStats) Print() {
 	if s.endTime == nil {
 		s.Finish()
 	}
+	if logger.GetSink() != nil {
+		logger.Info("explore stats",
+			"totalTime", s.endTime.Sub(*s.startTime),
+			"totalNodeVisits", s.TotalNodeVisits,
+			"uniqueNodeVisits", s.UniqueNodeVisits,
+			"abortedPaths", s.AbortedPaths,
+		)
+		return
+	}
 	fmt.Printf("Total time: %v\n", s.endTime.Sub(*s.startTime))
 	fmt.Printf("Total node visits: %d\n", s.TotalNodeVisits)
 	fmt.Printf("Unique node visits: %d\n", s.UniqueNodeVisits)

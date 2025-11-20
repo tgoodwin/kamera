@@ -238,7 +238,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 	_, iKeyExists := m.effectIKeys[frameID][iKey]
 
 	logger := log.FromContext(ctx)
-	logger.V(2).Info("[validateEffect] frame=%s op=%s key=%s exists=%v\n", frameID, op, resourceKey, rKeyExists)
+	logger.V(2).Info("[validateEffect]", "frame", frameID, "op", op, "key", resourceKey, "exists", rKeyExists, "trackedKeys", rKeys.List())
 
 	switch op {
 	// there are no UID preconditions for create.
@@ -251,11 +251,11 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		}
 		// Automatically track the resource if CREATE is valid
 		rKeys.Add(resourceKey)
-		fmt.Printf("[validateEffect] added key=%s (CREATE)\n", resourceKey)
+		logger.V(2).Info("tracked create", "key", resourceKey)
 
 	case event.GET:
 		if !rKeyExists {
-			fmt.Printf("[validateEffect] GET miss key=%s tracked=%v\n", resourceKey, rKeys.List())
+			logger.V(1).Info("GET miss", "key", resourceKey, "tracked", rKeys.List())
 			return apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
 				obj.GetName())
@@ -269,7 +269,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 
 	case event.UPDATE, event.PATCH:
 		if !rKeyExists {
-			fmt.Printf("\n[validateEffect] UPDATE/PATCH miss key=%s tracked=%v\n", resourceKey, rKeys.List())
+			logger.V(1).Info("UPDATE/PATCH miss", "key", resourceKey, "tracked", rKeys.List())
 			panic("Object not found for UPDATE/PATCH: probably a serious logic error in the tracecheck manager")
 		}
 		// No need to change tracking state for UPDATE/PATCH
@@ -294,7 +294,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 			// Automatically remove tracking if DELETE is valid
 			rKeys.Delete(resourceKey)
 			delete(m.effectIKeys[frameID], iKey)
-			fmt.Printf("[validateEffect] deleted key=%s (MARK)\n", resourceKey)
+			logger.V(2).Info("marked for deletion", "key", resourceKey)
 			return nil
 		}
 
@@ -312,7 +312,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 				// Automatically remove tracking if DELETE is valid
 				rKeys.Delete(resourceKey)
 				delete(m.effectIKeys[frameID], iKey)
-				fmt.Printf("[validateEffect] deleted key=%s (MARK w/UID)\n", resourceKey)
+				logger.V(2).Info("marked for deletion", "key", resourceKey, "preconditionUID", *precondition.UID)
 				return nil
 			}
 		}

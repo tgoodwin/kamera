@@ -238,12 +238,12 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	// Ctrl-C cancels the search
 	go func() {
 		<-sigs
-		fmt.Println("received interrupt signal")
+		logger.Info("received interrupt signal")
 		cancel()
 	}()
 
 	summarize := func(res *Result) {
-		fmt.Println("### Summary ###")
+		logger.V(1).Info("explore summary")
 		e.stats.Print()
 		res.Summarize()
 	}
@@ -327,11 +327,11 @@ func (e *Explorer) explore(
 	}
 
 	if e.config.debug {
-		fmt.Println("initial state")
+		logger.V(1).Info("initial state")
 		initialState.Contents.contents.DumpContents()
-		fmt.Println("kind sequences")
+		logger.V(1).Info("kind sequences")
 		for k, v := range initialState.Contents.KindSequences {
-			fmt.Println(k, v)
+			logger.V(1).Info("kind sequence", "kind", k, "value", v)
 		}
 	}
 
@@ -535,8 +535,7 @@ func (e *Explorer) explore(
 			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
-			fmt.Println("taking reconcile step", "ReconcilerID", reconcilerID, "Depth", currentState.depth)
-			logger.V(0).WithValues(
+			logger.WithValues(
 				"ReconcilerID", reconcilerID,
 				"Depth", currentState.depth,
 			).Info("Taking reconcile step")
