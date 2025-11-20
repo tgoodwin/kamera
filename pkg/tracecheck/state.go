@@ -300,7 +300,7 @@ func (sn StateNode) Clone() StateNode {
 }
 
 func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
-	var objectPairs = make([]string, len(sn.Objects()))
+	objectPairs := make([]string, 0, len(sn.Objects()))
 	for objKey, version := range sn.Objects() {
 		objectPairs = append(objectPairs, fmt.Sprintf("%s=%s", objKey.ObjectID, version.Value))
 	}
