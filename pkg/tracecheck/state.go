@@ -300,13 +300,28 @@ func (sn StateNode) Clone() StateNode {
 }
 
 func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
-	// collect and sort object keys for deterministic ordering
+	// collect and sort object keys for deterministic ordering. Multiple
+	// resources can share the same sleeve ObjectID, so compare on the full
+	// composite key to avoid unstable ordering across runs.
 	objectKeys := make([]snapshot.CompositeKey, 0, len(sn.Objects()))
 	for objKey := range sn.Objects() {
 		objectKeys = append(objectKeys, objKey)
 	}
 	sort.Slice(objectKeys, func(i, j int) bool {
-		return objectKeys[i].ObjectID < objectKeys[j].ObjectID
+		ai, aj := objectKeys[i], objectKeys[j]
+		if ai.ResourceKey.Group != aj.ResourceKey.Group {
+			return ai.ResourceKey.Group < aj.ResourceKey.Group
+		}
+		if ai.ResourceKey.Kind != aj.ResourceKey.Kind {
+			return ai.ResourceKey.Kind < aj.ResourceKey.Kind
+		}
+		if ai.ResourceKey.Namespace != aj.ResourceKey.Namespace {
+			return ai.ResourceKey.Namespace < aj.ResourceKey.Namespace
+		}
+		if ai.ResourceKey.Name != aj.ResourceKey.Name {
+			return ai.ResourceKey.Name < aj.ResourceKey.Name
+		}
+		return ai.ObjectID < aj.ObjectID
 	})
 
 	// collect pending reconciles (and sort if not order-sensitive)
@@ -336,7 +351,7 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 		if idx > 0 {
 			builder.WriteByte(',')
 		}
-		builder.WriteString(objKey.ObjectID)
+		builder.WriteString(serializeCompositeKey(objKey))
 		builder.WriteByte('=')
 		builder.WriteString(sn.Contents.contents[objKey].Value)
 	}
@@ -360,6 +375,14 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 
 func (sn StateNode) Serialize() string {
 	return sn.serialize(false)
+}
+
+func serializeCompositeKey(ck snapshot.CompositeKey) string {
+	group := ck.ResourceKey.Group
+	if group == "" {
+		group = "core"
+	}
+	return fmt.Sprintf("%s/%s/%s/%s:%s", group, ck.ResourceKey.Kind, ck.ResourceKey.Namespace, ck.ResourceKey.Name, ck.ObjectID)
 }
 
 // StateHash represents the contents of the state node and the pending reconciles, unaffected by the order of pending reconciles.
