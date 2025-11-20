@@ -1006,6 +1006,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		switch mode {
 		case modeStates:
 			mainTable.SetTitle("States")
+			mainTable.SetSelectionChangedFunc(nil)
+			mainTable.SetSelectedFunc(nil)
 			populateStates(mainTable, states)
 			if selectedState >= len(states) {
 				if len(states) == 0 {
@@ -1018,16 +1020,18 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			if len(states) > 0 {
 				row = selectedState + 1
 			}
-			mainTable.Select(row, 0)
 			if stateSelectionChanged != nil {
 				mainTable.SetSelectionChangedFunc(stateSelectionChanged)
 			}
 			if stateEnter != nil {
 				mainTable.SetSelectedFunc(stateEnter)
 			}
+			mainTable.Select(row, 0)
 			renderStateDetail()
 		case modePaths:
 			mainTable.SetTitle(fmt.Sprintf("Paths • State %d", selectedState))
+			mainTable.SetSelectionChangedFunc(nil)
+			mainTable.SetSelectedFunc(nil)
 			populatePaths(mainTable, states, selectedState)
 			rowCount := len(states[selectedState].Paths)
 			if rowCount == 0 {
@@ -1041,16 +1045,18 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			if rowCount > 0 {
 				row = selectedPath + 1
 			}
-			mainTable.Select(row, 0)
 			if pathSelectionChanged != nil {
 				mainTable.SetSelectionChangedFunc(pathSelectionChanged)
 			}
 			if pathEnter != nil {
 				mainTable.SetSelectedFunc(pathEnter)
 			}
+			mainTable.Select(row, 0)
 			renderPathDetail()
 		case modeSteps:
 			mainTable.SetTitle(fmt.Sprintf("Steps • State %d • Path %d", selectedState, selectedPath))
+			mainTable.SetSelectionChangedFunc(nil)
+			mainTable.SetSelectedFunc(nil)
 			populateSteps(mainTable, states, selectedState, selectedPath)
 			path := states[selectedState].Paths[selectedPath]
 			if len(path) == 0 {
@@ -1062,13 +1068,13 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			if len(path) > 0 {
 				row = selectedStep + 1
 			}
-			mainTable.Select(row, 0)
 			if stepSelectionChanged != nil {
 				mainTable.SetSelectionChangedFunc(stepSelectionChanged)
 			}
 			if stepEnter != nil {
 				mainTable.SetSelectedFunc(stepEnter)
 			}
+			mainTable.Select(row, 0)
 			renderStepDetail()
 		case modeReconcile:
 			renderReconcileDetail()
@@ -1215,7 +1221,7 @@ func configureTable(title string, selectable bool) *tview.Table {
 
 func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 	table.Clear()
-	headers := []string{"Idx", "Hash", "Objects", "Paths", "Reason"}
+	headers := []string{"Idx", "Hash", "Objects", "Paths", "Pending", "Reason"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -1227,6 +1233,7 @@ func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 		table.SetCell(row+1, 1, tview.NewTableCell(util.ShortenHash(hash)))
 		table.SetCell(row+1, 2, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
 		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
+		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
 		reason := state.Reason
 		if state.Error != "" {
 			snippet := truncateString(state.Error, 48)
@@ -1236,7 +1243,7 @@ func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 				reason = fmt.Sprintf("%s (%s)", reason, snippet)
 			}
 		}
-		table.SetCell(row+1, 4, tview.NewTableCell(reason))
+		table.SetCell(row+1, 5, tview.NewTableCell(reason))
 	}
 }
 
