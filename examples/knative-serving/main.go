@@ -148,6 +148,7 @@ func (r *revisionDigestStub) Reconcile(ctx context.Context, req reconcile.Reques
 
 func main() {
 	logLevel := flag.String("log-level", "info", "logging level (debug, info, warn, error)")
+	searchDepth := flag.Int("depth", 10, "exploration search depth")
 	interactiveFlag := flag.Bool("interactive", true, "launch interactive trace inspector")
 	flag.Parse()
 
@@ -164,7 +165,7 @@ func main() {
 
 	tracecheck.SetLogger(logf.Log.WithName("tracecheck"))
 
-	explorer, initialState, err := newKnativeExplorerAndState(1)
+	explorer, initialState, err := newKnativeExplorerAndState(*searchDepth)
 	if err != nil {
 		panic(fmt.Sprintf("Build() error = %v", err))
 	}
