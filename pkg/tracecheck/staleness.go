@@ -163,6 +163,7 @@ func getAllCombos(values map[string][]int64) []KindSequences {
 	for k := range values {
 		keys = append(keys, k)
 	}
+	sort.Strings(keys)
 
 	var result []KindSequences
 	generateCombos(values, keys, 0, make(KindSequences), &result)
