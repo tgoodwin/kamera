@@ -24,4 +24,15 @@ Instead of making code changes right away, outline your findings under the `#Pla
 - After optimizations, rerun existing tests plus the new benchmark to confirm correctness and quantify speed/alloc improvements; document before/after numbers in the work log.
 - Immediate next steps: wire up the benchmark harness and grab a baseline CPU profile to confirm hotspots.
 - Start with the hashing/serialization cleanup, since it should lower CPU without changing behavior.
+- Microbenchmark follow-ups:
+  - Cache `StateNode` hashes/serialize strings (cached `Hash`/`OrderSensitiveHash` with invalidation on mutation) to make repeated hashing zero-alloc.
+  - Store sorted `CompositeKey` slices (and sorted pending reconcile view) on `StateSnapshot` to avoid per-call map key sorting before hashing.
+  - Hash directly into a digest (xxhash/FNV) instead of building intermediate strings; keep returning `ShortenHash` of the digest.
+  - Cache `ExecutionHistory.UniqueKey` or rewrite with a pre-sized builder to drop the remaining alloc.
+  - Add microbenches for repeated Hash calls on the same node and mutation+rehash to validate cache win vs invalidation cost.
+  - Add a `StateNode.Clone` microbench to size per-branch overhead; consider avoiding slice/map clones when pending/history don’t change.
 # Work Log
+- Added knative-heavy benchmark harness external to `pkg/tracecheck` in `examples/knative-serving` (shared setup helpers + `BenchmarkExploreKnativeHeavy`) to avoid pulling knative deps into core; baseline on local machine: `~1.35s/op`, `~13.6MB/op`, `~100k allocs/op`.
+- Fixed `StateNode.serialize` preallocation bug (no more prefilling slice before append) to reduce hashing churn.
+- Avoided rescanning `stateEvents` on every effect in `takeReconcileStep` by computing the highest sequence once and incrementing.
+- Added hashing microbenches in `pkg/tracecheck` and refactored `StateNode.serialize` to use a single builder (allocs for `Hash` dropped from 46→10 on small cases; 1548→10 on 500-object cases). Added `Clone` microbench (50 pending/50 history: ~1µs, 3KB, 2 allocs).

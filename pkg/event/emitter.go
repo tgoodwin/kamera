@@ -3,7 +3,6 @@ package event
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 
 	"github.com/go-logr/logr"
@@ -147,7 +146,6 @@ func (i *InMemoryEmitter) Dump(frameID string) []string {
 	}
 
 	if len(logs) == 0 {
-		fmt.Println("Error: frameID not found")
 		panic("frameID not found")
 	}
 
