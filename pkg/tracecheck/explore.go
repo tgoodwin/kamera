@@ -14,6 +14,7 @@ import (
 	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -457,7 +458,6 @@ func (e *Explorer) explore(
 				convergencesByDivergenceKey[currentState.divergenceKey] = append(convergencesByDivergenceKey[currentState.divergenceKey], stateKey)
 			}
 
-			fmt.Println("sending converged state", currentState.Hash())
 			if cancelled := sendWithCancel(ctx, convergedStatesCh, currentState); cancelled {
 				return nil
 			}
@@ -640,6 +640,8 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// create a new frameID for this reconcile state transition
 	frameID := util.UUID()
 	ctx = replay.WithFrameID(ctx, frameID)
+	restoreClock := simclock.SetDepth(state.depth)
+	defer restoreClock()
 
 	// prepare the "true state of the world" for the controller's potential actions
 	// to be validated against. (e.g. "create error: thing of name X already exists")

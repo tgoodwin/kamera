@@ -13,7 +13,9 @@ func TestAddSleeveObjectID(t *testing.T) {
 	// Test when the label does not exist
 	obj := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Labels: map[string]string{},
+			Name:      "po",
+			Namespace: "default",
+			Labels:    map[string]string{},
 		},
 	}
 
@@ -23,8 +25,7 @@ func TestAddSleeveObjectID(t *testing.T) {
 	labels := obj.GetLabels()
 	objectID, exists := labels[TraceyObjectID]
 	assert.True(t, exists, "TraceyObjectID label should be set")
-	_, err := uuid.Parse(objectID)
-	assert.NoError(t, err, "TraceyObjectID label should be a valid UUID")
+	assert.Equal(t, deterministicSleeveObjectID(obj), objectID, "TraceyObjectID label should be deterministic")
 
 	// Test idempotency: label should not be overwritten if it already exists
 	existingUUID := uuid.New().String()
