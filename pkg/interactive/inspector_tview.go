@@ -1363,8 +1363,24 @@ func formatPathSummary(state tracecheck.ResultState, pathIdx int) string {
 		}
 		fmt.Fprintf(&b, "  [%d] %s\n", idx, step.ControllerID)
 	}
+
+	if len(state.State.PendingReconciles) > 0 {
+		b.WriteString("\nPending Reconciles:\n")
+		for idx, pr := range state.State.PendingReconciles {
+			req := pr.Request.NamespacedName
+			fmt.Fprintf(&b, "  [%d] %s %s/%s\n", idx, pr.ReconcilerID, req.Namespace, req.Name)
+		}
+	}
+
+	b.WriteString("\nOutcome:\n")
+	if len(state.State.PendingReconciles) == 0 && state.Error == "" && state.FailedReconcile == nil {
+		b.WriteString("  Converged\n")
+	} else if state.Reason != "" {
+		fmt.Fprintf(&b, "  %s\n", state.Reason)
+	} else {
+		b.WriteString("  Aborted\n")
+	}
 	if state.Reason != "" || state.Error != "" || state.FailedReconcile != nil {
-		b.WriteString("\nOutcome:\n")
 		if state.Reason != "" {
 			fmt.Fprintf(&b, "  Reason: %s\n", state.Reason)
 		}
