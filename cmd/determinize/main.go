@@ -14,7 +14,23 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/ast/astutil"
+	"golang.org/x/tools/imports"
 )
+
+var skipModulePrefixes = []string{
+	"golang.org/toolchain@",
+	"k8s.io/utils@",
+}
+
+func skipModule(path string) bool {
+	normalized := filepath.ToSlash(path)
+	for _, prefix := range skipModulePrefixes {
+		if strings.Contains(normalized, prefix) {
+			return true
+		}
+	}
+	return false
+}
 
 const simclockImportPath = "github.com/tgoodwin/kamera/pkg/simclock"
 
@@ -60,16 +76,33 @@ func collectGoFiles(paths []string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		if skipModule(path) {
+			continue
+		}
 		if info.IsDir() {
 			err = filepath.WalkDir(path, func(p string, d os.DirEntry, err error) error {
 				if err != nil {
 					return err
+				}
+				if skipModule(p) {
+					if d.IsDir() {
+						return filepath.SkipDir
+					}
+					return nil
 				}
 				if d.IsDir() {
 					name := d.Name()
 					if name == "vendor" || name == ".git" || strings.HasPrefix(name, ".") {
 						return filepath.SkipDir
 					}
+					// skipping testdata directories cause they contain purposefully invalid Go code
+					// TODO: handle testdata directories better, e.g. by rewriting only specific files
+					if name == "testdata" {
+						return filepath.SkipDir
+					}
+					return nil
+				}
+				if strings.Contains(p, string(filepath.Separator)+"testdata"+string(filepath.Separator)) {
 					return nil
 				}
 				if strings.HasSuffix(p, ".go") && !strings.HasSuffix(p, "_test.go") {
@@ -83,6 +116,8 @@ func collectGoFiles(paths []string) ([]string, error) {
 			if err != nil {
 				return nil, err
 			}
+		} else if strings.Contains(path, string(filepath.Separator)+"testdata"+string(filepath.Separator)) {
+			continue
 		} else if strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") {
 			if _, ok := seen[path]; !ok {
 				seen[path] = struct{}{}
@@ -116,7 +151,11 @@ func rewriteFile(filename string) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filename, formatted, 0644)
+	processed, err := imports.Process(filename, formatted, nil)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filename, processed, 0644)
 }
 
 func buildImportMap(file *ast.File) map[string]string {
