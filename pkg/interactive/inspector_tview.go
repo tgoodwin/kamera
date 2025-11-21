@@ -220,6 +220,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		stepSelectionChanged  func(int, int)
 		stepEnter             func(int, int)
 		performDetailAction   func()
+		setFocusForMode       func()
 	)
 
 	var (
@@ -228,6 +229,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		renderStepDetail      func()
 		renderReconcileDetail func()
 	)
+
+	setFocusForMode = func() {}
 
 	updateStatus := func(text string) {
 		statusBar.SetText(text)
@@ -920,6 +923,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 				detailText.SetTitle(title)
 				detailText.SetText(body)
 				currentDetailPrim = detailText
+				app.SetFocus(detailText)
 				updateStatus(reconcileStatusMessage)
 			} else {
 				applyMode(modeReconcile)
@@ -945,6 +949,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 					detailText.SetTitle(title)
 					detailText.SetText(body)
 					currentDetailPrim = detailText
+					app.SetFocus(detailText)
 					updateStatus(reconcileStatusMessage)
 				} else {
 					applyMode(modeReconcile)
@@ -1078,6 +1083,17 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			renderStepDetail()
 		case modeReconcile:
 			renderReconcileDetail()
+		}
+
+		setFocusForMode()
+	}
+
+	setFocusForMode = func() {
+		switch mode {
+		case modeReconcile:
+			app.SetFocus(currentDetailPrim)
+		default:
+			app.SetFocus(mainTable)
 		}
 	}
 
