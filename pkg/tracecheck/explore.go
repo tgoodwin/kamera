@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
@@ -17,17 +18,11 @@ import (
 	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
 	DefaultMaxDepth = 10
 )
-
-type reconciler interface {
-	doReconcile(ctx context.Context, readset ObjectVersions, req reconcile.Request) (*ReconcileResult, error)
-	replayReconcile(ctx context.Context, req reconcile.Request) (*ReconcileResult, error)
-}
 
 // EffectContextManager manages a "current state of the world" context
 // for each branch of execution (not shared between branches). This is the state
@@ -58,6 +53,8 @@ type ExploreConfig struct {
 	mode ExploreMode
 
 	debug bool
+
+	EnablePerfStats bool
 
 	// per-kind staleness config for each reconciler
 	KindBoundsPerReconciler map[string]ReconcilerConfig
@@ -245,7 +242,9 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	summarize := func(res *Result) {
 		logger.V(1).Info("explore summary")
-		e.stats.Print()
+		if e.config != nil && e.config.EnablePerfStats {
+			e.stats.Print()
+		}
 		res.Summarize()
 	}
 
@@ -631,6 +630,12 @@ func (e *Explorer) explore(
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
 func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (StateNode, *ReconcileResult, error) {
 	stepLog := log.FromContext(ctx)
+	startWall := time.Now()
+	defer func() {
+		if e.stats != nil && e.config != nil && e.config.EnablePerfStats {
+			e.stats.RecordStep(pr.ReconcilerID, time.Since(startWall))
+		}
+	}()
 
 	// defensive validation
 	if len(state.Contents.KindSequences) == 0 {
