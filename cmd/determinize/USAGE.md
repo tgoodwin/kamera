@@ -1,3 +1,5 @@
+# Determinizing Go code + module dependencies
+
 1. create temp dirs
 ```
 mkdir -p ~/tmp/gomodcache ~/tmp/gocache
