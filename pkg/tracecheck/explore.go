@@ -640,6 +640,8 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// create a new frameID for this reconcile state transition
 	frameID := util.UUID()
 	ctx = replay.WithFrameID(ctx, frameID)
+
+	// increment simulated time by setting the simulated clock depth to match the depth of this state
 	restoreClock := simclock.SetDepth(state.depth)
 	defer restoreClock()
 
