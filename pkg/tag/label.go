@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/samber/lo"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -52,7 +53,15 @@ func LabelChange(obj client.Object) {
 }
 
 func AddSleeveObjectID(obj client.Object) {
-	addTagIfNotExists(obj, TraceyObjectID)
+	labels := obj.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+	if _, ok := labels[TraceyObjectID]; ok {
+		return
+	}
+	labels[TraceyObjectID] = deterministicSleeveObjectID(obj)
+	obj.SetLabels(labels)
 }
 
 func AddLabel(obj client.Object, key, value string) {
@@ -82,6 +91,16 @@ func addUIDTag(obj client.Object, key string) {
 	}
 	labels[key] = uuid.New().String()
 	obj.SetLabels(labels)
+}
+
+func deterministicSleeveObjectID(obj client.Object) string {
+	gvk := util.GetGroupVersionKind(obj)
+	key := fmt.Sprintf("%s/%s/%s/%s", gvk.Group, gvk.Kind, obj.GetNamespace(), obj.GetName())
+	if key == "///" {
+		// Fall back to random if we truly have no identifiers.
+		return uuid.New().String()
+	}
+	return util.ShortenHash(key)
 }
 
 func GetSleeveObjectID(obj client.Object) string {

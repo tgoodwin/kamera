@@ -166,5 +166,3 @@ require (
 
 replace github.com/tgoodwin/kamera => ../..
 
-// TODO un-point from local fork
-replace knative.dev/serving => /Users/tgoodwin/projects/knative-serving

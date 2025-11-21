@@ -1,4 +1,16 @@
 SLEEVECTRL_IMG ?= docker.io/tlg2132/sleeve-controller-manager:latest
+GOBIN := $(shell pwd)/bin
+
+# ensure that GOBIN is in PATH when running
+export PATH := $(GOBIN):$(PATH)
+.PHONY: all
+all: test
+
+.PHONY: determinize
+determinize:
+	@echo "building determinize..."
+	go build -o $(GOBIN)/determinize ./cmd/determinize
+
 .PHONY: test
 test:
 	@echo "🧪 Running tests..."
