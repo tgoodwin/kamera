@@ -3,8 +3,6 @@ package simclock
 import (
 	"sync/atomic"
 	"time"
-
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var (
@@ -40,9 +38,4 @@ func WithDepth(depth int, f func()) {
 func Configure(b time.Time, s time.Duration) {
 	base = b
 	step = s
-}
-
-// NowMeta returns a metav1.Time based on the deterministic clock.
-func NowMeta() metav1.Time {
-	return metav1.NewTime(Now())
 }

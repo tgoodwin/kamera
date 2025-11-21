@@ -50,6 +50,12 @@ func collectGoFiles(paths []string) ([]string, error) {
 	seen := make(map[string]struct{})
 	var files []string
 	for _, path := range paths {
+		if strings.HasSuffix(path, "...") {
+			path = strings.TrimSuffix(path, "...")
+			if path == "" {
+				path = "."
+			}
+		}
 		info, err := os.Stat(path)
 		if err != nil {
 			return nil, err
@@ -138,8 +144,8 @@ func replaceSelectors(fset *token.FileSet, file *ast.File, importMap map[string]
 	var changed bool
 	simclockAlias := ""
 
-	ast.Inspect(file, func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
+	astutil.Apply(file, func(c *astutil.Cursor) bool {
+		sel, ok := c.Node().(*ast.SelectorExpr)
 		if !ok {
 			return true
 		}
@@ -167,8 +173,17 @@ func replaceSelectors(fset *token.FileSet, file *ast.File, importMap map[string]
 				if alias == "" {
 					return true
 				}
-				sel.X = ast.NewIdent(alias)
-				sel.Sel = ast.NewIdent("NowMeta")
+				metaAlias := importAlias(importMap, "k8s.io/apimachinery/pkg/apis/meta/v1")
+				if metaAlias == "" {
+					metaAlias = ident.Name
+				}
+				call := &ast.CallExpr{
+					Fun: &ast.SelectorExpr{X: ast.NewIdent(metaAlias), Sel: ast.NewIdent("NewTime")},
+					Args: []ast.Expr{
+						&ast.CallExpr{Fun: &ast.SelectorExpr{X: ast.NewIdent(alias), Sel: ast.NewIdent("Now")}},
+					},
+				}
+				c.Replace(call)
 				changed = true
 				importMap[alias] = simclockImportPath
 			}
@@ -185,7 +200,7 @@ func replaceSelectors(fset *token.FileSet, file *ast.File, importMap map[string]
 			}
 		}
 		return true
-	})
+	}, nil)
 
 	return changed
 }
