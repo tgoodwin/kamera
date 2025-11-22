@@ -220,6 +220,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		stepSelectionChanged  func(int, int)
 		stepEnter             func(int, int)
 		performDetailAction   func()
+		setFocusForMode       func()
 	)
 
 	var (
@@ -228,6 +229,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		renderStepDetail      func()
 		renderReconcileDetail func()
 	)
+
+	setFocusForMode = func() {}
 
 	updateStatus := func(text string) {
 		statusBar.SetText(text)
@@ -920,6 +923,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 				detailText.SetTitle(title)
 				detailText.SetText(body)
 				currentDetailPrim = detailText
+				app.SetFocus(detailText)
 				updateStatus(reconcileStatusMessage)
 			} else {
 				applyMode(modeReconcile)
@@ -945,6 +949,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 					detailText.SetTitle(title)
 					detailText.SetText(body)
 					currentDetailPrim = detailText
+					app.SetFocus(detailText)
 					updateStatus(reconcileStatusMessage)
 				} else {
 					applyMode(modeReconcile)
@@ -1078,6 +1083,17 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			renderStepDetail()
 		case modeReconcile:
 			renderReconcileDetail()
+		}
+
+		setFocusForMode()
+	}
+
+	setFocusForMode = func() {
+		switch mode {
+		case modeReconcile:
+			app.SetFocus(currentDetailPrim)
+		default:
+			app.SetFocus(mainTable)
 		}
 	}
 
@@ -1347,8 +1363,24 @@ func formatPathSummary(state tracecheck.ResultState, pathIdx int) string {
 		}
 		fmt.Fprintf(&b, "  [%d] %s\n", idx, step.ControllerID)
 	}
+
+	if len(state.State.PendingReconciles) > 0 {
+		b.WriteString("\nPending Reconciles:\n")
+		for idx, pr := range state.State.PendingReconciles {
+			req := pr.Request.NamespacedName
+			fmt.Fprintf(&b, "  [%d] %s %s/%s\n", idx, pr.ReconcilerID, req.Namespace, req.Name)
+		}
+	}
+
+	b.WriteString("\nOutcome:\n")
+	if len(state.State.PendingReconciles) == 0 && state.Error == "" && state.FailedReconcile == nil {
+		b.WriteString("  Converged\n")
+	} else if state.Reason != "" {
+		fmt.Fprintf(&b, "  %s\n", state.Reason)
+	} else {
+		b.WriteString("  Aborted\n")
+	}
 	if state.Reason != "" || state.Error != "" || state.FailedReconcile != nil {
-		b.WriteString("\nOutcome:\n")
 		if state.Reason != "" {
 			fmt.Fprintf(&b, "  Reason: %s\n", state.Reason)
 		}

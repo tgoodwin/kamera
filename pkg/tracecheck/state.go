@@ -407,7 +407,6 @@ func (sn *StateNode) TrimForInspection() {
 	}
 	sn.parent = nil
 	sn.action = nil
-	sn.PendingReconciles = nil
 	sn.ExecutionHistory = nil
 	sn.stuckReconcilerPositions = nil
 	sn.Contents.trimForInspection()
