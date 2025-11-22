@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"reflect"
 	"strings"
@@ -167,6 +169,15 @@ func main() {
 	))
 
 	tracecheck.SetLogger(logf.Log.WithName("tracecheck"))
+
+	go func() {
+		addr := "localhost:6060"
+		pprofLog := logf.Log.WithName("pprof")
+		pprofLog.Info("starting pprof server", "addr", addr)
+		if err := http.ListenAndServe(addr, nil); err != nil {
+			pprofLog.Error(err, "pprof server exited")
+		}
+	}()
 
 	explorer, initialState, err := newKnativeExplorerAndState(*searchDepth, *emitStatsFlag)
 	if err != nil {

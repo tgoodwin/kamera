@@ -657,6 +657,10 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	// invoke the controller at its observed state of the world
 	observableState := state.ObserveAs(pr.ReconcilerID)
+	if e.stats != nil && e.config != nil && e.config.EnablePerfStats {
+		// TODO remove before merging: temporary rehydration instrumentation
+		e.stats.RecordRehydration(pr.ReconcilerID, len(observableState))
+	}
 	stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "FrameID", frameID).V(2).Info("about to reconcile")
 
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
