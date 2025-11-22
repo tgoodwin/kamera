@@ -151,6 +151,8 @@ func main() {
 	searchDepth := flag.Int("depth", 10, "exploration search depth")
 	interactiveFlag := flag.Bool("interactive", true, "launch interactive trace inspector")
 	emitStatsFlag := flag.Bool("emit-stats", false, "record and emit reconcile performance stats")
+	dumpPathFlag := flag.String("dump-output", "", "optional path to write exploration results (converged + aborted) to disk")
+	timeoutFlag := flag.Duration("timeout", 0, "abort exploration after this duration (0 disables)")
 	flag.Parse()
 
 	level, err := parseLogLevel(*logLevel)
@@ -173,7 +175,14 @@ func main() {
 
 	fmt.Printf("[main] initial pending: %v\n", initialState.PendingReconciles)
 
-	res := explorer.Explore(context.Background(), initialState)
+	ctx := context.Background()
+	if *timeoutFlag > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, *timeoutFlag)
+		defer cancel()
+	}
+
+	res := explorer.Explore(ctx, initialState)
 
 	fmt.Println("converged states:", len(res.ConvergedStates))
 	fmt.Println("aborted states:", len(res.AbortedStates))
@@ -183,6 +192,14 @@ func main() {
 	if len(states) == 0 {
 		fmt.Println("no states returned from exploration")
 		return
+	}
+
+	if *dumpPathFlag != "" {
+		if err := interactive.SaveInspectorDump(states, *dumpPathFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to dump results to %s: %v\n", *dumpPathFlag, err)
+			os.Exit(1)
+		}
+		fmt.Printf("wrote results to %s\n", *dumpPathFlag)
 	}
 
 	if !*interactiveFlag {
