@@ -27,7 +27,7 @@ import (
 
 const defaultMaxDepth = 100
 
-func newKnativeExplorerAndState(maxDepth int) (*tracecheck.Explorer, tracecheck.StateNode, error) {
+func newKnativeExplorerAndState(maxDepth int, perfStats bool) (*tracecheck.Explorer, tracecheck.StateNode, error) {
 	depth := maxDepth
 	if depth <= 0 {
 		depth = defaultMaxDepth
@@ -36,6 +36,9 @@ func newKnativeExplorerAndState(maxDepth int) (*tracecheck.Explorer, tracecheck.
 	builder := tracecheck.NewExplorerBuilder(scheme)
 	configureKnativeExplorer(builder)
 	builder.WithMaxDepth(depth)
+	if perfStats {
+		builder.WithPerfStats()
+	}
 
 	explorer, err := builder.Build("standalone")
 	if err != nil {

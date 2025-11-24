@@ -85,7 +85,7 @@ TARGET_DIR=$(cd "$TARGET_DIR" && pwd)
 
 # Resolve repo root relative to this script (../.. from cmd/determinize/)
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
-REPO_ROOT=$(cd "$SCRIPT_DIR/../.." && pwd)
+REPO_ROOT=$(cd "$SCRIPT_DIR" && pwd)
 
 # create temp dirs (gocache and gomodcache under cache root)
 GOCACHE_DIR="$CACHE_ROOT/gocache"

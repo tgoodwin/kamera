@@ -88,6 +88,11 @@ func (b *ExplorerBuilder) WithDebug() {
 	b.config.debug = true
 }
 
+func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
+	b.config.EnablePerfStats = true
+	return b
+}
+
 func (b *ExplorerBuilder) BreakEarly() {
 	b.config.breakEarly = true
 }
