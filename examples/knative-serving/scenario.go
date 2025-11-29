@@ -13,6 +13,8 @@ import (
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
+	"knative.dev/pkg/reconciler"
+	"knative.dev/serving/pkg/apis/autoscaling"
 	"knative.dev/serving/pkg/apis/serving"
 	v1 "knative.dev/serving/pkg/apis/serving/v1"
 	kpareconciler "knative.dev/serving/pkg/reconciler/autoscaling/kpa"
@@ -69,6 +71,9 @@ func buildBaselineService() *v1.Service {
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "kamera-test",
 						Annotations: map[string]string{
+							// Ensure KPA class annotation is present so the KPA reconciler processes the PA.
+							autoscaling.ClassAnnotationKey: autoscaling.KPA,
+						},
 					},
 					Spec: v1.RevisionSpec{
 						PodSpec: corev1.PodSpec{
@@ -100,7 +105,12 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 	builder.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 			multiScaler := knativeharness.NewFakeMultiScaler(ctx.Done(), logging.FromContext(ctx))
-			return kpareconciler.NewController(ctx, cmw, multiScaler)
+			impl := kpareconciler.NewController(ctx, cmw, multiScaler)
+			// Wrap the reconciler so we can log the SKS/PA state before and after each reconcile.
+			if la, ok := impl.Reconciler.(reconciler.LeaderAware); ok {
+				impl.Reconciler = knativeharness.NewKPAProbeReconciler(la)
+			}
+			return impl
 		}
 		strategy, err := knativeharness.NewKnativeStrategy(factory, r, serving.RevisionUID)
 		if err != nil {

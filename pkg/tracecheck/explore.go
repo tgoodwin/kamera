@@ -17,6 +17,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/util"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -660,6 +661,26 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "FrameID", frameID).V(2).Info("about to reconcile")
 
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
+	if err != nil && apierrors.IsAlreadyExists(err) {
+		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).Info("tolerating AlreadyExists error; treating reconcile as no-op")
+		beforeState := make(ObjectVersions)
+		maps.Copy(beforeState, state.Objects())
+		beforeSequences := make(KindSequences)
+		maps.Copy(beforeSequences, state.Contents.KindSequences)
+
+		reconcileResult = &ReconcileResult{
+			ControllerID:  pr.ReconcilerID,
+			FrameID:       frameID,
+			FrameType:     FrameTypeExplore,
+			Changes:       Changes{ObjectVersions: make(ObjectVersions)},
+			StateBefore:   beforeState,
+			StateAfter:    beforeState,
+			KindSeqBefore: beforeSequences,
+			KindSeqAfter:  beforeSequences,
+			Error:         err.Error(),
+		}
+		err = nil
+	}
 	if err != nil {
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")
 		// return the pre-reconcile state if the controller errored

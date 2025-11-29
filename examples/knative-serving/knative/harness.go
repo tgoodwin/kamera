@@ -23,6 +23,7 @@ import (
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/injection"
 	"knative.dev/pkg/injection/clients/dynamicclient"
+	dynamicfake "knative.dev/pkg/injection/clients/dynamicclient/fake"
 	"knative.dev/pkg/reconciler"
 	reconcilertesting "knative.dev/pkg/reconciler/testing"
 
@@ -65,6 +66,7 @@ import (
 	serviceinformers "knative.dev/pkg/client/injection/kube/informers/core/v1/service"
 	autoscalingv1alpha1 "knative.dev/serving/pkg/apis/autoscaling/v1alpha1"
 	cfgmap "knative.dev/serving/pkg/apis/config"
+	kpaclient "knative.dev/serving/pkg/client/injection/client/fake"
 	podscalableinformer "knative.dev/serving/pkg/client/injection/ducks/autoscaling/v1alpha1/podscalable"
 	painformers "knative.dev/serving/pkg/client/injection/informers/autoscaling/v1alpha1/podautoscaler"
 )
@@ -455,7 +457,74 @@ func syncDynamicClient(ctx context.Context, resource string, obj client.Object, 
 	}
 }
 
+// NewKPAProbeReconciler wraps a leader-aware reconciler to log ServerlessService and PA state
+// before and after each reconcile. This helps debug why KPA might no-op in the explorer.
+type KPAProbeReconciler struct {
+	inner interface {
+		Reconcile(context.Context, string) error
+	}
+	la reconciler.LeaderAware
+}
+
+func NewKPAProbeReconciler(inner reconciler.LeaderAware) *KPAProbeReconciler {
+	return &KPAProbeReconciler{
+		inner: inner.(interface {
+			Reconcile(context.Context, string) error
+		}),
+		la: inner,
+	}
+}
+
+func (p *KPAProbeReconciler) Reconcile(ctx context.Context, key string) error {
+	logger := log.FromContext(ctx).WithName("kpa-probe").WithValues("key", key)
+	ns, name, err := cache.SplitMetaNamespaceKey(key)
+	if err == nil {
+		logSKS(ctx, logger, ns, name, "before")
+		logPA(ctx, logger, ns, name, "before")
+	}
+
+	err = p.inner.Reconcile(ctx, key)
+
+	if err == nil && ns != "" && name != "" {
+		logSKS(ctx, logger, ns, name, "after")
+		logPA(ctx, logger, ns, name, "after")
+	}
+	return err
+}
+
+func (p *KPAProbeReconciler) Promote(b reconciler.Bucket, enq func(reconciler.Bucket, types.NamespacedName)) error {
+	return p.la.Promote(b, enq)
+}
+
+func (p *KPAProbeReconciler) Demote(b reconciler.Bucket) {
+	p.la.Demote(b)
+}
+
+func logSKS(ctx context.Context, logger logr.Logger, ns, name, stage string) {
+	sks, err := fakenetworkingclient.Get(ctx).NetworkingV1alpha1().ServerlessServices(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		logger.Info("sks lookup", "stage", stage, "found", false, "error", err.Error())
+		return
+	}
+	logger.Info("sks lookup", "stage", stage, "found", true, "mode", sks.Spec.Mode, "serviceName", sks.Status.ServiceName, "privateService", sks.Status.PrivateServiceName)
+}
+
+func logPA(ctx context.Context, logger logr.Logger, ns, name, stage string) {
+	pa, err := kpaclient.Get(ctx).AutoscalingV1alpha1().PodAutoscalers(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		logger.Info("pa lookup", "stage", stage, "found", false, "error", err.Error())
+		return
+	}
+	logger.Info("pa lookup", "stage", stage, "found", true, "serviceName", pa.Status.ServiceName, "metricsServiceName", pa.Status.MetricsServiceName, "conditions", pa.Status.Conditions)
+}
+
 func syncPodScalableInformer(ctx context.Context, dep *appsv1.Deployment, op event.OperationType, logger logr.Logger) {
+	if err := ctx.Err(); err != nil {
+		// TODO(tg/debug): remove once informer startup issues are resolved; this is a defensive guard
+		logger.WithValues("stage", "podscalable-context").Info("skipping podscalable sync due to context error", "contextErr", err)
+		return
+	}
+
 	factory := podscalableinformer.Get(ctx)
 	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
 
@@ -590,6 +659,9 @@ func setupClientState(ctx context.Context, state []runtime.Object, selectors ...
 	ctx, cancel := context.WithCancel(ctx)
 	ctx = filteredinformerfactory.WithSelectors(ctx, selectors...)
 	ctx = injection.WithConfig(ctx, &rest.Config{})
+	// Override dynamic client with a scheme that includes Knative types (e.g., PodScalable duck) so
+	// duck informers can list/watch deployments successfully.
+	ctx, _ = dynamicfake.With(ctx, kamerascheme.Default)
 	ctx, informers := injection.Fake.SetupInformers(ctx, &rest.Config{})
 
 	logger := log.FromContext(ctx).WithName("setup")
@@ -615,10 +687,11 @@ func setupClientState(ctx context.Context, state []runtime.Object, selectors ...
 
 	waitInformers, err := reconcilertesting.RunAndSyncInformers(ctx, informers...)
 	if err != nil {
-		logger.Error(err, "RunAndSyncInformers failed")
+		// Log which informer failed to sync for easier debugging.
 		for idx, meta := range metas {
 			logger.Error(err, "informer sync status", "index", idx, "type", meta.typeName, "synced", meta.informer.HasSynced())
 		}
+		logger.Error(err, "RunAndSyncInformers failed")
 		cancel()
 		return nil, nil, fmt.Errorf("failed to sync informers: %w", err)
 	}
@@ -712,6 +785,7 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 			}
 			ensureGVK(o)
 			logger := log.FromContext(ctx).WithName("seed").WithValues("resource", "deployments", "namespace", o.Namespace, "name", o.Name)
+			// Seed dynamic client so duck PodScalable informer (which uses dynamic watches) can list deployments.
 			syncDynamicClient(ctx, "deployments", o, event.CREATE, logger)
 			syncPodScalableInformer(ctx, o, event.CREATE, logger)
 		case *appsv1.ReplicaSet:

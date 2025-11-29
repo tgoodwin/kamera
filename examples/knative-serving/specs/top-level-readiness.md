@@ -21,3 +21,10 @@ Please document findings under the Work Log section of this file.
 1. if it becomes apparent that, for example, a resource R is not being created, do not "solve" that problem by adding code to the KnativeStrategy to manually create it. This is "cheating." Instead, we should figure out what part of the k8s/Knative control plane would create resource R in the real world, and figure out what's blocking that from happening in our simulation.
 
 ## Work Log
+- Ran headless explore with `GOCACHE=$REPO/.gocache GOMODCACHE=~/tmp/gomodcache go run . -depth 35 -timeout 30s -interactive=false -log-level info -dump-output /tmp/kamera-results3.jsonl`.
+- Converged state still shows Service/Route Ready=Unknown (RevisionMissing) and Revision Ready/ResourcesAvailable/Active all Unknown (Deploying) even though Deployment/Pod are Ready.
+- PodAutoscaler exists but status fields/conditions are empty; no ServerlessService or Ingress objects were created.
+- Explorer path shows KPA reconciler ran (one frame) but recorded no effects or status updates; no CREATEs for serverlessservices appeared in the reactor logs.
+- Timeout-related “failed to sync informers” errors appear only right at the explore timeout boundary (e.g., 30s/60s) and don’t change the converged state.
+- Saw an execution branch abort when ServiceReconciler attempted a CREATE on an object that already existed; this should be treated as optimistic concurrency, so we need to tolerate `AlreadyExists` from that reconciler instead of failing the entire branch.
+- Added global tolerance in `pkg/tracecheck/explore.go` so `IsAlreadyExists` errors from any reconciler are treated as no-ops rather than aborting the branch (optimistic concurrency).
