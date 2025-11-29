@@ -10,10 +10,18 @@ This example drives Kamera’s `Explorer` against a minimal Knative Serving setu
 - `-dump-output <path>`: write converged + aborted states to a file (works even when `-interactive=false`).
 - `-emit-stats`: record and print reconcile performance stats at the end.
 
+## preparing knative code for deterministic simulation testing
+Kamera's `Explorer` simulation searches the reconciliation execution space and identifies possible converged states. Because Knative code modifies Knative resources with nondeterministic values such as timestamps, these timestamp values can cause two semantically equivalent states to appear distinct, which is no good for our deterministic simulation strategy. So, we fix this by preprocessing Knative code + dependencies to be deterministic.
+```
+$REPO_ROOT/determinize_deps.sh -c ~/tmp -t ./examples/knative-serving -m knative.dev
+```
+
 ## Suggested headless workflow
-The explorer can run for a while on deep searches. Use a timeout and dump results to inspect them offline:
+Run the explore routine using the "determinized" dependencies (from previous step) by setting `GOCACHE` and `GOMODCACHE` accordingly. The explorer can run for a while on deep searches, so use a timeout and dump results to inspect them offline:
 ```sh
 # Abort after 60s, limit depth to 25, disable TUI, log at info, dump results.
+GOCACHE=~/tmp/gocache \
+GOMODCACHE=~/tmp/gomodcache \
 go run ./examples/knative-serving \
   -depth 25 \
   -timeout 60s \
@@ -24,5 +32,5 @@ go run ./examples/knative-serving \
 ```
 
 - Inspect `/tmp/kamera-results.jsonl` directly or feed it into your own tooling.
-- Increase `-depth` gradually; deeper searches grow quickly. In this Knative example, convergence requires a depth of ~30.
-- Keep a timeout on while iterating to avoid long-running explorations.
+- Increase `-depth` gradually if the search is hitting max depth before finding any converged states. In this Knative example, convergence requires a depth of ~30.
+- Keep a timeout on while iterating to avoid long-running, exhaustive explorations. The explore routine collects the convergence paths it finds along the way (DFS), so setting a timeout lets you inspect any convergence paths that were found without waiting for the routine to cover the entire state space. This faster feedback loop is useful when iterating / debugging.
