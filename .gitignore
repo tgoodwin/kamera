@@ -28,7 +28,9 @@ go.work.sum
 
 .vscode/**
 **/.gocache/**
+**/.gomodcache/**
 **/debug.log
+.**.log
 
 examples/chaos/**
 
