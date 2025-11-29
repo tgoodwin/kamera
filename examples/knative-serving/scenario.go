@@ -68,6 +68,7 @@ func buildBaselineService() *v1.Service {
 				Template: v1.RevisionTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "kamera-test",
+						Annotations: map[string]string{
 					},
 					Spec: v1.RevisionSpec{
 						PodSpec: corev1.PodSpec{
@@ -164,8 +165,10 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 
 	builder.WithResourceDep("serving.knative.dev/Revision", "RevisionDigestStub", "RevisionReconciler", "KPA", "ServiceReconciler")
 	builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "KPA", "ServerlessServiceReconciler")
+	builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "RevisionReconciler")
 	builder.WithResourceDep("serving.knative.dev/Service", "ServiceReconciler")
 	builder.WithResourceDep("serving.knative.dev/Configuration", "ServiceReconciler", "RevisionReconciler")
 	builder.WithResourceDep("serving.knative.dev/Route", "RouteReconciler", "ServiceReconciler")
 	builder.WithResourceDep("networking.internal.knative.dev/Ingress", "RouteReconciler", "ServerlessServiceReconciler")
+	builder.WithResourceDep("apps/Deployment", "RevisionReconciler")
 }
