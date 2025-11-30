@@ -21,7 +21,6 @@ import (
 	"k8s.io/client-go/tools/record"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/injection"
-	"knative.dev/pkg/injection/clients/dynamicclient"
 	dynamicfake "knative.dev/pkg/injection/clients/dynamicclient/fake"
 	"knative.dev/pkg/reconciler"
 	reconcilertesting "knative.dev/pkg/reconciler/testing"
@@ -420,52 +419,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 	}
 }
 
-func syncDynamicClient(ctx context.Context, resource string, obj client.Object, op event.OperationType, logger logr.Logger) {
-	dc := dynamicclient.Get(ctx)
-	gvr, ok := resourceToDynamicGVR[resource]
-	if !ok {
-		return
-	}
-
-	content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj.DeepCopyObject())
-	if err != nil {
-		logger.WithValues("stage", "toUnstructured").Error(err, "failed to convert object for dynamic client")
-		return
-	}
-
-	unstr := &unstructured.Unstructured{Object: content}
-	unstr.SetGroupVersionKind(obj.GetObjectKind().GroupVersionKind())
-	res := dc.Resource(gvr).Namespace(obj.GetNamespace())
-
-	switch op {
-	case event.CREATE:
-		loggerWithStage := logger.WithValues("stage", "dynamic-create")
-		if _, err = res.Create(ctx, unstr, metav1.CreateOptions{}); err != nil {
-			if !apierrs.IsAlreadyExists(err) {
-				loggerWithStage.Error(err, "failed to create object in dynamic client")
-			}
-		} else {
-			loggerWithStage.Info("created object in dynamic client")
-		}
-	case event.UPDATE:
-		loggerWithStage := logger.WithValues("stage", "dynamic-update")
-		if _, err = res.Update(ctx, unstr, metav1.UpdateOptions{}); err != nil {
-			loggerWithStage.Error(err, "failed to update object in dynamic client")
-		} else {
-			loggerWithStage.Info("updated object in dynamic client")
-		}
-	case event.MARK_FOR_DELETION:
-		loggerWithStage := logger.WithValues("stage", "dynamic-delete")
-		if err = res.Delete(ctx, obj.GetName(), metav1.DeleteOptions{}); err != nil {
-			if !apierrs.IsNotFound(err) {
-				loggerWithStage.Error(err, "failed to delete object from dynamic client")
-			}
-		} else {
-			loggerWithStage.Info("deleted object from dynamic client")
-		}
-	}
-}
-
 func syncPodScalableInformer(ctx context.Context, dep *appsv1.Deployment, op event.OperationType, logger logr.Logger) {
 	if err := ctx.Err(); err != nil {
 		// TODO(tg/debug): remove once informer startup issues are resolved; this is a defensive guard
@@ -734,8 +687,6 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 			}
 			ensureGVK(o)
 			logger := log.FromContext(ctx).WithName("seed").WithValues("resource", "deployments", "namespace", o.Namespace, "name", o.Name)
-			// Seed dynamic client so duck PodScalable informer (which uses dynamic watches) can list deployments.
-			syncDynamicClient(ctx, "deployments", o, event.CREATE, logger)
 			syncPodScalableInformer(ctx, o, event.CREATE, logger)
 		case *appsv1.ReplicaSet:
 			if _, err := kubeclient.AppsV1().ReplicaSets(o.Namespace).Create(ctx, o, metav1.CreateOptions{}); err != nil {
@@ -750,8 +701,6 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 				return fmt.Errorf("failed to create ingress: %w", err)
 			}
 			ensureGVK(o)
-			logger := log.FromContext(ctx).WithName("seed").WithValues("resource", "ingresses", "namespace", o.Namespace, "name", o.Name)
-			syncDynamicClient(ctx, "ingresses", o, event.CREATE, logger)
 		default:
 			return fmt.Errorf("unsupported type %T", o)
 		}
@@ -848,13 +797,6 @@ var resourceToListKind = map[string]string{
 	"secrets":            "SecretList",
 	"serviceaccounts":    "ServiceAccountList",
 	"ingresses":          "IngressList",
-}
-
-var resourceToDynamicGVR = map[string]schema.GroupVersionResource{
-	"deployments":        {Group: "apps", Version: "v1", Resource: "deployments"},
-	"services":           {Group: "", Version: "v1", Resource: "services"},
-	"serverlessservices": {Group: "networking.internal.knative.dev", Version: "v1alpha1", Resource: "serverlessservices"},
-	"ingresses":          {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
 }
 
 func ensureGVK(obj client.Object) {
