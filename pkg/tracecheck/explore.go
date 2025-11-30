@@ -16,6 +16,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/simclock"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -754,10 +755,19 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		case event.CREATE:
 			if exists {
 				// the effect validation mechanism should prevent a create effect from going through
-				// if an object with the same kind/namespace/name already exists, so panic if it does happen
+				// with an 'AlreadyExists' error, so panic if it does happen
 				panic("create effect object already exists in prev state: " + effect.Key.String())
 			} else {
-				// key not in state as expected, add it
+				// Mimic APIServer behavior: set Generation to 1 on CREATE if not already set
+				newObj := e.versionManager.Resolve(changeOV[effect.Key])
+				if newObj != nil {
+					gen := newObj.GetGeneration()
+					if gen == 0 {
+						newObj.SetGeneration(1)
+						// Update the version hash after modifying Generation
+						changeOV[effect.Key] = e.versionManager.Publish(newObj)
+					}
+				}
 				prevState[effect.Key] = changeOV[effect.Key]
 			}
 		case event.UPDATE, event.PATCH:
@@ -770,6 +780,35 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			}
 			if exists && existingKey != effect.Key {
 				delete(prevState, existingKey)
+			}
+			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
+			oldObj := e.versionManager.Resolve(prevState[existingKey])
+			newObj := e.versionManager.Resolve(changeOV[effect.Key])
+			if oldObj != nil && newObj != nil {
+				// Compare specs to determine if Generation should be incremented
+				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
+				// Use a safe check to avoid panics if spec comparison fails
+				specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
+				if err != nil {
+					// If we can't determine if spec changed, conservatively increment Generation
+					// This is safer than not incrementing it
+					stepLog.V(2).WithValues("key", effect.Key, "error", err).Info("error checking spec change, incrementing Generation conservatively")
+					specChanged = true
+				}
+				if specChanged {
+					oldGen := oldObj.GetGeneration()
+					if oldGen == 0 {
+						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
+						// This can happen if the state snapshot has objects with Generation=0
+						newObj.SetGeneration(1)
+						stepLog.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", 1).Info("set Generation to 1 on spec update (was 0)")
+					} else {
+						newObj.SetGeneration(oldGen + 1)
+						stepLog.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", newObj.GetGeneration()).Info("incremented Generation on spec update")
+					}
+					// Update the version hash after modifying Generation
+					changeOV[effect.Key] = e.versionManager.Publish(newObj)
+				}
 			}
 			prevState[effect.Key] = changeOV[effect.Key]
 
@@ -998,6 +1037,18 @@ func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput
 	// after processing the reconcile, we need to determine which controllers
 	// were triggered by the changes in the state.
 	triggeredByChanges := e.getTriggeredReconcilers(result.Changes)
+
+	// Log which reconcilers were triggered for debugging
+	if len(triggeredByChanges) > 0 {
+		triggeredIDs := lo.Map(triggeredByChanges, func(pr PendingReconcile, _ int) string {
+			return pr.String()
+		})
+		logger.WithValues(
+			"ReconcilerID", reconcileInput.ReconcilerID,
+			"TriggeredReconcilers", triggeredIDs,
+			"NumChanges", len(result.Changes.ObjectVersions),
+		).V(1).Info("reconcilers triggered by changes")
+	}
 
 	// for those that would have been triggered but have been configured as "stuck",
 	// filter them out of the triggered list if the changes are contained within the
