@@ -18,7 +18,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/injection"
@@ -60,16 +59,9 @@ import (
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/system"
 
-	ingressinformers "knative.dev/networking/pkg/client/injection/informers/networking/v1alpha1/ingress"
-	sksinformers "knative.dev/networking/pkg/client/injection/informers/networking/v1alpha1/serverlessservice"
-	deploymentinformers "knative.dev/pkg/client/injection/kube/informers/apps/v1/deployment"
-	endpointsinformers "knative.dev/pkg/client/injection/kube/informers/core/v1/endpoints"
-	serviceinformers "knative.dev/pkg/client/injection/kube/informers/core/v1/service"
 	autoscalingv1alpha1 "knative.dev/serving/pkg/apis/autoscaling/v1alpha1"
 	cfgmap "knative.dev/serving/pkg/apis/config"
 	podscalableinformer "knative.dev/serving/pkg/client/injection/ducks/autoscaling/v1alpha1/podscalable"
-	painformers "knative.dev/serving/pkg/client/injection/informers/autoscaling/v1alpha1/podautoscaler"
-	routeinformers "knative.dev/serving/pkg/client/injection/informers/serving/v1/route"
 	kparesources "knative.dev/serving/pkg/reconciler/autoscaling/kpa/resources"
 )
 
@@ -365,27 +357,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			a := action.(testing.UpdateAction)
 			obj = a.GetObject()
 			op = event.UPDATE
-			// When Route is updated (including status updates via regular Update), ensure ObservedGeneration is set.
-			// This handles cases where the Route reconciler updates the Route via Update instead of UpdateStatus.
-			// if resource == "routes" {
-			// 	logger.Info("reactor processing route update", "objType", fmt.Sprintf("%T", obj))
-			// 	if route, ok := obj.(*v1.Route); ok {
-			// 		logger.Info("reactor intercepted route update", "name", route.Name, "namespace", a.GetNamespace(),
-			// 			"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
-			// 		// Only set ObservedGeneration if it's not already set or doesn't match Generation
-			// 		if route.Status.ObservedGeneration != route.Generation {
-			// 			logger.Info("setting route ObservedGeneration", "name", route.Name,
-			// 				"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
-			// 			route.Status.ObservedGeneration = route.Generation
-			// 			logger.Info("set route ObservedGeneration", "name", route.Name, "observedGeneration", route.Status.ObservedGeneration)
-			// 		} else {
-			// 			logger.Info("route ObservedGeneration already matches Generation", "name", route.Name,
-			// 				"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
-			// 		}
-			// 	} else {
-			// 		logger.Info("route update but object is not *v1.Route", "objType", fmt.Sprintf("%T", obj))
-			// 	}
-			// }
 		case "delete":
 			a := action.(testing.DeleteAction)
 			obj, err = lookup(a.GetResource(), a.GetNamespace(), a.GetName())
@@ -405,27 +376,11 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 				if subresource == "status" {
 					obj = updateSubAction.GetObject()
 					op = event.UPDATE
-					if resource == "ingresses" {
-						logger.Info("reactor intercepted ingress status update", "name", obj.(client.Object).GetName(), "namespace", updateSubAction.GetNamespace())
-					}
-					// When Route reconciler updates Route status, ensure ObservedGeneration is set.
-					// In real Knative, the framework sets this automatically, but in our simulation we need to do it explicitly.
-					// if resource == "routes" {
-					// 	if route, ok := obj.(*v1.Route); ok {
-					// 		logger.Info("reactor intercepted route status update", "name", route.Name, "namespace", updateSubAction.GetNamespace(),
-					// 			"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
-					// 		// Set ObservedGeneration to match Generation so Service reconciler sees Route as reconciled
-					// 		route.Status.ObservedGeneration = route.Generation
-					// 		logger.Info("set route ObservedGeneration", "name", route.Name, "observedGeneration", route.Status.ObservedGeneration)
-					// 	} else {
-					// 		logger.Info("route status update but object is not *v1.Route", "type", fmt.Sprintf("%T", obj))
-					// 	}
-					// }
 				} else {
 					logger.V(1).Info("updatesubresource with non-status subresource", "subresource", subresource, "resource", resource)
 				}
 			} else {
-				logger.Info("updatesubresource action but type assertion failed", "actionType", fmt.Sprintf("%T", action))
+				panic("updatesubresource action type assertion failed - not supposed to happen")
 			}
 		default:
 			// Log unhandled verbs to help debug missing status updates
@@ -446,8 +401,8 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 					tag.AddSleeveObjectID(co)
 				}
 				// Sync informer cache so reconcilers reading from informers see the latest state
-				syncInformerCache(ctx, resource, co, op)
-				logger.V(1).Info("recording effect",
+				// syncInformerCache(ctx, resource, co, op)
+				logger.V(2).Info("recording effect",
 					"operation", op,
 					"name", co.GetName(),
 					"kind", co.GetObjectKind().GroupVersionKind().Kind,
@@ -462,68 +417,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 
 		// Return false to let the default reactor handle the action.
 		return false, nil, err
-	}
-}
-
-func syncInformerCache(ctx context.Context, resource string, obj client.Object, op event.OperationType) {
-	var (
-		indexer cache.Indexer
-	)
-
-	switch resource {
-	case "deployments":
-		indexer = deploymentinformers.Get(ctx).Informer().GetIndexer()
-	case "podautoscalers":
-		indexer = painformers.Get(ctx).Informer().GetIndexer()
-	case "endpoints":
-		indexer = endpointsinformers.Get(ctx).Informer().GetIndexer()
-	case "services":
-		indexer = serviceinformers.Get(ctx).Informer().GetIndexer()
-	case "serverlessservices":
-		indexer = sksinformers.Get(ctx).Informer().GetIndexer()
-	case "ingresses":
-		indexer = ingressinformers.Get(ctx).Informer().GetIndexer()
-	case "routes":
-		indexer = routeinformers.Get(ctx).Informer().GetIndexer()
-	default:
-		return
-	}
-
-	copy := obj.DeepCopyObject().(client.Object)
-	logger := log.FromContext(ctx).WithName("cache-sync").WithValues(
-		"resource", resource,
-		"name", copy.GetName(),
-		"namespace", copy.GetNamespace(),
-	)
-	if anns := copy.GetAnnotations(); len(anns) > 0 {
-		logger = logger.WithValues("annotations", anns)
-	}
-
-	var err error
-	switch op {
-	case event.CREATE:
-		err = indexer.Add(copy)
-		logger.Info("added object to informer cache")
-	case event.UPDATE:
-		err = indexer.Update(copy)
-		logger.Info("updated object in informer cache")
-	case event.MARK_FOR_DELETION:
-		err = indexer.Delete(copy)
-		logger.Info("deleted object from informer cache")
-	default:
-		return
-	}
-
-	syncDynamicClient(ctx, resource, copy, op, logger)
-	switch resource {
-	case "deployments":
-		if dep, ok := copy.(*appsv1.Deployment); ok {
-			syncPodScalableInformer(ctx, dep, op, logger)
-		}
-	}
-
-	if err != nil {
-		logger.Error(err, "failed to sync informer cache")
 	}
 }
 
