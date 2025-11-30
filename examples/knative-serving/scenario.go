@@ -179,6 +179,6 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 	builder.WithResourceDep("serving.knative.dev/Service", "ServiceReconciler")
 	builder.WithResourceDep("serving.knative.dev/Configuration", "ServiceReconciler", "RevisionReconciler")
 	builder.WithResourceDep("serving.knative.dev/Route", "RouteReconciler", "ServiceReconciler")
-	builder.WithResourceDep("networking.internal.knative.dev/Ingress", "RouteReconciler", "ServerlessServiceReconciler")
+	builder.WithResourceDep("networking.internal.knative.dev/Ingress", "IngressStatusStub", "RouteReconciler", "ServerlessServiceReconciler")
 	builder.WithResourceDep("apps/Deployment", "RevisionReconciler")
 }

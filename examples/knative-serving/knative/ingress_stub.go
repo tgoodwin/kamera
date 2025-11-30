@@ -42,6 +42,7 @@ func (r *IngressStatusStub) Reconcile(ctx context.Context, req reconcile.Request
 			DomainInternal: clusterHost,
 		}},
 	)
+	// Set ObservedGeneration to match Generation so Route reconciler sees Ingress as ready
 	desiredStatus.ObservedGeneration = ing.Generation
 
 	if equality.Semantic.DeepEqual(ing.Status, desiredStatus) {
