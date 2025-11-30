@@ -67,7 +67,6 @@ import (
 	serviceinformers "knative.dev/pkg/client/injection/kube/informers/core/v1/service"
 	autoscalingv1alpha1 "knative.dev/serving/pkg/apis/autoscaling/v1alpha1"
 	cfgmap "knative.dev/serving/pkg/apis/config"
-	kpaclient "knative.dev/serving/pkg/client/injection/client/fake"
 	podscalableinformer "knative.dev/serving/pkg/client/injection/ducks/autoscaling/v1alpha1/podscalable"
 	painformers "knative.dev/serving/pkg/client/injection/informers/autoscaling/v1alpha1/podautoscaler"
 	routeinformers "knative.dev/serving/pkg/client/injection/informers/serving/v1/route"
@@ -605,67 +604,6 @@ func syncDynamicClient(ctx context.Context, resource string, obj client.Object, 
 			loggerWithStage.Info("deleted object from dynamic client")
 		}
 	}
-}
-
-// NewKPAProbeReconciler wraps a leader-aware reconciler to log ServerlessService and PA state
-// before and after each reconcile. This helps debug why KPA might no-op in the explorer.
-type KPAProbeReconciler struct {
-	inner interface {
-		Reconcile(context.Context, string) error
-	}
-	la reconciler.LeaderAware
-}
-
-func NewKPAProbeReconciler(inner reconciler.LeaderAware) *KPAProbeReconciler {
-	return &KPAProbeReconciler{
-		inner: inner.(interface {
-			Reconcile(context.Context, string) error
-		}),
-		la: inner,
-	}
-}
-
-func (p *KPAProbeReconciler) Reconcile(ctx context.Context, key string) error {
-	logger := log.FromContext(ctx).WithName("kpa-probe").WithValues("key", key)
-	ns, name, err := cache.SplitMetaNamespaceKey(key)
-	if err == nil {
-		logSKS(ctx, logger, ns, name, "before")
-		logPA(ctx, logger, ns, name, "before")
-	}
-
-	err = p.inner.Reconcile(ctx, key)
-
-	if err == nil && ns != "" && name != "" {
-		logSKS(ctx, logger, ns, name, "after")
-		logPA(ctx, logger, ns, name, "after")
-	}
-	return err
-}
-
-func (p *KPAProbeReconciler) Promote(b reconciler.Bucket, enq func(reconciler.Bucket, types.NamespacedName)) error {
-	return p.la.Promote(b, enq)
-}
-
-func (p *KPAProbeReconciler) Demote(b reconciler.Bucket) {
-	p.la.Demote(b)
-}
-
-func logSKS(ctx context.Context, logger logr.Logger, ns, name, stage string) {
-	sks, err := fakenetworkingclient.Get(ctx).NetworkingV1alpha1().ServerlessServices(ns).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		logger.Info("sks lookup", "stage", stage, "found", false, "error", err.Error())
-		return
-	}
-	logger.Info("sks lookup", "stage", stage, "found", true, "mode", sks.Spec.Mode, "serviceName", sks.Status.ServiceName, "privateService", sks.Status.PrivateServiceName)
-}
-
-func logPA(ctx context.Context, logger logr.Logger, ns, name, stage string) {
-	pa, err := kpaclient.Get(ctx).AutoscalingV1alpha1().PodAutoscalers(ns).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		logger.Info("pa lookup", "stage", stage, "found", false, "error", err.Error())
-		return
-	}
-	logger.Info("pa lookup", "stage", stage, "found", true, "serviceName", pa.Status.ServiceName, "metricsServiceName", pa.Status.MetricsServiceName, "conditions", pa.Status.Conditions)
 }
 
 func syncPodScalableInformer(ctx context.Context, dep *appsv1.Deployment, op event.OperationType, logger logr.Logger) {

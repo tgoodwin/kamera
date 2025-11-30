@@ -13,7 +13,6 @@ import (
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
-	"knative.dev/pkg/reconciler"
 	"knative.dev/serving/pkg/apis/autoscaling"
 	"knative.dev/serving/pkg/apis/serving"
 	v1 "knative.dev/serving/pkg/apis/serving/v1"
@@ -106,10 +105,6 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 			multiScaler := knativeharness.NewFakeMultiScaler(ctx.Done(), logging.FromContext(ctx))
 			impl := kpareconciler.NewController(ctx, cmw, multiScaler)
-			// Wrap the reconciler so we can log the SKS/PA state before and after each reconcile.
-			if la, ok := impl.Reconciler.(reconciler.LeaderAware); ok {
-				impl.Reconciler = knativeharness.NewKPAProbeReconciler(la)
-			}
 			return impl
 		}
 		strategy, err := knativeharness.NewKnativeStrategy(factory, r, serving.RevisionUID)
