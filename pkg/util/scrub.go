@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-const scrubbedTimestamp = "1970-01-01T00:00:00Z"
+const scrubbedTimestamp = "SCRUBBED_TIMESTAMP"
 
 // ScrubTimes walks an arbitrary JSON-like structure (maps/slices) and replaces
 // any string that parses as RFC3339 with a deterministic placeholder.
