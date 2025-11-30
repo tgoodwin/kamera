@@ -6,7 +6,6 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/tgoodwin/kamera/pkg/tag"
-	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -45,7 +44,6 @@ func NewDefaultHasher() *JSONHasher {
 
 func (h *JSONHasher) Hash(obj *unstructured.Unstructured) (VersionHash, error) {
 	objCopy := obj.DeepCopy()
-	util.ScrubTimes(objCopy.Object)
 	return NewDefaultHash(stableHashString(objCopy.Object)), nil
 }
 
@@ -69,7 +67,6 @@ func (h *AnonymizingHasher) Hash(obj *unstructured.Unstructured) (VersionHash, e
 		}
 	}
 	objCopy.SetLabels(anonymizedLabels)
-	util.ScrubTimes(objCopy.Object)
 	return VersionHash{Value: stableHashString(objCopy.Object), Strategy: AnonymizedHash}, nil
 }
 
