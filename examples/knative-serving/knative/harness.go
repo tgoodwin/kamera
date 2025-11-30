@@ -895,9 +895,10 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 	kubeclient := fakekubeclient.Get(ctx)
 	cachingclient := fakecachingclient.Get(ctx)
 	networkingclient := fakenetworkingclient.Get(ctx)
+	logger := log.FromContext(ctx).WithName("seed")
 
 	// i am sorry for the following code
-	for _, obj := range objs {
+	for idx, obj := range objs {
 		if u, ok := obj.(*unstructured.Unstructured); ok {
 			typed, err := convertUnstructured(u)
 			if err != nil {
@@ -906,9 +907,10 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 			obj = typed
 		}
 
-		// if o, ok := obj.(client.Object); ok {
-		// 	fmt.Printf("[insertObjects] type=%T name=%s/%s\n", obj, o.GetNamespace(), o.GetName())
-		// }
+		if o, ok := obj.(client.Object); ok {
+			gvk := o.GetObjectKind().GroupVersionKind()
+			logger.Info("seeding object", "index", idx, "type", fmt.Sprintf("%T", obj), "gvk", gvk.String(), "namespace", o.GetNamespace(), "name", o.GetName())
+		}
 
 		switch o := obj.(type) {
 		case *v1.Service:
@@ -1158,7 +1160,10 @@ func convertUnstructured(u *unstructured.Unstructured) (runtime.Object, error) {
 			}
 		}
 	}
-	if (gvk.Group == "" || gvk.Kind == "") && u.GetKind() != "" {
+	// Only apply a fallback mapping when we have neither group nor kind.
+	// Otherwise we risk remapping core kinds (e.g., core/v1 Service) to a
+	// different API group (e.g., serving.knative.dev/v1 Service).
+	if gvk.Group == "" && gvk.Kind == "" && u.GetKind() != "" {
 		if mapped, ok := kindToGVK[u.GetKind()]; ok {
 			gvk = mapped
 		}
