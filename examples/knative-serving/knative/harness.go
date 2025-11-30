@@ -367,25 +367,25 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			op = event.UPDATE
 			// When Route is updated (including status updates via regular Update), ensure ObservedGeneration is set.
 			// This handles cases where the Route reconciler updates the Route via Update instead of UpdateStatus.
-			if resource == "routes" {
-				logger.Info("reactor processing route update", "objType", fmt.Sprintf("%T", obj))
-				if route, ok := obj.(*v1.Route); ok {
-					logger.Info("reactor intercepted route update", "name", route.Name, "namespace", a.GetNamespace(),
-						"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
-					// Only set ObservedGeneration if it's not already set or doesn't match Generation
-					if route.Status.ObservedGeneration != route.Generation {
-						logger.Info("setting route ObservedGeneration", "name", route.Name,
-							"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
-						route.Status.ObservedGeneration = route.Generation
-						logger.Info("set route ObservedGeneration", "name", route.Name, "observedGeneration", route.Status.ObservedGeneration)
-					} else {
-						logger.Info("route ObservedGeneration already matches Generation", "name", route.Name,
-							"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
-					}
-				} else {
-					logger.Info("route update but object is not *v1.Route", "objType", fmt.Sprintf("%T", obj))
-				}
-			}
+			// if resource == "routes" {
+			// 	logger.Info("reactor processing route update", "objType", fmt.Sprintf("%T", obj))
+			// 	if route, ok := obj.(*v1.Route); ok {
+			// 		logger.Info("reactor intercepted route update", "name", route.Name, "namespace", a.GetNamespace(),
+			// 			"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
+			// 		// Only set ObservedGeneration if it's not already set or doesn't match Generation
+			// 		if route.Status.ObservedGeneration != route.Generation {
+			// 			logger.Info("setting route ObservedGeneration", "name", route.Name,
+			// 				"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
+			// 			route.Status.ObservedGeneration = route.Generation
+			// 			logger.Info("set route ObservedGeneration", "name", route.Name, "observedGeneration", route.Status.ObservedGeneration)
+			// 		} else {
+			// 			logger.Info("route ObservedGeneration already matches Generation", "name", route.Name,
+			// 				"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
+			// 		}
+			// 	} else {
+			// 		logger.Info("route update but object is not *v1.Route", "objType", fmt.Sprintf("%T", obj))
+			// 	}
+			// }
 		case "delete":
 			a := action.(testing.DeleteAction)
 			obj, err = lookup(a.GetResource(), a.GetNamespace(), a.GetName())
@@ -410,17 +410,17 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 					}
 					// When Route reconciler updates Route status, ensure ObservedGeneration is set.
 					// In real Knative, the framework sets this automatically, but in our simulation we need to do it explicitly.
-					if resource == "routes" {
-						if route, ok := obj.(*v1.Route); ok {
-							logger.Info("reactor intercepted route status update", "name", route.Name, "namespace", updateSubAction.GetNamespace(),
-								"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
-							// Set ObservedGeneration to match Generation so Service reconciler sees Route as reconciled
-							route.Status.ObservedGeneration = route.Generation
-							logger.Info("set route ObservedGeneration", "name", route.Name, "observedGeneration", route.Status.ObservedGeneration)
-						} else {
-							logger.Info("route status update but object is not *v1.Route", "type", fmt.Sprintf("%T", obj))
-						}
-					}
+					// if resource == "routes" {
+					// 	if route, ok := obj.(*v1.Route); ok {
+					// 		logger.Info("reactor intercepted route status update", "name", route.Name, "namespace", updateSubAction.GetNamespace(),
+					// 			"generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration)
+					// 		// Set ObservedGeneration to match Generation so Service reconciler sees Route as reconciled
+					// 		route.Status.ObservedGeneration = route.Generation
+					// 		logger.Info("set route ObservedGeneration", "name", route.Name, "observedGeneration", route.Status.ObservedGeneration)
+					// 	} else {
+					// 		logger.Info("route status update but object is not *v1.Route", "type", fmt.Sprintf("%T", obj))
+					// 	}
+					// }
 				} else {
 					logger.V(1).Info("updatesubresource with non-status subresource", "subresource", subresource, "resource", resource)
 				}
@@ -430,7 +430,7 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 		default:
 			// Log unhandled verbs to help debug missing status updates
 			if action.GetVerb() != "watch" && action.GetVerb() != "deletecollection" {
-				logger.Info("unhandled action type", "verb", action.GetVerb(), "resource", resource)
+				panic("unhandled action type: " + strings.Join([]string{action.GetVerb(), action.GetResource().Resource}, " "))
 			}
 			return false, nil, nil
 		}
@@ -507,28 +507,6 @@ func syncInformerCache(ctx context.Context, resource string, obj client.Object, 
 	case event.UPDATE:
 		err = indexer.Update(copy)
 		logger.Info("updated object in informer cache")
-		// For Ingress status updates, log the ObservedGeneration to verify it's set correctly
-		if resource == "ingresses" {
-			if ing, ok := copy.(*netv1alpha1.Ingress); ok {
-				readyCond := ing.Status.GetCondition(netv1alpha1.IngressConditionReady)
-				readyStatus := "unknown"
-				if readyCond != nil {
-					readyStatus = string(readyCond.Status)
-				}
-				logger.Info("synced ingress to cache", "generation", ing.Generation, "observedGeneration", ing.Status.ObservedGeneration, "ready", readyStatus)
-			}
-		}
-		// For Route status updates, log the Ready condition to verify it's synced correctly
-		if resource == "routes" {
-			if route, ok := copy.(*v1.Route); ok {
-				readyCond := route.Status.GetCondition(v1.RouteConditionReady)
-				readyStatus := "unknown"
-				if readyCond != nil {
-					readyStatus = string(readyCond.Status)
-				}
-				logger.Info("synced route to cache", "generation", route.Generation, "observedGeneration", route.Status.ObservedGeneration, "ready", readyStatus)
-			}
-		}
 	case event.MARK_FOR_DELETION:
 		err = indexer.Delete(copy)
 		logger.Info("deleted object from informer cache")
