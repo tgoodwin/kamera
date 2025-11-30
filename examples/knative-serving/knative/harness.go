@@ -69,6 +69,7 @@ import (
 	kpaclient "knative.dev/serving/pkg/client/injection/client/fake"
 	podscalableinformer "knative.dev/serving/pkg/client/injection/ducks/autoscaling/v1alpha1/podscalable"
 	painformers "knative.dev/serving/pkg/client/injection/informers/autoscaling/v1alpha1/podautoscaler"
+	kparesources "knative.dev/serving/pkg/reconciler/autoscaling/kpa/resources"
 )
 
 // Ensure KnativeStrategy implements the Strategy interface
@@ -86,24 +87,40 @@ type KnativeStrategy struct {
 }
 
 type fakeUniScaler struct {
-	mu       sync.RWMutex
-	desired  int32
-	excessBC int32
+	mu              sync.RWMutex
+	desired         int32
+	excessBC        int32
+	activationScale int32
 }
 
 func newFakeUniScaler(decider *scaling.Decider) *fakeUniScaler {
 	desired := decider.Spec.InitialScale
+	// Store ActivationScale for use during activation
+	activationScale := decider.Spec.ActivationScale
 	return &fakeUniScaler{
-		desired:  desired,
-		excessBC: 0,
+		desired:         desired,
+		excessBC:        0,
+		activationScale: activationScale,
 	}
 }
 
 func (f *fakeUniScaler) Scale(_ *zap.SugaredLogger, _ time.Time) scaling.ScaleResult {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	// In real Knative, when InitialScale is 0 (scale-to-zero), the autoscaler
+	// scales up to ActivationScale (or 1 if not set) when there's traffic/activation.
+	// In our simulation, we simulate this by returning at least 1 (or ActivationScale if set)
+	// when InitialScale is 0, which allows the activation flow to proceed.
+	desired := f.desired
+	if desired == 0 {
+		if f.activationScale >= 2 {
+			desired = f.activationScale
+		} else {
+			desired = 1
+		}
+	}
 	return scaling.ScaleResult{
-		DesiredPodCount:     f.desired,
+		DesiredPodCount:     desired,
 		ExcessBurstCapacity: f.excessBC,
 		ScaleValid:          true,
 	}
@@ -113,13 +130,63 @@ func (f *fakeUniScaler) Update(spec *scaling.DeciderSpec) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.desired = spec.InitialScale
+	f.activationScale = spec.ActivationScale
+}
+
+// fakeDeciders wraps MultiScaler to ensure deciders are initialized with correct DesiredScale
+// immediately, rather than waiting for the async ticker to update it.
+type fakeDeciders struct {
+	*scaling.MultiScaler
+	uniScalerFactory func(*scaling.Decider) (scaling.UniScaler, error)
+	logger           *zap.SugaredLogger
+}
+
+// Create overrides MultiScaler.Create to immediately compute and set DesiredScale
+func (f *fakeDeciders) Create(ctx context.Context, decider *scaling.Decider) (*scaling.Decider, error) {
+	// Create the decider using the underlying MultiScaler
+	result, err := f.MultiScaler.Create(ctx, decider)
+	if err != nil {
+		return nil, err
+	}
+
+	// Immediately compute the scale to set DesiredScale correctly
+	// This simulates the ticker running immediately in our simulation context
+	uniScaler, err := f.uniScalerFactory(result)
+	if err != nil {
+		return result, err
+	}
+
+	scaleResult := uniScaler.Scale(f.logger, time.Now())
+	if scaleResult.ScaleValid {
+		// Update the decider with the computed scale
+		result.Status.DesiredScale = scaleResult.DesiredPodCount
+		result.Status.ExcessBurstCapacity = scaleResult.ExcessBurstCapacity
+		// Update the decider in the MultiScaler
+		_, err = f.MultiScaler.Update(ctx, result)
+		if err != nil {
+			return result, err
+		}
+		// Return the updated decider
+		return f.MultiScaler.Get(ctx, result.Namespace, result.Name)
+	}
+
+	return result, nil
 }
 
 // NewFakeMultiScaler constructs a MultiScaler suitable for offline simulations.
-func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) *scaling.MultiScaler {
-	return scaling.NewMultiScaler(stopCh, func(decider *scaling.Decider) (scaling.UniScaler, error) {
+// It wraps the MultiScaler to ensure deciders are initialized with correct DesiredScale
+// immediately, rather than waiting for the async ticker. The fake UniScaler ensures that
+// when InitialScale is 0, it returns at least 1 (or ActivationScale if set) to allow activation to proceed.
+func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) kparesources.Deciders {
+	uniScalerFactory := func(decider *scaling.Decider) (scaling.UniScaler, error) {
 		return newFakeUniScaler(decider), nil
-	}, logger)
+	}
+	ms := scaling.NewMultiScaler(stopCh, uniScalerFactory, logger)
+	return &fakeDeciders{
+		MultiScaler:      ms,
+		uniScalerFactory: uniScalerFactory,
+		logger:           logger,
+	}
 }
 
 // NewKnativeStrategy creates a new KnativeStrategy for a given controller factory.
