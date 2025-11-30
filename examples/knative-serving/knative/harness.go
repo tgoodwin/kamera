@@ -328,11 +328,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			"namespace", action.GetNamespace(),
 		)
 
-		// Log all actions on routes to debug UpdateStatus interception
-		if resource == "routes" && (verb == "updatesubresource" || verb == "update") {
-			logger.Info("reactor received route action", "verb", verb, "actionType", fmt.Sprintf("%T", action))
-		}
-
 		// lookup iterates through all provided trackers to find the object.
 		lookup := func(res schema.GroupVersionResource, ns, name string) (runtime.Object, error) {
 			for _, tracker := range trackers {
@@ -362,9 +357,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			ul.SetGroupVersionKind(gvk)
 			obj = ul
 			op = event.LIST
-			if resource == "serverlessservices" {
-				logger.Info("listing serverlessservices", "namespace", a.GetNamespace())
-			}
 		case "create":
 			a := action.(testing.CreateAction)
 			obj = a.GetObject()
@@ -373,9 +365,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			a := action.(testing.UpdateAction)
 			obj = a.GetObject()
 			op = event.UPDATE
-			if resource == "ingresses" {
-				logger.Info("reactor intercepted ingress update", "name", a.GetObject().(client.Object).GetName(), "namespace", a.GetNamespace())
-			}
 			// When Route is updated (including status updates via regular Update), ensure ObservedGeneration is set.
 			// This handles cases where the Route reconciler updates the Route via Update instead of UpdateStatus.
 			if resource == "routes" {
