@@ -35,6 +35,9 @@ go run ./examples/knative-serving \
 - Increase `-depth` gradually if the search is hitting max depth before finding any converged states. In this Knative example, convergence requires a depth of ~30.
 - Keep a timeout on while iterating to avoid long-running, exhaustive explorations. The explore routine collects the convergence paths it finds along the way (DFS), so setting a timeout lets you inspect any convergence paths that were found without waiting for the routine to cover the entire state space. This faster feedback loop is useful when iterating / debugging.
 
+## suggested debugging flow
+when debugging, first add print statements / log statements to verify some suspected behavior. only afer suscpected behavior is verified (via inspecting output results via the headless workflow) should we proceed to making behavioral changes in pursuit of solving some hypothesized issue.
+
 ## handling `AlreadyExists` errors
 - Knative Service reconciliation may issue CREATEs for resources (e.g., Configuration/Route) that already exist; the API returns `AlreadyExists` to signal optimistic concurrency, not a fatal error.
 - If the explorer aborts a branch on `AlreadyExists` from the ServiceReconciler, treat it as expected concurrency and adjust the harness/strategy to swallow the error so exploration can continue.
