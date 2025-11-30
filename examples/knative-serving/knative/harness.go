@@ -457,33 +457,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 				if tag.GetSleeveObjectID(co) == "" {
 					tag.AddSleeveObjectID(co)
 				}
-				// For Ingress creation, immediately update its status to ready so Route reconciler sees it as configured.
-				// This works around an event-driven semantics incompatibility: in a real cluster, the Route reconciler
-				// would be re-triggered after IngressStatusStub updates the Ingress status. However, in the explorer's
-				// state restoration model, the Route reconciler checks the Ingress status in the same reconciliation
-				// where it creates it (see route.go:170), before IngressStatusStub has a chance to run. By immediately
-				// updating the Ingress status here, we ensure the Route reconciler sees the correct ObservedGeneration
-				// when it checks ingress.GetObjectMeta().GetGeneration() != ingress.Status.ObservedGeneration.
-				if op == event.CREATE && resource == "ingresses" {
-					if ing, ok := co.(*netv1alpha1.Ingress); ok {
-						// Update the Ingress status immediately to match what IngressStatusStub would do
-						ing.Status.InitializeConditions()
-						ing.Status.MarkNetworkConfigured()
-						host := fmt.Sprintf("%s.%s.example.com", ing.Name, ing.Namespace)
-						clusterHost := fmt.Sprintf("%s.%s.svc.cluster.local", ing.Name, ing.Namespace)
-						ing.Status.MarkLoadBalancerReady(
-							[]netv1alpha1.LoadBalancerIngressStatus{{
-								Domain:         host,
-								DomainInternal: clusterHost,
-							}},
-							[]netv1alpha1.LoadBalancerIngressStatus{{
-								DomainInternal: clusterHost,
-							}},
-						)
-						// Set ObservedGeneration to match Generation so Route reconciler sees Ingress as ready
-						ing.Status.ObservedGeneration = ing.Generation
-					}
-				}
 				// Sync informer cache so reconcilers reading from informers see the latest state
 				syncInformerCache(ctx, resource, co, op)
 				logger.V(1).Info("recording effect",
