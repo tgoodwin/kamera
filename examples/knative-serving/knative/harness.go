@@ -370,9 +370,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			a := action.(testing.CreateAction)
 			obj = a.GetObject()
 			op = event.CREATE
-			if resource == "podautoscalers" {
-				fmt.Printf("[reactor] CREATE podautoscaler %s/%s\n", action.GetNamespace(), a.GetObject().(client.Object).GetName())
-			}
 		case "update":
 			a := action.(testing.UpdateAction)
 			obj = a.GetObject()
@@ -489,10 +486,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 				}
 				// Sync informer cache so reconcilers reading from informers see the latest state
 				syncInformerCache(ctx, resource, co, op)
-				if op == event.CREATE && resource == "serverlessservices" {
-					logger.Info("observed serverlessservice create", "name", co.GetName())
-					fmt.Printf("[reactor] CREATE serverlessservice %s/%s\n", action.GetNamespace(), co.GetName())
-				}
 				logger.V(1).Info("recording effect",
 					"operation", op,
 					"name", co.GetName(),
@@ -588,10 +581,6 @@ func syncInformerCache(ctx context.Context, resource string, obj client.Object, 
 		if dep, ok := copy.(*appsv1.Deployment); ok {
 			syncPodScalableInformer(ctx, dep, op, logger)
 		}
-	case "services":
-		fmt.Printf("[syncInformerCache] service op=%s type=%T name=%s/%s\n", op, copy, copy.GetNamespace(), copy.GetName())
-	case "serverlessservices":
-		fmt.Printf("[syncInformerCache] serverlessservice op=%s name=%s/%s\n", op, copy.GetNamespace(), copy.GetName())
 	}
 
 	if err != nil {
@@ -823,7 +812,6 @@ func (ks *KnativeStrategy) ReconcileAtState(ctx context.Context, nsName types.Na
 
 	if err != nil {
 		errMsg := err.Error()
-		fmt.Printf("[ReconcileAtState] error type=%T err=%v\n", err, errMsg)
 		if apierrs.IsNotFound(err) || strings.Contains(errMsg, " not found") {
 			logger.Info("transient not found; requeueing", "error", err)
 			return reconcile.Result{Requeue: true}, nil
