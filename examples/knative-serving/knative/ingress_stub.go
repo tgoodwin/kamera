@@ -42,6 +42,7 @@ func (r *IngressStatusStub) Reconcile(ctx context.Context, req reconcile.Request
 			DomainInternal: clusterHost,
 		}},
 	)
+	// Set ObservedGeneration to match Generation to reflect complete reconciliation
 	desiredStatus.ObservedGeneration = ing.Generation
 
 	if equality.Semantic.DeepEqual(ing.Status, desiredStatus) {

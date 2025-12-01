@@ -18,11 +18,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
-	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/injection"
-	"knative.dev/pkg/injection/clients/dynamicclient"
 	dynamicfake "knative.dev/pkg/injection/clients/dynamicclient/fake"
 	"knative.dev/pkg/reconciler"
 	reconcilertesting "knative.dev/pkg/reconciler/testing"
@@ -60,15 +58,10 @@ import (
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/system"
 
-	sksinformers "knative.dev/networking/pkg/client/injection/informers/networking/v1alpha1/serverlessservice"
-	deploymentinformers "knative.dev/pkg/client/injection/kube/informers/apps/v1/deployment"
-	endpointsinformers "knative.dev/pkg/client/injection/kube/informers/core/v1/endpoints"
-	serviceinformers "knative.dev/pkg/client/injection/kube/informers/core/v1/service"
 	autoscalingv1alpha1 "knative.dev/serving/pkg/apis/autoscaling/v1alpha1"
 	cfgmap "knative.dev/serving/pkg/apis/config"
-	kpaclient "knative.dev/serving/pkg/client/injection/client/fake"
 	podscalableinformer "knative.dev/serving/pkg/client/injection/ducks/autoscaling/v1alpha1/podscalable"
-	painformers "knative.dev/serving/pkg/client/injection/informers/autoscaling/v1alpha1/podautoscaler"
+	kparesources "knative.dev/serving/pkg/reconciler/autoscaling/kpa/resources"
 )
 
 // Ensure KnativeStrategy implements the Strategy interface
@@ -86,24 +79,40 @@ type KnativeStrategy struct {
 }
 
 type fakeUniScaler struct {
-	mu       sync.RWMutex
-	desired  int32
-	excessBC int32
+	mu              sync.RWMutex
+	desired         int32
+	excessBC        int32
+	activationScale int32
 }
 
 func newFakeUniScaler(decider *scaling.Decider) *fakeUniScaler {
 	desired := decider.Spec.InitialScale
+	// Store ActivationScale for use during activation
+	activationScale := decider.Spec.ActivationScale
 	return &fakeUniScaler{
-		desired:  desired,
-		excessBC: 0,
+		desired:         desired,
+		excessBC:        0,
+		activationScale: activationScale,
 	}
 }
 
 func (f *fakeUniScaler) Scale(_ *zap.SugaredLogger, _ time.Time) scaling.ScaleResult {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
+	// In real Knative, when InitialScale is 0 (scale-to-zero), the autoscaler
+	// scales up to ActivationScale (or 1 if not set) when there's traffic/activation.
+	// In our simulation, we simulate this by returning at least 1 (or ActivationScale if set)
+	// when InitialScale is 0, which allows the activation flow to proceed.
+	desired := f.desired
+	if desired == 0 {
+		if f.activationScale >= 2 {
+			desired = f.activationScale
+		} else {
+			desired = 1
+		}
+	}
 	return scaling.ScaleResult{
-		DesiredPodCount:     f.desired,
+		DesiredPodCount:     desired,
 		ExcessBurstCapacity: f.excessBC,
 		ScaleValid:          true,
 	}
@@ -113,13 +122,63 @@ func (f *fakeUniScaler) Update(spec *scaling.DeciderSpec) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.desired = spec.InitialScale
+	f.activationScale = spec.ActivationScale
+}
+
+// fakeDeciders wraps MultiScaler to ensure deciders are initialized with correct DesiredScale
+// immediately, rather than waiting for the async ticker to update it.
+type fakeDeciders struct {
+	*scaling.MultiScaler
+	uniScalerFactory func(*scaling.Decider) (scaling.UniScaler, error)
+	logger           *zap.SugaredLogger
+}
+
+// Create overrides MultiScaler.Create to immediately compute and set DesiredScale
+func (f *fakeDeciders) Create(ctx context.Context, decider *scaling.Decider) (*scaling.Decider, error) {
+	// Create the decider using the underlying MultiScaler
+	result, err := f.MultiScaler.Create(ctx, decider)
+	if err != nil {
+		return nil, err
+	}
+
+	// Immediately compute the scale to set DesiredScale correctly
+	// This simulates the ticker running immediately in our simulation context
+	uniScaler, err := f.uniScalerFactory(result)
+	if err != nil {
+		return result, err
+	}
+
+	scaleResult := uniScaler.Scale(f.logger, time.Now())
+	if scaleResult.ScaleValid {
+		// Update the decider with the computed scale
+		result.Status.DesiredScale = scaleResult.DesiredPodCount
+		result.Status.ExcessBurstCapacity = scaleResult.ExcessBurstCapacity
+		// Update the decider in the MultiScaler
+		_, err = f.MultiScaler.Update(ctx, result)
+		if err != nil {
+			return result, err
+		}
+		// Return the updated decider
+		return f.MultiScaler.Get(ctx, result.Namespace, result.Name)
+	}
+
+	return result, nil
 }
 
 // NewFakeMultiScaler constructs a MultiScaler suitable for offline simulations.
-func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) *scaling.MultiScaler {
-	return scaling.NewMultiScaler(stopCh, func(decider *scaling.Decider) (scaling.UniScaler, error) {
+// It wraps the MultiScaler to ensure deciders are initialized with correct DesiredScale
+// immediately, rather than waiting for the async ticker. The fake UniScaler ensures that
+// when InitialScale is 0, it returns at least 1 (or ActivationScale if set) to allow activation to proceed.
+func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) kparesources.Deciders {
+	uniScalerFactory := func(decider *scaling.Decider) (scaling.UniScaler, error) {
 		return newFakeUniScaler(decider), nil
-	}, logger)
+	}
+	ms := scaling.NewMultiScaler(stopCh, uniScalerFactory, logger)
+	return &fakeDeciders{
+		MultiScaler:      ms,
+		uniScalerFactory: uniScalerFactory,
+		logger:           logger,
+	}
 }
 
 // NewKnativeStrategy creates a new KnativeStrategy for a given controller factory.
@@ -253,8 +312,9 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 		var obj runtime.Object
 		var op event.OperationType
 		resource := action.GetResource().Resource
+		verb := action.GetVerb()
 		logger := baseLogger.WithValues(
-			"verb", action.GetVerb(),
+			"verb", verb,
 			"resource", resource,
 			"namespace", action.GetNamespace(),
 		)
@@ -288,16 +348,10 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			ul.SetGroupVersionKind(gvk)
 			obj = ul
 			op = event.LIST
-			if resource == "serverlessservices" {
-				logger.Info("listing serverlessservices", "namespace", a.GetNamespace())
-			}
 		case "create":
 			a := action.(testing.CreateAction)
 			obj = a.GetObject()
 			op = event.CREATE
-			if resource == "podautoscalers" {
-				fmt.Printf("[reactor] CREATE podautoscaler %s/%s\n", action.GetNamespace(), a.GetObject().(client.Object).GetName())
-			}
 		case "update":
 			a := action.(testing.UpdateAction)
 			obj = a.GetObject()
@@ -310,8 +364,28 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			a := action.(testing.PatchAction)
 			obj, err = lookup(a.GetResource(), a.GetNamespace(), a.GetName())
 			op = event.PATCH
+		case "updatesubresource":
+			// Handle status updates which use UpdateSubresourceAction
+			if updateSubAction, ok := action.(interface {
+				GetSubresource() string
+				GetObject() runtime.Object
+				GetNamespace() string
+			}); ok {
+				subresource := updateSubAction.GetSubresource()
+				if subresource == "status" {
+					obj = updateSubAction.GetObject()
+					op = event.UPDATE
+				} else {
+					logger.V(1).Info("updatesubresource with non-status subresource", "subresource", subresource, "resource", resource)
+				}
+			} else {
+				panic("updatesubresource action type assertion failed - not supposed to happen")
+			}
 		default:
-			logger.V(1).Info("unhandled action type")
+			// Log unhandled verbs to help debug missing status updates
+			if action.GetVerb() != "watch" && action.GetVerb() != "deletecollection" {
+				panic("unhandled action type: " + strings.Join([]string{action.GetVerb(), action.GetResource().Resource}, " "))
+			}
 			return false, nil, nil
 		}
 
@@ -325,13 +399,7 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 				if tag.GetSleeveObjectID(co) == "" {
 					tag.AddSleeveObjectID(co)
 				}
-				// TODO determine if we need this
-				// syncInformerCache(ctx, resource, co, op)
-				if op == event.CREATE && resource == "serverlessservices" {
-					logger.Info("observed serverlessservice create", "name", co.GetName())
-					fmt.Printf("[reactor] CREATE serverlessservice %s/%s\n", action.GetNamespace(), co.GetName())
-				}
-				logger.V(1).Info("recording effect",
+				logger.V(2).Info("recording effect",
 					"operation", op,
 					"name", co.GetName(),
 					"kind", co.GetObjectKind().GroupVersionKind().Kind,
@@ -347,175 +415,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 		// Return false to let the default reactor handle the action.
 		return false, nil, err
 	}
-}
-
-func syncInformerCache(ctx context.Context, resource string, obj client.Object, op event.OperationType) {
-	var (
-		indexer cache.Indexer
-	)
-
-	switch resource {
-	case "deployments":
-		indexer = deploymentinformers.Get(ctx).Informer().GetIndexer()
-	case "podautoscalers":
-		indexer = painformers.Get(ctx).Informer().GetIndexer()
-	case "endpoints":
-		indexer = endpointsinformers.Get(ctx).Informer().GetIndexer()
-	case "services":
-		indexer = serviceinformers.Get(ctx).Informer().GetIndexer()
-	case "serverlessservices":
-		indexer = sksinformers.Get(ctx).Informer().GetIndexer()
-	default:
-		return
-	}
-
-	copy := obj.DeepCopyObject().(client.Object)
-	logger := log.FromContext(ctx).WithName("cache-sync").WithValues(
-		"resource", resource,
-		"name", copy.GetName(),
-		"namespace", copy.GetNamespace(),
-	)
-	if anns := copy.GetAnnotations(); len(anns) > 0 {
-		logger = logger.WithValues("annotations", anns)
-	}
-
-	var err error
-	switch op {
-	case event.CREATE:
-		err = indexer.Add(copy)
-		logger.Info("added object to informer cache")
-	case event.UPDATE:
-		err = indexer.Update(copy)
-		logger.Info("updated object in informer cache")
-	case event.MARK_FOR_DELETION:
-		err = indexer.Delete(copy)
-		logger.Info("deleted object from informer cache")
-	default:
-		return
-	}
-
-	syncDynamicClient(ctx, resource, copy, op, logger)
-	switch resource {
-	case "deployments":
-		if dep, ok := copy.(*appsv1.Deployment); ok {
-			syncPodScalableInformer(ctx, dep, op, logger)
-		}
-	case "services":
-		fmt.Printf("[syncInformerCache] service op=%s type=%T name=%s/%s\n", op, copy, copy.GetNamespace(), copy.GetName())
-	case "serverlessservices":
-		fmt.Printf("[syncInformerCache] serverlessservice op=%s name=%s/%s\n", op, copy.GetNamespace(), copy.GetName())
-	}
-
-	if err != nil {
-		logger.Error(err, "failed to sync informer cache")
-	}
-}
-
-func syncDynamicClient(ctx context.Context, resource string, obj client.Object, op event.OperationType, logger logr.Logger) {
-	dc := dynamicclient.Get(ctx)
-	gvr, ok := resourceToDynamicGVR[resource]
-	if !ok {
-		return
-	}
-
-	content, err := runtime.DefaultUnstructuredConverter.ToUnstructured(obj.DeepCopyObject())
-	if err != nil {
-		logger.WithValues("stage", "toUnstructured").Error(err, "failed to convert object for dynamic client")
-		return
-	}
-
-	unstr := &unstructured.Unstructured{Object: content}
-	unstr.SetGroupVersionKind(obj.GetObjectKind().GroupVersionKind())
-	res := dc.Resource(gvr).Namespace(obj.GetNamespace())
-
-	switch op {
-	case event.CREATE:
-		loggerWithStage := logger.WithValues("stage", "dynamic-create")
-		if _, err = res.Create(ctx, unstr, metav1.CreateOptions{}); err != nil {
-			if !apierrs.IsAlreadyExists(err) {
-				loggerWithStage.Error(err, "failed to create object in dynamic client")
-			}
-		} else {
-			loggerWithStage.Info("created object in dynamic client")
-		}
-	case event.UPDATE:
-		loggerWithStage := logger.WithValues("stage", "dynamic-update")
-		if _, err = res.Update(ctx, unstr, metav1.UpdateOptions{}); err != nil {
-			loggerWithStage.Error(err, "failed to update object in dynamic client")
-		} else {
-			loggerWithStage.Info("updated object in dynamic client")
-		}
-	case event.MARK_FOR_DELETION:
-		loggerWithStage := logger.WithValues("stage", "dynamic-delete")
-		if err = res.Delete(ctx, obj.GetName(), metav1.DeleteOptions{}); err != nil {
-			if !apierrs.IsNotFound(err) {
-				loggerWithStage.Error(err, "failed to delete object from dynamic client")
-			}
-		} else {
-			loggerWithStage.Info("deleted object from dynamic client")
-		}
-	}
-}
-
-// NewKPAProbeReconciler wraps a leader-aware reconciler to log ServerlessService and PA state
-// before and after each reconcile. This helps debug why KPA might no-op in the explorer.
-type KPAProbeReconciler struct {
-	inner interface {
-		Reconcile(context.Context, string) error
-	}
-	la reconciler.LeaderAware
-}
-
-func NewKPAProbeReconciler(inner reconciler.LeaderAware) *KPAProbeReconciler {
-	return &KPAProbeReconciler{
-		inner: inner.(interface {
-			Reconcile(context.Context, string) error
-		}),
-		la: inner,
-	}
-}
-
-func (p *KPAProbeReconciler) Reconcile(ctx context.Context, key string) error {
-	logger := log.FromContext(ctx).WithName("kpa-probe").WithValues("key", key)
-	ns, name, err := cache.SplitMetaNamespaceKey(key)
-	if err == nil {
-		logSKS(ctx, logger, ns, name, "before")
-		logPA(ctx, logger, ns, name, "before")
-	}
-
-	err = p.inner.Reconcile(ctx, key)
-
-	if err == nil && ns != "" && name != "" {
-		logSKS(ctx, logger, ns, name, "after")
-		logPA(ctx, logger, ns, name, "after")
-	}
-	return err
-}
-
-func (p *KPAProbeReconciler) Promote(b reconciler.Bucket, enq func(reconciler.Bucket, types.NamespacedName)) error {
-	return p.la.Promote(b, enq)
-}
-
-func (p *KPAProbeReconciler) Demote(b reconciler.Bucket) {
-	p.la.Demote(b)
-}
-
-func logSKS(ctx context.Context, logger logr.Logger, ns, name, stage string) {
-	sks, err := fakenetworkingclient.Get(ctx).NetworkingV1alpha1().ServerlessServices(ns).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		logger.Info("sks lookup", "stage", stage, "found", false, "error", err.Error())
-		return
-	}
-	logger.Info("sks lookup", "stage", stage, "found", true, "mode", sks.Spec.Mode, "serviceName", sks.Status.ServiceName, "privateService", sks.Status.PrivateServiceName)
-}
-
-func logPA(ctx context.Context, logger logr.Logger, ns, name, stage string) {
-	pa, err := kpaclient.Get(ctx).AutoscalingV1alpha1().PodAutoscalers(ns).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		logger.Info("pa lookup", "stage", stage, "found", false, "error", err.Error())
-		return
-	}
-	logger.Info("pa lookup", "stage", stage, "found", true, "serviceName", pa.Status.ServiceName, "metricsServiceName", pa.Status.MetricsServiceName, "conditions", pa.Status.Conditions)
 }
 
 func syncPodScalableInformer(ctx context.Context, dep *appsv1.Deployment, op event.OperationType, logger logr.Logger) {
@@ -635,7 +534,6 @@ func (ks *KnativeStrategy) ReconcileAtState(ctx context.Context, nsName types.Na
 
 	if err != nil {
 		errMsg := err.Error()
-		fmt.Printf("[ReconcileAtState] error type=%T err=%v\n", err, errMsg)
 		if apierrs.IsNotFound(err) || strings.Contains(errMsg, " not found") {
 			logger.Info("transient not found; requeueing", "error", err)
 			return reconcile.Result{Requeue: true}, nil
@@ -718,10 +616,6 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 			obj = typed
 		}
 
-		// if o, ok := obj.(client.Object); ok {
-		// 	fmt.Printf("[insertObjects] type=%T name=%s/%s\n", obj, o.GetNamespace(), o.GetName())
-		// }
-
 		switch o := obj.(type) {
 		case *v1.Service:
 			if _, err := servingclient.ServingV1().Services(o.Namespace).Create(ctx, o, metav1.CreateOptions{}); err != nil {
@@ -785,8 +679,6 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 			}
 			ensureGVK(o)
 			logger := log.FromContext(ctx).WithName("seed").WithValues("resource", "deployments", "namespace", o.Namespace, "name", o.Name)
-			// Seed dynamic client so duck PodScalable informer (which uses dynamic watches) can list deployments.
-			syncDynamicClient(ctx, "deployments", o, event.CREATE, logger)
 			syncPodScalableInformer(ctx, o, event.CREATE, logger)
 		case *appsv1.ReplicaSet:
 			if _, err := kubeclient.AppsV1().ReplicaSets(o.Namespace).Create(ctx, o, metav1.CreateOptions{}); err != nil {
@@ -801,8 +693,6 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 				return fmt.Errorf("failed to create ingress: %w", err)
 			}
 			ensureGVK(o)
-			logger := log.FromContext(ctx).WithName("seed").WithValues("resource", "ingresses", "namespace", o.Namespace, "name", o.Name)
-			syncDynamicClient(ctx, "ingresses", o, event.CREATE, logger)
 		default:
 			return fmt.Errorf("unsupported type %T", o)
 		}
@@ -901,13 +791,6 @@ var resourceToListKind = map[string]string{
 	"ingresses":          "IngressList",
 }
 
-var resourceToDynamicGVR = map[string]schema.GroupVersionResource{
-	"deployments":        {Group: "apps", Version: "v1", Resource: "deployments"},
-	"services":           {Group: "", Version: "v1", Resource: "services"},
-	"serverlessservices": {Group: "networking.internal.knative.dev", Version: "v1alpha1", Resource: "serverlessservices"},
-	"ingresses":          {Group: "networking.k8s.io", Version: "v1", Resource: "ingresses"},
-}
-
 func ensureGVK(obj client.Object) {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	if gvk.Kind != "" && gvk.Version != "" {
@@ -970,7 +853,10 @@ func convertUnstructured(u *unstructured.Unstructured) (runtime.Object, error) {
 			}
 		}
 	}
-	if (gvk.Group == "" || gvk.Kind == "") && u.GetKind() != "" {
+	// Only apply a fallback mapping when we have neither group nor kind.
+	// Otherwise we risk remapping core kinds (e.g., core/v1 Service) to a
+	// different API group (e.g., serving.knative.dev/v1 Service).
+	if gvk.Group == "" && gvk.Kind == "" && u.GetKind() != "" {
 		if mapped, ok := kindToGVK[u.GetKind()]; ok {
 			gvk = mapped
 		}

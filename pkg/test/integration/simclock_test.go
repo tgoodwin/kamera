@@ -79,7 +79,7 @@ func TestSimClockAdvancesWithExploreDepth(t *testing.T) {
 
 	for i, typ := range expectedTypes {
 		cond := clockConds[typ]
-		expected := startTime.Add(time.Duration(i) * time.Hour)
+		expected := startTime.Add(time.Duration(i) * time.Second)
 		require.True(t, cond.LastTransitionTime.Time.Equal(expected))
 	}
 
