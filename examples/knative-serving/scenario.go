@@ -13,6 +13,7 @@ import (
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
+	"knative.dev/serving/pkg/apis/autoscaling"
 	"knative.dev/serving/pkg/apis/serving"
 	v1 "knative.dev/serving/pkg/apis/serving/v1"
 	kpareconciler "knative.dev/serving/pkg/reconciler/autoscaling/kpa"
@@ -68,6 +69,10 @@ func buildBaselineService() *v1.Service {
 				Template: v1.RevisionTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "kamera-test",
+						Annotations: map[string]string{
+							// Ensure KPA class annotation is present so the KPA reconciler processes the PA.
+							autoscaling.ClassAnnotationKey: autoscaling.KPA,
+						},
 					},
 					Spec: v1.RevisionSpec{
 						PodSpec: corev1.PodSpec{
@@ -99,7 +104,8 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 	builder.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 			multiScaler := knativeharness.NewFakeMultiScaler(ctx.Done(), logging.FromContext(ctx))
-			return kpareconciler.NewController(ctx, cmw, multiScaler)
+			impl := kpareconciler.NewController(ctx, cmw, multiScaler)
+			return impl
 		}
 		strategy, err := knativeharness.NewKnativeStrategy(factory, r, serving.RevisionUID)
 		if err != nil {
@@ -164,8 +170,10 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 
 	builder.WithResourceDep("serving.knative.dev/Revision", "RevisionDigestStub", "RevisionReconciler", "KPA", "ServiceReconciler")
 	builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "KPA", "ServerlessServiceReconciler")
+	builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "RevisionReconciler")
 	builder.WithResourceDep("serving.knative.dev/Service", "ServiceReconciler")
 	builder.WithResourceDep("serving.knative.dev/Configuration", "ServiceReconciler", "RevisionReconciler")
 	builder.WithResourceDep("serving.knative.dev/Route", "RouteReconciler", "ServiceReconciler")
-	builder.WithResourceDep("networking.internal.knative.dev/Ingress", "RouteReconciler", "ServerlessServiceReconciler")
+	builder.WithResourceDep("networking.internal.knative.dev/Ingress", "IngressStatusStub", "RouteReconciler", "ServerlessServiceReconciler")
+	builder.WithResourceDep("apps/Deployment", "RevisionReconciler")
 }

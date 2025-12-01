@@ -25,6 +25,11 @@ func init() {
 	mustAddToScheme(cachingv1alpha1.AddToScheme)
 	mustAddToScheme(networkingv1.AddToScheme)
 	mustAddToScheme(networkingv1alpha1.AddToScheme)
+	// PodScalable is a duck type and isn't registered by autoscalingv1alpha1.AddToScheme.
+	Default.AddKnownTypes(autoscalingv1alpha1.SchemeGroupVersion,
+		&autoscalingv1alpha1.PodScalable{},
+		&autoscalingv1alpha1.PodScalableList{},
+	)
 }
 
 func mustAddToScheme(fn func(*runtime.Scheme) error) {

@@ -7,7 +7,7 @@ import (
 
 var (
 	base = time.Unix(0, 0)
-	step = time.Hour
+	step = time.Second
 
 	currentDepth atomic.Int64
 )

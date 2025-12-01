@@ -122,7 +122,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 	// TODO SLE-28 figure out why this can happen.
 	if sleeveObjectID == "" {
-		logger.V(2).Error(nil, "object does not have a sleeve object ID", "kind", kind)
+		logger.V(4).Info("object missing sleeve object ID", "kind", kind)
 	}
 
 	frameID := replay.FrameIDFromContext(ctx)
