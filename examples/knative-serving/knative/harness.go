@@ -399,8 +399,6 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 				if tag.GetSleeveObjectID(co) == "" {
 					tag.AddSleeveObjectID(co)
 				}
-				// Sync informer cache so reconcilers reading from informers see the latest state
-				// syncInformerCache(ctx, resource, co, op)
 				logger.V(2).Info("recording effect",
 					"operation", op,
 					"name", co.GetName(),
@@ -607,21 +605,15 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 	kubeclient := fakekubeclient.Get(ctx)
 	cachingclient := fakecachingclient.Get(ctx)
 	networkingclient := fakenetworkingclient.Get(ctx)
-	logger := log.FromContext(ctx).WithName("seed")
 
 	// i am sorry for the following code
-	for idx, obj := range objs {
+	for _, obj := range objs {
 		if u, ok := obj.(*unstructured.Unstructured); ok {
 			typed, err := convertUnstructured(u)
 			if err != nil {
 				return fmt.Errorf("failed to convert unstructured %s: %w", u.GroupVersionKind().String(), err)
 			}
 			obj = typed
-		}
-
-		if o, ok := obj.(client.Object); ok {
-			gvk := o.GetObjectKind().GroupVersionKind()
-			logger.Info("seeding object", "index", idx, "type", fmt.Sprintf("%T", obj), "gvk", gvk.String(), "namespace", o.GetNamespace(), "name", o.GetName())
 		}
 
 		switch o := obj.(type) {
