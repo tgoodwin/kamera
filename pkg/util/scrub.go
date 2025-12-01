@@ -5,11 +5,11 @@ import (
 	"time"
 )
 
-const scrubbedTimestamp = "1970-01-01T00:00:00Z"
+const scrubbedTimestamp = "SCRUBBED_TIMESTAMP"
 
 // ScrubTimes walks an arbitrary JSON-like structure (maps/slices) and replaces
 // any string that parses as RFC3339 with a deterministic placeholder.
-// This is intended to normalize timestamp-bearing fields for deterministic hashing.
+// This normalizes timestamp-bearing fields so hashing becomes deterministic.
 func ScrubTimes(v interface{}) {
 	scrubTimes(v)
 }
