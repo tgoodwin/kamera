@@ -43,3 +43,13 @@ In our explorer, `KnativeStrategy.ReconcileAtState` builds a fresh controller pe
 - Alternative: treat Decider status updates as “changes” that trigger KPA via dependency graph, but direct enqueue capture is simpler and closer to real behavior.
 - Decider is not a K8s resource (in-memory only), so we won’t see it in state snapshots; the enqueue side-effects are the observable signal to feed into Kamera’s pending reconciles.
 - Harness idea: expose an explorer “enqueue pending reconcile” hook; wire `MultiScaler.Watch` to that hook so `Inform` directly produces pending KPA reconciles without relying on a real workqueue.
+
+## Goal: simulating scaledown
+Objective: get PA/Revision to scale to zero after simulated time elapses, with minimal moving parts.
+
+Steps:
+- Add a sim clock/ticker in determinize for autoscaler/KPA: swap `time.Now` and `time.NewTicker` in those packages for `simclock.Now()`/`simclock.NewTicker()`.
+- Drive `simclock` forward by 1s per DFS step; on each step, fire any tickers whose interval has elapsed. No goroutines.
+- Keep a long-lived `MultiScaler` per explore branch; set `tickProvider` to the sim ticker so `runScalerTicker` uses logical ticks.
+- Wire `MultiScaler.Watch` to the explorer’s pending reconcile queue (skip the real workqueue) so each tick enqueues the PA key.
+- Let KPA’s existing `handleScaleToZero`/`ActiveFor` logic read `simclock.Now()`: once stable window + grace pass and desiredScale=0, the next tick enqueues KPA and that reconcile scales the deployment to zero.
