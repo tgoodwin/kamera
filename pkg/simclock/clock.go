@@ -26,17 +26,18 @@ func (DeterministicClock) After(d time.Duration) <-chan time.Time {
 	ch <- Now().Add(d)
 	return ch
 }
-func (DeterministicClock) Tick(time.Duration) <-chan time.Time {
-	ch := make(chan time.Time, 1)
-	ch <- Now()
-	return ch
+func (DeterministicClock) Tick(d time.Duration) <-chan time.Time {
+	return newTicker(d).C()
 }
+
 func (DeterministicClock) NewTimer(d time.Duration) clock.Timer {
 	return newDeterministicTimer(Now().Add(d))
 }
+
 func (DeterministicClock) NewTicker(d time.Duration) clock.Ticker {
-	return newDeterministicTicker(d)
+	return newTicker(d)
 }
+
 func (d DeterministicClock) AfterFunc(_ time.Duration, f func()) clock.Timer {
 	f()
 	return d.NewTimer(0)
@@ -84,22 +85,3 @@ func (t *deterministicTimer) Reset(d time.Duration) bool {
 	}
 	return true
 }
-
-var _ clock.Ticker = (*deterministicTicker)(nil)
-
-type deterministicTicker struct {
-	interval time.Duration
-	ch       chan time.Time
-}
-
-func newDeterministicTicker(interval time.Duration) *deterministicTicker {
-	ch := make(chan time.Time, 1)
-	ch <- Now()
-	return &deterministicTicker{interval: interval, ch: ch}
-}
-
-func (t *deterministicTicker) C() <-chan time.Time {
-	return t.ch
-}
-
-func (t *deterministicTicker) Stop() {}
