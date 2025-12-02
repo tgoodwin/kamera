@@ -124,3 +124,31 @@ func TestWithAsyncEnqueueCollector(t *testing.T) {
 	assert.Nil(t, parentCollector)
 }
 
+func TestWithAsyncEnqueueCollector_RepeatedCalls(t *testing.T) {
+	// Demonstrates behavior when WithAsyncEnqueueCollector is called multiple times
+	ctx := context.Background()
+	collector1 := &AsyncEnqueueCollector{}
+	collector2 := &AsyncEnqueueCollector{}
+
+	// First call creates a new context with collector1
+	ctx1 := WithAsyncEnqueueCollector(ctx, collector1)
+
+	// Second call creates a new context (based on ctx1) with collector2
+	// This "shadows" collector1 - GetAsyncEnqueueCollector will return collector2
+	ctx2 := WithAsyncEnqueueCollector(ctx1, collector2)
+
+	// ctx2 returns the most recent collector (collector2)
+	retrieved2 := GetAsyncEnqueueCollector(ctx2)
+	assert.NotNil(t, retrieved2)
+	assert.Same(t, collector2, retrieved2)
+
+	// ctx1 still returns collector1 (the original context wasn't modified)
+	retrieved1 := GetAsyncEnqueueCollector(ctx1)
+	assert.NotNil(t, retrieved1)
+	assert.Same(t, collector1, retrieved1)
+
+	// Original context is unaffected
+	retrieved0 := GetAsyncEnqueueCollector(ctx)
+	assert.Nil(t, retrieved0)
+}
+

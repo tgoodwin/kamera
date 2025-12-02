@@ -56,4 +56,3 @@ func GetAsyncEnqueueCollector(ctx context.Context) *AsyncEnqueueCollector {
 	}
 	return nil
 }
-

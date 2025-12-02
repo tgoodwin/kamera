@@ -856,7 +856,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		newStateEvents = append(newStateEvents, stateEvent)
 	}
 
-	newPendingReconciles := e.determineNewPendingReconciles(state, pr, reconcileResult)
+	newPendingReconciles := e.determineNewPendingReconciles(ctx, state, pr, reconcileResult)
 	stepLog.V(1).Info("pending reconciles after step", "count", len(newPendingReconciles), "items", newPendingReconciles)
 
 	// make a copy of the current execution history
@@ -1018,7 +1018,7 @@ func dumpQueue(queue []StateNode) []string {
 	return queueStr
 }
 
-func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput PendingReconcile, result *ReconcileResult) []PendingReconcile {
+func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state StateNode, reconcileInput PendingReconcile, result *ReconcileResult) []PendingReconcile {
 	//  remove the current reconcile from the pending reconciles list because it has just been processed
 	stillPending := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
 		return pending != reconcileInput
@@ -1032,6 +1032,15 @@ func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput
 			}
 		}
 		return false
+	}
+
+	// Read captured enqueues from context (from Watch callbacks during reconcile)
+	// These are already PendingReconcile entries with the correct reconciler ID
+	// Note: Each reconcile step creates a fresh AsyncEnqueueCollector in doReconcile,
+	// so we won't double-count across steps. The collector goes out of scope after this step.
+	var capturedPending []PendingReconcile
+	if collector := GetAsyncEnqueueCollector(ctx); collector != nil {
+		capturedPending = collector.Get()
 	}
 
 	// after processing the reconcile, we need to determine which controllers
@@ -1081,7 +1090,10 @@ func (e *Explorer) determineNewPendingReconciles(state StateNode, reconcileInput
 		triggeredByChanges = append(triggeredByChanges, reconcileInput)
 	}
 
-	return e.getNewPendingReconciles(stillPending, triggeredByChanges)
+	// Merge captured enqueues with triggered reconciles
+	allTriggered := append(triggeredByChanges, capturedPending...)
+
+	return e.getNewPendingReconciles(stillPending, allTriggered)
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {
