@@ -206,6 +206,16 @@ func replaceSelectors(fset *token.FileSet, file *ast.File, importMap map[string]
 				changed = true
 				importMap[alias] = simclockImportPath
 			}
+			if sel.Sel.Name == "NewTicker" {
+				alias := ensureSimclockAlias(fset, file, importMap, &simclockAlias)
+				if alias == "" {
+					return true
+				}
+				sel.X = ast.NewIdent(alias)
+				sel.Sel = ast.NewIdent("NewTicker")
+				changed = true
+				importMap[alias] = simclockImportPath
+			}
 		case "k8s.io/apimachinery/pkg/apis/meta/v1":
 			if sel.Sel.Name == "Now" {
 				alias := ensureSimclockAlias(fset, file, importMap, &simclockAlias)
