@@ -37,9 +37,20 @@ func (rd ResourceDeps) ForReconciler(reconcilerID string) ([]string, error) {
 // has ControllerManagedBy.For called with the kind of the resource
 type PrimariesByKind map[string]util.Set[string]
 
+// PendingReconcileSource indicates how a reconcile request was triggered
+type PendingReconcileSource string
+
+const (
+	// SourceStateChange indicates the reconcile was triggered by a resource state change
+	SourceStateChange PendingReconcileSource = "State Change"
+	// SourceAsyncEnqueue indicates the reconcile was triggered by an async enqueue (e.g., ticker)
+	SourceAsyncEnqueue PendingReconcileSource = "Async Enqueue"
+)
+
 type PendingReconcile struct {
 	ReconcilerID string
 	Request      reconcile.Request
+	Source       PendingReconcileSource
 }
 
 func (pr PendingReconcile) String() string {
@@ -124,6 +135,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 				Request: reconcile.Request{
 					NamespacedName: nsName,
 				},
+				Source: SourceStateChange,
 			}
 		}
 
@@ -137,6 +149,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 					Request: reconcile.Request{
 						NamespacedName: nsName,
 					},
+					Source: SourceStateChange,
 				}
 			}
 		}
@@ -162,6 +175,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 							Request: reconcile.Request{
 								NamespacedName: ownerNSName,
 							},
+							Source: SourceStateChange,
 						}
 					}
 				}

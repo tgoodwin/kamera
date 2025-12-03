@@ -91,20 +91,28 @@ type ReconcileResult struct {
 	KindSeqBefore KindSequences
 	KindSeqAfter  KindSequences
 
+	PendingReconciles []PendingReconcile // Pending reconciles produced by this step
+
 	ctrlRes reconcile.Result
 }
 
 type ExecutionHistory []*ReconcileResult
 
 func (eh ExecutionHistory) UniqueKey() string {
-	// first filter out no-ops
+	// first filter out no-ops (but preserve convergence steps with 0 pending reconciles)
 	filterNoOps := lo.Filter(eh, func(r *ReconcileResult, _ int) bool {
-		return len(r.Changes.ObjectVersions) > 0 || r.Error != ""
+		return len(r.Changes.ObjectVersions) > 0 || r.Error != "" || len(r.PendingReconciles) == 0
 	})
 	strComponents := lo.Map(filterNoOps, func(r *ReconcileResult, _ int) string {
 		suffix := ""
 		if r.Error != "" {
 			suffix = "!"
+		}
+		// Include convergence marker to distinguish converged vs non-converged paths
+		// This ensures paths ending in convergence (0 pending reconciles) are not
+		// considered equivalent to paths that continue beyond that point
+		if len(r.PendingReconciles) == 0 {
+			suffix += ":converged"
 		}
 		return fmt.Sprintf("%s@%d%s", r.ControllerID, len(r.Changes.Effects), suffix)
 	})
@@ -147,7 +155,12 @@ func (eh ExecutionHistory) Summarize() {
 func (eh ExecutionHistory) FilterNoOps() ExecutionHistory {
 	var filtered ExecutionHistory
 	for _, r := range eh {
-		if len(r.Changes.ObjectVersions) > 0 || r.Error != "" {
+		// Keep reconciles that:
+		// 1. Have effects (state changes)
+		// 2. Have errors
+		// 3. Produce 0 pending reconciles (convergence step - important even if no-op)
+		// This ensures we preserve the final step that shows convergence
+		if len(r.Changes.ObjectVersions) > 0 || r.Error != "" || len(r.PendingReconciles) == 0 {
 			filtered = append(filtered, r)
 		}
 	}
@@ -179,12 +192,15 @@ func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 	pathsWithoutNoOps = lo.Filter(pathsWithoutNoOps, func(path ExecutionHistory, _ int) bool {
 		return len(path) > 0
 	})
+	// Deduplicate using UniqueKey() which already includes:
+	// - Controller IDs
+	// - Effects count (for each step)
+	// - Error markers
+	// - Convergence information (via FilterNoOps preserving 0-pending steps)
+	// This is cleaner than manually constructing a key and ensures all relevant
+	// path differences are captured, including convergence status.
 	unique := lo.UniqBy(pathsWithoutNoOps, func(path ExecutionHistory) string {
-		return strings.Join(
-			lo.Map(path, func(r *ReconcileResult, _ int) string {
-				return r.ControllerID
-			}), ",",
-		)
+		return path.UniqueKey()
 	})
 
 	return unique
