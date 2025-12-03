@@ -182,7 +182,9 @@ func buildImportMap(file *ast.File) map[string]string {
 func replaceSelectors(fset *token.FileSet, file *ast.File, importMap map[string]string) bool {
 	var changed bool
 	simclockAlias := ""
+	hasTimeTicker := false // track if we replaced time.NewTicker
 
+	// First pass: replace function calls
 	astutil.Apply(file, func(c *astutil.Cursor) bool {
 		sel, ok := c.Node().(*ast.SelectorExpr)
 		if !ok {
@@ -207,6 +209,9 @@ func replaceSelectors(fset *token.FileSet, file *ast.File, importMap map[string]
 				importMap[alias] = simclockImportPath
 			}
 			if sel.Sel.Name == "NewTicker" {
+				// time.NewTicker returns *time.Ticker with C field
+				// simclock.NewTicker returns *simclock.Ticker with C field (same semantics)
+				hasTimeTicker = true
 				alias := ensureSimclockAlias(fset, file, importMap, &simclockAlias)
 				if alias == "" {
 					return true
@@ -238,6 +243,8 @@ func replaceSelectors(fset *token.FileSet, file *ast.File, importMap map[string]
 			}
 		case "k8s.io/utils/clock":
 			if sel.Sel.Name == "RealClock" {
+				// k8s.io/utils/clock.RealClock -> simclock.DeterministicClock
+				// DeterministicClock.NewTicker() returns k8sTicker which implements clock.Ticker
 				alias := ensureSimclockAlias(fset, file, importMap, &simclockAlias)
 				if alias == "" {
 					return true
@@ -250,6 +257,43 @@ func replaceSelectors(fset *token.FileSet, file *ast.File, importMap map[string]
 		}
 		return true
 	}, nil)
+
+	// Second pass: replace type references *time.Ticker -> *simclock.Ticker
+	// Always do this if the file imports "time" (since time.Ticker might be used as a type)
+	// We check for time import to avoid unnecessary processing
+	hasTimeImport := false
+	for _, path := range importMap {
+		if path == "time" {
+			hasTimeImport = true
+			break
+		}
+	}
+	if hasTimeImport || hasTimeTicker {
+		astutil.Apply(file, func(c *astutil.Cursor) bool {
+			sel, ok := c.Node().(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			ident, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			path := importMap[ident.Name]
+
+			// Replace time.Ticker type references with simclock.Ticker
+			// time.Ticker can only be used as a type (not a value), so replace ALL occurrences
+			// This handles: *time.Ticker, time.Ticker, func() *time.Ticker, etc.
+			if path == "time" && sel.Sel.Name == "Ticker" {
+				alias := ensureSimclockAlias(fset, file, importMap, &simclockAlias)
+				if alias != "" {
+					sel.X = ast.NewIdent(alias)
+					changed = true
+					importMap[alias] = simclockImportPath
+				}
+			}
+			return true
+		}, nil)
+	}
 
 	return changed
 }
