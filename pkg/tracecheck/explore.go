@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,6 +26,22 @@ import (
 const (
 	DefaultMaxDepth = 10
 )
+
+// updateWrapperCollectorFn is a function that can be set by harness packages to update
+// persistent enqueue wrapper collectors before SetDepth is called. This avoids circular
+// dependencies between tracecheck and harness packages.
+var (
+	updateWrapperCollectorFn func(*AsyncEnqueueCollector)
+	updateWrapperCollectorMu sync.Mutex
+)
+
+// SetUpdateWrapperCollectorFn sets the function to call when updating persistent wrapper collectors.
+// This should be called by harness packages during initialization.
+func SetUpdateWrapperCollectorFn(fn func(*AsyncEnqueueCollector)) {
+	updateWrapperCollectorMu.Lock()
+	defer updateWrapperCollectorMu.Unlock()
+	updateWrapperCollectorFn = fn
+}
 
 // EffectContextManager manages a "current state of the world" context
 // for each branch of execution (not shared between branches). This is the state
@@ -655,6 +672,15 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	collector := &AsyncEnqueueCollector{}
 	reconcileCtx := WithAsyncEnqueueCollector(ctx, collector)
 
+	// Update persistent enqueue wrappers with the new collector BEFORE SetDepth.
+	// This ensures that when tickers fire during SetDepth, they use the current step's collector.
+	// We need to do this here because SetDepth happens before PrepareState, and PrepareState
+	// is where the wrapper's collector would normally be updated via NewEnqueueCapturingDeciders.
+	// We use a function pointer that can be set by the harness package to avoid circular dependencies.
+	if updateWrapperCollectorFn != nil {
+		updateWrapperCollectorFn(collector)
+	}
+
 	// increment simulated time by setting the simulated clock depth to match the depth of this state
 	restoreClock := simclock.SetDepth(state.depth)
 	defer restoreClock()
@@ -864,7 +890,20 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	}
 
 	newPendingReconciles := e.determineNewPendingReconciles(reconcileCtx, state, pr, reconcileResult)
-	stepLog.V(1).Info("pending reconciles after step", "count", len(newPendingReconciles), "items", newPendingReconciles)
+	stepLog.Info("📋 PENDING-RECONCILES: final pending reconciles after step",
+		"depth", state.depth,
+		"count", len(newPendingReconciles),
+		"items", newPendingReconciles)
+
+	// Specifically log if any KPA enqueues made it into the pending list
+	for _, pending := range newPendingReconciles {
+		if pending.ReconcilerID == "KPA" {
+			stepLog.Info("✅ KPA-PENDING: KPA enqueue in pending reconciles",
+				"depth", state.depth,
+				"pa", pending.Request.NamespacedName,
+				"total_pending", len(newPendingReconciles))
+		}
+	}
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
@@ -1047,8 +1086,37 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// Note: Each reconcile step creates a fresh AsyncEnqueueCollector in doReconcile,
 	// so we won't double-count across steps. The collector goes out of scope after this step.
 	var capturedPending []PendingReconcile
+	stepLog := log.FromContext(ctx)
 	if collector := GetAsyncEnqueueCollector(ctx); collector != nil {
 		capturedPending = collector.Get()
+		stepLog.Info("📥 COLLECTOR-READ: reading captured enqueues from collector",
+			"depth", state.depth,
+			"count", len(capturedPending),
+			"reconciler", reconcileInput.ReconcilerID)
+		if len(capturedPending) > 0 {
+			// Log KPA ticker enqueues at info level for visibility
+			for _, pr := range capturedPending {
+				if pr.ReconcilerID == "KPA" {
+					stepLog.Info("🔥 KPA-TICKER: captured async enqueue",
+						"depth", state.depth,
+						"pa", pr.Request.NamespacedName,
+						"total_captured", len(capturedPending))
+				}
+			}
+			stepLog.V(1).Info("captured async enqueues from tickers",
+				"count", len(capturedPending),
+				"depth", state.depth,
+				"reconciler", reconcileInput.ReconcilerID,
+				"enqueues", capturedPending)
+		} else {
+			stepLog.V(2).Info("📥 COLLECTOR-READ: no captured enqueues in collector",
+				"depth", state.depth,
+				"reconciler", reconcileInput.ReconcilerID)
+		}
+	} else {
+		stepLog.V(2).Info("📥 COLLECTOR-READ: no collector found in context",
+			"depth", state.depth,
+			"reconciler", reconcileInput.ReconcilerID)
 	}
 
 	// after processing the reconcile, we need to determine which controllers
@@ -1092,14 +1160,29 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 		triggeredByChanges = filtered
 	}
 
+	// Set Source for triggeredByChanges (state change triggers)
+	for i := range triggeredByChanges {
+		triggeredByChanges[i].Source = SourceStateChange
+	}
+
 	// if the controller returned a response with Requeue = true,
 	// we need to requeue the original request, no matter what.
 	if result.ctrlRes.Requeue {
+		reconcileInput.Source = SourceStateChange
 		triggeredByChanges = append(triggeredByChanges, reconcileInput)
 	}
 
-	// Merge captured enqueues with triggered reconciles
 	allTriggered := append(triggeredByChanges, capturedPending...)
+
+	// Log the merge of captured enqueues into pending reconciles
+	if len(capturedPending) > 0 {
+		stepLog.Info("📤 MERGE-ENQUEUES: merging captured enqueues into pending reconciles",
+			"depth", state.depth,
+			"captured_count", len(capturedPending),
+			"triggered_by_changes_count", len(triggeredByChanges),
+			"total_pending", len(allTriggered),
+			"captured_enqueues", capturedPending)
+	}
 
 	return e.getNewPendingReconciles(stillPending, allTriggered)
 }

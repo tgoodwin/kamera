@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/go-logr/logr"
 	"go.uber.org/zap"
@@ -25,9 +26,12 @@ import (
 	"knative.dev/pkg/reconciler"
 	reconcilertesting "knative.dev/pkg/reconciler/testing"
 
+	"reflect"
+
 	kamerascheme "github.com/tgoodwin/kamera/examples/knative-serving/knative/scheme"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -133,13 +137,42 @@ type fakeDeciders struct {
 	logger           *zap.SugaredLogger
 }
 
+// Get overrides MultiScaler.Get to add logging
+func (f *fakeDeciders) Get(ctx context.Context, namespace, name string) (*scaling.Decider, error) {
+	fmt.Printf("🔔 FAKE-GET: decider=%s/%s\n", namespace, name)
+	result, err := f.MultiScaler.Get(ctx, namespace, name)
+	if err != nil {
+		fmt.Printf("🔔 FAKE-GET-NOTFOUND: decider=%s/%s, err=%v\n", namespace, name, err)
+	} else {
+		fmt.Printf("🔔 FAKE-GET-FOUND: decider=%s/%s\n", namespace, name)
+	}
+	return result, err
+}
+
 // Create overrides MultiScaler.Create to immediately compute and set DesiredScale
+// and register synchronous callbacks for tickers
 func (f *fakeDeciders) Create(ctx context.Context, decider *scaling.Decider) (*scaling.Decider, error) {
+	fmt.Printf("🔔 FAKE-CREATE: decider=%s/%s\n", decider.Namespace, decider.Name)
+
 	// Create the decider using the underlying MultiScaler
+	// This will call createScaler -> runScalerTicker, which creates a ticker
 	result, err := f.MultiScaler.Create(ctx, decider)
 	if err != nil {
+		fmt.Printf("🔔 FAKE-CREATE-ERROR: decider=%s/%s, err=%v\n", decider.Namespace, decider.Name, err)
 		return nil, err
 	}
+	fmt.Printf("🔔 FAKE-CREATE-SUCCESS: decider=%s/%s\n", decider.Namespace, decider.Name)
+
+	// After Create, a ticker should have been created. We need to find it and register a callback.
+	// Since we can't easily access the ticker that was created, we'll use a different approach:
+	// We'll register callbacks for all tickers that match the interval (2s for KPA).
+	// Actually, this is getting complex. Let's try a simpler approach: make the channel read
+	// happen by ensuring the goroutine is running. But we can't ensure that.
+
+	// Register a synchronous callback for the ticker that was just created.
+	// The ticker should be the most recent one created by runScalerTicker.
+	key := types.NamespacedName{Namespace: decider.Namespace, Name: decider.Name}
+	registerTickerCallbackForDecider(f.MultiScaler, key)
 
 	// Immediately compute the scale to set DesiredScale correctly
 	// This simulates the ticker running immediately in our simulation context
@@ -165,20 +198,200 @@ func (f *fakeDeciders) Create(ctx context.Context, decider *scaling.Decider) (*s
 	return result, nil
 }
 
+// persistentStopCh is a channel that never closes, allowing tickers to persist across reconcile steps
+var persistentStopCh = make(chan struct{})
+
+// persistentMultiScaler is a singleton MultiScaler that persists across reconcile steps.
+// This is necessary because controllers are recreated per reconcile step, but we need
+// the MultiScaler (and its tickers) to persist so tickers can fire across steps.
+var (
+	persistentMultiScalerMu sync.Mutex
+	persistentMultiScaler   kparesources.Deciders
+
+	// persistentEnqueueWrapper is a singleton wrapper that persists across reconcile steps.
+	// This ensures Watch() is only called once on the underlying MultiScaler.
+	persistentEnqueueWrapper *enqueueCapturingDeciders
+)
+
 // NewFakeMultiScaler constructs a MultiScaler suitable for offline simulations.
 // It wraps the MultiScaler to ensure deciders are initialized with correct DesiredScale
 // immediately, rather than waiting for the async ticker. The fake UniScaler ensures that
 // when InitialScale is 0, it returns at least 1 (or ActivationScale if set) to allow activation to proceed.
+//
+// Note: We use a persistent MultiScaler instance (singleton) instead of creating a new one
+// each time, because controllers are recreated per reconcile step. This allows tickers to
+// persist across reconcile steps and fire when depth advances.
 func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) kparesources.Deciders {
-	uniScalerFactory := func(decider *scaling.Decider) (scaling.UniScaler, error) {
-		return newFakeUniScaler(decider), nil
+	persistentMultiScalerMu.Lock()
+	defer persistentMultiScalerMu.Unlock()
+
+	if persistentMultiScaler == nil {
+		fmt.Printf("🔔 MULTISCALER-SINGLETON: Creating persistent MultiScaler\n")
+		uniScalerFactory := func(decider *scaling.Decider) (scaling.UniScaler, error) {
+			return newFakeUniScaler(decider), nil
+		}
+		// Use persistentStopCh instead of stopCh to allow tickers to persist across reconcile steps
+		ms := scaling.NewMultiScaler(persistentStopCh, uniScalerFactory, logger)
+
+		// Wrap the tickProvider to intercept ticker creation and register synchronous callbacks
+		// We use reflection to access the private tickProvider field and replace it with our wrapper
+		wrapMultiScalerTickerProvider(ms)
+
+		persistentMultiScaler = &fakeDeciders{
+			MultiScaler:      ms,
+			uniScalerFactory: uniScalerFactory,
+			logger:           logger,
+		}
+	} else {
+		fmt.Printf("🔔 MULTISCALER-SINGLETON: Reusing existing MultiScaler\n")
 	}
-	ms := scaling.NewMultiScaler(stopCh, uniScalerFactory, logger)
-	return &fakeDeciders{
-		MultiScaler:      ms,
-		uniScalerFactory: uniScalerFactory,
-		logger:           logger,
+
+	return persistentMultiScaler
+}
+
+// mostRecentTicker tracks the most recently created ticker so we can register callbacks
+var (
+	mostRecentTicker   *simclock.Ticker
+	mostRecentTickerMu sync.Mutex
+)
+
+// wrapMultiScalerTickerProvider uses unsafe to replace the MultiScaler's tickProvider
+// with a wrapper that registers synchronous callbacks. When a ticker fires, we'll call
+// tickScaler directly, which will then call Inform, triggering the Watch callback.
+func wrapMultiScalerTickerProvider(ms *scaling.MultiScaler) {
+	// Use reflection to find the tickProvider field offset
+	msValue := reflect.ValueOf(ms).Elem()
+	tickProviderField := msValue.FieldByName("tickProvider")
+	if !tickProviderField.IsValid() {
+		panic("MultiScaler.tickProvider field not found - reflection failed")
 	}
+
+	// Use unsafe to get a pointer to the field and set it
+	// We need to get the address of the struct and add the field offset
+	msPtr := unsafe.Pointer(ms)
+	tickProviderPtr := unsafe.Pointer(uintptr(msPtr) + tickProviderField.UnsafeAddr() - msValue.UnsafeAddr())
+
+	// Create a wrapper that tracks the most recent ticker
+	wrappedProvider := func(d time.Duration) *simclock.Ticker {
+		// Create the ticker directly (same as what the original tickProvider does)
+		ticker := simclock.NewTicker(d)
+
+		// Track the most recent ticker so we can register callbacks when Create is called
+		mostRecentTickerMu.Lock()
+		mostRecentTicker = ticker
+		mostRecentTickerMu.Unlock()
+
+		fmt.Printf("🔔 TICKER-PROVIDER-WRAP: Created ticker, interval=%v\n", d)
+		return ticker
+	}
+
+	// Set the field using unsafe pointer
+	*(*func(time.Duration) *simclock.Ticker)(tickProviderPtr) = wrappedProvider
+
+	fmt.Printf("🔔 TICKER-PROVIDER-WRAP: Wrapped MultiScaler tickProvider\n")
+}
+
+// registerTickerCallbackForDecider registers a synchronous callback for the ticker
+// associated with the given decider. When the ticker fires, it will call tickScaler
+// synchronously, which will then call Inform, triggering the Watch callback.
+func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.NamespacedName) {
+	// Get the most recent ticker (should be the one created for this decider)
+	mostRecentTickerMu.Lock()
+	ticker := mostRecentTicker
+	mostRecentTickerMu.Unlock()
+
+	if ticker == nil {
+		fmt.Printf("🔔 CALLBACK-REGISTER: No recent ticker found for key=%s, skipping\n", key)
+		return
+	}
+
+	// Use reflection to access the MultiScaler's internal scalers map
+	msValue := reflect.ValueOf(ms).Elem()
+	scalersField := msValue.FieldByName("scalers")
+	if !scalersField.IsValid() {
+		fmt.Printf("🔔 CALLBACK-REGISTER: scalers field not found, skipping callback registration\n")
+		return
+	}
+
+	// Can't call .Interface() on unexported field, so use unsafe to get a pointer to it
+	msPtr := unsafe.Pointer(ms)
+	scalersPtr := unsafe.Pointer(uintptr(msPtr) + scalersField.UnsafeAddr() - msValue.UnsafeAddr())
+
+	// Get the scaler for this key by using reflection on the unsafe pointer
+	scalersMapValue := reflect.NewAt(scalersField.Type(), scalersPtr).Elem()
+	scalerValue := scalersMapValue.MapIndex(reflect.ValueOf(key))
+	if !scalerValue.IsValid() {
+		fmt.Printf("🔔 CALLBACK-REGISTER: scaler not found for key=%s, skipping\n", key)
+		return
+	}
+
+	// The scaler is a *scalerRunner. We need to access its fields.
+	// Can't call .Elem() on unexported type, so we need to work with the reflect.Value directly
+	// The scalerValue is a pointer to scalerRunner, so we need to dereference it
+	if scalerValue.Kind() != reflect.Ptr {
+		fmt.Printf("🔔 CALLBACK-REGISTER: scalerValue is not a pointer, got kind=%v\n", scalerValue.Kind())
+		return
+	}
+
+	runnerValue := scalerValue.Elem()
+	scalerField := runnerValue.FieldByName("scaler")
+	if !scalerField.IsValid() {
+		fmt.Printf("🔔 CALLBACK-REGISTER: scaler field not found in runner\n")
+		return
+	}
+
+	// Can't call .Interface() on unexported field, so use unsafe
+	runnerPtr := unsafe.Pointer(scalerValue.Pointer())
+	scalerPtr := unsafe.Pointer(uintptr(runnerPtr) + scalerField.UnsafeAddr() - runnerValue.UnsafeAddr())
+	scalerValuePtr := reflect.NewAt(scalerField.Type(), scalerPtr).Elem()
+
+	// Get the scaler (UniScaler interface)
+	scaler := scalerValuePtr.Interface().(scaling.UniScaler)
+
+	// Use reflection to call the private tickScaler method
+	// tickScaler signature: func (m *MultiScaler) tickScaler(scaler UniScaler, runner *scalerRunner, metricKey types.NamespacedName)
+	tickScalerMethod := reflect.ValueOf(ms).MethodByName("tickScaler")
+	if !tickScalerMethod.IsValid() {
+		// tickScaler is private, so we can't call it via MethodByName
+		// We need to use a different approach: call it via the unexported method
+		// Actually, we can't call private methods via reflection easily.
+		// Let's try a different approach: make Inform get called directly.
+
+		// Actually, the simplest approach is to register a callback that calls Inform
+		// when the ticker fires. But we need to know when to call Inform (when scale changes).
+		// That requires calling tickScaler, which we can't do easily.
+
+		// Let's try yet another approach: Register a callback that manually calls Scale
+		// and then Inform if the scale changed. This mimics what tickScaler does.
+		fmt.Printf("🔔 CALLBACK-REGISTER: tickScaler is private, using workaround\n")
+
+		// Register a callback that calls Scale and Inform
+		callback := func() {
+			// Call Scale (similar to what tickScaler does)
+			scaleResult := scaler.Scale(nil, simclock.Now()) // logger is nil for now
+
+			if scaleResult.ScaleValid {
+				// Update the decider status (we'd need to access the runner's decider)
+				// For now, just call Inform to trigger the Watch callback
+				// This is a simplified version - in reality we'd update the decider status first
+				ms.Inform(key)
+			}
+		}
+
+		simclock.RegisterTickerCallback(ticker, callback)
+		fmt.Printf("🔔 CALLBACK-REGISTER: Registered callback for ticker, key=%s\n", key)
+		return
+	}
+
+	// If we could call tickScaler, we would do:
+	// tickScalerMethod.Call([]reflect.Value{
+	//     reflect.ValueOf(scaler),
+	//     scalerValue,
+	//     reflect.ValueOf(key),
+	// })
+	// But since it's private, we can't do this easily.
+
+	fmt.Printf("🔔 CALLBACK-REGISTER: Callback registration attempted for key=%s\n", key)
 }
 
 // enqueueCapturingDeciders wraps a Deciders implementation to capture Watch callback invocations
@@ -186,28 +399,117 @@ type enqueueCapturingDeciders struct {
 	kparesources.Deciders
 	collector    *tracecheck.AsyncEnqueueCollector
 	reconcilerID string
+
+	// watchRegistered tracks whether we've already called Watch() on the underlying MultiScaler.
+	// Since MultiScaler.Watch() can only be called once, we need to make this idempotent.
+	watchRegistered bool
+	watchMu         sync.Mutex
+
+	// currentCallback stores the current controller callback so we can call it when Inform is invoked
+	currentCallback func(types.NamespacedName)
 }
 
 func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
-	wrappedCallback := func(key types.NamespacedName) {
-		// Call original callback (impl.EnqueueKey) - this enqueues in the controller's workqueue
-		callback(key)
+	e.watchMu.Lock()
+	defer e.watchMu.Unlock()
 
-		// Also capture for the explorer's pending reconciles with the reconciler ID that owns this ticker
-		if e.collector != nil {
-			e.collector.Add(e.reconcilerID, key)
+	// Store the current callback so we can call it when Inform is invoked
+	e.currentCallback = callback
+
+	fmt.Printf("🔔 WATCH-REGISTER: reconcilerID=%s, collector=%v, alreadyRegistered=%v\n", e.reconcilerID, e.collector != nil, e.watchRegistered)
+
+	// Only call the underlying Watch() once, since MultiScaler doesn't support multiple calls
+	if !e.watchRegistered {
+		wrappedCallback := func(key types.NamespacedName) {
+			fmt.Printf("🔔 WATCH-CALLBACK: reconcilerID=%s, key=%s\n", e.reconcilerID, key)
+
+			// Call the current controller callback (impl.EnqueueKey) - this enqueues in the controller's workqueue
+			// We need to get the current callback safely
+			e.watchMu.Lock()
+			cb := e.currentCallback
+			collector := e.collector
+			e.watchMu.Unlock()
+
+			if cb != nil {
+				cb(key)
+			}
+
+			// Also capture for the explorer's pending reconciles with the reconciler ID that owns this ticker
+			if collector != nil {
+				fmt.Printf("🔔 WATCH-ADD: reconcilerID=%s, key=%s, adding to collector\n", e.reconcilerID, key)
+				collector.Add(e.reconcilerID, key)
+			} else {
+				fmt.Printf("🔔 WATCH-ERROR: reconcilerID=%s, key=%s, collector is nil!\n", e.reconcilerID, key)
+			}
 		}
+		e.Deciders.Watch(wrappedCallback)
+		e.watchRegistered = true
+		fmt.Printf("🔔 WATCH-REGISTER: Successfully registered Watch callback\n")
+	} else {
+		fmt.Printf("🔔 WATCH-REGISTER: Watch already registered, just updating callback reference\n")
 	}
-	e.Deciders.Watch(wrappedCallback)
 }
 
-// NewEnqueueCapturingDeciders creates a Deciders wrapper that captures Watch callback invocations
+// NewEnqueueCapturingDeciders creates a Deciders wrapper that captures Watch callback invocations.
+// Since the underlying MultiScaler is a singleton, we also use a singleton wrapper to ensure
+// Watch() is only called once.
 func NewEnqueueCapturingDeciders(base kparesources.Deciders, collector *tracecheck.AsyncEnqueueCollector, reconcilerID string) kparesources.Deciders {
-	return &enqueueCapturingDeciders{
-		Deciders:     base,
-		collector:    collector,
-		reconcilerID: reconcilerID,
+	fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: reconcilerID=%s, collector=%v, base_type=%T\n", reconcilerID, collector != nil, base)
+
+	persistentMultiScalerMu.Lock()
+	defer persistentMultiScalerMu.Unlock()
+
+	// If we already have a persistent wrapper, reuse it and just update the collector
+	if persistentEnqueueWrapper != nil {
+		persistentEnqueueWrapper.watchMu.Lock()
+		persistentEnqueueWrapper.collector = collector
+		persistentEnqueueWrapper.watchMu.Unlock()
+		fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: Reusing persistent wrapper, updated collector\n")
+		return persistentEnqueueWrapper
 	}
+
+	// Create a new wrapper and make it persistent
+	wrapper := &enqueueCapturingDeciders{
+		Deciders:        base,
+		collector:       collector,
+		reconcilerID:    reconcilerID,
+		watchRegistered: false,
+	}
+	persistentEnqueueWrapper = wrapper
+	fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: Created new persistent wrapper\n")
+	return wrapper
+}
+
+// updatePersistentEnqueueWrapperCollector updates the collector in the persistent wrapper.
+// This is called from takeReconcileStep BEFORE SetDepth to ensure tickers use the current step's collector.
+func updatePersistentEnqueueWrapperCollector(collector *tracecheck.AsyncEnqueueCollector) {
+	persistentMultiScalerMu.Lock()
+	defer persistentMultiScalerMu.Unlock()
+
+	if persistentEnqueueWrapper != nil {
+		persistentEnqueueWrapper.watchMu.Lock()
+		persistentEnqueueWrapper.collector = collector
+		persistentEnqueueWrapper.watchMu.Unlock()
+		fmt.Printf("🔔 UPDATE-WRAPPER-COLLECTOR: Updated persistent wrapper collector\n")
+	}
+}
+
+func init() {
+	// Register the update function with tracecheck so it can update the wrapper's collector
+	// before SetDepth is called, ensuring tickers use the current step's collector.
+	tracecheck.SetUpdateWrapperCollectorFn(updatePersistentEnqueueWrapperCollector)
+}
+
+// Get forwards to the base Deciders implementation
+func (e *enqueueCapturingDeciders) Get(ctx context.Context, namespace, name string) (*scaling.Decider, error) {
+	fmt.Printf("🔔 ENQUEUE-GET: reconcilerID=%s, decider=%s/%s, base_type=%T\n", e.reconcilerID, namespace, name, e.Deciders)
+	return e.Deciders.Get(ctx, namespace, name)
+}
+
+// Create forwards to the base Deciders implementation
+func (e *enqueueCapturingDeciders) Create(ctx context.Context, decider *scaling.Decider) (*scaling.Decider, error) {
+	fmt.Printf("🔔 ENQUEUE-CREATE: reconcilerID=%s, decider=%s/%s, base_type=%T\n", e.reconcilerID, decider.Namespace, decider.Name, e.Deciders)
+	return e.Deciders.Create(ctx, decider)
 }
 
 // NewKnativeStrategy creates a new KnativeStrategy for a given controller factory.

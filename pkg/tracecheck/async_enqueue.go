@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"k8s.io/apimachinery/pkg/types"
@@ -27,11 +28,13 @@ type AsyncEnqueueCollector struct {
 func (ec *AsyncEnqueueCollector) Add(reconcilerID string, key types.NamespacedName) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
+	fmt.Printf("🔔 COLLECTOR-ADD: reconcilerID=%s, key=%s, current_count=%d\n", reconcilerID, key, len(ec.enqueues))
 	ec.enqueues = append(ec.enqueues, PendingReconcile{
 		ReconcilerID: reconcilerID,
 		Request: reconcile.Request{
 			NamespacedName: key,
 		},
+		Source: SourceAsyncEnqueue,
 	})
 }
 

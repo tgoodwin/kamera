@@ -1,6 +1,7 @@
 package simclock
 
 import (
+	"fmt"
 	"sync/atomic"
 	"time"
 )
@@ -22,6 +23,7 @@ func Now() time.Time {
 // SetDepth sets the current depth and returns a restore func to reset to the previous depth.
 func SetDepth(depth int) func() {
 	prev := currentDepth.Swap(int64(depth))
+	fmt.Printf("🔔 SETDEPTH: prev=%d, new=%d, will_advance=%v\n", prev, depth, int64(depth) > prev)
 	if int64(depth) > prev {
 		advanceTickers(int64(depth))
 	}
