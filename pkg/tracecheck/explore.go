@@ -648,20 +648,27 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	frameID := util.UUID()
 	ctx = replay.WithFrameID(ctx, frameID)
 
+	// Create a fresh async enqueue collector for this reconcile step and add to context.
+	// This must be done BEFORE SetDepth so that when tickers fire during SetDepth,
+	// they can access the collector from the context.
+	// The collector is scoped to this reconcile step and will be read in determineNewPendingReconciles.
+	collector := &AsyncEnqueueCollector{}
+	reconcileCtx := WithAsyncEnqueueCollector(ctx, collector)
+
 	// increment simulated time by setting the simulated clock depth to match the depth of this state
 	restoreClock := simclock.SetDepth(state.depth)
 	defer restoreClock()
 
 	// prepare the "true state of the world" for the controller's potential actions
 	// to be validated against. (e.g. "create error: thing of name X already exists")
-	e.effectContextManager.PrepareEffectContext(ctx, state.Contents.All())
-	defer e.effectContextManager.CleanupEffectContext(ctx)
+	e.effectContextManager.PrepareEffectContext(reconcileCtx, state.Contents.All())
+	defer e.effectContextManager.CleanupEffectContext(reconcileCtx)
 
 	// invoke the controller at its observed state of the world
 	observableState := state.ObserveAs(pr.ReconcilerID)
 	stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "FrameID", frameID).V(2).Info("about to reconcile")
 
-	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
+	reconcileResult, err := e.reconcileAtState(reconcileCtx, observableState, pr)
 	if err != nil && apierrors.IsAlreadyExists(err) {
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).Info("tolerating AlreadyExists error; treating reconcile as no-op")
 		beforeState := make(ObjectVersions)
@@ -856,7 +863,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		newStateEvents = append(newStateEvents, stateEvent)
 	}
 
-	newPendingReconciles := e.determineNewPendingReconciles(ctx, state, pr, reconcileResult)
+	newPendingReconciles := e.determineNewPendingReconciles(reconcileCtx, state, pr, reconcileResult)
 	stepLog.V(1).Info("pending reconciles after step", "count", len(newPendingReconciles), "items", newPendingReconciles)
 
 	// make a copy of the current execution history

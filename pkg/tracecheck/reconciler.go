@@ -145,9 +145,6 @@ type ReconcilerContainer struct {
 func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
 	frameID := replay.FrameIDFromContext(ctx)
 
-	collector := &AsyncEnqueueCollector{}
-	ctx = WithAsyncEnqueueCollector(ctx, collector)
-
 	// convert ObjectVersions to []runtime.Object
 	var objects []runtime.Object
 	for _, hash := range observableState {

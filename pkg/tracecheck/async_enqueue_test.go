@@ -42,7 +42,7 @@ func TestAsyncEnqueueCollector_Get(t *testing.T) {
 	enqueues2 := collector.Get()
 	assert.Len(t, enqueues1, 1)
 	assert.Len(t, enqueues2, 1)
-	assert.NotSame(t, enqueues1, enqueues2) // Different slices
+	assert.NotSame(t, enqueues1, enqueues2)     // Different slices
 	assert.Equal(t, enqueues1[0], enqueues2[0]) // But same content
 }
 
@@ -151,4 +151,3 @@ func TestWithAsyncEnqueueCollector_RepeatedCalls(t *testing.T) {
 	retrieved0 := GetAsyncEnqueueCollector(ctx)
 	assert.Nil(t, retrieved0)
 }
-
