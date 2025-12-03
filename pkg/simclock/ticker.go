@@ -6,9 +6,17 @@ import (
 	"time"
 )
 
+var (
+	tickerSeq      atomic.Int64
+	tickerRegistry = make(map[int64]*Ticker)
+	tickerMu       sync.Mutex
+)
+
 // Ticker delivers ticks on its channel when simulated depth advances far enough.
-// It mirrors time.Ticker semantics but is driven by SetDepth.
+// It mirrors time.Ticker semantics (C field, Stop, Reset) but is driven by SetDepth.
 type Ticker struct {
+	C <-chan time.Time // receive-only channel exposed to users
+
 	id            int64
 	interval      time.Duration
 	intervalSteps int64
@@ -16,14 +24,8 @@ type Ticker struct {
 	mu        sync.Mutex
 	nextDepth int64
 	stopped   bool
-	ch        chan time.Time
+	ch        chan time.Time // underlying bidirectional channel for sending
 }
-
-var (
-	tickerSeq      atomic.Int64
-	tickerRegistry = make(map[int64]*Ticker)
-	tickerMu       sync.Mutex
-)
 
 // NewTicker returns a Ticker whose channel ticks each time the depth advances by d.
 // The first tick arrives after the first full interval.
@@ -37,19 +39,15 @@ func newTicker(d time.Duration) *Ticker {
 	id := tickerSeq.Add(1)
 	ch := make(chan time.Time, 1)
 	t := &Ticker{
+		C:             ch, // expose as receive-only
+		ch:            ch, // keep bidirectional for internal use
 		id:            id,
 		interval:      d,
 		intervalSteps: steps,
 		nextDepth:     currentDepth.Load() + steps,
-		ch:            ch,
 	}
 	registerTicker(t)
 	return t
-}
-
-// C returns the channel on which ticks are delivered.
-func (t *Ticker) C() <-chan time.Time {
-	return t.ch
 }
 
 // Stop halts the ticker and removes it from the registry.

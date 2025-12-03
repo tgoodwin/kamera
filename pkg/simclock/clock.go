@@ -27,7 +27,7 @@ func (DeterministicClock) After(d time.Duration) <-chan time.Time {
 	return ch
 }
 func (DeterministicClock) Tick(d time.Duration) <-chan time.Time {
-	return newTicker(d).C()
+	return newTicker(d).C
 }
 
 func (DeterministicClock) NewTimer(d time.Duration) clock.Timer {
@@ -35,12 +35,28 @@ func (DeterministicClock) NewTimer(d time.Duration) clock.Timer {
 }
 
 func (DeterministicClock) NewTicker(d time.Duration) clock.Ticker {
-	return newTicker(d)
+	return newK8sTicker(d)
 }
 
 func (d DeterministicClock) AfterFunc(_ time.Duration, f func()) clock.Timer {
 	f()
 	return d.NewTimer(0)
+}
+
+func NewK8sTicker(d time.Duration) clock.Ticker {
+	return newK8sTicker(d)
+}
+
+type k8sTicker struct {
+	*Ticker
+}
+
+func newK8sTicker(d time.Duration) *k8sTicker {
+	return &k8sTicker{Ticker: newTicker(d)}
+}
+
+func (t *k8sTicker) C() <-chan time.Time {
+	return t.Ticker.C
 }
 
 var (
