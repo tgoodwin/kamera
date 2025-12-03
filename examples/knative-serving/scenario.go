@@ -103,7 +103,17 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 	})
 	builder.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
-			multiScaler := knativeharness.NewFakeMultiScaler(ctx.Done(), logging.FromContext(ctx))
+			// Get async enqueue collector from context
+			collector := tracecheck.GetAsyncEnqueueCollector(ctx)
+			if collector == nil {
+				// This should never happen - the collector is created in doReconcile before PrepareState
+				panic("AsyncEnqueueCollector not found in context - this indicates a programming error")
+			}
+
+			// Create MultiScaler and wrap it to capture enqueues
+			baseMultiScaler := knativeharness.NewFakeMultiScaler(ctx.Done(), logging.FromContext(ctx))
+			multiScaler := knativeharness.NewEnqueueCapturingDeciders(baseMultiScaler, collector, "KPA")
+
 			impl := kpareconciler.NewController(ctx, cmw, multiScaler)
 			return impl
 		}

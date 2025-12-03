@@ -181,6 +181,35 @@ func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) kpare
 	}
 }
 
+// enqueueCapturingDeciders wraps a Deciders implementation to capture Watch callback invocations
+type enqueueCapturingDeciders struct {
+	kparesources.Deciders
+	collector    *tracecheck.AsyncEnqueueCollector
+	reconcilerID string
+}
+
+func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
+	wrappedCallback := func(key types.NamespacedName) {
+		// Call original callback (impl.EnqueueKey) - this enqueues in the controller's workqueue
+		callback(key)
+
+		// Also capture for the explorer's pending reconciles with the reconciler ID that owns this ticker
+		if e.collector != nil {
+			e.collector.Add(e.reconcilerID, key)
+		}
+	}
+	e.Deciders.Watch(wrappedCallback)
+}
+
+// NewEnqueueCapturingDeciders creates a Deciders wrapper that captures Watch callback invocations
+func NewEnqueueCapturingDeciders(base kparesources.Deciders, collector *tracecheck.AsyncEnqueueCollector, reconcilerID string) kparesources.Deciders {
+	return &enqueueCapturingDeciders{
+		Deciders:     base,
+		collector:    collector,
+		reconcilerID: reconcilerID,
+	}
+}
+
 // NewKnativeStrategy creates a new KnativeStrategy for a given controller factory.
 func NewKnativeStrategy(factory ControllerFactory, recorder replay.EffectRecorder, selectors ...string) (*KnativeStrategy, error) {
 	if factory == nil {
