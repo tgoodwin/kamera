@@ -1,7 +1,6 @@
 package tracecheck
 
 import (
-	"context"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -37,13 +36,14 @@ func TestAsyncEnqueueCollector_Get(t *testing.T) {
 	key1 := types.NamespacedName{Namespace: "default", Name: "foo"}
 	collector.Add("Reconciler1", key1)
 
-	// Get should return a copy
+	// Get should return a copy and clear the collector
 	enqueues1 := collector.Get()
-	enqueues2 := collector.Get()
 	assert.Len(t, enqueues1, 1)
-	assert.Len(t, enqueues2, 1)
-	assert.NotSame(t, enqueues1, enqueues2)     // Different slices
-	assert.Equal(t, enqueues1[0], enqueues2[0]) // But same content
+
+	// Second Get should return empty because collector was cleared
+	enqueues2 := collector.Get()
+	assert.Len(t, enqueues2, 0)
+	assert.NotSame(t, enqueues1, enqueues2) // Different slices
 }
 
 func TestAsyncEnqueueCollector_Clear(t *testing.T) {
@@ -93,61 +93,10 @@ func TestAsyncEnqueueCollector_ThreadSafety(t *testing.T) {
 	assert.Len(t, enqueues, numGoroutines*enqueuesPerGoroutine)
 }
 
-func TestGetAsyncEnqueueCollector(t *testing.T) {
-	ctx := context.Background()
-
-	// Should return nil when not in context
-	collector := GetAsyncEnqueueCollector(ctx)
-	assert.Nil(t, collector)
-
-	// Should return collector when in context
-	expectedCollector := &AsyncEnqueueCollector{}
-	ctx = WithAsyncEnqueueCollector(ctx, expectedCollector)
-
-	collector = GetAsyncEnqueueCollector(ctx)
-	assert.NotNil(t, collector)
-	assert.Same(t, expectedCollector, collector)
-}
-
-func TestWithAsyncEnqueueCollector(t *testing.T) {
-	ctx := context.Background()
-	collector := &AsyncEnqueueCollector{}
-
-	ctx = WithAsyncEnqueueCollector(ctx, collector)
-
-	retrieved := GetAsyncEnqueueCollector(ctx)
-	assert.NotNil(t, retrieved)
-	assert.Same(t, collector, retrieved)
-
-	// Should not affect parent context
-	parentCollector := GetAsyncEnqueueCollector(context.Background())
-	assert.Nil(t, parentCollector)
-}
-
-func TestWithAsyncEnqueueCollector_RepeatedCalls(t *testing.T) {
-	// Demonstrates behavior when WithAsyncEnqueueCollector is called multiple times
-	ctx := context.Background()
-	collector1 := &AsyncEnqueueCollector{}
-	collector2 := &AsyncEnqueueCollector{}
-
-	// First call creates a new context with collector1
-	ctx1 := WithAsyncEnqueueCollector(ctx, collector1)
-
-	// Second call creates a new context (based on ctx1) with collector2
-	// This "shadows" collector1 - GetAsyncEnqueueCollector will return collector2
-	ctx2 := WithAsyncEnqueueCollector(ctx1, collector2)
-
-	// ctx2 returns the most recent collector (collector2)
-	retrieved2 := GetAsyncEnqueueCollector(ctx2)
-	assert.NotNil(t, retrieved2)
-	assert.Same(t, collector2, retrieved2)
-
-	// ctx1 still returns collector1 (the original context wasn't modified)
-	retrieved1 := GetAsyncEnqueueCollector(ctx1)
-	assert.NotNil(t, retrieved1)
-	assert.Same(t, collector1, retrieved1)
-
-	// Original context is unaffected
-	retrieved0 := GetAsyncEnqueueCollector(ctx)
-	assert.Nil(t, retrieved0)
+func TestGetGlobalAsyncEnqueueCollector(t *testing.T) {
+	// Should return the same singleton instance
+	collector1 := GetGlobalAsyncEnqueueCollector()
+	collector2 := GetGlobalAsyncEnqueueCollector()
+	assert.NotNil(t, collector1)
+	assert.Same(t, collector1, collector2)
 }

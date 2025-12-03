@@ -397,7 +397,6 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 // enqueueCapturingDeciders wraps a Deciders implementation to capture Watch callback invocations
 type enqueueCapturingDeciders struct {
 	kparesources.Deciders
-	collector    *tracecheck.AsyncEnqueueCollector
 	reconcilerID string
 
 	// watchRegistered tracks whether we've already called Watch() on the underlying MultiScaler.
@@ -416,7 +415,7 @@ func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
 	// Store the current callback so we can call it when Inform is invoked
 	e.currentCallback = callback
 
-	fmt.Printf("🔔 WATCH-REGISTER: reconcilerID=%s, collector=%v, alreadyRegistered=%v\n", e.reconcilerID, e.collector != nil, e.watchRegistered)
+	fmt.Printf("🔔 WATCH-REGISTER: reconcilerID=%s, alreadyRegistered=%v\n", e.reconcilerID, e.watchRegistered)
 
 	// Only call the underlying Watch() once, since MultiScaler doesn't support multiple calls
 	if !e.watchRegistered {
@@ -424,23 +423,19 @@ func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
 			fmt.Printf("🔔 WATCH-CALLBACK: reconcilerID=%s, key=%s\n", e.reconcilerID, key)
 
 			// Call the current controller callback (impl.EnqueueKey) - this enqueues in the controller's workqueue
-			// We need to get the current callback safely
 			e.watchMu.Lock()
 			cb := e.currentCallback
-			collector := e.collector
 			e.watchMu.Unlock()
 
 			if cb != nil {
 				cb(key)
 			}
 
-			// Also capture for the explorer's pending reconciles with the reconciler ID that owns this ticker
-			if collector != nil {
-				fmt.Printf("🔔 WATCH-ADD: reconcilerID=%s, key=%s, adding to collector\n", e.reconcilerID, key)
-				collector.Add(e.reconcilerID, key)
-			} else {
-				fmt.Printf("🔔 WATCH-ERROR: reconcilerID=%s, key=%s, collector is nil!\n", e.reconcilerID, key)
-			}
+			// Add to the global async enqueue collector.
+			// The collector is automatically cleared after each Get() call in determineNewPendingReconciles.
+			collector := tracecheck.GetGlobalAsyncEnqueueCollector()
+			fmt.Printf("🔔 WATCH-ADD: reconcilerID=%s, key=%s, adding to global collector\n", e.reconcilerID, key)
+			collector.Add(e.reconcilerID, key)
 		}
 		e.Deciders.Watch(wrappedCallback)
 		e.watchRegistered = true
@@ -453,51 +448,29 @@ func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
 // NewEnqueueCapturingDeciders creates a Deciders wrapper that captures Watch callback invocations.
 // Since the underlying MultiScaler is a singleton, we also use a singleton wrapper to ensure
 // Watch() is only called once.
-func NewEnqueueCapturingDeciders(base kparesources.Deciders, collector *tracecheck.AsyncEnqueueCollector, reconcilerID string) kparesources.Deciders {
-	fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: reconcilerID=%s, collector=%v, base_type=%T\n", reconcilerID, collector != nil, base)
+// The wrapper uses the global async enqueue collector, which is automatically cleared after each Get() call.
+func NewEnqueueCapturingDeciders(base kparesources.Deciders, reconcilerID string) kparesources.Deciders {
+	fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: reconcilerID=%s, base_type=%T\n", reconcilerID, base)
 
 	persistentMultiScalerMu.Lock()
 	defer persistentMultiScalerMu.Unlock()
 
-	// If we already have a persistent wrapper, reuse it and just update the collector
+	// If we already have a persistent wrapper, reuse it.
+	// The context will be updated before SetDepth in takeReconcileStep.
 	if persistentEnqueueWrapper != nil {
-		persistentEnqueueWrapper.watchMu.Lock()
-		persistentEnqueueWrapper.collector = collector
-		persistentEnqueueWrapper.watchMu.Unlock()
-		fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: Reusing persistent wrapper, updated collector\n")
+		fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: Reusing persistent wrapper\n")
 		return persistentEnqueueWrapper
 	}
 
 	// Create a new wrapper and make it persistent
 	wrapper := &enqueueCapturingDeciders{
 		Deciders:        base,
-		collector:       collector,
 		reconcilerID:    reconcilerID,
 		watchRegistered: false,
 	}
 	persistentEnqueueWrapper = wrapper
 	fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: Created new persistent wrapper\n")
 	return wrapper
-}
-
-// updatePersistentEnqueueWrapperCollector updates the collector in the persistent wrapper.
-// This is called from takeReconcileStep BEFORE SetDepth to ensure tickers use the current step's collector.
-func updatePersistentEnqueueWrapperCollector(collector *tracecheck.AsyncEnqueueCollector) {
-	persistentMultiScalerMu.Lock()
-	defer persistentMultiScalerMu.Unlock()
-
-	if persistentEnqueueWrapper != nil {
-		persistentEnqueueWrapper.watchMu.Lock()
-		persistentEnqueueWrapper.collector = collector
-		persistentEnqueueWrapper.watchMu.Unlock()
-		fmt.Printf("🔔 UPDATE-WRAPPER-COLLECTOR: Updated persistent wrapper collector\n")
-	}
-}
-
-func init() {
-	// Register the update function with tracecheck so it can update the wrapper's collector
-	// before SetDepth is called, ensuring tickers use the current step's collector.
-	tracecheck.SetUpdateWrapperCollectorFn(updatePersistentEnqueueWrapperCollector)
 }
 
 // Get forwards to the base Deciders implementation

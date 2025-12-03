@@ -45,6 +45,8 @@ const (
 	SourceStateChange PendingReconcileSource = "State Change"
 	// SourceAsyncEnqueue indicates the reconcile was triggered by an async enqueue (e.g., ticker)
 	SourceAsyncEnqueue PendingReconcileSource = "Async Enqueue"
+
+	SourceRequeue PendingReconcileSource = "Requeue"
 )
 
 type PendingReconcile struct {

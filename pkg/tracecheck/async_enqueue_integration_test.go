@@ -67,7 +67,7 @@ type TickerBasedStrategy struct {
 
 func (s *TickerBasedStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
 	// Get the async enqueue collector from context
-	collector := GetAsyncEnqueueCollector(ctx)
+	collector := GetGlobalAsyncEnqueueCollector()
 	if collector == nil {
 		// This is expected in some test scenarios, but in real usage it should be present
 		return ctx, func() {}, nil
