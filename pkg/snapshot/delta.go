@@ -7,9 +7,9 @@ import (
 	"io"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/pmezard/go-difflib/difflib"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/util/diff"
 	"sigs.k8s.io/yaml"
 )
 
@@ -119,12 +119,34 @@ func computeDelta(old, new *unstructured.Unstructured) string {
 		return ""
 	}
 
-	return diff.StringDiff(string(oldYAML), string(newYAML))
+	diffStr, err := unifiedYAMLDiff(string(oldYAML), string(newYAML))
+	if err != nil {
+		return fmt.Sprintf("error computing diff: %v", err)
+	}
+	return diffStr
 }
 
 func ComputeDelta(old, new *unstructured.Unstructured, opts ...cmp.Option) string {
 	// opts currently unused but kept for backward compatibility with callers.
 	return computeDelta(old, new)
+}
+
+func unifiedYAMLDiff(oldYAML, newYAML string) (string, error) {
+	if oldYAML == newYAML {
+		return "", nil
+	}
+
+	diffStr, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+		A:        difflib.SplitLines(oldYAML),
+		B:        difflib.SplitLines(newYAML),
+		FromFile: "before",
+		ToFile:   "after",
+		Context:  3,
+	})
+	if err != nil {
+		return "", err
+	}
+	return diffStr, nil
 }
 
 func objectToYAML(obj *unstructured.Unstructured) ([]byte, error) {
