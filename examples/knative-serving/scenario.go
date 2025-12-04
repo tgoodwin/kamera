@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	knativeharness "github.com/tgoodwin/kamera/examples/knative-serving/knative"
 	"github.com/tgoodwin/kamera/pkg/replay"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	corev1 "k8s.io/api/core/v1"
@@ -33,6 +35,11 @@ func newKnativeExplorerAndState(maxDepth int, perfStats bool) (*tracecheck.Explo
 	if depth <= 0 {
 		depth = defaultMaxDepth
 	}
+
+	// Configure simclock to use 2s steps instead of 1s to speed up scale-to-zero simulation
+	// (60s stable window + 30s grace period = 90s total, which is 45 steps at 2s/step)
+	// Note: 2s matches the KPA ticker interval (tickInterval = 2s), so tickers work correctly
+	simclock.Configure(time.Unix(0, 0), 2*time.Second)
 
 	builder := tracecheck.NewExplorerBuilder(scheme)
 	configureKnativeExplorer(builder)
@@ -72,6 +79,10 @@ func buildBaselineService() *v1.Service {
 						Annotations: map[string]string{
 							// Ensure KPA class annotation is present so the KPA reconciler processes the PA.
 							autoscaling.ClassAnnotationKey: autoscaling.KPA,
+							// Set InitialScale=1 to allow activation
+							autoscaling.InitialScaleAnnotationKey: "1",
+							// Set MinScale=0 to allow scale-to-zero
+							autoscaling.MinScaleAnnotationKey: "0",
 						},
 					},
 					Spec: v1.RevisionSpec{

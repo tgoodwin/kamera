@@ -2,6 +2,7 @@ package kamera
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -17,11 +18,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	dynamicfakeclient "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/record"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/injection"
+	dynamicclient "knative.dev/pkg/injection/clients/dynamicclient"
 	dynamicfake "knative.dev/pkg/injection/clients/dynamicclient/fake"
 	"knative.dev/pkg/reconciler"
 	reconcilertesting "knative.dev/pkg/reconciler/testing"
@@ -100,21 +103,23 @@ func newFakeUniScaler(decider *scaling.Decider) *fakeUniScaler {
 	}
 }
 
-func (f *fakeUniScaler) Scale(_ *zap.SugaredLogger, _ time.Time) scaling.ScaleResult {
+func (f *fakeUniScaler) Scale(_ *zap.SugaredLogger, now time.Time) scaling.ScaleResult {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-	// In real Knative, when InitialScale is 0 (scale-to-zero), the autoscaler
-	// scales up to ActivationScale (or 1 if not set) when there's traffic/activation.
-	// In our simulation, we simulate this by returning at least 1 (or ActivationScale if set)
-	// when InitialScale is 0, which allows the activation flow to proceed.
-	desired := f.desired
-	if desired == 0 {
-		if f.activationScale >= 2 {
-			desired = f.activationScale
-		} else {
-			desired = 1
-		}
-	}
+
+	// For scale-to-zero simulation with no traffic: always return 0.
+	// In real Knative, UniScaler uses metrics (concurrent requests) to determine desired scale.
+	// For simulation with no traffic, we return 0 to trigger scale-down.
+	//
+	// Knative's KPA reconciler will:
+	// 1. Apply bounds (min/max/InitialScale) in scale() before handleScaleToZero
+	// 2. So if InitialScale=1, it will scale to 1 initially
+	// 3. handleScaleToZero will enforce timing (60s stable window + 30s grace period)
+	// 4. After timing is met, it will allow scaling to 0
+	desired := int32(0)
+
+	fmt.Printf("🔔 UNISCALER-SCALE: desired=%d, now=%v\n", desired, now)
+
 	return scaling.ScaleResult{
 		DesiredPodCount:     desired,
 		ExcessBurstCapacity: f.excessBC,
@@ -211,7 +216,37 @@ var (
 	// persistentEnqueueWrapper is a singleton wrapper that persists across reconcile steps.
 	// This ensures Watch() is only called once on the underlying MultiScaler.
 	persistentEnqueueWrapper *enqueueCapturingDeciders
+
+	// persistentDynamicClient tracks the persistent dynamic client that should be reused
+	// across reconcile steps to ensure reactors are triggered.
+	persistentDynamicClientMu           sync.Mutex
+	persistentDynamicClient             *dynamicfakeclient.FakeDynamicClient
+	persistentDynamicClientReactorAdded bool
+
+	// pendingScaleChanges tracks deployment scale changes from KPA that need to be
+	// propagated to the simulation's snapshot store.
+	pendingScaleChangesMu sync.Mutex
+	pendingScaleChanges   = make(map[types.NamespacedName]int32)
 )
+
+// RecordScaleChange records a pending scale change from the KPA dynamic client reactor.
+// The KnativeStrategy will apply these changes to the simulation state after reconciliation.
+func RecordScaleChange(namespace, name string, replicas int32) {
+	pendingScaleChangesMu.Lock()
+	defer pendingScaleChangesMu.Unlock()
+	key := types.NamespacedName{Namespace: namespace, Name: name}
+	pendingScaleChanges[key] = replicas
+	fmt.Printf("🔔 SCALE-CHANGE-RECORDED: %s/%s -> replicas=%d\n", namespace, name, replicas)
+}
+
+// GetAndClearScaleChanges returns and clears all pending scale changes.
+func GetAndClearScaleChanges() map[types.NamespacedName]int32 {
+	pendingScaleChangesMu.Lock()
+	defer pendingScaleChangesMu.Unlock()
+	result := pendingScaleChanges
+	pendingScaleChanges = make(map[types.NamespacedName]int32)
+	return result
+}
 
 // NewFakeMultiScaler constructs a MultiScaler suitable for offline simulations.
 // It wraps the MultiScaler to ensure deciders are initialized with correct DesiredScale
@@ -365,17 +400,53 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 		// and then Inform if the scale changed. This mimics what tickScaler does.
 		fmt.Printf("🔔 CALLBACK-REGISTER: tickScaler is private, using workaround\n")
 
-		// Register a callback that calls Scale and Inform
+		// Register a callback that calls Scale, updates decider status, and Inform
 		callback := func() {
-			// Call Scale (similar to what tickScaler does)
-			scaleResult := scaler.Scale(nil, simclock.Now()) // logger is nil for now
+			now := simclock.Now()
+			fmt.Printf("🔔 CALLBACK-TICK: key=%s, now=%v\n", key, now)
 
-			if scaleResult.ScaleValid {
-				// Update the decider status (we'd need to access the runner's decider)
-				// For now, just call Inform to trigger the Watch callback
-				// This is a simplified version - in reality we'd update the decider status first
-				ms.Inform(key)
+			// Call Scale (similar to what tickScaler does)
+			scaleResult := scaler.Scale(nil, now) // logger is nil for now
+
+			if !scaleResult.ScaleValid {
+				fmt.Printf("🔔 CALLBACK-TICK: Scale result invalid for key=%s\n", key)
+				return
 			}
+
+			// Get the current decider to update its status
+			// We use a background context since this is called from a ticker callback
+			ctx := context.Background()
+			decider, err := ms.Get(ctx, key.Namespace, key.Name)
+			if err != nil {
+				fmt.Printf("🔔 CALLBACK-TICK: Failed to get decider for key=%s, err=%v\n", key, err)
+				return
+			}
+
+			// Check if scale changed
+			oldScale := decider.Status.DesiredScale
+			newScale := scaleResult.DesiredPodCount
+			scaleChanged := oldScale != newScale
+
+			fmt.Printf("🔔 CALLBACK-TICK: decider=%s, oldScale=%d, newScale=%d, changed=%v\n", key, oldScale, newScale, scaleChanged)
+
+			// Update decider status (like tickScaler does via updateLatestScale)
+			decider.Status.DesiredScale = newScale
+			decider.Status.ExcessBurstCapacity = scaleResult.ExcessBurstCapacity
+
+			// Persist the update
+			_, err = ms.Update(ctx, decider)
+			if err != nil {
+				fmt.Printf("🔔 CALLBACK-TICK: Failed to update decider for key=%s, err=%v\n", key, err)
+				return
+			}
+
+			// Always inform to trigger reconcile, even if scale didn't change.
+			// This ensures KPA keeps reconciling to check handleScaleToZero timing.
+			// In real Knative, tickScaler calls Inform whenever scale changes OR when
+			// ExcessBurstCapacity sign changes. For scale-to-zero, we need periodic
+			// reconciles to check if enough time has passed.
+			fmt.Printf("🔔 CALLBACK-TICK: Calling Inform for key=%s (scaleChanged=%v, oldScale=%d, newScale=%d)\n", key, scaleChanged, oldScale, newScale)
+			ms.Inform(key)
 		}
 
 		simclock.RegisterTickerCallback(ticker, callback)
@@ -508,7 +579,16 @@ func NewKnativeStrategy(factory ControllerFactory, recorder replay.EffectRecorde
 			Name:      autoscalercfg.ConfigName,
 			Namespace: system.Namespace(),
 		},
-		Data: map[string]string{},
+		Data: map[string]string{
+			// Shorten stable-window from default 60s to 6s (minimum allowed)
+			// to speed up scale-to-zero in simulation
+			"stable-window": "6s",
+			// Also shorten scale-to-zero-grace-period from default 30s to 6s
+			"scale-to-zero-grace-period": "6s",
+			// Set TBC to -1 to skip activator probe (activator always in path)
+			// This is needed because the simulation doesn't have network access
+			"target-burst-capacity": "-1",
+		},
 	},
 		// added the following for route reconciler
 		&corev1.ConfigMap{
@@ -801,6 +881,31 @@ func makePodScalableFromDeployment(dep *appsv1.Deployment) *autoscalingv1alpha1.
 	return ps
 }
 
+// seedDeploymentToDynamicClient adds a deployment to the dynamic fake client.
+// This is necessary because the KPA scaler uses the dynamic client to patch deployments
+// for scale operations, but deployments created via the typed kubeclient don't automatically
+// appear in the dynamic client's store.
+func seedDeploymentToDynamicClient(ctx context.Context, dep *appsv1.Deployment) error {
+	dynamicClient := dynamicfake.Get(ctx)
+
+	// Convert the deployment to unstructured
+	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(dep)
+	if err != nil {
+		return fmt.Errorf("failed to convert deployment to unstructured: %w", err)
+	}
+
+	u := &unstructured.Unstructured{Object: unstructuredObj}
+	u.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("Deployment"))
+
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	_, err = dynamicClient.Resource(gvr).Namespace(dep.Namespace).Create(ctx, u, metav1.CreateOptions{})
+	if err != nil && !apierrs.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create deployment in dynamic client: %w", err)
+	}
+
+	return nil
+}
+
 // ReconcileAtState invokes the reconciler for a given state.
 func (ks *KnativeStrategy) ReconcileAtState(ctx context.Context, nsName types.NamespacedName) (reconcile.Result, error) {
 	servingClient := fakeservingclient.Get(ctx)
@@ -854,17 +959,163 @@ func (ks *KnativeStrategy) ReconcileAtState(ctx context.Context, nsName types.Na
 	}
 
 	logger.Info("reconcile completed", "requeue", false, "requeueAfter", 0)
+
+	// Apply any pending scale changes from the KPA's dynamic client patch operations.
+	// These need to be recorded via the effect recorder so they're visible to the simulation.
+	applyPendingScaleChanges(ctx, ks.recorder)
+
 	return reconcile.Result{}, nil
+}
+
+// applyPendingScaleChanges applies any pending deployment scale changes to the simulation state.
+// This bridges the gap between the KPA's dynamic client (which patches deployments directly)
+// and the simulation's snapshot store (which the DeploymentController reads from).
+// The recorder parameter is unused but kept for signature compatibility.
+func applyPendingScaleChanges(ctx context.Context, _ replay.EffectRecorder) {
+	scaleChanges := GetAndClearScaleChanges()
+	if len(scaleChanges) == 0 {
+		return
+	}
+
+	kubeClient := fakekubeclient.Get(ctx)
+	for key, replicas := range scaleChanges {
+		fmt.Printf("🔔 APPLY-SCALE-CHANGE: applying %s/%s -> replicas=%d to simulation state\n", key.Namespace, key.Name, replicas)
+
+		// Get the deployment from the typed client
+		dep, err := kubeClient.AppsV1().Deployments(key.Namespace).Get(ctx, key.Name, metav1.GetOptions{})
+		if err != nil {
+			fmt.Printf("🔔 APPLY-SCALE-CHANGE: failed to get deployment: %v\n", err)
+			continue
+		}
+
+		// Update the replicas
+		dep.Spec.Replicas = &replicas
+
+		// Update via the kubeclient - the reactor will intercept this and record the effect
+		_, err = kubeClient.AppsV1().Deployments(key.Namespace).Update(ctx, dep, metav1.UpdateOptions{})
+		if err != nil {
+			fmt.Printf("🔔 APPLY-SCALE-CHANGE: failed to update deployment: %v\n", err)
+			continue
+		}
+
+		fmt.Printf("🔔 APPLY-SCALE-CHANGE: successfully recorded deployment scale change\n")
+	}
+}
+
+// setupDeploymentPatchSync adds a reactor to the dynamic client that syncs deployment patches
+// to the typed kubeclient. This is necessary because the KPA uses the dynamic client for scale
+// operations, but the DeploymentController reads from the typed kubeclient's store.
+func setupDeploymentPatchSync(ctx context.Context, dynamicFakeClient *dynamicfakeclient.FakeDynamicClient) {
+	persistentDynamicClientMu.Lock()
+	defer persistentDynamicClientMu.Unlock()
+
+	if persistentDynamicClientReactorAdded {
+		fmt.Printf("🔔 SETUP-PATCH-SYNC: Reactor already added, skipping\n")
+		return
+	}
+	persistentDynamicClientReactorAdded = true
+
+	fmt.Printf("🔔 SETUP-PATCH-SYNC: Adding deployment patch reactor to dynamic client (first time), client=%p\n", dynamicFakeClient)
+
+	// Add a catch-all reactor to see what operations are happening
+	dynamicFakeClient.PrependReactor("*", "*", func(action testing.Action) (bool, runtime.Object, error) {
+		fmt.Printf("🔔 DYNAMIC-CLIENT-ACTION: verb=%s, resource=%s, namespace=%s\n",
+			action.GetVerb(), action.GetResource().Resource, action.GetNamespace())
+		return false, nil, nil // Don't handle, let it fall through
+	})
+
+	// Add a reactor for Patch operations on deployments.
+	// The KPA uses the dynamic client to patch deployment replicas for scale operations.
+	// We intercept this and update the deployment in the dynamic client's store.
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	dynamicFakeClient.PrependReactor("patch", "deployments", func(action testing.Action) (bool, runtime.Object, error) {
+		patchAction, ok := action.(testing.PatchAction)
+		if !ok {
+			return false, nil, nil
+		}
+
+		ns := patchAction.GetNamespace()
+		name := patchAction.GetName()
+		patch := patchAction.GetPatch()
+
+		fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: patching deployment %s/%s with patch: %s\n", ns, name, string(patch))
+
+		// Get the deployment from the dynamic client's store
+		unstructuredDep, err := dynamicFakeClient.Tracker().Get(gvr, ns, name)
+		if err != nil {
+			fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: failed to get deployment from dynamic client: %v\n", err)
+			return false, nil, err
+		}
+
+		u, ok := unstructuredDep.(*unstructured.Unstructured)
+		if !ok {
+			fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: unexpected type: %T\n", unstructuredDep)
+			return false, nil, fmt.Errorf("unexpected type: %T", unstructuredDep)
+		}
+
+		// Apply the JSON patch to the deployment
+		// The patch format is: [{"op":"replace","path":"/spec/replicas","value":0}]
+		var patchOps []map[string]interface{}
+		if err := json.Unmarshal(patch, &patchOps); err != nil {
+			fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: failed to unmarshal patch: %v\n", err)
+			return false, nil, err
+		}
+
+		for _, op := range patchOps {
+			path, _ := op["path"].(string)
+			if path == "/spec/replicas" {
+				value, _ := op["value"].(float64)
+				replicas := int64(value)
+				if err := unstructured.SetNestedField(u.Object, replicas, "spec", "replicas"); err != nil {
+					fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: failed to set replicas: %v\n", err)
+					return false, nil, err
+				}
+				fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: setting replicas to %d\n", replicas)
+				// Record this scale change so the KnativeStrategy can propagate it to the simulation state
+				RecordScaleChange(ns, name, int32(replicas))
+			}
+		}
+
+		// Update the deployment in the dynamic client's tracker
+		if err := dynamicFakeClient.Tracker().Update(gvr, u, ns); err != nil {
+			fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: failed to update deployment in dynamic client: %v\n", err)
+			return false, nil, err
+		}
+
+		fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: successfully updated deployment scale in dynamic client\n")
+
+		return true, u, nil
+	})
 }
 
 func setupClientState(ctx context.Context, state []runtime.Object, selectors ...string) (context.Context, func(), error) {
 	ctx, cancel := context.WithCancel(ctx)
 	ctx = filteredinformerfactory.WithSelectors(ctx, selectors...)
 	ctx = injection.WithConfig(ctx, &rest.Config{})
-	// Override dynamic client with a scheme that includes Knative types (e.g., PodScalable duck) so
-	// duck informers can list/watch deployments successfully.
-	ctx, _ = dynamicfake.With(ctx, kamerascheme.Default)
+
+	// Set up fake informers first. This creates fake clients including a dynamic client.
 	ctx, informers := injection.Fake.SetupInformers(ctx, &rest.Config{})
+
+	// Use a persistent dynamic client so reactors are triggered across reconcile steps.
+	// The dynamic client is used by KPA for scale operations, and we need to add reactors
+	// to sync patches back to the typed kubeclient.
+	// IMPORTANT: We inject the persistent dynamic client AFTER SetupInformers so it overrides
+	// the fake dynamic client that SetupInformers creates.
+	persistentDynamicClientMu.Lock()
+	if persistentDynamicClient == nil {
+		fmt.Printf("🔔 SETUP-CLIENT-STATE: Creating persistent dynamic client\n")
+		persistentDynamicClient = dynamicfakeclient.NewSimpleDynamicClient(kamerascheme.Default)
+	} else {
+		fmt.Printf("🔔 SETUP-CLIENT-STATE: Reusing persistent dynamic client\n")
+	}
+	// Inject the persistent dynamic client into the context, overriding any client from SetupInformers
+	ctx = context.WithValue(ctx, dynamicclient.Key{}, persistentDynamicClient)
+	persistentDynamicClientMu.Unlock()
+
+	// Add a reactor to sync dynamic client deployment patches to the typed kubeclient.
+	// This is necessary because the KPA uses the dynamic client to patch deployments for scale
+	// operations, but our DeploymentController reads from the typed kubeclient.
+	setupDeploymentPatchSync(ctx, persistentDynamicClient)
 
 	logger := log.FromContext(ctx).WithName("setup")
 	type informerMeta struct {
@@ -982,6 +1233,10 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 				return fmt.Errorf("failed to create deployment: %w", err)
 			}
 			ensureGVK(o)
+			// Also seed the deployment to the dynamic client so applyScale can find it
+			if err := seedDeploymentToDynamicClient(ctx, o); err != nil {
+				return fmt.Errorf("failed to seed deployment to dynamic client: %w", err)
+			}
 			logger := log.FromContext(ctx).WithName("seed").WithValues("resource", "deployments", "namespace", o.Namespace, "name", o.Name)
 			syncPodScalableInformer(ctx, o, event.CREATE, logger)
 		case *appsv1.ReplicaSet:

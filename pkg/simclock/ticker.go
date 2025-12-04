@@ -19,17 +19,20 @@ var (
 
 // Ticker delivers ticks on its channel when simulated depth advances far enough.
 // It mirrors time.Ticker semantics (C field, Stop, Reset) but is driven by SetDepth.
+// Unlike time.Ticker, this ticker is designed to work with branching state exploration:
+// it fires based purely on whether the current depth is at a valid tick boundary,
+// so each branch gets its own ticker fires regardless of what other branches have done.
 type Ticker struct {
 	C <-chan time.Time // receive-only channel exposed to users
 
 	id            int64
 	interval      time.Duration
 	intervalSteps int64
+	startDepth    int64 // depth when ticker was created (for computing tick boundaries)
 
-	mu        sync.Mutex
-	nextDepth int64
-	stopped   bool
-	ch        chan time.Time // underlying bidirectional channel for sending
+	mu      sync.Mutex
+	stopped bool
+	ch      chan time.Time // underlying bidirectional channel for sending
 }
 
 // NewTicker returns a Ticker whose channel ticks each time the depth advances by d.
@@ -44,18 +47,17 @@ func newTicker(d time.Duration) *Ticker {
 	id := tickerSeq.Add(1)
 	ch := make(chan time.Time, 1) // buffered channel (size 1) to allow one tick to be queued
 	current := currentDepth.Load()
-	nextDepth := current + steps
 	t := &Ticker{
 		C:             ch, // expose as receive-only
 		ch:            ch, // keep bidirectional for internal use
 		id:            id,
 		interval:      d,
 		intervalSteps: steps,
-		nextDepth:     nextDepth,
+		startDepth:    current, // record when ticker was created
 	}
 	registerTicker(t)
 	// Debug: log ticker creation
-	fmt.Printf("🔔 TICKER-CREATE: id=%d, interval=%v, steps=%d, currentDepth=%d, nextDepth=%d\n", id, d, steps, current, nextDepth)
+	fmt.Printf("🔔 TICKER-CREATE: id=%d, interval=%v, steps=%d, startDepth=%d\n", id, d, steps, current)
 	return t
 }
 
@@ -72,7 +74,7 @@ func (t *Ticker) Stop() {
 	deregisterTicker(t.id)
 }
 
-// Reset updates the ticker interval and schedules the next tick relative to the current depth.
+// Reset updates the ticker interval and resets the start depth to current depth.
 // Panics if d is not a positive multiple of the simclock step.
 func (t *Ticker) Reset(d time.Duration) {
 	steps := validateInterval(d)
@@ -82,7 +84,7 @@ func (t *Ticker) Reset(d time.Duration) {
 
 	t.interval = d
 	t.intervalSteps = steps
-	t.nextDepth = currentDepth.Load() + steps
+	t.startDepth = currentDepth.Load() // reset start depth
 	if t.stopped {
 		t.stopped = false
 		registerTicker(t)
@@ -96,8 +98,21 @@ func (t *Ticker) tickIfDue(depth int64) {
 		return
 	}
 
-	for depth >= t.nextDepth {
-		fmt.Printf("🔔 TICKER-FIRE: id=%d, depth=%d, nextDepth=%d, intervalSteps=%d\n", t.id, depth, t.nextDepth, t.intervalSteps)
+	// Compute whether this depth is at a valid tick boundary.
+	// This approach is stateless and works correctly with branching exploration:
+	// each branch that reaches a tick boundary will get a ticker fire,
+	// regardless of what other branches have done.
+	//
+	// Tick boundaries are at: startDepth + intervalSteps, startDepth + 2*intervalSteps, ...
+	// (First tick is after one full interval, not at startDepth itself)
+	if depth <= t.startDepth {
+		return
+	}
+
+	offset := depth - t.startDepth
+	if offset%t.intervalSteps == 0 {
+		tickDepth := depth
+		fmt.Printf("🔔 TICKER-FIRE: id=%d, depth=%d, startDepth=%d, intervalSteps=%d\n", t.id, depth, t.startDepth, t.intervalSteps)
 
 		// Invoke synchronous callback if registered (this happens BEFORE sending to channel)
 		// This allows deterministic synchronous execution of ticker callbacks
@@ -112,13 +127,11 @@ func (t *Ticker) tickIfDue(depth int64) {
 		// Send to channel (for goroutines waiting on ticker.C)
 		// This is non-blocking to avoid deadlocks if no one is reading
 		select {
-		case t.ch <- depthToTime(t.nextDepth):
+		case t.ch <- depthToTime(tickDepth):
 			fmt.Printf("🔔 TICKER-SENT: id=%d, depth=%d\n", t.id, depth)
 		default:
 			fmt.Printf("🔔 TICKER-DROPPED: id=%d, depth=%d (channel full)\n", t.id, depth)
 		}
-
-		t.nextDepth += t.intervalSteps
 	}
 }
 
