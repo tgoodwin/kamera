@@ -87,44 +87,50 @@ func (t *Ticker) Reset(d time.Duration) {
 	}
 }
 
-func (t *Ticker) tickIfDue(depth int64) {
+func (t *Ticker) tickIfDue(prevDepth, depth int64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.stopped {
 		return
 	}
 
-	// Compute whether this depth is at a valid tick boundary.
-	// This approach is stateless and works correctly with branching exploration:
-	// each branch that reaches a tick boundary will get a ticker fire,
-	// regardless of what other branches have done.
-	//
+	// Compute whether this depth advancement crossed at least one tick boundary.
 	// Tick boundaries are at: startDepth + intervalSteps, startDepth + 2*intervalSteps, ...
 	// (First tick is after one full interval, not at startDepth itself)
 	if depth <= t.startDepth {
 		return
 	}
 
-	offset := depth - t.startDepth
-	if offset%t.intervalSteps == 0 {
-		tickDepth := depth
+	offsetPrev := prevDepth - t.startDepth
+	if offsetPrev < 0 {
+		offsetPrev = 0
+	}
+	prevIntervals := offsetPrev / t.intervalSteps
+	currentIntervals := (depth - t.startDepth) / t.intervalSteps
 
-		// Invoke synchronous callback if registered (this happens BEFORE sending to channel)
-		// This allows deterministic synchronous execution of ticker callbacks
-		callbacksMu.Lock()
-		callback := tickerCallbacks[t.id]
-		callbacksMu.Unlock()
-		if callback != nil {
-			callback()
-		}
+	// If we haven't crossed a new interval boundary since the last depth, do nothing.
+	if currentIntervals <= prevIntervals {
+		return
+	}
 
-		// Send to channel (for goroutines waiting on ticker.C)
-		// This is non-blocking to avoid deadlocks if no one is reading
-		select {
-		case t.ch <- depthToTime(tickDepth):
-		default:
-			// Channel full, tick dropped
-		}
+	// Fire at the first boundary after the previous depth; later boundaries are dropped
+	tickDepth := t.startDepth + (prevIntervals+1)*t.intervalSteps
+
+	// Invoke synchronous callback if registered (this happens BEFORE sending to channel)
+	// This allows deterministic synchronous execution of ticker callbacks
+	callbacksMu.Lock()
+	callback := tickerCallbacks[t.id]
+	callbacksMu.Unlock()
+	if callback != nil {
+		callback()
+	}
+
+	// Send to channel (for goroutines waiting on ticker.C)
+	// This is non-blocking to avoid deadlocks if no one is reading
+	select {
+	case t.ch <- depthToTime(tickDepth):
+	default:
+		// Channel full, tick dropped
 	}
 }
 
@@ -155,7 +161,7 @@ func RegisterTickerCallback(ticker *Ticker, callback func()) {
 	tickerCallbacks[ticker.id] = callback
 }
 
-func advanceTickers(depth int64) {
+func advanceTickers(prevDepth, depth int64) {
 	tickerMu.Lock()
 	tickers := make([]*Ticker, 0, len(tickerRegistry))
 	for _, t := range tickerRegistry {
@@ -164,7 +170,7 @@ func advanceTickers(depth int64) {
 	tickerMu.Unlock()
 
 	for _, t := range tickers {
-		t.tickIfDue(depth)
+		t.tickIfDue(prevDepth, depth)
 	}
 }
 

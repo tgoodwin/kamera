@@ -286,7 +286,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	result := &Result{ConvergedStates: make([]ResultState, 0), AbortedStates: abortedCollected}
 	for i, stateKey := range lo.Keys(seenConvergedStates) {
 		state := seenConvergedStates[stateKey]
-		paths := executionPathsToState[stateKey]
+		paths := normalizeAndDedupePaths(executionPathsToState[stateKey])
 		state.DivergencePoint = initialState.DivergencePoint
 		convergedState := ResultState{
 			ID:       fmt.Sprintf("state-%d", i),
@@ -918,20 +918,32 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 // TODO figure out if we need to append to the front if using DFS
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
-	// lo.Union does not change the order of elements relatively, but it does remove duplicates
+	seen := make(map[string]struct{})
+	addUnique := func(list []PendingReconcile, out *[]PendingReconcile) {
+		for _, pr := range list {
+			key := pr.ReconcilerID + ":" + pr.Request.NamespacedName.String()
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			*out = append(*out, pr)
+		}
+	}
+
+	merged := make([]PendingReconcile, 0, len(currPending)+len(triggered))
 	switch e.config.mode {
 	case DepthFirst:
-		// In DFS, we want to explore newly triggered reconciles first (depth-first)
-		// So we put triggered at the beginning of the list
-		// Remove duplicates while preserving order
-		return lo.Union(triggered, currPending)
+		// In DFS, explore newly triggered reconciles first
+		addUnique(triggered, &merged)
+		addUnique(currPending, &merged)
 	case BreadthFirst:
-		// In BFS, we want to explore existing pending reconciles before newly triggered ones
-		// So we keep the original order - first finish currPending, then do triggered
-		return lo.Union(currPending, triggered)
+		// In BFS, finish current queue before newly triggered ones
+		addUnique(currPending, &merged)
+		addUnique(triggered, &merged)
 	default:
 		panic("invalid mode")
 	}
+	return merged
 }
 
 func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions, pr PendingReconcile) (*ReconcileResult, error) {
@@ -1130,7 +1142,6 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// if the controller returned a response with Requeue = true,
 	// we need to requeue the original request, no matter what.
 	if result.ctrlRes.Requeue {
-		reconcileInput.Source = SourceRequeue
 		triggeredByChanges = append(triggeredByChanges, reconcileInput)
 	}
 

@@ -177,6 +177,64 @@ func DebugPaths(paths []ExecutionHistory) {
 	}
 }
 
+// normalizeNoOpSuffix sorts the trailing no-op reconciles (no changes, no errors)
+// so that exploration order does not create spurious path permutations when the
+// remaining work is idempotent.
+func normalizeNoOpSuffix(path ExecutionHistory) ExecutionHistory {
+	cut := len(path)
+	for cut > 0 {
+		r := path[cut-1]
+		if len(r.Changes.ObjectVersions) == 0 && r.Error == "" {
+			cut--
+			continue
+		}
+		break
+	}
+
+	// No no-op suffix or only a single no-op reconcile to reorder.
+	if cut >= len(path)-1 {
+		return path
+	}
+
+	normalized := make(ExecutionHistory, 0, len(path))
+	normalized = append(normalized, path[:cut]...)
+
+	suffix := slices.Clone(path[cut:])
+	sort.SliceStable(suffix, func(i, j int) bool {
+		if suffix[i].ControllerID != suffix[j].ControllerID {
+			return suffix[i].ControllerID < suffix[j].ControllerID
+		}
+		return len(suffix[i].PendingReconciles) < len(suffix[j].PendingReconciles)
+	})
+
+	normalized = append(normalized, suffix...)
+	return normalized
+}
+
+// normalizeAndDedupePaths keeps full execution histories (including no-ops) but
+// normalizes trailing no-op reconciles to a deterministic order and removes
+// duplicate paths that would otherwise differ only by those no-op permutations.
+func normalizeAndDedupePaths(paths []ExecutionHistory) []ExecutionHistory {
+	seen := make(map[string]struct{})
+	deduped := make([]ExecutionHistory, 0, len(paths))
+
+	for _, path := range paths {
+		normalized := normalizeNoOpSuffix(path)
+		sigParts := make([]string, len(normalized))
+		for i, r := range normalized {
+			sigParts[i] = fmt.Sprintf("%s@%d", r.ControllerID, len(r.Deltas))
+		}
+		sig := strings.Join(sigParts, ",")
+		if _, ok := seen[sig]; ok {
+			continue
+		}
+		seen[sig] = struct{}{}
+		deduped = append(deduped, normalized)
+	}
+
+	return deduped
+}
+
 func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 	return lo.UniqBy(paths, func(path ExecutionHistory) string {
 		return path.UniqueKey()
@@ -184,8 +242,11 @@ func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 }
 
 func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
-	getUniquePaths(paths)
-	pathsWithoutNoOps := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
+	normalized := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
+		return normalizeNoOpSuffix(path)
+	})
+
+	pathsWithoutNoOps := lo.Map(normalized, func(path ExecutionHistory, _ int) ExecutionHistory {
 		return path.FilterNoOps()
 	})
 	// filter out empty paths
