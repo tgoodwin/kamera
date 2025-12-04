@@ -9,6 +9,8 @@ import (
 	"time"
 	"unsafe"
 
+	jsonpatch "github.com/evanphx/json-patch"
+
 	"github.com/go-logr/logr"
 	"go.uber.org/zap"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -18,13 +20,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
-	dynamicfakeclient "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/rest"
 	testing "k8s.io/client-go/testing"
 	"k8s.io/client-go/tools/record"
 	filteredinformerfactory "knative.dev/pkg/client/injection/kube/informers/factory/filtered"
 	"knative.dev/pkg/injection"
-	dynamicclient "knative.dev/pkg/injection/clients/dynamicclient"
 	dynamicfake "knative.dev/pkg/injection/clients/dynamicclient/fake"
 	"knative.dev/pkg/reconciler"
 	reconcilertesting "knative.dev/pkg/reconciler/testing"
@@ -208,35 +208,7 @@ var (
 	// persistentEnqueueWrapper is a singleton wrapper that persists across reconcile steps.
 	// This ensures Watch() is only called once on the underlying MultiScaler.
 	persistentEnqueueWrapper *enqueueCapturingDeciders
-
-	// persistentDynamicClient tracks the persistent dynamic client that should be reused
-	// across reconcile steps to ensure reactors are triggered.
-	persistentDynamicClient             *dynamicfakeclient.FakeDynamicClient
-	persistentDynamicClientReactorAdded bool
-
-	// pendingScaleChanges tracks deployment scale changes from KPA that need to be
-	// propagated to the simulation's snapshot store.
-	pendingScaleChangesMu sync.Mutex
-	pendingScaleChanges   = make(map[types.NamespacedName]int32)
 )
-
-// RecordScaleChange records a pending scale change from the KPA dynamic client reactor.
-// The KnativeStrategy will apply these changes to the simulation state after reconciliation.
-func RecordScaleChange(namespace, name string, replicas int32) {
-	pendingScaleChangesMu.Lock()
-	defer pendingScaleChangesMu.Unlock()
-	key := types.NamespacedName{Namespace: namespace, Name: name}
-	pendingScaleChanges[key] = replicas
-}
-
-// GetAndClearScaleChanges returns and clears all pending scale changes.
-func GetAndClearScaleChanges() map[types.NamespacedName]int32 {
-	pendingScaleChangesMu.Lock()
-	defer pendingScaleChangesMu.Unlock()
-	result := pendingScaleChanges
-	pendingScaleChanges = make(map[types.NamespacedName]int32)
-	return result
-}
 
 // NewFakeMultiScaler constructs a MultiScaler suitable for offline simulations.
 // It wraps the MultiScaler to ensure deciders are initialized with correct DesiredScale
@@ -644,6 +616,7 @@ func (ks *KnativeStrategy) PrepareState(ctx context.Context, state []runtime.Obj
 
 // newReactor creates a new reactor function that intercepts client actions,
 // records them as effects, and uses the provided trackers to fetch object states.
+// The dynamicClient is used to apply JSON patches for deployment scale operations.
 func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ...testing.ObjectTracker) testing.ReactionFunc {
 	baseLogger := log.FromContext(ctx).WithName("fake-reactor")
 
@@ -701,7 +674,18 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			op = event.MARK_FOR_DELETION
 		case "patch":
 			a := action.(testing.PatchAction)
-			obj, err = lookup(a.GetResource(), a.GetNamespace(), a.GetName())
+			gvr := a.GetResource()
+			ns := a.GetNamespace()
+			name := a.GetName()
+
+			// Look up the original object
+			obj, err = lookup(gvr, ns, name)
+			if err == nil && obj != nil {
+				// Apply the JSON patch to get the patched object for recording.
+				// Fake clients don't properly apply JSON patches, so we do it ourselves.
+				// Without this, we'd record the OLD object and the simulation state wouldn't reflect the patch.
+				obj = applyJSONPatchToObject(obj, a.GetPatch(), logger)
+			}
 			op = event.PATCH
 		case "updatesubresource":
 			// Handle status updates which use UpdateSubresourceAction
@@ -754,6 +738,56 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 		// Return false to let the default reactor handle the action.
 		return false, nil, err
 	}
+}
+
+// applyJSONPatchToObject applies a JSON Patch (RFC 6902) to any runtime.Object.
+// This is necessary because fake clients don't properly apply JSON patches.
+// Works with both typed objects (e.g., *appsv1.Deployment) and unstructured objects.
+// Returns the patched object, or the original if patching fails.
+func applyJSONPatchToObject(obj runtime.Object, patchBytes []byte, logger logr.Logger) runtime.Object {
+	// Decode the patch
+	patch, err := jsonpatch.DecodePatch(patchBytes)
+	if err != nil {
+		logger.V(1).Info("failed to decode JSON patch, using original object", "error", err)
+		return obj
+	}
+
+	// Convert to unstructured for patching
+	var unstructuredMap map[string]interface{}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		// Already unstructured
+		unstructuredMap = u.Object
+	} else {
+		// Convert typed object to unstructured
+		unstructuredMap, err = runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+		if err != nil {
+			logger.V(1).Info("failed to convert object to unstructured for patching", "error", err)
+			return obj
+		}
+	}
+
+	// Marshal to JSON
+	original, err := json.Marshal(unstructuredMap)
+	if err != nil {
+		logger.V(1).Info("failed to marshal object for patching", "error", err)
+		return obj
+	}
+
+	// Apply the patch
+	modified, err := patch.Apply(original)
+	if err != nil {
+		logger.V(1).Info("failed to apply JSON patch, using original object", "error", err)
+		return obj
+	}
+
+	// Unmarshal back to unstructured
+	patched := &unstructured.Unstructured{}
+	if err := json.Unmarshal(modified, &patched.Object); err != nil {
+		logger.V(1).Info("failed to unmarshal patched object", "error", err)
+		return obj
+	}
+
+	return patched
 }
 
 func syncPodScalableInformer(ctx context.Context, dep *appsv1.Deployment, op event.OperationType, logger logr.Logger) {
@@ -867,21 +901,25 @@ func (ks *KnativeStrategy) ReconcileAtState(ctx context.Context, nsName types.Na
 	kubeClient := fakekubeclient.Get(ctx)
 	cachingClient := fakecachingclient.Get(ctx)
 	networkingClient := fakenetworkingclient.Get(ctx)
+	dynamicClient := dynamicfake.Get(ctx)
 
 	logger := log.FromContext(ctx).WithName("reconcile").WithValues("key", nsName.String())
 
-	// Create a reactor and attach it to both clients to intercept and record actions.
+	// Create a reactor and attach it to all clients to intercept and record actions.
+	// This includes the dynamic client which KPA uses for scale operations.
 	reactor := newReactor(ctx, ks.recorder,
 		servingClient.Tracker(),
 		kubeClient.Tracker(),
 		cachingClient.Tracker(),
-		networkingClient.Tracker())
+		networkingClient.Tracker(),
+		dynamicClient.Tracker())
 
-	// Add the reactor to both clients.
+	// Add the reactor to all clients.
 	servingClient.PrependReactor("*", "*", reactor)
 	kubeClient.PrependReactor("*", "*", reactor)
 	cachingClient.PrependReactor("*", "*", reactor)
 	networkingClient.PrependReactor("*", "*", reactor)
+	dynamicClient.PrependReactor("*", "*", reactor)
 
 	// must re-initialize the controller each time to reset its informer state
 	ctrl := ks.factory(ctx, nil)
@@ -915,110 +953,7 @@ func (ks *KnativeStrategy) ReconcileAtState(ctx context.Context, nsName types.Na
 
 	logger.Info("reconcile completed", "requeue", false, "requeueAfter", 0)
 
-	// Apply any pending scale changes from the KPA's dynamic client patch operations.
-	// These need to be recorded via the effect recorder so they're visible to the simulation.
-	applyPendingScaleChanges(ctx, ks.recorder)
-
 	return reconcile.Result{}, nil
-}
-
-// applyPendingScaleChanges applies any pending deployment scale changes to the simulation state.
-// This bridges the gap between the KPA's dynamic client (which patches deployments directly)
-// and the simulation's snapshot store (which the DeploymentController reads from).
-// The recorder parameter is unused but kept for signature compatibility.
-func applyPendingScaleChanges(ctx context.Context, _ replay.EffectRecorder) {
-	scaleChanges := GetAndClearScaleChanges()
-	if len(scaleChanges) == 0 {
-		return
-	}
-
-	kubeClient := fakekubeclient.Get(ctx)
-	for key, replicas := range scaleChanges {
-
-		// Get the deployment from the typed client
-		dep, err := kubeClient.AppsV1().Deployments(key.Namespace).Get(ctx, key.Name, metav1.GetOptions{})
-		if err != nil {
-			continue
-		}
-
-		// Update the replicas
-		dep.Spec.Replicas = &replicas
-
-		// Update via the kubeclient - the reactor will intercept this and record the effect
-		_, err = kubeClient.AppsV1().Deployments(key.Namespace).Update(ctx, dep, metav1.UpdateOptions{})
-		if err != nil {
-			continue
-		}
-
-	}
-}
-
-// setupDeploymentPatchSync adds a reactor to the dynamic client that syncs deployment patches
-// to the typed kubeclient. This is necessary because the KPA uses the dynamic client for scale
-// operations, but the DeploymentController reads from the typed kubeclient's store.
-func setupDeploymentPatchSync(ctx context.Context, dynamicFakeClient *dynamicfakeclient.FakeDynamicClient) {
-	if persistentDynamicClientReactorAdded {
-		return
-	}
-	persistentDynamicClientReactorAdded = true
-
-	// Add a catch-all reactor for dynamic client operations
-	dynamicFakeClient.PrependReactor("*", "*", func(action testing.Action) (bool, runtime.Object, error) {
-		return false, nil, nil // Don't handle, let it fall through
-	})
-
-	// Add a reactor for Patch operations on deployments.
-	// The KPA uses the dynamic client to patch deployment replicas for scale operations.
-	// We intercept this and update the deployment in the dynamic client's store.
-	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
-	dynamicFakeClient.PrependReactor("patch", "deployments", func(action testing.Action) (bool, runtime.Object, error) {
-		patchAction, ok := action.(testing.PatchAction)
-		if !ok {
-			return false, nil, nil
-		}
-
-		ns := patchAction.GetNamespace()
-		name := patchAction.GetName()
-		patch := patchAction.GetPatch()
-
-		// Get the deployment from the dynamic client's store
-		unstructuredDep, err := dynamicFakeClient.Tracker().Get(gvr, ns, name)
-		if err != nil {
-			return false, nil, err
-		}
-
-		u, ok := unstructuredDep.(*unstructured.Unstructured)
-		if !ok {
-			return false, nil, fmt.Errorf("unexpected type: %T", unstructuredDep)
-		}
-
-		// Apply the JSON patch to the deployment
-		// The patch format is: [{"op":"replace","path":"/spec/replicas","value":0}]
-		var patchOps []map[string]interface{}
-		if err := json.Unmarshal(patch, &patchOps); err != nil {
-			return false, nil, err
-		}
-
-		for _, op := range patchOps {
-			path, _ := op["path"].(string)
-			if path == "/spec/replicas" {
-				value, _ := op["value"].(float64)
-				replicas := int64(value)
-				if err := unstructured.SetNestedField(u.Object, replicas, "spec", "replicas"); err != nil {
-					return false, nil, err
-				}
-				// Record this scale change so the KnativeStrategy can propagate it to the simulation state
-				RecordScaleChange(ns, name, int32(replicas))
-			}
-		}
-
-		// Update the deployment in the dynamic client's tracker
-		if err := dynamicFakeClient.Tracker().Update(gvr, u, ns); err != nil {
-			return false, nil, err
-		}
-
-		return true, u, nil
-	})
 }
 
 func setupClientState(ctx context.Context, state []runtime.Object, selectors ...string) (context.Context, func(), error) {
@@ -1029,22 +964,6 @@ func setupClientState(ctx context.Context, state []runtime.Object, selectors ...
 	// Set up fake informers first. This creates fake clients including a dynamic client.
 	ctx, informers := injection.Fake.SetupInformers(ctx, &rest.Config{})
 
-	// Use a persistent dynamic client so reactors are triggered across reconcile steps.
-	// The dynamic client is used by KPA for scale operations, and we need to add reactors
-	// to sync patches back to the typed kubeclient.
-	// IMPORTANT: We inject the persistent dynamic client AFTER SetupInformers so it overrides
-	// the fake dynamic client that SetupInformers creates.
-	if persistentDynamicClient == nil {
-		persistentDynamicClient = dynamicfakeclient.NewSimpleDynamicClient(kamerascheme.Default)
-	}
-	// Inject the persistent dynamic client into the context, overriding any client from SetupInformers
-	ctx = context.WithValue(ctx, dynamicclient.Key{}, persistentDynamicClient)
-
-	// Add a reactor to sync dynamic client deployment patches to the typed kubeclient.
-	// This is necessary because the KPA uses the dynamic client to patch deployments for scale
-	// operations, but our DeploymentController reads from the typed kubeclient.
-	setupDeploymentPatchSync(ctx, persistentDynamicClient)
-
 	logger := log.FromContext(ctx).WithName("setup")
 	type informerMeta struct {
 		typeName string
@@ -1054,7 +973,7 @@ func setupClientState(ctx context.Context, state []runtime.Object, selectors ...
 
 	for idx, informer := range informers {
 		typeName := fmt.Sprintf("%T", informer)
-		logger.Info("registered informer", "index", idx, "type", typeName)
+		logger.V(2).Info("registered informer", "index", idx, "type", typeName)
 		metas[idx] = informerMeta{typeName: typeName, informer: informer}
 	}
 
