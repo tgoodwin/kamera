@@ -1,7 +1,6 @@
 package simclock
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -56,8 +55,6 @@ func newTicker(d time.Duration) *Ticker {
 		startDepth:    current, // record when ticker was created
 	}
 	registerTicker(t)
-	// Debug: log ticker creation
-	fmt.Printf("🔔 TICKER-CREATE: id=%d, interval=%v, steps=%d, startDepth=%d\n", id, d, steps, current)
 	return t
 }
 
@@ -70,7 +67,6 @@ func (t *Ticker) Stop() {
 	}
 	t.stopped = true
 	t.mu.Unlock()
-	fmt.Printf("🔔 TICKER-STOP: id=%d\n", t.id)
 	deregisterTicker(t.id)
 }
 
@@ -112,7 +108,6 @@ func (t *Ticker) tickIfDue(depth int64) {
 	offset := depth - t.startDepth
 	if offset%t.intervalSteps == 0 {
 		tickDepth := depth
-		fmt.Printf("🔔 TICKER-FIRE: id=%d, depth=%d, startDepth=%d, intervalSteps=%d\n", t.id, depth, t.startDepth, t.intervalSteps)
 
 		// Invoke synchronous callback if registered (this happens BEFORE sending to channel)
 		// This allows deterministic synchronous execution of ticker callbacks
@@ -120,7 +115,6 @@ func (t *Ticker) tickIfDue(depth int64) {
 		callback := tickerCallbacks[t.id]
 		callbacksMu.Unlock()
 		if callback != nil {
-			fmt.Printf("🔔 TICKER-CALLBACK: id=%d, depth=%d, invoking callback synchronously\n", t.id, depth)
 			callback()
 		}
 
@@ -128,9 +122,8 @@ func (t *Ticker) tickIfDue(depth int64) {
 		// This is non-blocking to avoid deadlocks if no one is reading
 		select {
 		case t.ch <- depthToTime(tickDepth):
-			fmt.Printf("🔔 TICKER-SENT: id=%d, depth=%d\n", t.id, depth)
 		default:
-			fmt.Printf("🔔 TICKER-DROPPED: id=%d, depth=%d (channel full)\n", t.id, depth)
+			// Channel full, tick dropped
 		}
 	}
 }
@@ -139,7 +132,6 @@ func registerTicker(t *Ticker) {
 	tickerMu.Lock()
 	tickerRegistry[t.id] = t
 	tickerMu.Unlock()
-	fmt.Printf("🔔 TICKER-REGISTER: id=%d, total_registered=%d\n", t.id, len(tickerRegistry))
 }
 
 func deregisterTicker(id int64) {
@@ -161,7 +153,6 @@ func RegisterTickerCallback(ticker *Ticker, callback func()) {
 	callbacksMu.Lock()
 	defer callbacksMu.Unlock()
 	tickerCallbacks[ticker.id] = callback
-	fmt.Printf("🔔 TICKER-CALLBACK-REGISTER: id=%d\n", ticker.id)
 }
 
 func advanceTickers(depth int64) {
@@ -172,7 +163,6 @@ func advanceTickers(depth int64) {
 	}
 	tickerMu.Unlock()
 
-	fmt.Printf("🔔 ADVANCE-TICKERS: depth=%d, registered_tickers=%d\n", depth, len(tickers))
 	for _, t := range tickers {
 		t.tickIfDue(depth)
 	}

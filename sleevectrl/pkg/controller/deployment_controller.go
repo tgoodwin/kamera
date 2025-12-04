@@ -142,7 +142,6 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		desiredReplicas = *deployment.Spec.Replicas
 	}
 
-
 	var (
 		oldReplicaSets []*appsv1.ReplicaSet
 	)

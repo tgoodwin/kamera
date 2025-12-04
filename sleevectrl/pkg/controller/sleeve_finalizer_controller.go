@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -11,6 +12,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracegen"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -25,12 +27,23 @@ func (r *FinalizerReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 	logger := log.FromContext(ctx)
 	logger.V(2).Info("FinalizerReconciler Reconcile", "request", req)
 	obj := &unstructured.Unstructured{}
-	kind, ok := ctx.Value(tag.CleanupKindKey{}).(string)
+	canonicalKind, ok := ctx.Value(tag.CleanupKindKey{}).(string)
 	if !ok {
 		return reconcile.Result{}, errors.New("no kind in context")
 	}
+	// The context stores canonical kind like "core/Pod" or "apps/Deployment".
+	// We need to extract just the Kind part (after the /) for SetKind.
+	kind := canonicalKind
+	if idx := strings.LastIndex(canonicalKind, "/"); idx >= 0 {
+		kind = canonicalKind[idx+1:]
+	}
 	obj.SetKind(kind)
 	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+		// If the object is not found, it's already been deleted - nothing to clean up
+		if client.IgnoreNotFound(err) == nil {
+			logger.V(1).Info("object already deleted, nothing to clean up")
+			return reconcile.Result{}, nil
+		}
 		logger.Error(err, "failed to get object")
 		return reconcile.Result{}, fmt.Errorf("failed to get object: %w", err)
 	}

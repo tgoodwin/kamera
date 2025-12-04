@@ -118,8 +118,6 @@ func (f *fakeUniScaler) Scale(_ *zap.SugaredLogger, now time.Time) scaling.Scale
 	// 4. After timing is met, it will allow scaling to 0
 	desired := int32(0)
 
-	fmt.Printf("🔔 UNISCALER-SCALE: desired=%d, now=%v\n", desired, now)
-
 	return scaling.ScaleResult{
 		DesiredPodCount:     desired,
 		ExcessBurstCapacity: f.excessBC,
@@ -144,12 +142,9 @@ type fakeDeciders struct {
 
 // Get overrides MultiScaler.Get to add logging
 func (f *fakeDeciders) Get(ctx context.Context, namespace, name string) (*scaling.Decider, error) {
-	fmt.Printf("🔔 FAKE-GET: decider=%s/%s\n", namespace, name)
 	result, err := f.MultiScaler.Get(ctx, namespace, name)
 	if err != nil {
-		fmt.Printf("🔔 FAKE-GET-NOTFOUND: decider=%s/%s, err=%v\n", namespace, name, err)
 	} else {
-		fmt.Printf("🔔 FAKE-GET-FOUND: decider=%s/%s\n", namespace, name)
 	}
 	return result, err
 }
@@ -157,16 +152,13 @@ func (f *fakeDeciders) Get(ctx context.Context, namespace, name string) (*scalin
 // Create overrides MultiScaler.Create to immediately compute and set DesiredScale
 // and register synchronous callbacks for tickers
 func (f *fakeDeciders) Create(ctx context.Context, decider *scaling.Decider) (*scaling.Decider, error) {
-	fmt.Printf("🔔 FAKE-CREATE: decider=%s/%s\n", decider.Namespace, decider.Name)
 
 	// Create the decider using the underlying MultiScaler
 	// This will call createScaler -> runScalerTicker, which creates a ticker
 	result, err := f.MultiScaler.Create(ctx, decider)
 	if err != nil {
-		fmt.Printf("🔔 FAKE-CREATE-ERROR: decider=%s/%s, err=%v\n", decider.Namespace, decider.Name, err)
 		return nil, err
 	}
-	fmt.Printf("🔔 FAKE-CREATE-SUCCESS: decider=%s/%s\n", decider.Namespace, decider.Name)
 
 	// After Create, a ticker should have been created. We need to find it and register a callback.
 	// Since we can't easily access the ticker that was created, we'll use a different approach:
@@ -236,7 +228,6 @@ func RecordScaleChange(namespace, name string, replicas int32) {
 	defer pendingScaleChangesMu.Unlock()
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 	pendingScaleChanges[key] = replicas
-	fmt.Printf("🔔 SCALE-CHANGE-RECORDED: %s/%s -> replicas=%d\n", namespace, name, replicas)
 }
 
 // GetAndClearScaleChanges returns and clears all pending scale changes.
@@ -261,7 +252,6 @@ func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) kpare
 	defer persistentMultiScalerMu.Unlock()
 
 	if persistentMultiScaler == nil {
-		fmt.Printf("🔔 MULTISCALER-SINGLETON: Creating persistent MultiScaler\n")
 		uniScalerFactory := func(decider *scaling.Decider) (scaling.UniScaler, error) {
 			return newFakeUniScaler(decider), nil
 		}
@@ -278,7 +268,6 @@ func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) kpare
 			logger:           logger,
 		}
 	} else {
-		fmt.Printf("🔔 MULTISCALER-SINGLETON: Reusing existing MultiScaler\n")
 	}
 
 	return persistentMultiScaler
@@ -316,14 +305,12 @@ func wrapMultiScalerTickerProvider(ms *scaling.MultiScaler) {
 		mostRecentTicker = ticker
 		mostRecentTickerMu.Unlock()
 
-		fmt.Printf("🔔 TICKER-PROVIDER-WRAP: Created ticker, interval=%v\n", d)
 		return ticker
 	}
 
 	// Set the field using unsafe pointer
 	*(*func(time.Duration) *simclock.Ticker)(tickProviderPtr) = wrappedProvider
 
-	fmt.Printf("🔔 TICKER-PROVIDER-WRAP: Wrapped MultiScaler tickProvider\n")
 }
 
 // registerTickerCallbackForDecider registers a synchronous callback for the ticker
@@ -336,7 +323,6 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 	mostRecentTickerMu.Unlock()
 
 	if ticker == nil {
-		fmt.Printf("🔔 CALLBACK-REGISTER: No recent ticker found for key=%s, skipping\n", key)
 		return
 	}
 
@@ -344,7 +330,6 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 	msValue := reflect.ValueOf(ms).Elem()
 	scalersField := msValue.FieldByName("scalers")
 	if !scalersField.IsValid() {
-		fmt.Printf("🔔 CALLBACK-REGISTER: scalers field not found, skipping callback registration\n")
 		return
 	}
 
@@ -356,7 +341,6 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 	scalersMapValue := reflect.NewAt(scalersField.Type(), scalersPtr).Elem()
 	scalerValue := scalersMapValue.MapIndex(reflect.ValueOf(key))
 	if !scalerValue.IsValid() {
-		fmt.Printf("🔔 CALLBACK-REGISTER: scaler not found for key=%s, skipping\n", key)
 		return
 	}
 
@@ -364,14 +348,12 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 	// Can't call .Elem() on unexported type, so we need to work with the reflect.Value directly
 	// The scalerValue is a pointer to scalerRunner, so we need to dereference it
 	if scalerValue.Kind() != reflect.Ptr {
-		fmt.Printf("🔔 CALLBACK-REGISTER: scalerValue is not a pointer, got kind=%v\n", scalerValue.Kind())
 		return
 	}
 
 	runnerValue := scalerValue.Elem()
 	scalerField := runnerValue.FieldByName("scaler")
 	if !scalerField.IsValid() {
-		fmt.Printf("🔔 CALLBACK-REGISTER: scaler field not found in runner\n")
 		return
 	}
 
@@ -398,18 +380,15 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 
 		// Let's try yet another approach: Register a callback that manually calls Scale
 		// and then Inform if the scale changed. This mimics what tickScaler does.
-		fmt.Printf("🔔 CALLBACK-REGISTER: tickScaler is private, using workaround\n")
 
 		// Register a callback that calls Scale, updates decider status, and Inform
 		callback := func() {
 			now := simclock.Now()
-			fmt.Printf("🔔 CALLBACK-TICK: key=%s, now=%v\n", key, now)
 
 			// Call Scale (similar to what tickScaler does)
 			scaleResult := scaler.Scale(nil, now) // logger is nil for now
 
 			if !scaleResult.ScaleValid {
-				fmt.Printf("🔔 CALLBACK-TICK: Scale result invalid for key=%s\n", key)
 				return
 			}
 
@@ -418,25 +397,16 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 			ctx := context.Background()
 			decider, err := ms.Get(ctx, key.Namespace, key.Name)
 			if err != nil {
-				fmt.Printf("🔔 CALLBACK-TICK: Failed to get decider for key=%s, err=%v\n", key, err)
 				return
 			}
 
-			// Check if scale changed
-			oldScale := decider.Status.DesiredScale
-			newScale := scaleResult.DesiredPodCount
-			scaleChanged := oldScale != newScale
-
-			fmt.Printf("🔔 CALLBACK-TICK: decider=%s, oldScale=%d, newScale=%d, changed=%v\n", key, oldScale, newScale, scaleChanged)
-
 			// Update decider status (like tickScaler does via updateLatestScale)
-			decider.Status.DesiredScale = newScale
+			decider.Status.DesiredScale = scaleResult.DesiredPodCount
 			decider.Status.ExcessBurstCapacity = scaleResult.ExcessBurstCapacity
 
 			// Persist the update
 			_, err = ms.Update(ctx, decider)
 			if err != nil {
-				fmt.Printf("🔔 CALLBACK-TICK: Failed to update decider for key=%s, err=%v\n", key, err)
 				return
 			}
 
@@ -445,12 +415,10 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 			// In real Knative, tickScaler calls Inform whenever scale changes OR when
 			// ExcessBurstCapacity sign changes. For scale-to-zero, we need periodic
 			// reconciles to check if enough time has passed.
-			fmt.Printf("🔔 CALLBACK-TICK: Calling Inform for key=%s (scaleChanged=%v, oldScale=%d, newScale=%d)\n", key, scaleChanged, oldScale, newScale)
 			ms.Inform(key)
 		}
 
 		simclock.RegisterTickerCallback(ticker, callback)
-		fmt.Printf("🔔 CALLBACK-REGISTER: Registered callback for ticker, key=%s\n", key)
 		return
 	}
 
@@ -462,7 +430,6 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 	// })
 	// But since it's private, we can't do this easily.
 
-	fmt.Printf("🔔 CALLBACK-REGISTER: Callback registration attempted for key=%s\n", key)
 }
 
 // enqueueCapturingDeciders wraps a Deciders implementation to capture Watch callback invocations
@@ -486,12 +453,9 @@ func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
 	// Store the current callback so we can call it when Inform is invoked
 	e.currentCallback = callback
 
-	fmt.Printf("🔔 WATCH-REGISTER: reconcilerID=%s, alreadyRegistered=%v\n", e.reconcilerID, e.watchRegistered)
-
 	// Only call the underlying Watch() once, since MultiScaler doesn't support multiple calls
 	if !e.watchRegistered {
 		wrappedCallback := func(key types.NamespacedName) {
-			fmt.Printf("🔔 WATCH-CALLBACK: reconcilerID=%s, key=%s\n", e.reconcilerID, key)
 
 			// Call the current controller callback (impl.EnqueueKey) - this enqueues in the controller's workqueue
 			e.watchMu.Lock()
@@ -505,14 +469,11 @@ func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
 			// Add to the global async enqueue collector.
 			// The collector is automatically cleared after each Get() call in determineNewPendingReconciles.
 			collector := tracecheck.GetGlobalAsyncEnqueueCollector()
-			fmt.Printf("🔔 WATCH-ADD: reconcilerID=%s, key=%s, adding to global collector\n", e.reconcilerID, key)
 			collector.Add(e.reconcilerID, key)
 		}
 		e.Deciders.Watch(wrappedCallback)
 		e.watchRegistered = true
-		fmt.Printf("🔔 WATCH-REGISTER: Successfully registered Watch callback\n")
 	} else {
-		fmt.Printf("🔔 WATCH-REGISTER: Watch already registered, just updating callback reference\n")
 	}
 }
 
@@ -521,7 +482,6 @@ func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
 // Watch() is only called once.
 // The wrapper uses the global async enqueue collector, which is automatically cleared after each Get() call.
 func NewEnqueueCapturingDeciders(base kparesources.Deciders, reconcilerID string) kparesources.Deciders {
-	fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: reconcilerID=%s, base_type=%T\n", reconcilerID, base)
 
 	persistentMultiScalerMu.Lock()
 	defer persistentMultiScalerMu.Unlock()
@@ -529,7 +489,6 @@ func NewEnqueueCapturingDeciders(base kparesources.Deciders, reconcilerID string
 	// If we already have a persistent wrapper, reuse it.
 	// The context will be updated before SetDepth in takeReconcileStep.
 	if persistentEnqueueWrapper != nil {
-		fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: Reusing persistent wrapper\n")
 		return persistentEnqueueWrapper
 	}
 
@@ -540,19 +499,16 @@ func NewEnqueueCapturingDeciders(base kparesources.Deciders, reconcilerID string
 		watchRegistered: false,
 	}
 	persistentEnqueueWrapper = wrapper
-	fmt.Printf("🔔 NEW-ENQUEUE-CAPTURING: Created new persistent wrapper\n")
 	return wrapper
 }
 
 // Get forwards to the base Deciders implementation
 func (e *enqueueCapturingDeciders) Get(ctx context.Context, namespace, name string) (*scaling.Decider, error) {
-	fmt.Printf("🔔 ENQUEUE-GET: reconcilerID=%s, decider=%s/%s, base_type=%T\n", e.reconcilerID, namespace, name, e.Deciders)
 	return e.Deciders.Get(ctx, namespace, name)
 }
 
 // Create forwards to the base Deciders implementation
 func (e *enqueueCapturingDeciders) Create(ctx context.Context, decider *scaling.Decider) (*scaling.Decider, error) {
-	fmt.Printf("🔔 ENQUEUE-CREATE: reconcilerID=%s, decider=%s/%s, base_type=%T\n", e.reconcilerID, decider.Namespace, decider.Name, e.Deciders)
 	return e.Deciders.Create(ctx, decider)
 }
 
@@ -979,12 +935,10 @@ func applyPendingScaleChanges(ctx context.Context, _ replay.EffectRecorder) {
 
 	kubeClient := fakekubeclient.Get(ctx)
 	for key, replicas := range scaleChanges {
-		fmt.Printf("🔔 APPLY-SCALE-CHANGE: applying %s/%s -> replicas=%d to simulation state\n", key.Namespace, key.Name, replicas)
 
 		// Get the deployment from the typed client
 		dep, err := kubeClient.AppsV1().Deployments(key.Namespace).Get(ctx, key.Name, metav1.GetOptions{})
 		if err != nil {
-			fmt.Printf("🔔 APPLY-SCALE-CHANGE: failed to get deployment: %v\n", err)
 			continue
 		}
 
@@ -994,11 +948,9 @@ func applyPendingScaleChanges(ctx context.Context, _ replay.EffectRecorder) {
 		// Update via the kubeclient - the reactor will intercept this and record the effect
 		_, err = kubeClient.AppsV1().Deployments(key.Namespace).Update(ctx, dep, metav1.UpdateOptions{})
 		if err != nil {
-			fmt.Printf("🔔 APPLY-SCALE-CHANGE: failed to update deployment: %v\n", err)
 			continue
 		}
 
-		fmt.Printf("🔔 APPLY-SCALE-CHANGE: successfully recorded deployment scale change\n")
 	}
 }
 
@@ -1010,17 +962,12 @@ func setupDeploymentPatchSync(ctx context.Context, dynamicFakeClient *dynamicfak
 	defer persistentDynamicClientMu.Unlock()
 
 	if persistentDynamicClientReactorAdded {
-		fmt.Printf("🔔 SETUP-PATCH-SYNC: Reactor already added, skipping\n")
 		return
 	}
 	persistentDynamicClientReactorAdded = true
 
-	fmt.Printf("🔔 SETUP-PATCH-SYNC: Adding deployment patch reactor to dynamic client (first time), client=%p\n", dynamicFakeClient)
-
-	// Add a catch-all reactor to see what operations are happening
+	// Add a catch-all reactor for dynamic client operations
 	dynamicFakeClient.PrependReactor("*", "*", func(action testing.Action) (bool, runtime.Object, error) {
-		fmt.Printf("🔔 DYNAMIC-CLIENT-ACTION: verb=%s, resource=%s, namespace=%s\n",
-			action.GetVerb(), action.GetResource().Resource, action.GetNamespace())
 		return false, nil, nil // Don't handle, let it fall through
 	})
 
@@ -1038,18 +985,14 @@ func setupDeploymentPatchSync(ctx context.Context, dynamicFakeClient *dynamicfak
 		name := patchAction.GetName()
 		patch := patchAction.GetPatch()
 
-		fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: patching deployment %s/%s with patch: %s\n", ns, name, string(patch))
-
 		// Get the deployment from the dynamic client's store
 		unstructuredDep, err := dynamicFakeClient.Tracker().Get(gvr, ns, name)
 		if err != nil {
-			fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: failed to get deployment from dynamic client: %v\n", err)
 			return false, nil, err
 		}
 
 		u, ok := unstructuredDep.(*unstructured.Unstructured)
 		if !ok {
-			fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: unexpected type: %T\n", unstructuredDep)
 			return false, nil, fmt.Errorf("unexpected type: %T", unstructuredDep)
 		}
 
@@ -1057,7 +1000,6 @@ func setupDeploymentPatchSync(ctx context.Context, dynamicFakeClient *dynamicfak
 		// The patch format is: [{"op":"replace","path":"/spec/replicas","value":0}]
 		var patchOps []map[string]interface{}
 		if err := json.Unmarshal(patch, &patchOps); err != nil {
-			fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: failed to unmarshal patch: %v\n", err)
 			return false, nil, err
 		}
 
@@ -1067,10 +1009,8 @@ func setupDeploymentPatchSync(ctx context.Context, dynamicFakeClient *dynamicfak
 				value, _ := op["value"].(float64)
 				replicas := int64(value)
 				if err := unstructured.SetNestedField(u.Object, replicas, "spec", "replicas"); err != nil {
-					fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: failed to set replicas: %v\n", err)
 					return false, nil, err
 				}
-				fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: setting replicas to %d\n", replicas)
 				// Record this scale change so the KnativeStrategy can propagate it to the simulation state
 				RecordScaleChange(ns, name, int32(replicas))
 			}
@@ -1078,11 +1018,8 @@ func setupDeploymentPatchSync(ctx context.Context, dynamicFakeClient *dynamicfak
 
 		// Update the deployment in the dynamic client's tracker
 		if err := dynamicFakeClient.Tracker().Update(gvr, u, ns); err != nil {
-			fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: failed to update deployment in dynamic client: %v\n", err)
 			return false, nil, err
 		}
-
-		fmt.Printf("🔔 DYNAMIC-PATCH-REACTOR: successfully updated deployment scale in dynamic client\n")
 
 		return true, u, nil
 	})
@@ -1103,10 +1040,8 @@ func setupClientState(ctx context.Context, state []runtime.Object, selectors ...
 	// the fake dynamic client that SetupInformers creates.
 	persistentDynamicClientMu.Lock()
 	if persistentDynamicClient == nil {
-		fmt.Printf("🔔 SETUP-CLIENT-STATE: Creating persistent dynamic client\n")
 		persistentDynamicClient = dynamicfakeclient.NewSimpleDynamicClient(kamerascheme.Default)
 	} else {
-		fmt.Printf("🔔 SETUP-CLIENT-STATE: Reusing persistent dynamic client\n")
 	}
 	// Inject the persistent dynamic client into the context, overriding any client from SetupInformers
 	ctx = context.WithValue(ctx, dynamicclient.Key{}, persistentDynamicClient)
