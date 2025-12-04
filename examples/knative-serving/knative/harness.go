@@ -211,7 +211,6 @@ var (
 
 	// persistentDynamicClient tracks the persistent dynamic client that should be reused
 	// across reconcile steps to ensure reactors are triggered.
-	persistentDynamicClientMu           sync.Mutex
 	persistentDynamicClient             *dynamicfakeclient.FakeDynamicClient
 	persistentDynamicClientReactorAdded bool
 
@@ -958,9 +957,6 @@ func applyPendingScaleChanges(ctx context.Context, _ replay.EffectRecorder) {
 // to the typed kubeclient. This is necessary because the KPA uses the dynamic client for scale
 // operations, but the DeploymentController reads from the typed kubeclient's store.
 func setupDeploymentPatchSync(ctx context.Context, dynamicFakeClient *dynamicfakeclient.FakeDynamicClient) {
-	persistentDynamicClientMu.Lock()
-	defer persistentDynamicClientMu.Unlock()
-
 	if persistentDynamicClientReactorAdded {
 		return
 	}
@@ -1038,14 +1034,11 @@ func setupClientState(ctx context.Context, state []runtime.Object, selectors ...
 	// to sync patches back to the typed kubeclient.
 	// IMPORTANT: We inject the persistent dynamic client AFTER SetupInformers so it overrides
 	// the fake dynamic client that SetupInformers creates.
-	persistentDynamicClientMu.Lock()
 	if persistentDynamicClient == nil {
 		persistentDynamicClient = dynamicfakeclient.NewSimpleDynamicClient(kamerascheme.Default)
-	} else {
 	}
 	// Inject the persistent dynamic client into the context, overriding any client from SetupInformers
 	ctx = context.WithValue(ctx, dynamicclient.Key{}, persistentDynamicClient)
-	persistentDynamicClientMu.Unlock()
 
 	// Add a reactor to sync dynamic client deployment patches to the typed kubeclient.
 	// This is necessary because the KPA uses the dynamic client to patch deployments for scale
