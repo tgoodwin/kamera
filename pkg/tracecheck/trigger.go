@@ -59,6 +59,21 @@ func (pr PendingReconcile) String() string {
 	return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
 }
 
+// allPendingAreAsyncEnqueues returns true if all pending reconciles are from async enqueues
+// (e.g., ticker-based re-enqueues). This is used to determine convergence: if the only
+// remaining work is time-based re-enqueues, the controller logic has effectively converged.
+func allPendingAreAsyncEnqueues(pending []PendingReconcile) bool {
+	if len(pending) == 0 {
+		return false // empty list should not be considered "all async"
+	}
+	for _, pr := range pending {
+		if pr.Source != SourceAsyncEnqueue {
+			return false
+		}
+	}
+	return true
+}
+
 type hashResolver interface {
 	GetByHash(hash snapshot.VersionHash, strategy snapshot.HashStrategy) (*unstructured.Unstructured, bool)
 }
