@@ -186,6 +186,33 @@ func replaceSelectors(fset *token.FileSet, file *ast.File, importMap map[string]
 
 	// First pass: replace function calls
 	astutil.Apply(file, func(c *astutil.Cursor) bool {
+		// Handle time.Since(t) -> simclock.Now().Sub(t)
+		// We need to match the CallExpr directly, not the SelectorExpr
+		if callExpr, ok := c.Node().(*ast.CallExpr); ok {
+			if sel, ok := callExpr.Fun.(*ast.SelectorExpr); ok {
+				if ident, ok := sel.X.(*ast.Ident); ok {
+					path := importMap[ident.Name]
+					if path == "time" && sel.Sel.Name == "Since" && len(callExpr.Args) == 1 {
+						alias := ensureSimclockAlias(fset, file, importMap, &simclockAlias)
+						if alias != "" {
+							// Create: simclock.Now().Sub(arg)
+							nowCall := &ast.CallExpr{
+								Fun: &ast.SelectorExpr{X: ast.NewIdent(alias), Sel: ast.NewIdent("Now")},
+							}
+							subCall := &ast.CallExpr{
+								Fun:  &ast.SelectorExpr{X: nowCall, Sel: ast.NewIdent("Sub")},
+								Args: callExpr.Args,
+							}
+							c.Replace(subCall)
+							changed = true
+							importMap[alias] = simclockImportPath
+							return true
+						}
+					}
+				}
+			}
+		}
+
 		sel, ok := c.Node().(*ast.SelectorExpr)
 		if !ok {
 			return true
