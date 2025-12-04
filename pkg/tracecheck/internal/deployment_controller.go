@@ -109,6 +109,7 @@ func (d *deploymentStrategy) ReconcileAtState(ctx context.Context, name types.Na
 		deployment.Spec.Replicas = pointerTo(desiredReplicas)
 	}
 
+
 	if !deployment.DeletionTimestamp.IsZero() {
 		// Core controller lets garbage collector handle cleanup.
 		return reconcile.Result{}, nil

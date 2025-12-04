@@ -142,6 +142,7 @@ func (r *DeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		desiredReplicas = *deployment.Spec.Replicas
 	}
 
+
 	var (
 		oldReplicaSets []*appsv1.ReplicaSet
 	)
@@ -234,6 +235,17 @@ func (r *DeploymentReconciler) rolloutReplicaSets(
 			currentTotal = currentTotal - newSpecReplicas + target
 			newSpecReplicas = target
 		}
+	}
+
+	// Handle scale-down of newRS when desiredReplicas < current replicas
+	// (e.g., scaling to 0 for scale-to-zero)
+	if newSpecReplicas > desiredReplicas {
+		if err := r.scaleReplicaSet(ctx, newRS, desiredReplicas); err != nil {
+			logger.Error(err, "failed to scale down new ReplicaSet", "replicaSet", newRS.Name)
+			return err
+		}
+		currentTotal = currentTotal - newSpecReplicas + desiredReplicas
+		newSpecReplicas = desiredReplicas
 	}
 
 	totalReady := newRS.Status.ReadyReplicas
