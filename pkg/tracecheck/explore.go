@@ -445,18 +445,19 @@ func (e *Explorer) explore(
 
 		// A state is considered converged if:
 		// 1. There are no pending reconciles, OR
-		// 2. All remaining pending reconciles are from async enqueues (e.g., tickers)
-		//    This allows convergence when only time-based re-enqueues remain
-		if len(currentState.PendingReconciles) == 0 || allPendingAreAsyncEnqueues(currentState.PendingReconciles) {
+		// 2. All remaining pending reconciles are ignorable for convergence (async enqueues
+		//    from tickers, or requeues from poll-based controllers). These don't indicate
+		//    state changes, just time-based or polling behavior.
+		if len(currentState.PendingReconciles) == 0 || allPendingIgnorableForConvergence(currentState.PendingReconciles) {
 			reason := "no pending reconciles"
 			if len(currentState.PendingReconciles) > 0 {
-				reason = "only async enqueues remaining"
+				reason = "only async enqueues/requeues remaining"
 			}
 			logger.WithValues(
 				"Depth", currentState.depth,
 				"StateKey", currentState.Hash(),
 				"Reason", reason,
-				"RemainingAsync", len(currentState.PendingReconciles),
+				"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
 			).Info("arrived at converged state")
 			logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
 			seenConvergedStates[stateKey] = currentState

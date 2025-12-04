@@ -59,19 +59,32 @@ func (pr PendingReconcile) String() string {
 	return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
 }
 
-// allPendingAreAsyncEnqueues returns true if all pending reconciles are from async enqueues
-// (e.g., ticker-based re-enqueues). This is used to determine convergence: if the only
-// remaining work is time-based re-enqueues, the controller logic has effectively converged.
-func allPendingAreAsyncEnqueues(pending []PendingReconcile) bool {
+// allPendingIgnorableForConvergence returns true if all pending reconciles are from
+// sources that don't indicate state changes (async enqueues from tickers, or requeues
+// from controllers that always re-enqueue). This is used to determine convergence:
+// if the only remaining work is time-based re-enqueues or poll-based requeues,
+// the controller logic has effectively converged since no state is changing.
+func allPendingIgnorableForConvergence(pending []PendingReconcile) bool {
 	if len(pending) == 0 {
-		return false // empty list should not be considered "all async"
+		return false // empty list should not be considered "all ignorable"
 	}
 	for _, pr := range pending {
-		if pr.Source != SourceAsyncEnqueue {
+		if pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue {
 			return false
 		}
 	}
 	return true
+}
+
+// countIgnorableForConvergence counts pending reconciles that are ignorable for convergence
+func countIgnorableForConvergence(pending []PendingReconcile) int {
+	count := 0
+	for _, pr := range pending {
+		if pr.Source == SourceAsyncEnqueue || pr.Source == SourceRequeue {
+			count++
+		}
+	}
+	return count
 }
 
 type hashResolver interface {
@@ -143,7 +156,6 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 			deletionTS := objectVal.GetDeletionTimestamp()
 			if deletionTS.IsZero() {
 				panic("found object marked for deletion but with no deletion timestamp")
-				return nil, fmt.Errorf("object %s marked for deletion but has no deletion timestamp", nsName)
 			}
 			// queue up the CleanupReconciler to handle the actual removal
 			reconcileKey := fmt.Sprintf("%s:%s:%s", cleanupReconcilerID, nsName.Namespace, nsName.Name)
