@@ -1019,35 +1019,12 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 		return pending != reconcileInput
 	})
 
-	containsGroupKind := func(list []string, group, kind string) bool {
-		canonical := util.CanonicalGroupKind(group, kind)
-		for _, item := range list {
-			if item == canonical {
-				return true
-			}
-		}
-		return false
-	}
-
 	// Read captured enqueues from the global collector (from Watch callbacks during reconcile).
 	// Get() automatically clears the collector after returning, so it's ready for the next step.
 	// These are already PendingReconcile entries with the correct reconciler ID.
 	stepLog := log.FromContext(ctx)
 	capturedPending := GetGlobalAsyncEnqueueCollector().Get()
 	if len(capturedPending) > 0 {
-		stepLog.Info("📥 COLLECTOR-READ: read captured enqueues from global collector",
-			"depth", state.depth,
-			"count", len(capturedPending),
-			"reconciler", reconcileInput.ReconcilerID)
-		// Log KPA ticker enqueues at info level for visibility
-		for _, pr := range capturedPending {
-			if pr.ReconcilerID == "KPA" {
-				stepLog.Info("🔥 KPA-TICKER: captured async enqueue",
-					"depth", state.depth,
-					"pa", pr.Request.NamespacedName,
-					"total_captured", len(capturedPending))
-			}
-		}
 		stepLog.V(1).Info("captured async enqueues from tickers",
 			"count", len(capturedPending),
 			"depth", state.depth,
@@ -1076,22 +1053,21 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// kinds their watch streams are "stuck" on.
 	if state.stuckReconcilerPositions != nil {
 		filtered := lo.Filter(triggeredByChanges, func(pending PendingReconcile, _ int) bool {
-			if stuckKinds, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]; stuck {
-				resourceDeps, _ := e.triggerManager.KindDepsForReconciler(pending.ReconcilerID)
-				couldSeeChange := false
-				for changeKey := range result.Changes.ObjectVersions {
-					canonicalKind := util.CanonicalGroupKind(changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind)
-					if _, stuckOnKind := stuckKinds[canonicalKind]; !stuckOnKind {
-						if containsGroupKind(resourceDeps, changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind) {
-							couldSeeChange = true
-						}
+			stuckKinds, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]
+			if !stuck {
+				return true // not stuck on anything, pass through
+			}
+			resourceDeps, _ := e.triggerManager.KindDepsForReconciler(pending.ReconcilerID)
+			for changeKey := range result.Changes.ObjectVersions {
+				canonicalKind := util.CanonicalGroupKind(changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind)
+				// If not stuck on this kind AND subscribes to it, could see the change
+				if _, stuckOnKind := stuckKinds[canonicalKind]; !stuckOnKind {
+					if slices.Contains(resourceDeps, canonicalKind) {
+						return true
 					}
 				}
-				return couldSeeChange
-			} else {
-				// if not stuck on anything, pass it through the filter!
-				return true
 			}
+			return false
 		})
 		triggeredByChanges = filtered
 	}
@@ -1103,17 +1079,6 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	}
 
 	allTriggered := append(triggeredByChanges, capturedPending...)
-
-	// Log the merge of captured enqueues into pending reconciles
-	if len(capturedPending) > 0 {
-		stepLog.Info("📤 MERGE-ENQUEUES: merging captured enqueues into pending reconciles",
-			"depth", state.depth,
-			"captured_count", len(capturedPending),
-			"triggered_by_changes_count", len(triggeredByChanges),
-			"total_pending", len(allTriggered),
-			"captured_enqueues", capturedPending)
-	}
-
 	return e.getNewPendingReconciles(stillPending, allTriggered)
 }
 
