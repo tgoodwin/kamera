@@ -96,8 +96,6 @@ func TestExhaustiveInterleavings(t *testing.T) {
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
-	// eb.WithDebug()
-	eb.WithEmitter(event.NewInMemoryEmitter())
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
@@ -175,7 +173,6 @@ func TestExhaustiveInterleavings(t *testing.T) {
 func TestConvergedStateIdentification(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
-	eb.WithEmitter(event.NewInMemoryEmitter())
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.

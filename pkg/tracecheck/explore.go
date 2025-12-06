@@ -916,7 +916,6 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	return child, child.action, nil
 }
 
-// TODO figure out if we need to append to the front if using DFS
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
 	seen := make(map[string]struct{})
 	addUnique := func(list []PendingReconcile, out *[]PendingReconcile) {

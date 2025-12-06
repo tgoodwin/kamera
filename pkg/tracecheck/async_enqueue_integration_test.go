@@ -188,7 +188,7 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 	tickerBasedSeenAtDepths := make(map[int]bool)
 
 	// Take reconcile steps and observe depth progression and ticker fires
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		if len(currentState.PendingReconciles) == 0 {
 			break
 		}
