@@ -179,7 +179,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
 
-	// Testing two controllers whos behavior is identical
+	// Testing two controllers whose behavior is identical
 	// and who both depend on the same object.
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.FooReconciler{
