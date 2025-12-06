@@ -377,7 +377,9 @@ func (e *Explorer) explore(
 		orderKey := currentState.OrderSensitiveHash()
 		lineageKey := currentState.LineageHash()
 
-		logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", currentState.DetailedLineage())
+		if logger.V(1).Enabled() {
+			logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", currentState.DetailedLineage())
+		}
 
 		// we reconcile on the first pending reconcile for this state,
 		// but if there are multiple pending reconciles, we want to explore what would happen
@@ -388,10 +390,12 @@ func (e *Explorer) explore(
 		if len(currentState.PendingReconciles) > 1 {
 			if !seenStates[orderKey] || true {
 				expandedStates := expandStateByReconcileOrder(currentState)
-				branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
-					return sn.LineageHash()
-				})
-				logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
+				if logger.V(2).Enabled() {
+					branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
+						return sn.LineageHash()
+					})
+					logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
+				}
 				for _, candidate := range expandedStates {
 					lineageHash := candidate.LineageHash()
 					if _, seenOrder := seenStatesPendingOrderSensitive[lineageHash]; !seenOrder {
@@ -431,13 +435,17 @@ func (e *Explorer) explore(
 			if len(currentState.PendingReconciles) > 0 {
 				reason = "only async enqueues/requeues remaining"
 			}
-			logger.WithValues(
-				"Depth", currentState.depth,
-				"StateKey", currentState.Hash(),
-				"Reason", reason,
-				"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
-			).Info("arrived at converged state")
-			logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
+			if logger.V(1).Enabled() {
+				logger.V(1).WithValues(
+					"Depth", currentState.depth,
+					"StateKey", currentState.Hash(),
+					"Reason", reason,
+					"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
+				).Info("arrived at converged state")
+			}
+			if logger.V(2).Enabled() {
+				logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
+			}
 			seenConvergedStates[stateKey] = currentState
 
 			// track how many times we've arrived at this state from some common ancestor
@@ -525,10 +533,7 @@ func (e *Explorer) explore(
 			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
-			logger.WithValues(
-				"ReconcilerID", reconcilerID,
-				"Depth", currentState.depth,
-			).Info("Taking reconcile step")
+			stepLogger.Info("Taking reconcile step")
 
 			// for each view, create a new branch in exploration
 			newState, stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
@@ -572,11 +577,13 @@ func (e *Explorer) explore(
 			}
 
 			if newState.depth > e.config.MaxDepth {
-				logger.WithValues(
-					"maxDepth", e.config.MaxDepth,
-					"currentDepth", newState.depth,
-					"Lineage", newState.ReconcileLineage(),
-				).V(1).Info("aborting path due to max depth")
+				if logger.V(1).Enabled() {
+					logger.WithValues(
+						"maxDepth", e.config.MaxDepth,
+						"currentDepth", newState.depth,
+						"Lineage", newState.ReconcileLineage(),
+					).Info("aborting path due to max depth")
+				}
 				e.stats.AbortedPaths++
 				stateKey := newState.Hash()
 				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], newState.ExecutionHistory)
@@ -677,47 +684,26 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil && apierrors.IsAlreadyExists(err) {
+		// AlreadyExists errors happen when a stale read causes a controller to try creating
+		// an object that already exists. Treat this as a no-op and continue exploring.
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).Info("tolerating AlreadyExists error; treating reconcile as no-op")
-		beforeState := make(ObjectVersions)
-		maps.Copy(beforeState, state.Objects())
-		beforeSequences := make(KindSequences)
-		maps.Copy(beforeSequences, state.Contents.KindSequences)
-
 		reconcileResult = &ReconcileResult{
-			ControllerID:  pr.ReconcilerID,
-			FrameID:       frameID,
-			FrameType:     FrameTypeExplore,
-			Changes:       Changes{ObjectVersions: make(ObjectVersions)},
-			StateBefore:   beforeState,
-			StateAfter:    beforeState,
-			KindSeqBefore: beforeSequences,
-			KindSeqAfter:  beforeSequences,
-			Error:         err.Error(),
+			ControllerID: pr.ReconcilerID,
+			FrameID:      frameID,
+			FrameType:    FrameTypeExplore,
+			Changes:      Changes{ObjectVersions: make(ObjectVersions)},
+			Error:        err.Error(),
 		}
 		err = nil
 	}
 	if err != nil {
+		// Other errors cause the branch to be abandoned. Return a minimal result for history tracking.
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")
-		// return the pre-reconcile state if the controller errored
-		beforeState := make(ObjectVersions)
-		maps.Copy(beforeState, state.Objects())
-		beforeSequences := make(KindSequences)
-		maps.Copy(beforeSequences, state.Contents.KindSequences)
-		afterState := make(ObjectVersions)
-		maps.Copy(afterState, beforeState)
-		afterSequences := make(KindSequences)
-		maps.Copy(afterSequences, beforeSequences)
-
 		failure := &ReconcileResult{
-			ControllerID:  pr.ReconcilerID,
-			FrameID:       frameID,
-			FrameType:     FrameTypeReplay,
-			Changes:       Changes{ObjectVersions: make(ObjectVersions)},
-			StateBefore:   beforeState,
-			StateAfter:    afterState,
-			KindSeqBefore: beforeSequences,
-			KindSeqAfter:  afterSequences,
-			Error:         err.Error(),
+			ControllerID: pr.ReconcilerID,
+			FrameID:      frameID,
+			FrameType:    FrameTypeExplore,
+			Error:        err.Error(),
 		}
 		return state, failure, err
 	}
@@ -737,7 +723,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	maps.Copy(newSequences, state.Contents.KindSequences)
 	for key, seq := range newSequences {
 		if !strings.Contains(key, "/") {
-			stepLog.V(1).Info("kind sequence key lacks group info", "key", key, "sequence", seq)
+			stepLog.Error(nil, "kind sequence key lacks group info", "key", key, "sequence", seq)
 		}
 	}
 	effects := reconcileResult.Changes.Effects
@@ -871,20 +857,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	}
 
 	newPendingReconciles := e.determineNewPendingReconciles(ctx, state, pr, reconcileResult)
-	stepLog.Info("📋 PENDING-RECONCILES: final pending reconciles after step",
-		"depth", state.depth,
-		"count", len(newPendingReconciles),
-		"items", newPendingReconciles)
-
-	// Specifically log if any KPA enqueues made it into the pending list
-	for _, pending := range newPendingReconciles {
-		if pending.ReconcilerID == "KPA" {
-			stepLog.Info("✅ KPA-PENDING: KPA enqueue in pending reconciles",
-				"depth", state.depth,
-				"pa", pending.Request.NamespacedName,
-				"total_pending", len(newPendingReconciles))
-		}
-	}
+	stepLog.V(1).WithValues(
+		"Depth", state.depth,
+		"Count", len(newPendingReconciles),
+		"Items", newPendingReconciles,
+	).Info("final pending reconciles after step")
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
@@ -1060,8 +1037,8 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// were triggered by the changes in the state.
 	triggeredByChanges := e.getTriggeredReconcilers(result.Changes)
 
-	// Log which reconcilers were triggered for debugging
-	if len(triggeredByChanges) > 0 {
+	// Log which reconcilers were triggered for debugging, but only if verbosity at least 1 is enabled.
+	if logger.V(1).Enabled() && len(triggeredByChanges) > 0 {
 		triggeredIDs := lo.Map(triggeredByChanges, func(pr PendingReconcile, _ int) string {
 			return pr.String()
 		})
