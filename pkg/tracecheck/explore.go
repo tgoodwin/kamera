@@ -34,21 +34,16 @@ type EffectContextManager interface {
 	CleanupEffectContext(ctx context.Context)
 }
 
-type ReconcilerConfig struct {
-	Bounds      LookbackLimits
-	MaxRestarts int
+type PerturbationConfig struct {
+	StaleReadBounds LookbackLimits
+	MaxRestarts     int
 }
 
 type ExploreConfig struct {
-	MaxDepth     int
-	useStaleness int
-
-	breakEarly bool
-
-	EnablePerfStats bool
-
-	// per-kind staleness config for each reconciler
-	KindBoundsPerReconciler map[string]ReconcilerConfig
+	maxDepth        int
+	recordPerfStats bool
+	// per-reconciler perturbation config
+	perturbationCfg map[string]PerturbationConfig
 }
 
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
@@ -220,7 +215,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	summarize := func(res *Result) {
 		logger.V(1).Info("explore summary")
-		if e.config != nil && e.config.EnablePerfStats {
+		if e.config != nil && e.config.recordPerfStats {
 			e.stats.Print()
 		}
 		res.Summarize()
@@ -300,8 +295,8 @@ func (e *Explorer) explore(
 		close(abortedStatesCh)
 	}()
 
-	if e.config.MaxDepth == 0 {
-		e.config.MaxDepth = DefaultMaxDepth
+	if e.config.maxDepth == 0 {
+		e.config.maxDepth = DefaultMaxDepth
 	}
 
 	if logger.V(2).Enabled() {
@@ -574,10 +569,10 @@ func (e *Explorer) explore(
 				seenDepths[newState.depth] = true
 			}
 
-			if newState.depth > e.config.MaxDepth {
+			if newState.depth > e.config.maxDepth {
 				if logger.V(1).Enabled() {
 					logger.WithValues(
-						"maxDepth", e.config.MaxDepth,
+						"maxDepth", e.config.maxDepth,
 						"currentDepth", newState.depth,
 						"Lineage", newState.ReconcileLineage(),
 					).Info("aborting path due to max depth")
@@ -590,7 +585,7 @@ func (e *Explorer) explore(
 					ID:       fmt.Sprintf("aborted-%s", stateKey),
 					State:    newState,
 					Paths:    []ExecutionHistory{newState.ExecutionHistory},
-					Reason:   fmt.Sprintf("max depth %d", e.config.MaxDepth),
+					Reason:   fmt.Sprintf("max depth %d", e.config.maxDepth),
 					Resolver: e.versionManager,
 				}:
 				case <-ctx.Done():
@@ -652,7 +647,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	stepLog := log.FromContext(ctx)
 	startWall := time.Now()
 	defer func() {
-		if e.stats != nil && e.config != nil && e.config.EnablePerfStats {
+		if e.stats != nil && e.config != nil && e.config.recordPerfStats {
 			e.stats.RecordStep(pr.ReconcilerID, time.Since(startWall))
 		}
 	}()
@@ -932,7 +927,7 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string, currDepth int) ([]StateNode, error) {
 	currSnapshot := currState.Contents
-	config, ok := e.config.KindBoundsPerReconciler[reconcilerID]
+	config, ok := e.config.perturbationCfg[reconcilerID]
 	if !ok {
 		logger.V(2).Info("no staleness bounds configured for reconciler", "ReconcilerID", reconcilerID)
 		// no staleness bounds configured for this reconciler, so dont compute stale states
@@ -945,8 +940,8 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return []StateNode{currState}, nil
 	}
 
-	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.config.MaxDepth)
-	possiblePastViews, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.Bounds)
+	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.config.maxDepth)
+	possiblePastViews, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.StaleReadBounds)
 	if err != nil {
 		return nil, errors.Wrap(err, "getting possible views")
 	}
@@ -973,7 +968,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		// for.
 		stuckPositionsForReconciler := make(KindSequences)
 		for k, v := range staleState.KindSequences {
-			if _, exists := config.Bounds[k]; exists {
+			if _, exists := config.StaleReadBounds[k]; exists {
 				stuckPositionsForReconciler[k] = v
 			}
 		}

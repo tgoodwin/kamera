@@ -58,8 +58,8 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		reconcilerToKind:           make(map[string]string),
 
 		config: &ExploreConfig{
-			MaxDepth:                10,
-			KindBoundsPerReconciler: make(map[string]ReconcilerConfig),
+			maxDepth:        10,
+			perturbationCfg: make(map[string]PerturbationConfig),
 		},
 	}
 
@@ -85,12 +85,8 @@ func (b *ExplorerBuilder) WithStrategy(id string, strategyFunc func(recorder rep
 }
 
 func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
-	b.config.EnablePerfStats = true
+	b.config.recordPerfStats = true
 	return b
-}
-
-func (b *ExplorerBuilder) BreakEarly() {
-	b.config.breakEarly = true
 }
 
 func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) *ExplorerBuilder {
@@ -118,18 +114,12 @@ func (b *ExplorerBuilder) WithPriorityStrategy(p *PriorityStrategyBuilder) *Expl
 }
 
 func (b *ExplorerBuilder) WithMaxDepth(depth int) *ExplorerBuilder {
-	b.config.MaxDepth = depth
+	b.config.maxDepth = depth
 	return b
 }
 
-// Deprecated: ExploreStaleStates is deprecated and will be removed in a future release.
-func (b *ExplorerBuilder) ExploreStaleStates() *ExplorerBuilder {
-	b.config.useStaleness = 1
-	return b
-}
-
-func (b *ExplorerBuilder) WithKindBounds(reconcilerID string, rc ReconcilerConfig) *ExplorerBuilder {
-	b.config.KindBoundsPerReconciler[reconcilerID] = rc
+func (b *ExplorerBuilder) WithPerturbations(reconcilerID string, rc PerturbationConfig) *ExplorerBuilder {
+	b.config.perturbationCfg[reconcilerID] = rc
 	return b
 }
 

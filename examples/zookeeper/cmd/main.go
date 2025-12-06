@@ -177,9 +177,8 @@ func main() {
 	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef}, nil)
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
 
-	eb.ExploreStaleStates() // Enable staleness exploration
-	eb.WithKindBounds("ZookeeperReconciler", tracecheck.ReconcilerConfig{
-		Bounds: tracecheck.LookbackLimits{
+	eb.WithPerturbations("ZookeeperReconciler", tracecheck.PerturbationConfig{
+		StaleReadBounds: tracecheck.LookbackLimits{
 			"ZookeeperCluster":      3,
 			"PersistentVolumeClaim": 1,
 		},

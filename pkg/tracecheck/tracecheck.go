@@ -309,7 +309,7 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		reconcilers:  reconcilers,
 		dependencies: tc.ResourceDeps,
 		config: &ExploreConfig{
-			MaxDepth: maxDepth,
+			maxDepth: maxDepth,
 		},
 
 		triggerManager: NewTriggerManager(
