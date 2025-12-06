@@ -26,7 +26,7 @@ type AsyncEnqueueCollector struct {
 }
 
 // Add records an enqueued reconcile request with its associated reconciler ID
-func (ec *AsyncEnqueueCollector) Add(reconcilerID string, key types.NamespacedName) {
+func (ec *AsyncEnqueueCollector) Add(reconcilerID ReconcilerID, key types.NamespacedName) {
 	ec.mu.Lock()
 	defer ec.mu.Unlock()
 	ec.enqueues = append(ec.enqueues, PendingReconcile{

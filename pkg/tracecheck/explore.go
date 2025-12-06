@@ -43,18 +43,18 @@ type ExploreConfig struct {
 	maxDepth        int
 	recordPerfStats bool
 	// per-reconciler perturbation config
-	perturbationCfg map[string]PerturbationConfig
+	perturbationCfg map[ReconcilerID]PerturbationConfig
 }
 
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
 type TriggerHandler interface {
 	GetTriggered(changes Changes) ([]PendingReconcile, error)
-	KindDepsForReconciler(reconcilerID string) ([]string, error)
+	KindDepsForReconciler(reconcilerID ReconcilerID) ([]string, error)
 }
 
 type Explorer struct {
 	// reconciler implementations keyed by ID
-	reconcilers map[string]*ReconcilerContainer
+	reconcilers map[ReconcilerID]*ReconcilerContainer
 	// maps Kinds to a list of reconcilerIDs that depend on them
 	dependencies ResourceDeps
 
@@ -98,7 +98,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 	var rebuiltState *StateSnapshot
 	for _, reconcile := range reconciles {
-		reconcilerID := reconcile.ControllerID
+		reconcilerID := ReconcilerID(reconcile.ControllerID)
 		if _, ok := e.reconcilers[reconcilerID]; !ok {
 			panic(fmt.Sprintf("reconciler %s not found", reconcilerID))
 		}
@@ -893,7 +893,7 @@ func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingRecon
 	// Deduplicate by ReconcilerID + NamespacedName (first occurrence wins).
 	all := append(triggered, currPending...)
 	return lo.UniqBy(all, func(pr PendingReconcile) string {
-		return pr.ReconcilerID + ":" + pr.Request.NamespacedName.String()
+		return string(pr.ReconcilerID) + ":" + pr.Request.NamespacedName.String()
 	})
 }
 
@@ -925,7 +925,7 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 	return res
 }
 
-func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string, currDepth int) ([]StateNode, error) {
+func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID ReconcilerID, currDepth int) ([]StateNode, error) {
 	currSnapshot := currState.Contents
 	config, ok := e.config.perturbationCfg[reconcilerID]
 	if !ok {
@@ -956,9 +956,9 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 
 	divergenceHash := currState.Hash()
 	asStateNodes := lo.Map(possiblePastViews, func(staleState *StateSnapshot, _ int) StateNode {
-		var stuckPositions map[string]KindSequences
+		var stuckPositions map[ReconcilerID]KindSequences
 		if currState.stuckReconcilerPositions == nil {
-			stuckPositions = make(map[string]KindSequences)
+			stuckPositions = make(map[ReconcilerID]KindSequences)
 		} else {
 			stuckPositions = maps.Clone(currState.stuckReconcilerPositions)
 		}

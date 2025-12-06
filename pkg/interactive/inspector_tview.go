@@ -744,7 +744,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		controller := "(nil)"
 		frame := "-"
 		if step != nil {
-			controller = step.ControllerID
+			controller = string(step.ControllerID)
 			frame = util.Shorter(step.FrameID)
 		}
 		detailTable.SetTitle(fmt.Sprintf("State • Step %d (%s @ %s)", selectedStep, controller, frame))
@@ -835,7 +835,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			}
 			for idx, pr := range stepPendingReconciles {
 				pendingReconcilesTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
-				pendingReconcilesTable.SetCell(idx+1, 1, valueCell(pr.ReconcilerID))
+				pendingReconcilesTable.SetCell(idx+1, 1, valueCell(string(pr.ReconcilerID)))
 				pendingReconcilesTable.SetCell(idx+1, 2, valueCell(pr.Request.Namespace))
 				pendingReconcilesTable.SetCell(idx+1, 3, valueCell(pr.Request.Name))
 				pendingReconcilesTable.SetCell(idx+1, 4, valueCell(string(pr.Source)))
@@ -886,7 +886,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		frame := "-"
 		step := path[selectedStep]
 		if step != nil {
-			controller = step.ControllerID
+			controller = string(step.ControllerID)
 			frame = util.Shorter(step.FrameID)
 		}
 
@@ -975,7 +975,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			}
 			for idx, pr := range stepPendingReconciles {
 				pendingReconcilesTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
-				pendingReconcilesTable.SetCell(idx+1, 1, valueCell(pr.ReconcilerID))
+				pendingReconcilesTable.SetCell(idx+1, 1, valueCell(string(pr.ReconcilerID)))
 				pendingReconcilesTable.SetCell(idx+1, 2, valueCell(pr.Request.Namespace))
 				pendingReconcilesTable.SetCell(idx+1, 3, valueCell(pr.Request.Name))
 				pendingReconcilesTable.SetCell(idx+1, 4, valueCell(string(pr.Source)))
@@ -1396,7 +1396,7 @@ func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx
 		frame := "-"
 		writes := "0"
 		if step != nil {
-			controller = step.ControllerID
+			controller = string(step.ControllerID)
 			frame = util.Shorter(step.FrameID)
 			writes = fmt.Sprintf("%d", len(step.Changes.Effects))
 		}

@@ -79,7 +79,7 @@ type Changes struct {
 }
 
 type ReconcileResult struct {
-	ControllerID string
+	ControllerID ReconcilerID
 	FrameID      string
 	FrameType    FrameType
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
@@ -314,10 +314,10 @@ type StateNode struct {
 
 	// tracks what KindSequences a controller may be "stuck" on
 	// e.g. if a controller's watches are connected to a partitioned APIServer
-	stuckReconcilerPositions map[string]KindSequences
+	stuckReconcilerPositions map[ReconcilerID]KindSequences
 }
 
-func (sn StateNode) ObserveAs(reconcilerID string) ObjectVersions {
+func (sn StateNode) ObserveAs(reconcilerID ReconcilerID) ObjectVersions {
 	if sn.stuckReconcilerPositions == nil {
 		return sn.Contents.All()
 	}
@@ -452,7 +452,7 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 			builder.WriteByte(',')
 		}
 		// inline PendingReconcile.String to avoid fmt.Sprintf allocations
-		builder.WriteString(pr.ReconcilerID)
+		builder.WriteString(string(pr.ReconcilerID))
 		builder.WriteByte(':')
 		builder.WriteString(pr.Request.Namespace)
 		builder.WriteByte('/')
@@ -521,7 +521,7 @@ func (sn StateNode) DetailedLineage() string {
 	var id string
 	var numChanges int = 0
 	if sn.action != nil {
-		id = sn.action.ControllerID
+		id = string(sn.action.ControllerID)
 		numChanges = len(sn.action.Changes.ObjectVersions)
 	} else {
 		id = "root"
@@ -538,7 +538,7 @@ func (sn StateNode) ReconcileLineage() string {
 	var numChanges int = 0
 
 	if sn.action != nil {
-		id = sn.action.ControllerID
+		id = string(sn.action.ControllerID)
 		frameID = util.Shorter(sn.action.FrameID) // TODO this is not robust
 		numChanges = len(sn.action.Changes.ObjectVersions)
 	} else {

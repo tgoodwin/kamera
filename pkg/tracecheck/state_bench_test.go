@@ -93,7 +93,7 @@ func makeBenchmarkStateNode(numObjects, numPending int) StateNode {
 	pending := make([]PendingReconcile, 0, numPending)
 	for i := 0; i < numPending; i++ {
 		pending = append(pending, PendingReconcile{
-			ReconcilerID: fmt.Sprintf("reconciler-%d", i),
+			ReconcilerID: ReconcilerID(fmt.Sprintf("reconciler-%d", i)),
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Namespace: "ns",
@@ -122,7 +122,7 @@ func makeBenchmarkHistory(length, effectsPer int) ExecutionHistory {
 			}
 		}
 		hist = append(hist, &ReconcileResult{
-			ControllerID: fmt.Sprintf("reconciler-%d", i%3),
+			ControllerID: ReconcilerID(fmt.Sprintf("reconciler-%d", i%3)),
 			FrameID:      fmt.Sprintf("frame-%d", i),
 			FrameType:    FrameTypeExplore,
 			Changes: Changes{

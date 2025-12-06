@@ -68,7 +68,7 @@ func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, name t
 	// our cleanup reconciler implementation needs to know what kind of object it is reconciling
 	// as reconcile.Request is only namespace/name. so we inject it through the context.
 	// TODO factor this cleanup-specific stuff out into a dedicated strategy
-	if s.reconcilerName == cleanupReconcilerID {
+	if s.reconcilerName == string(cleanupReconcilerID) {
 		frameID := replay.FrameIDFromContext(ctx)
 		frameData, err := s.frameInserter.(*replay.FrameManager).GetCacheFrame(frameID)
 		if err != nil {
@@ -133,7 +133,7 @@ func (s *ControllerRuntimeStrategy) toFrameData(objects []runtime.Object) replay
 
 type ReconcilerContainer struct {
 	// The name of the reconciler
-	Name string
+	Name ReconcilerID
 
 	Strategy     Strategy
 	effectReader effectReader
@@ -206,7 +206,7 @@ func (r *ReconcilerContainer) replayReconcile(ctx context.Context, request recon
 	}, nil
 }
 
-func Wrap(name string, r reconcile.Reconciler, vm VersionManager, fi frameInserter, er effectReader) *ReconcilerContainer {
+func Wrap(name ReconcilerID, r reconcile.Reconciler, vm VersionManager, fi frameInserter, er effectReader) *ReconcilerContainer {
 	var scheme *runtime.Scheme
 	if scProvider, ok := vm.(interface {
 		Scheme() *runtime.Scheme
@@ -217,7 +217,7 @@ func Wrap(name string, r reconcile.Reconciler, vm VersionManager, fi frameInsert
 	strategy := &ControllerRuntimeStrategy{
 		Reconciler:     r,
 		frameInserter:  fi,
-		reconcilerName: name,
+		reconcilerName: string(name),
 		effectReader:   er,
 		scheme:         scheme,
 	}

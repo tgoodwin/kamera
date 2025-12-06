@@ -282,7 +282,7 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 		effects[i] = eff
 	}
 	return dumpReconcileResult{
-		ControllerID: step.ControllerID,
+		ControllerID: string(step.ControllerID),
 		FrameID:      step.FrameID,
 		FrameType:    step.FrameType,
 		Changes: dumpChanges{
@@ -300,7 +300,7 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 
 func fromDumpReconcileResult(dump dumpReconcileResult, resolver *dumpKeyResolver) *tracecheck.ReconcileResult {
 	return &tracecheck.ReconcileResult{
-		ControllerID: dump.ControllerID,
+		ControllerID: tracecheck.ReconcilerID(dump.ControllerID),
 		FrameID:      dump.FrameID,
 		FrameType:    dump.FrameType,
 		Changes: tracecheck.Changes{

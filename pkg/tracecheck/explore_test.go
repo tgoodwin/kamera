@@ -14,7 +14,7 @@ import (
 func Test_getNewPendingReconciles(t *testing.T) {
 	newPr := func(id, namespace, name string) PendingReconcile {
 		return PendingReconcile{
-			ReconcilerID: id,
+			ReconcilerID: ReconcilerID(id),
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Namespace: namespace,
@@ -92,7 +92,7 @@ func Test_getNewPendingReconciles(t *testing.T) {
 func Test_determineNewPendingReconciles(t *testing.T) {
 	newPr := func(id, namespace, name string) PendingReconcile {
 		return PendingReconcile{
-			ReconcilerID: id,
+			ReconcilerID: ReconcilerID(id),
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{
 					Namespace: namespace,
@@ -121,8 +121,8 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 		curr                     []PendingReconcile
 		pendingReconcile         PendingReconcile
 		triggered                []PendingReconcile
-		reconcilerKindDeps       map[string][]string
-		stuckReconcilerPositions map[string]KindSequences
+		reconcilerKindDeps       map[ReconcilerID][]string
+		stuckReconcilerPositions map[ReconcilerID]KindSequences
 		result                   *ReconcileResult
 		expected                 []PendingReconcile
 	}{
@@ -133,7 +133,7 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			},
 			pendingReconcile: newPr("controllerA", "namespace1", "name1"),
 			triggered:        nil,
-			reconcilerKindDeps: map[string][]string{
+			reconcilerKindDeps: map[ReconcilerID][]string{
 				"controllerA": {"Kind1", "Kind2"},
 			},
 			stuckReconcilerPositions: nil,
@@ -151,12 +151,12 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			},
 			pendingReconcile: newPr("controllerA", "namespace1", "name1"),
 			triggered:        []PendingReconcile{newPr("controllerB", "namespace1", "name2")},
-			reconcilerKindDeps: map[string][]string{
+			reconcilerKindDeps: map[ReconcilerID][]string{
 				"controllerA": {"Kind1", "Kind2"},
 				"controllerB": {"Kind1", "Kind2"},
 				"controllerC": {"Kind1", "Kind2"},
 			},
-			stuckReconcilerPositions: map[string]KindSequences{
+			stuckReconcilerPositions: map[ReconcilerID]KindSequences{
 				"controllerB": {
 					"Kind1": 1,
 				},
@@ -182,7 +182,7 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			triggered: []PendingReconcile{
 				newPr("controllerB", "namespace1", "name2"),
 			},
-			reconcilerKindDeps: map[string][]string{
+			reconcilerKindDeps: map[ReconcilerID][]string{
 				"controllerA": {"Kind1", "Kind2"},
 				"controllerB": {"Kind1", "Kind2"},
 				"controllerC": {"Kind1", "Kind2"},
@@ -207,7 +207,7 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			},
 			pendingReconcile: newPr("controllerA", "namespace1", "name1"),
 			triggered:        nil,
-			reconcilerKindDeps: map[string][]string{
+			reconcilerKindDeps: map[ReconcilerID][]string{
 				"controllerA": {"Kind1", "Kind2"},
 				"controllerB": {"Kind1", "Kind2"},
 				"controllerC": {"Kind1", "Kind2"},
@@ -231,12 +231,12 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			triggered: []PendingReconcile{
 				newPr("controllerB", "namespace1", "name2"),
 			},
-			reconcilerKindDeps: map[string][]string{
+			reconcilerKindDeps: map[ReconcilerID][]string{
 				"controllerA": {"Kind1", "Kind2"},
 				"controllerB": {"Kind1", "Kind2"},
 				"controllerC": {"Kind1", "Kind2"},
 			},
-			stuckReconcilerPositions: map[string]KindSequences{
+			stuckReconcilerPositions: map[ReconcilerID]KindSequences{
 				"controllerB": {
 					"Kind1": 1,
 				},
@@ -270,10 +270,10 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 					mockTriggered.EXPECT().KindDepsForReconciler(trig.ReconcilerID).Return(kindDeps, nil).Times(1)
 				}
 			}
-		e := &Explorer{
-			triggerManager: mockTriggered,
-			config:         &ExploreConfig{},
-		}
+			e := &Explorer{
+				triggerManager: mockTriggered,
+				config:         &ExploreConfig{},
+			}
 
 			state := StateNode{
 				PendingReconciles:        tt.curr,

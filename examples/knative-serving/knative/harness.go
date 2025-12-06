@@ -406,7 +406,7 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 // enqueueCapturingDeciders wraps a Deciders implementation to capture Watch callback invocations
 type enqueueCapturingDeciders struct {
 	kparesources.Deciders
-	reconcilerID string
+	reconcilerID tracecheck.ReconcilerID
 
 	// watchRegistered tracks whether we've already called Watch() on the underlying MultiScaler.
 	// Since MultiScaler.Watch() can only be called once, we need to make this idempotent.
@@ -452,7 +452,7 @@ func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
 // Since the underlying MultiScaler is a singleton, we also use a singleton wrapper to ensure
 // Watch() is only called once.
 // The wrapper uses the global async enqueue collector, which is automatically cleared after each Get() call.
-func NewEnqueueCapturingDeciders(base kparesources.Deciders, reconcilerID string) kparesources.Deciders {
+func NewEnqueueCapturingDeciders(base kparesources.Deciders, reconcilerID tracecheck.ReconcilerID) kparesources.Deciders {
 
 	persistentMultiScalerMu.Lock()
 	defer persistentMultiScalerMu.Unlock()
