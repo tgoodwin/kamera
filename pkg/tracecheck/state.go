@@ -99,19 +99,31 @@ type ReconcileResult struct {
 type ExecutionHistory []*ReconcileResult
 
 func (eh ExecutionHistory) UniqueKey() string {
-	// first filter out no-ops (but preserve convergence steps with 0 pending reconciles)
+	// Determine if the original path converged before filtering.
+	// Convergence occurs when:
+	// 1. The last step has 0 pending reconciles, OR
+	// 2. All remaining pending reconciles are ignorable for convergence (async enqueues/requeues)
+	originalConverged := false
+	if len(eh) > 0 {
+		lastStep := eh[len(eh)-1]
+		originalConverged = len(lastStep.PendingReconciles) == 0 ||
+			allPendingIgnorableForConvergence(lastStep.PendingReconciles)
+	}
+
+	// Filter out no-ops (steps with no changes and no errors)
 	filterNoOps := lo.Filter(eh, func(r *ReconcileResult, _ int) bool {
-		return len(r.Changes.ObjectVersions) > 0 || r.Error != "" || len(r.PendingReconciles) == 0
+		return len(r.Changes.ObjectVersions) > 0 || r.Error != ""
 	})
-	strComponents := lo.Map(filterNoOps, func(r *ReconcileResult, _ int) string {
+
+	strComponents := lo.Map(filterNoOps, func(r *ReconcileResult, idx int) string {
 		suffix := ""
 		if r.Error != "" {
 			suffix = "!"
 		}
-		// Include convergence marker to distinguish converged vs non-converged paths
-		// This ensures paths ending in convergence (0 pending reconciles) are not
-		// considered equivalent to paths that continue beyond that point
-		if len(r.PendingReconciles) == 0 {
+		// Include convergence marker on the last step if the original path converged.
+		// This ensures paths ending in convergence are not considered equivalent
+		// to paths that were cut off (e.g., due to max depth).
+		if idx == len(filterNoOps)-1 && originalConverged {
 			suffix += ":converged"
 		}
 		return fmt.Sprintf("%s@%d%s", r.ControllerID, len(r.Changes.Effects), suffix)
@@ -158,9 +170,9 @@ func (eh ExecutionHistory) FilterNoOps() ExecutionHistory {
 		// Keep reconciles that:
 		// 1. Have effects (state changes)
 		// 2. Have errors
-		// 3. Produce 0 pending reconciles (convergence step - important even if no-op)
-		// This ensures we preserve the final step that shows convergence
-		if len(r.Changes.ObjectVersions) > 0 || r.Error != "" || len(r.PendingReconciles) == 0 {
+		// No-op steps (no changes, no errors) are filtered out.
+		// Convergence is determined by whether the path completed, not by a special no-op step.
+		if len(r.Changes.ObjectVersions) > 0 || r.Error != "" {
 			filtered = append(filtered, r)
 		}
 	}
