@@ -36,7 +36,6 @@ func main() {
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
-	// eb.WithDebug()
 	eb.WithEmitter(event.NewInMemoryEmitter())
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{

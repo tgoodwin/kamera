@@ -45,8 +45,6 @@ type ExploreConfig struct {
 
 	breakEarly bool
 
-	debug bool
-
 	EnablePerfStats bool
 
 	// per-kind staleness config for each reconciler
@@ -306,12 +304,12 @@ func (e *Explorer) explore(
 		e.config.MaxDepth = DefaultMaxDepth
 	}
 
-	if e.config.debug {
-		logger.V(1).Info("initial state")
+	if logger.V(2).Enabled() {
+		logger.V(2).Info("initial state")
 		initialState.Contents.contents.DumpContents()
-		logger.V(1).Info("kind sequences")
+		logger.V(2).Info("kind sequences")
 		for k, v := range initialState.Contents.KindSequences {
-			logger.V(1).Info("kind sequence", "kind", k, "value", v)
+			logger.V(2).Info("kind sequence", "kind", k, "value", v)
 		}
 	}
 
@@ -523,9 +521,9 @@ func (e *Explorer) explore(
 
 		reconcilerID := pendingReconcile.ReconcilerID
 		for _, stateView := range possibleViews {
-			if e.config.debug {
-				logger.WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderSensitiveHash(), "Request", pendingReconcile.Request).Info("BEFORE")
-				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
+			if logger.V(2).Enabled() {
+				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderSensitiveHash(), "Request", pendingReconcile.Request).Info("BEFORE")
+				logger.V(2).WithValues("Queue", dumpQueue(queue)).Info("Queue")
 				stateView.Contents.DumpContents()
 				stateView.DumpPending()
 			}
@@ -564,9 +562,9 @@ func (e *Explorer) explore(
 				continue
 			}
 			logger.V(1).WithValues("Depth", currentState.depth, "NewPendingReconciles", newState.PendingReconciles).Info("reconcile step completed")
-			if e.config.debug {
-				logger.WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
-				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
+			if logger.V(2).Enabled() {
+				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
+				logger.V(2).WithValues("Queue", dumpQueue(queue)).Info("Queue")
 				newState.Contents.DumpContents()
 				newState.DumpPending()
 			}

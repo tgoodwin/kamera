@@ -84,10 +84,6 @@ func (b *ExplorerBuilder) WithStrategy(id string, strategyFunc func(recorder rep
 	return b.WithCustomStrategy(id, strategyFunc)
 }
 
-func (b *ExplorerBuilder) WithDebug() {
-	b.config.debug = true
-}
-
 func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
 	b.config.EnablePerfStats = true
 	return b
