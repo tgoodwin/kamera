@@ -15,10 +15,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// ResourceDeps is a map of canonical resource identifiers (group/kind) to the reconcilers that depend on them.
-type ResourceDeps map[string]util.Set[string]
+// ReconcilerID is a type alias for reconciler identifiers, providing type safety
+// and clarity when working with reconciler references throughout the codebase.
+type ReconcilerID string
 
-func (rd ResourceDeps) ForReconciler(reconcilerID string) ([]string, error) {
+// ResourceDeps is a map of canonical resource identifiers (group/kind) to the reconcilers that depend on them.
+type ResourceDeps map[string]util.Set[ReconcilerID]
+
+func (rd ResourceDeps) ForReconciler(reconcilerID ReconcilerID) ([]string, error) {
 	out := make([]string, 0)
 	found := false
 	for kind, reconcilers := range rd {
@@ -35,7 +39,7 @@ func (rd ResourceDeps) ForReconciler(reconcilerID string) ([]string, error) {
 
 // PrimariesByKind tracks the owner of a resource by kind, where owner is the reconciler that
 // has ControllerManagedBy.For called with the kind of the resource
-type PrimariesByKind map[string]util.Set[string]
+type PrimariesByKind map[string]util.Set[ReconcilerID]
 
 // PendingReconcileSource indicates how a reconcile request was triggered
 type PendingReconcileSource string
@@ -50,7 +54,7 @@ const (
 )
 
 type PendingReconcile struct {
-	ReconcilerID string
+	ReconcilerID ReconcilerID
 	Request      reconcile.Request
 	Source       PendingReconcileSource
 }
@@ -108,14 +112,14 @@ func canonicalKindKey(group, kind string) string {
 }
 
 // NewTriggerManager creates a new instance of TriggerManager
-func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPrimaryKind map[string]string, resolver hashResolver) *TriggerManager {
+func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPrimaryKind map[ReconcilerID]string, resolver hashResolver) *TriggerManager {
 
 	primariesByKind := make(PrimariesByKind)
 	for reconcilerID, kindSpec := range reconcilerToPrimaryKind {
 		gk := util.ParseGroupKind(kindSpec)
 		canonical := canonicalKindKeyFromGroupKind(gk)
 		if _, exists := primariesByKind[canonical]; !exists {
-			primariesByKind[canonical] = make(util.Set[string])
+			primariesByKind[canonical] = make(util.Set[ReconcilerID])
 		}
 		primariesByKind[canonical].Add(reconcilerID)
 	}
@@ -126,7 +130,7 @@ func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPr
 	}
 }
 
-func (tm *TriggerManager) KindDepsForReconciler(reconcilerID string) ([]string, error) {
+func (tm *TriggerManager) KindDepsForReconciler(reconcilerID ReconcilerID) ([]string, error) {
 	return tm.deps.ForReconciler(reconcilerID)
 }
 
@@ -164,7 +168,6 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 				Request: reconcile.Request{
 					NamespacedName: nsName,
 				},
-				Source: SourceStateChange,
 			}
 		}
 
@@ -178,7 +181,6 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 					Request: reconcile.Request{
 						NamespacedName: nsName,
 					},
-					Source: SourceStateChange,
 				}
 			}
 		}
@@ -204,7 +206,6 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 							Request: reconcile.Request{
 								NamespacedName: ownerNSName,
 							},
-							Source: SourceStateChange,
 						}
 					}
 				}
@@ -242,8 +243,8 @@ func (tm *TriggerManager) GetTriggered(changes Changes) ([]PendingReconcile, err
 	return result, nil
 }
 
-func NewPendingReconciles(nsName types.NamespacedName, dependentControllers ...string) []PendingReconcile {
-	return lo.Map(dependentControllers, func(controllerID string, _ int) PendingReconcile {
+func NewPendingReconciles(nsName types.NamespacedName, dependentControllers ...ReconcilerID) []PendingReconcile {
+	return lo.Map(dependentControllers, func(controllerID ReconcilerID, _ int) PendingReconcile {
 		return PendingReconcile{
 			ReconcilerID: controllerID,
 			Request: reconcile.Request{

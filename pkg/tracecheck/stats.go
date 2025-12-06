@@ -12,13 +12,13 @@ type ExploreStats struct {
 	UniqueNodeVisits int
 	TotalNodeVisits  int
 
-	RestartsPerReconciler map[string]int
+	RestartsPerReconciler map[ReconcilerID]int
 
 	// reconcile step timing
 	TotalReconcileSteps int
 	TotalStepLatency    time.Duration
 	MaxStepLatency      time.Duration
-	StepLatencyByRecon  map[string]*latencyStat
+	StepLatencyByRecon  map[ReconcilerID]*latencyStat
 }
 
 type latencyStat struct {
@@ -33,8 +33,8 @@ func NewExploreStats() *ExploreStats {
 		startTime:    nil,
 		AbortedPaths: 0,
 
-		RestartsPerReconciler: make(map[string]int),
-		StepLatencyByRecon:    make(map[string]*latencyStat),
+		RestartsPerReconciler: make(map[ReconcilerID]int),
+		StepLatencyByRecon:    make(map[ReconcilerID]*latencyStat),
 	}
 }
 
@@ -48,7 +48,7 @@ func (s *ExploreStats) Finish() {
 	s.endTime = &endTime
 }
 
-func (s *ExploreStats) RecordStep(reconcilerID string, d time.Duration) {
+func (s *ExploreStats) RecordStep(reconcilerID ReconcilerID, d time.Duration) {
 	s.TotalReconcileSteps++
 	s.TotalStepLatency += d
 	if d > s.MaxStepLatency {
@@ -95,7 +95,6 @@ func (s *ExploreStats) Print() {
 			"maxStepLatency", s.MaxStepLatency,
 			"stepLatencyByReconciler", s.latencyByReconcilerSummary(),
 		)
-		// return
 	}
 	fmt.Printf("Total time: %v\n", s.endTime.Sub(*s.startTime))
 	fmt.Printf("Total node visits: %d\n", s.TotalNodeVisits)
@@ -114,7 +113,7 @@ func (s *ExploreStats) latencyByReconcilerSummary() map[string]map[string]any {
 		if ls == nil || ls.Count == 0 {
 			continue
 		}
-		out[reconID] = map[string]any{
+		out[string(reconID)] = map[string]any{
 			"count": ls.Count,
 			"avg":   ls.Avg(),
 			"max":   ls.Max,

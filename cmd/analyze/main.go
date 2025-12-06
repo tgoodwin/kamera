@@ -87,9 +87,9 @@ func main() {
 	tc.AssignReconcilerToKind("FelixReconciler", routeConfigKind)
 
 	deps := make(tracecheck.ResourceDeps)
-	deps[rpodKind] = util.NewSet("RPodReconciler", "FelixReconciler")
+	deps[rpodKind] = util.NewSet[tracecheck.ReconcilerID]("RPodReconciler", "FelixReconciler")
 
-	deps[routeConfigKind] = util.NewSet("FelixReconciler")
+	deps[routeConfigKind] = util.NewSet[tracecheck.ReconcilerID]("FelixReconciler")
 	tc.ResourceDeps = deps
 
 	tc.AddReconciler("RPodReconciler", func(c ctrlclient.Client) tracecheck.Reconciler {

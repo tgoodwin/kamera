@@ -49,7 +49,7 @@ func (mr *MockTriggerHandlerMockRecorder) GetTriggered(arg0 interface{}) *gomock
 }
 
 // KindDepsForReconciler mocks base method.
-func (m *MockTriggerHandler) KindDepsForReconciler(arg0 string) ([]string, error) {
+func (m *MockTriggerHandler) KindDepsForReconciler(arg0 ReconcilerID) ([]string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "KindDepsForReconciler", arg0)
 	ret0, _ := ret[0].([]string)

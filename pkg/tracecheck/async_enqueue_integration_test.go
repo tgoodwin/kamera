@@ -162,9 +162,8 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 		}
 	})
 
-	// Set max depth and mode
-	explorer.config.MaxDepth = 10
-	explorer.config.mode = DepthFirst
+	// Set max depth
+	explorer.config.maxDepth = 10
 
 	// Track depth progression and ticker-fired enqueues
 	type stepResult struct {
@@ -188,7 +187,7 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 	tickerBasedSeenAtDepths := make(map[int]bool)
 
 	// Take reconcile steps and observe depth progression and ticker fires
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		if len(currentState.PendingReconciles) == 0 {
 			break
 		}

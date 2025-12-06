@@ -79,7 +79,7 @@ type Changes struct {
 }
 
 type ReconcileResult struct {
-	ControllerID string
+	ControllerID ReconcilerID
 	FrameID      string
 	FrameType    FrameType
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
@@ -99,19 +99,31 @@ type ReconcileResult struct {
 type ExecutionHistory []*ReconcileResult
 
 func (eh ExecutionHistory) UniqueKey() string {
-	// first filter out no-ops (but preserve convergence steps with 0 pending reconciles)
+	// Determine if the original path converged before filtering.
+	// Convergence occurs when:
+	// 1. The last step has 0 pending reconciles, OR
+	// 2. All remaining pending reconciles are ignorable for convergence (async enqueues/requeues)
+	originalConverged := false
+	if len(eh) > 0 {
+		lastStep := eh[len(eh)-1]
+		originalConverged = len(lastStep.PendingReconciles) == 0 ||
+			allPendingIgnorableForConvergence(lastStep.PendingReconciles)
+	}
+
+	// Filter out no-ops (steps with no changes and no errors)
 	filterNoOps := lo.Filter(eh, func(r *ReconcileResult, _ int) bool {
-		return len(r.Changes.ObjectVersions) > 0 || r.Error != "" || len(r.PendingReconciles) == 0
+		return len(r.Changes.ObjectVersions) > 0 || r.Error != ""
 	})
-	strComponents := lo.Map(filterNoOps, func(r *ReconcileResult, _ int) string {
+
+	strComponents := lo.Map(filterNoOps, func(r *ReconcileResult, idx int) string {
 		suffix := ""
 		if r.Error != "" {
 			suffix = "!"
 		}
-		// Include convergence marker to distinguish converged vs non-converged paths
-		// This ensures paths ending in convergence (0 pending reconciles) are not
-		// considered equivalent to paths that continue beyond that point
-		if len(r.PendingReconciles) == 0 {
+		// Include convergence marker on the last step if the original path converged.
+		// This ensures paths ending in convergence are not considered equivalent
+		// to paths that were cut off (e.g., due to max depth).
+		if idx == len(filterNoOps)-1 && originalConverged {
 			suffix += ":converged"
 		}
 		return fmt.Sprintf("%s@%d%s", r.ControllerID, len(r.Changes.Effects), suffix)
@@ -158,9 +170,9 @@ func (eh ExecutionHistory) FilterNoOps() ExecutionHistory {
 		// Keep reconciles that:
 		// 1. Have effects (state changes)
 		// 2. Have errors
-		// 3. Produce 0 pending reconciles (convergence step - important even if no-op)
-		// This ensures we preserve the final step that shows convergence
-		if len(r.Changes.ObjectVersions) > 0 || r.Error != "" || len(r.PendingReconciles) == 0 {
+		// No-op steps (no changes, no errors) are filtered out.
+		// Convergence is determined by whether the path completed, not by a special no-op step.
+		if len(r.Changes.ObjectVersions) > 0 || r.Error != "" {
 			filtered = append(filtered, r)
 		}
 	}
@@ -177,6 +189,64 @@ func DebugPaths(paths []ExecutionHistory) {
 	}
 }
 
+// normalizeNoOpSuffix sorts the trailing no-op reconciles (no changes, no errors)
+// so that exploration order does not create spurious path permutations when the
+// remaining work is idempotent.
+func normalizeNoOpSuffix(path ExecutionHistory) ExecutionHistory {
+	cut := len(path)
+	for cut > 0 {
+		r := path[cut-1]
+		if len(r.Changes.ObjectVersions) == 0 && r.Error == "" {
+			cut--
+			continue
+		}
+		break
+	}
+
+	// No no-op suffix or only a single no-op reconcile to reorder.
+	if cut >= len(path)-1 {
+		return path
+	}
+
+	normalized := make(ExecutionHistory, 0, len(path))
+	normalized = append(normalized, path[:cut]...)
+
+	suffix := slices.Clone(path[cut:])
+	sort.SliceStable(suffix, func(i, j int) bool {
+		if suffix[i].ControllerID != suffix[j].ControllerID {
+			return suffix[i].ControllerID < suffix[j].ControllerID
+		}
+		return len(suffix[i].PendingReconciles) < len(suffix[j].PendingReconciles)
+	})
+
+	normalized = append(normalized, suffix...)
+	return normalized
+}
+
+// normalizeAndDedupePaths keeps full execution histories (including no-ops) but
+// normalizes trailing no-op reconciles to a deterministic order and removes
+// duplicate paths that would otherwise differ only by those no-op permutations.
+func normalizeAndDedupePaths(paths []ExecutionHistory) []ExecutionHistory {
+	seen := make(map[string]struct{})
+	deduped := make([]ExecutionHistory, 0, len(paths))
+
+	for _, path := range paths {
+		normalized := normalizeNoOpSuffix(path)
+		sigParts := make([]string, len(normalized))
+		for i, r := range normalized {
+			sigParts[i] = fmt.Sprintf("%s@%d", r.ControllerID, len(r.Deltas))
+		}
+		sig := strings.Join(sigParts, ",")
+		if _, ok := seen[sig]; ok {
+			continue
+		}
+		seen[sig] = struct{}{}
+		deduped = append(deduped, normalized)
+	}
+
+	return deduped
+}
+
 func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 	return lo.UniqBy(paths, func(path ExecutionHistory) string {
 		return path.UniqueKey()
@@ -184,8 +254,11 @@ func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 }
 
 func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
-	getUniquePaths(paths)
-	pathsWithoutNoOps := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
+	normalized := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
+		return normalizeNoOpSuffix(path)
+	})
+
+	pathsWithoutNoOps := lo.Map(normalized, func(path ExecutionHistory, _ int) ExecutionHistory {
 		return path.FilterNoOps()
 	})
 	// filter out empty paths
@@ -241,10 +314,10 @@ type StateNode struct {
 
 	// tracks what KindSequences a controller may be "stuck" on
 	// e.g. if a controller's watches are connected to a partitioned APIServer
-	stuckReconcilerPositions map[string]KindSequences
+	stuckReconcilerPositions map[ReconcilerID]KindSequences
 }
 
-func (sn StateNode) ObserveAs(reconcilerID string) ObjectVersions {
+func (sn StateNode) ObserveAs(reconcilerID ReconcilerID) ObjectVersions {
 	if sn.stuckReconcilerPositions == nil {
 		return sn.Contents.All()
 	}
@@ -379,7 +452,7 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 			builder.WriteByte(',')
 		}
 		// inline PendingReconcile.String to avoid fmt.Sprintf allocations
-		builder.WriteString(pr.ReconcilerID)
+		builder.WriteString(string(pr.ReconcilerID))
 		builder.WriteByte(':')
 		builder.WriteString(pr.Request.Namespace)
 		builder.WriteByte('/')
@@ -448,7 +521,7 @@ func (sn StateNode) DetailedLineage() string {
 	var id string
 	var numChanges int = 0
 	if sn.action != nil {
-		id = sn.action.ControllerID
+		id = string(sn.action.ControllerID)
 		numChanges = len(sn.action.Changes.ObjectVersions)
 	} else {
 		id = "root"
@@ -465,7 +538,7 @@ func (sn StateNode) ReconcileLineage() string {
 	var numChanges int = 0
 
 	if sn.action != nil {
-		id = sn.action.ControllerID
+		id = string(sn.action.ControllerID)
 		frameID = util.Shorter(sn.action.FrameID) // TODO this is not robust
 		numChanges = len(sn.action.Changes.ObjectVersions)
 	} else {

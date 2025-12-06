@@ -23,18 +23,18 @@ import (
 )
 
 const (
-	cleanupReconcilerID    = "CleanupReconciler"
-	deploymentControllerID = "DeploymentController"
+	cleanupReconcilerID    ReconcilerID = "CleanupReconciler"
+	deploymentControllerID ReconcilerID = "DeploymentController"
 )
 
 type ExplorerBuilder struct {
-	reconcilers                map[string]ReconcilerConstructor
-	recorderInjectedStrategies map[string]func(recorder replay.EffectRecorder) Strategy
+	reconcilers                map[ReconcilerID]ReconcilerConstructor
+	recorderInjectedStrategies map[ReconcilerID]func(recorder replay.EffectRecorder) Strategy
 	resourceDeps               ResourceDeps
 	scheme                     *runtime.Scheme
 	emitter                    testEmitter
 	snapStore                  *snapshot.Store
-	reconcilerToKind           map[string]string
+	reconcilerToKind           map[ReconcilerID]string
 
 	priorityBuilder *PriorityStrategyBuilder
 
@@ -49,17 +49,17 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	utilruntime.Must(corev1.AddToScheme(scheme))
 
 	builder := &ExplorerBuilder{
-		reconcilers:                make(map[string]ReconcilerConstructor),
-		recorderInjectedStrategies: make(map[string]func(recorder replay.EffectRecorder) Strategy),
+		reconcilers:                make(map[ReconcilerID]ReconcilerConstructor),
+		recorderInjectedStrategies: make(map[ReconcilerID]func(recorder replay.EffectRecorder) Strategy),
 		resourceDeps:               make(ResourceDeps),
 		scheme:                     scheme,
 		emitter:                    event.NewInMemoryEmitter(),
 		snapStore:                  snapshot.NewStore(),
-		reconcilerToKind:           make(map[string]string),
+		reconcilerToKind:           make(map[ReconcilerID]string),
 
 		config: &ExploreConfig{
-			MaxDepth:                10,
-			KindBoundsPerReconciler: make(map[string]ReconcilerConfig),
+			maxDepth:        10,
+			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
 		},
 	}
 
@@ -68,43 +68,35 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	return builder
 }
 
-func (b *ExplorerBuilder) WithReconciler(id string, constructor ReconcilerConstructor) *ExplorerBuilder {
+func (b *ExplorerBuilder) WithReconciler(id ReconcilerID, constructor ReconcilerConstructor) *ExplorerBuilder {
 	b.reconcilers[id] = constructor
 	return b
 }
 
-func (b *ExplorerBuilder) WithCustomStrategy(id string, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
+func (b *ExplorerBuilder) WithCustomStrategy(id ReconcilerID, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
 	{
 		b.recorderInjectedStrategies[id] = strategyFunc
 		return b
 	}
 }
 
-func (b *ExplorerBuilder) WithStrategy(id string, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
+func (b *ExplorerBuilder) WithStrategy(id ReconcilerID, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
 	return b.WithCustomStrategy(id, strategyFunc)
 }
 
-func (b *ExplorerBuilder) WithDebug() {
-	b.config.debug = true
-}
-
 func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
-	b.config.EnablePerfStats = true
+	b.config.recordPerfStats = true
 	return b
 }
 
-func (b *ExplorerBuilder) BreakEarly() {
-	b.config.breakEarly = true
-}
-
-func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...string) *ExplorerBuilder {
+func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...ReconcilerID) *ExplorerBuilder {
 	return b.WithResourceDepGK(parseKindString(kind), reconcilerIDs...)
 }
 
-func (b *ExplorerBuilder) WithResourceDepGK(gk schema.GroupKind, reconcilerIDs ...string) *ExplorerBuilder {
+func (b *ExplorerBuilder) WithResourceDepGK(gk schema.GroupKind, reconcilerIDs ...ReconcilerID) *ExplorerBuilder {
 	key := util.CanonicalGroupKind(gk.Group, gk.Kind)
 	if _, ok := b.resourceDeps[key]; !ok {
-		b.resourceDeps[key] = util.NewSet[string]()
+		b.resourceDeps[key] = util.NewSet[ReconcilerID]()
 	}
 	for _, id := range reconcilerIDs {
 		b.resourceDeps[key].Add(id)
@@ -122,18 +114,22 @@ func (b *ExplorerBuilder) WithPriorityStrategy(p *PriorityStrategyBuilder) *Expl
 }
 
 func (b *ExplorerBuilder) WithMaxDepth(depth int) *ExplorerBuilder {
-	b.config.MaxDepth = depth
+	b.config.maxDepth = depth
 	return b
 }
 
-// Deprecated: ExploreStaleStates is deprecated and will be removed in a future release.
-func (b *ExplorerBuilder) ExploreStaleStates() *ExplorerBuilder {
-	b.config.useStaleness = 1
+func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc PerturbationConfig) *ExplorerBuilder {
+	b.config.perturbationCfg[reconcilerID] = rc
 	return b
 }
 
-func (b *ExplorerBuilder) WithKindBounds(reconcilerID string, rc ReconcilerConfig) *ExplorerBuilder {
-	b.config.KindBoundsPerReconciler[reconcilerID] = rc
+// WithDivergenceCircuitBreaker enables the divergence circuit breaker.
+// If paths from a divergence point converge to the same state more than `threshold` times,
+// further exploration from that subtree is skipped. This is a performance optimization
+// to limit combinatorial explosion. Currently, divergence points are created for
+// stale-read perturbations.
+func (b *ExplorerBuilder) WithDivergenceCircuitBreaker(threshold int) *ExplorerBuilder {
+	b.config.divergenceCircuitBreakerThreshold = threshold
 	return b
 }
 
@@ -149,7 +145,7 @@ func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBu
 
 // AssignReconcilerToKind configures which resource a reconciler "owns"
 // TODO make how we handle kinds more type safe
-func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID, kind string) *ExplorerBuilder {
+func (b *ExplorerBuilder) AssignReconcilerToKind(reconcilerID ReconcilerID, kind string) *ExplorerBuilder {
 	gk := parseKindString(kind)
 	b.reconcilerToKind[reconcilerID] = util.CanonicalGroupKind(gk.Group, gk.Kind)
 	return b
@@ -221,14 +217,14 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")
 }
 
-func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*ReconcilerContainer {
-	containers := make(map[string]*ReconcilerContainer)
+func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[ReconcilerID]*ReconcilerContainer {
+	containers := make(map[ReconcilerID]*ReconcilerContainer)
 
 	for reconcilerID, constructor := range b.reconcilers {
 		var frameManager *replay.FrameManager
 		if b.builder != nil {
 			// Build harness from the replay builder
-			h, err := b.builder.BuildHarness(reconcilerID)
+			h, err := b.builder.BuildHarness(string(reconcilerID))
 			if err != nil {
 				// Handle error
 				panic("building harness: " + err.Error())
@@ -244,7 +240,7 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 
 		// Create replay client
 		replayClient := replay.NewClient(
-			reconcilerID,
+			string(reconcilerID),
 			b.scheme,
 			frameManager,
 			mgr,
@@ -280,17 +276,17 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[string]*Recon
 func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *ReconcilerContainer {
 	fm := replay.NewFrameManager(nil)
 	replayClient := replay.NewClient(
-		cleanupReconcilerID,
+		string(cleanupReconcilerID),
 		b.scheme,
 		fm,
 		mgr,
 	)
 	wrappedClient := tracegen.New(
 		replayClient,
-		cleanupReconcilerID,
+		string(cleanupReconcilerID),
 		b.emitter,
 		tracegen.NewContextTracker(
-			cleanupReconcilerID,
+			string(cleanupReconcilerID),
 			b.emitter,
 			replay.FrameIDFromContext,
 		),
@@ -301,7 +297,7 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 	}
 	container := &ReconcilerContainer{
 		Name:           cleanupReconcilerID,
-		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, reconcilerName: cleanupReconcilerID, effectReader: mgr},
+		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, reconcilerName: string(cleanupReconcilerID), effectReader: mgr},
 		effectReader:   mgr,
 		versionManager: mgr,
 	}
@@ -318,7 +314,7 @@ func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
 	)
 }
 
-func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...string) StateNode {
+func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
 	gvk := ensureObjectGVK(obj, b.scheme)
 
 	r, err := snapshot.AsRecord(obj, "start")
@@ -333,7 +329,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Group: gvk.Group, Kind: gvk.Kind, ObjectID: sleeveObjectID}
 
-	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {
+	dependent := lo.Map(dependentControllers, func(s ReconcilerID, _ int) PendingReconcile {
 		return PendingReconcile{
 			ReconcilerID: s,
 			Request: reconcile.Request{

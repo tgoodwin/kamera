@@ -34,43 +34,31 @@ type EffectContextManager interface {
 	CleanupEffectContext(ctx context.Context)
 }
 
-type ReconcilerConfig struct {
-	Bounds      LookbackLimits
-	MaxRestarts int
+type PerturbationConfig struct {
+	StaleReadBounds LookbackLimits
+	MaxRestarts     int
 }
 
-type ExploreMode string
-
-const (
-	DepthFirst   ExploreMode = "stack"
-	BreadthFirst ExploreMode = "queue"
-)
-
 type ExploreConfig struct {
-	MaxDepth     int
-	useStaleness int
+	maxDepth        int
+	recordPerfStats bool
+	// per-reconciler perturbation config
+	perturbationCfg map[ReconcilerID]PerturbationConfig
 
-	breakEarly bool
-
-	mode ExploreMode
-
-	debug bool
-
-	EnablePerfStats bool
-
-	// per-kind staleness config for each reconciler
-	KindBoundsPerReconciler map[string]ReconcilerConfig
+	// divergenceCircuitBreakerThreshold limits exploration below certain subtrees
+	// if enough paths below that subtree converge to the same state.
+	divergenceCircuitBreakerThreshold int
 }
 
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
 type TriggerHandler interface {
 	GetTriggered(changes Changes) ([]PendingReconcile, error)
-	KindDepsForReconciler(reconcilerID string) ([]string, error)
+	KindDepsForReconciler(reconcilerID ReconcilerID) ([]string, error)
 }
 
 type Explorer struct {
 	// reconciler implementations keyed by ID
-	reconcilers map[string]*ReconcilerContainer
+	reconcilers map[ReconcilerID]*ReconcilerContainer
 	// maps Kinds to a list of reconcilerIDs that depend on them
 	dependencies ResourceDeps
 
@@ -114,7 +102,7 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 	var rebuiltState *StateSnapshot
 	for _, reconcile := range reconciles {
-		reconcilerID := reconcile.ControllerID
+		reconcilerID := ReconcilerID(reconcile.ControllerID)
 		if _, ok := e.reconcilers[reconcilerID]; !ok {
 			panic(fmt.Sprintf("reconciler %s not found", reconcilerID))
 		}
@@ -185,31 +173,18 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
-func (e *Explorer) getNext(stackQueue []StateNode) (StateNode, []StateNode) {
-	if e.config.mode == DepthFirst {
-		return stackQueue[len(stackQueue)-1], stackQueue[:len(stackQueue)-1]
-	} else if e.config.mode == BreadthFirst {
-		return stackQueue[0], stackQueue[1:]
-	}
-	panic("Invalid mode")
+// getNext pops the next state from the queue using DFS (depth-first) ordering.
+func (e *Explorer) getNext(queue []StateNode) (StateNode, []StateNode) {
+	return queue[len(queue)-1], queue[:len(queue)-1]
 }
 
-func (e *Explorer) addStateToExplore(stackQueue []StateNode, state StateNode) []StateNode {
-	mode := e.config.mode
-	if mode == DepthFirst {
-		// Add to the end for a stack (matching getNext's pop from end)
-		return append(stackQueue, state)
-	} else if mode == BreadthFirst {
-		// Add to the end for a queue (matching getNext's pop from front)
-		return append(stackQueue, state)
-	}
-	return stackQueue
+// enqueueState adds a state to the exploration queue.
+func (e *Explorer) enqueueState(queue []StateNode, state StateNode) []StateNode {
+	return append(queue, state)
 }
 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
 	logger.Info("starting!")
-
-	e.config.mode = DepthFirst
 
 	exploreCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -244,7 +219,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	summarize := func(res *Result) {
 		logger.V(1).Info("explore summary")
-		if e.config != nil && e.config.EnablePerfStats {
+		if e.config != nil && e.config.recordPerfStats {
 			e.stats.Print()
 		}
 		res.Summarize()
@@ -286,7 +261,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	result := &Result{ConvergedStates: make([]ResultState, 0), AbortedStates: abortedCollected}
 	for i, stateKey := range lo.Keys(seenConvergedStates) {
 		state := seenConvergedStates[stateKey]
-		paths := executionPathsToState[stateKey]
+		paths := normalizeAndDedupePaths(executionPathsToState[stateKey])
 		state.DivergencePoint = initialState.DivergencePoint
 		convergedState := ResultState{
 			ID:       fmt.Sprintf("state-%d", i),
@@ -324,16 +299,16 @@ func (e *Explorer) explore(
 		close(abortedStatesCh)
 	}()
 
-	if e.config.MaxDepth == 0 {
-		e.config.MaxDepth = DefaultMaxDepth
+	if e.config.maxDepth == 0 {
+		e.config.maxDepth = DefaultMaxDepth
 	}
 
-	if e.config.debug {
-		logger.V(1).Info("initial state")
+	if logger.V(2).Enabled() {
+		logger.V(2).Info("initial state")
 		initialState.Contents.contents.DumpContents()
-		logger.V(1).Info("kind sequences")
+		logger.V(2).Info("kind sequences")
 		for k, v := range initialState.Contents.KindSequences {
-			logger.V(1).Info("kind sequence", "kind", k, "value", v)
+			logger.V(2).Info("kind sequence", "kind", k, "value", v)
 		}
 	}
 
@@ -377,29 +352,14 @@ func (e *Explorer) explore(
 		default:
 		}
 
-		if len(queue) == 1 {
-			remaining := queue[0]
-			logger.WithValues(
-				"StateHash", remaining.Hash(),
-				"OrderHash", remaining.OrderSensitiveHash(),
-				"PendingCount", len(remaining.PendingReconciles),
-				"Depth", remaining.depth,
-				"Mode", remaining.mode,
-			).Info("only one state remaining in queue")
-			if logger.V(1).Enabled() {
-				logger.V(1).WithValues(
-					"DivergenceKey", remaining.divergenceKey,
-					"ReconcileLineage", remaining.ReconcileLineage(),
-				).Info("queue tail details")
-			}
-		}
-
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
 		lineageKey := currentState.LineageHash()
 
-		logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", currentState.DetailedLineage())
+		if logger.V(1).Enabled() {
+			logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", currentState.DetailedLineage())
+		}
 
 		// we reconcile on the first pending reconcile for this state,
 		// but if there are multiple pending reconciles, we want to explore what would happen
@@ -410,16 +370,18 @@ func (e *Explorer) explore(
 		if len(currentState.PendingReconciles) > 1 {
 			if !seenStates[orderKey] || true {
 				expandedStates := expandStateByReconcileOrder(currentState)
-				branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
-					return sn.LineageHash()
-				})
-				logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
+				if logger.V(2).Enabled() {
+					branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
+						return sn.LineageHash()
+					})
+					logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
+				}
 				for _, candidate := range expandedStates {
 					lineageHash := candidate.LineageHash()
 					if _, seenOrder := seenStatesPendingOrderSensitive[lineageHash]; !seenOrder {
 						if lineageHash != lineageKey {
 							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", lineageHash)
-							queue = e.addStateToExplore(queue, candidate)
+							queue = e.enqueueState(queue, candidate)
 						}
 						seenStatesPendingOrderSensitive[lineageHash] = true
 					} else {
@@ -453,13 +415,17 @@ func (e *Explorer) explore(
 			if len(currentState.PendingReconciles) > 0 {
 				reason = "only async enqueues/requeues remaining"
 			}
-			logger.WithValues(
-				"Depth", currentState.depth,
-				"StateKey", currentState.Hash(),
-				"Reason", reason,
-				"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
-			).Info("arrived at converged state")
-			logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
+			if logger.V(1).Enabled() {
+				logger.V(1).WithValues(
+					"Depth", currentState.depth,
+					"StateKey", currentState.Hash(),
+					"Reason", reason,
+					"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
+				).Info("arrived at converged state")
+			}
+			if logger.V(2).Enabled() {
+				logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
+			}
 			seenConvergedStates[stateKey] = currentState
 
 			// track how many times we've arrived at this state from some common ancestor
@@ -476,13 +442,17 @@ func (e *Explorer) explore(
 			continue
 		}
 
-		// Subtree Circuit-Breaker
-		moveOnThreshold := 20
-		if currentState.divergenceKey != "" {
+		// Divergence Circuit-Breaker: limit exploration when paths from a divergence point
+		// keep converging to the same state.
+		if threshold := e.config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
 			convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
 			repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
-			if repeatedCount > moveOnThreshold {
-				logger.Info("skipping state with too many convergences", "StateKey", stateKey, "ConvergencesUnderKey", len(convergencesUnderKey))
+			if repeatedCount > threshold {
+				logger.V(1).Info("skipping state; subtree circuit breaker triggered",
+					"StateKey", stateKey,
+					"DivergenceKey", currentState.divergenceKey,
+					"Threshold", threshold,
+					"RepeatedConvergences", repeatedCount)
 				continue
 			}
 		}
@@ -537,9 +507,9 @@ func (e *Explorer) explore(
 
 		reconcilerID := pendingReconcile.ReconcilerID
 		for _, stateView := range possibleViews {
-			if e.config.debug {
-				logger.WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderSensitiveHash(), "Request", pendingReconcile.Request).Info("BEFORE")
-				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
+			if logger.V(2).Enabled() {
+				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderSensitiveHash(), "Request", pendingReconcile.Request).Info("BEFORE")
+				logger.V(2).WithValues("Queue", dumpQueue(queue)).Info("Queue")
 				stateView.Contents.DumpContents()
 				stateView.DumpPending()
 			}
@@ -547,10 +517,7 @@ func (e *Explorer) explore(
 			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
-			logger.WithValues(
-				"ReconcilerID", reconcilerID,
-				"Depth", currentState.depth,
-			).Info("Taking reconcile step")
+			stepLogger.Info("Taking reconcile step")
 
 			// for each view, create a new branch in exploration
 			newState, stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
@@ -581,9 +548,9 @@ func (e *Explorer) explore(
 				continue
 			}
 			logger.V(1).WithValues("Depth", currentState.depth, "NewPendingReconciles", newState.PendingReconciles).Info("reconcile step completed")
-			if e.config.debug {
-				logger.WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
-				logger.WithValues("Queue", dumpQueue(queue)).Info("Queue")
+			if logger.V(2).Enabled() {
+				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
+				logger.V(2).WithValues("Queue", dumpQueue(queue)).Info("Queue")
 				newState.Contents.DumpContents()
 				newState.DumpPending()
 			}
@@ -593,15 +560,14 @@ func (e *Explorer) explore(
 				seenDepths[newState.depth] = true
 			}
 
-			stateHash := newState.Hash()
-			normalizedHistory := newState.ExecutionHistory.UniqueKey()
-
-			if newState.depth > e.config.MaxDepth {
-				logger.WithValues(
-					"maxDepth", e.config.MaxDepth,
-					"currentDepth", newState.depth,
-					"Lineage", newState.ReconcileLineage(),
-				).V(1).Info("aborting path due to max depth")
+			if newState.depth > e.config.maxDepth {
+				if logger.V(1).Enabled() {
+					logger.WithValues(
+						"maxDepth", e.config.maxDepth,
+						"currentDepth", newState.depth,
+						"Lineage", newState.ReconcileLineage(),
+					).Info("aborting path due to max depth")
+				}
 				e.stats.AbortedPaths++
 				stateKey := newState.Hash()
 				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], newState.ExecutionHistory)
@@ -610,7 +576,7 @@ func (e *Explorer) explore(
 					ID:       fmt.Sprintf("aborted-%s", stateKey),
 					State:    newState,
 					Paths:    []ExecutionHistory{newState.ExecutionHistory},
-					Reason:   fmt.Sprintf("max depth %d", e.config.MaxDepth),
+					Reason:   fmt.Sprintf("max depth %d", e.config.maxDepth),
 					Resolver: e.versionManager,
 				}:
 				case <-ctx.Done():
@@ -618,11 +584,38 @@ func (e *Explorer) explore(
 				continue
 			}
 
+			// Deduplication: Skip exploring paths that reach the same state via equivalent mutations.
+			//
+			// Key invariant: Same pending list = Same future possibilities = Safe to skip.
+			//
+			// stateHash includes both object state AND pending reconciles. Two paths only
+			// match when they have identical pending lists. If the pending lists are identical,
+			// then the future exploration from both paths would be identical - same controllers
+			// to run, same state to observe - so exploring both would be redundant.
+			//
+			// Importantly, by the time we reach this check, we've already queued all ordering
+			// variants for the pending list (via expandStateByReconcileOrder at lines 388-410).
+			// Skipping here doesn't mean "we don't care about orderings" - it means "we've
+			// already scheduled those orderings to be explored, no need to schedule them again."
+			//
+			// At intermediate states, different orderings naturally yield different pending
+			// lists because whichever reconcile just ran gets removed:
+			//
+			//   Path A: ...→ Foo@1 → State X, Pending=[Bar]  (Foo removed)
+			//   Path B: ...→ Bar@1 → State X, Pending=[Foo]  (Bar removed)
+			//
+			// Different pending lists → different stateHashes → both fully explored.
+			//
+			// Pruning typically only occurs at convergence (Pending=[]) where all paths
+			// collapse to empty pending lists. The paths that get pruned differ only in
+			// no-op orderings, which by definition cannot produce different outcomes.
+			stateHash := newState.Hash()
 			historySet, alreadyTracked := visitedStatePaths[stateHash]
 			if !alreadyTracked {
 				historySet = make(map[string]struct{})
 				visitedStatePaths[stateHash] = historySet
 			}
+			normalizedHistory := newState.ExecutionHistory.UniqueKey()
 			if _, seenPath := historySet[normalizedHistory]; seenPath {
 				logger.V(1).WithValues(
 					"StateHash", stateHash,
@@ -632,7 +625,7 @@ func (e *Explorer) explore(
 			} else {
 				// enqueue the new state to explore
 				historySet[normalizedHistory] = struct{}{}
-				queue = e.addStateToExplore(queue, newState)
+				queue = e.enqueueState(queue, newState)
 			}
 		}
 	}
@@ -645,7 +638,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	stepLog := log.FromContext(ctx)
 	startWall := time.Now()
 	defer func() {
-		if e.stats != nil && e.config != nil && e.config.EnablePerfStats {
+		if e.stats != nil && e.config != nil && e.config.recordPerfStats {
 			e.stats.RecordStep(pr.ReconcilerID, time.Since(startWall))
 		}
 	}()
@@ -675,47 +668,26 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil && apierrors.IsAlreadyExists(err) {
+		// AlreadyExists errors happen when a stale read causes a controller to try creating
+		// an object that already exists. Treat this as a no-op and continue exploring.
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).Info("tolerating AlreadyExists error; treating reconcile as no-op")
-		beforeState := make(ObjectVersions)
-		maps.Copy(beforeState, state.Objects())
-		beforeSequences := make(KindSequences)
-		maps.Copy(beforeSequences, state.Contents.KindSequences)
-
 		reconcileResult = &ReconcileResult{
-			ControllerID:  pr.ReconcilerID,
-			FrameID:       frameID,
-			FrameType:     FrameTypeExplore,
-			Changes:       Changes{ObjectVersions: make(ObjectVersions)},
-			StateBefore:   beforeState,
-			StateAfter:    beforeState,
-			KindSeqBefore: beforeSequences,
-			KindSeqAfter:  beforeSequences,
-			Error:         err.Error(),
+			ControllerID: pr.ReconcilerID,
+			FrameID:      frameID,
+			FrameType:    FrameTypeExplore,
+			Changes:      Changes{ObjectVersions: make(ObjectVersions)},
+			Error:        err.Error(),
 		}
 		err = nil
 	}
 	if err != nil {
+		// Other errors cause the branch to be abandoned. Return a minimal result for history tracking.
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")
-		// return the pre-reconcile state if the controller errored
-		beforeState := make(ObjectVersions)
-		maps.Copy(beforeState, state.Objects())
-		beforeSequences := make(KindSequences)
-		maps.Copy(beforeSequences, state.Contents.KindSequences)
-		afterState := make(ObjectVersions)
-		maps.Copy(afterState, beforeState)
-		afterSequences := make(KindSequences)
-		maps.Copy(afterSequences, beforeSequences)
-
 		failure := &ReconcileResult{
-			ControllerID:  pr.ReconcilerID,
-			FrameID:       frameID,
-			FrameType:     FrameTypeReplay,
-			Changes:       Changes{ObjectVersions: make(ObjectVersions)},
-			StateBefore:   beforeState,
-			StateAfter:    afterState,
-			KindSeqBefore: beforeSequences,
-			KindSeqAfter:  afterSequences,
-			Error:         err.Error(),
+			ControllerID: pr.ReconcilerID,
+			FrameID:      frameID,
+			FrameType:    FrameTypeExplore,
+			Error:        err.Error(),
 		}
 		return state, failure, err
 	}
@@ -735,7 +707,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	maps.Copy(newSequences, state.Contents.KindSequences)
 	for key, seq := range newSequences {
 		if !strings.Contains(key, "/") {
-			stepLog.V(1).Info("kind sequence key lacks group info", "key", key, "sequence", seq)
+			stepLog.Error(nil, "kind sequence key lacks group info", "key", key, "sequence", seq)
 		}
 	}
 	effects := reconcileResult.Changes.Effects
@@ -869,20 +841,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	}
 
 	newPendingReconciles := e.determineNewPendingReconciles(ctx, state, pr, reconcileResult)
-	stepLog.Info("📋 PENDING-RECONCILES: final pending reconciles after step",
-		"depth", state.depth,
-		"count", len(newPendingReconciles),
-		"items", newPendingReconciles)
-
-	// Specifically log if any KPA enqueues made it into the pending list
-	for _, pending := range newPendingReconciles {
-		if pending.ReconcilerID == "KPA" {
-			stepLog.Info("✅ KPA-PENDING: KPA enqueue in pending reconciles",
-				"depth", state.depth,
-				"pa", pending.Request.NamespacedName,
-				"total_pending", len(newPendingReconciles))
-		}
-	}
+	stepLog.V(1).WithValues(
+		"Depth", state.depth,
+		"Count", len(newPendingReconciles),
+		"Items", newPendingReconciles,
+	).Info("final pending reconciles after step")
 
 	// make a copy of the current execution history
 	currHistory := slices.Clone(state.ExecutionHistory)
@@ -916,22 +879,13 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	return child, child.action, nil
 }
 
-// TODO figure out if we need to append to the front if using DFS
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
-	// lo.Union does not change the order of elements relatively, but it does remove duplicates
-	switch e.config.mode {
-	case DepthFirst:
-		// In DFS, we want to explore newly triggered reconciles first (depth-first)
-		// So we put triggered at the beginning of the list
-		// Remove duplicates while preserving order
-		return lo.Union(triggered, currPending)
-	case BreadthFirst:
-		// In BFS, we want to explore existing pending reconciles before newly triggered ones
-		// So we keep the original order - first finish currPending, then do triggered
-		return lo.Union(currPending, triggered)
-	default:
-		panic("invalid mode")
-	}
+	// In DFS, explore newly triggered reconciles first, then existing pending.
+	// Deduplicate by ReconcilerID + NamespacedName (first occurrence wins).
+	all := append(triggered, currPending...)
+	return lo.UniqBy(all, func(pr PendingReconcile) string {
+		return string(pr.ReconcilerID) + ":" + pr.Request.NamespacedName.String()
+	})
 }
 
 func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions, pr PendingReconcile) (*ReconcileResult, error) {
@@ -962,9 +916,9 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 	return res
 }
 
-func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID string, currDepth int) ([]StateNode, error) {
+func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID ReconcilerID, currDepth int) ([]StateNode, error) {
 	currSnapshot := currState.Contents
-	config, ok := e.config.KindBoundsPerReconciler[reconcilerID]
+	config, ok := e.config.perturbationCfg[reconcilerID]
 	if !ok {
 		logger.V(2).Info("no staleness bounds configured for reconciler", "ReconcilerID", reconcilerID)
 		// no staleness bounds configured for this reconciler, so dont compute stale states
@@ -977,8 +931,8 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return []StateNode{currState}, nil
 	}
 
-	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.config.MaxDepth)
-	possiblePastViews, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.Bounds)
+	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.config.maxDepth)
+	possiblePastViews, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.StaleReadBounds)
 	if err != nil {
 		return nil, errors.Wrap(err, "getting possible views")
 	}
@@ -993,9 +947,9 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 
 	divergenceHash := currState.Hash()
 	asStateNodes := lo.Map(possiblePastViews, func(staleState *StateSnapshot, _ int) StateNode {
-		var stuckPositions map[string]KindSequences
+		var stuckPositions map[ReconcilerID]KindSequences
 		if currState.stuckReconcilerPositions == nil {
-			stuckPositions = make(map[string]KindSequences)
+			stuckPositions = make(map[ReconcilerID]KindSequences)
 		} else {
 			stuckPositions = maps.Clone(currState.stuckReconcilerPositions)
 		}
@@ -1005,7 +959,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		// for.
 		stuckPositionsForReconciler := make(KindSequences)
 		for k, v := range staleState.KindSequences {
-			if _, exists := config.Bounds[k]; exists {
+			if _, exists := config.StaleReadBounds[k]; exists {
 				stuckPositionsForReconciler[k] = v
 			}
 		}
@@ -1050,35 +1004,12 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 		return pending != reconcileInput
 	})
 
-	containsGroupKind := func(list []string, group, kind string) bool {
-		canonical := util.CanonicalGroupKind(group, kind)
-		for _, item := range list {
-			if item == canonical {
-				return true
-			}
-		}
-		return false
-	}
-
 	// Read captured enqueues from the global collector (from Watch callbacks during reconcile).
 	// Get() automatically clears the collector after returning, so it's ready for the next step.
 	// These are already PendingReconcile entries with the correct reconciler ID.
 	stepLog := log.FromContext(ctx)
 	capturedPending := GetGlobalAsyncEnqueueCollector().Get()
 	if len(capturedPending) > 0 {
-		stepLog.Info("📥 COLLECTOR-READ: read captured enqueues from global collector",
-			"depth", state.depth,
-			"count", len(capturedPending),
-			"reconciler", reconcileInput.ReconcilerID)
-		// Log KPA ticker enqueues at info level for visibility
-		for _, pr := range capturedPending {
-			if pr.ReconcilerID == "KPA" {
-				stepLog.Info("🔥 KPA-TICKER: captured async enqueue",
-					"depth", state.depth,
-					"pa", pr.Request.NamespacedName,
-					"total_captured", len(capturedPending))
-			}
-		}
 		stepLog.V(1).Info("captured async enqueues from tickers",
 			"count", len(capturedPending),
 			"depth", state.depth,
@@ -1090,8 +1021,8 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// were triggered by the changes in the state.
 	triggeredByChanges := e.getTriggeredReconcilers(result.Changes)
 
-	// Log which reconcilers were triggered for debugging
-	if len(triggeredByChanges) > 0 {
+	// Log which reconcilers were triggered for debugging, but only if verbosity at least 1 is enabled.
+	if logger.V(1).Enabled() && len(triggeredByChanges) > 0 {
 		triggeredIDs := lo.Map(triggeredByChanges, func(pr PendingReconcile, _ int) string {
 			return pr.String()
 		})
@@ -1107,22 +1038,21 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// kinds their watch streams are "stuck" on.
 	if state.stuckReconcilerPositions != nil {
 		filtered := lo.Filter(triggeredByChanges, func(pending PendingReconcile, _ int) bool {
-			if stuckKinds, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]; stuck {
-				resourceDeps, _ := e.triggerManager.KindDepsForReconciler(pending.ReconcilerID)
-				couldSeeChange := false
-				for changeKey := range result.Changes.ObjectVersions {
-					canonicalKind := util.CanonicalGroupKind(changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind)
-					if _, stuckOnKind := stuckKinds[canonicalKind]; !stuckOnKind {
-						if containsGroupKind(resourceDeps, changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind) {
-							couldSeeChange = true
-						}
+			stuckKinds, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]
+			if !stuck {
+				return true // not stuck on anything, pass through
+			}
+			resourceDeps, _ := e.triggerManager.KindDepsForReconciler(pending.ReconcilerID)
+			for changeKey := range result.Changes.ObjectVersions {
+				canonicalKind := util.CanonicalGroupKind(changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind)
+				// If not stuck on this kind AND subscribes to it, could see the change
+				if _, stuckOnKind := stuckKinds[canonicalKind]; !stuckOnKind {
+					if slices.Contains(resourceDeps, canonicalKind) {
+						return true
 					}
 				}
-				return couldSeeChange
-			} else {
-				// if not stuck on anything, pass it through the filter!
-				return true
 			}
+			return false
 		})
 		triggeredByChanges = filtered
 	}
@@ -1130,22 +1060,10 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// if the controller returned a response with Requeue = true,
 	// we need to requeue the original request, no matter what.
 	if result.ctrlRes.Requeue {
-		reconcileInput.Source = SourceRequeue
 		triggeredByChanges = append(triggeredByChanges, reconcileInput)
 	}
 
 	allTriggered := append(triggeredByChanges, capturedPending...)
-
-	// Log the merge of captured enqueues into pending reconciles
-	if len(capturedPending) > 0 {
-		stepLog.Info("📤 MERGE-ENQUEUES: merging captured enqueues into pending reconciles",
-			"depth", state.depth,
-			"captured_count", len(capturedPending),
-			"triggered_by_changes_count", len(triggeredByChanges),
-			"total_pending", len(allTriggered),
-			"captured_enqueues", capturedPending)
-	}
-
 	return e.getNewPendingReconciles(stillPending, allTriggered)
 }
 

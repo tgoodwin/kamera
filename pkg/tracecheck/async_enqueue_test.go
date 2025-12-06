@@ -18,9 +18,9 @@ func TestAsyncEnqueueCollector_Add(t *testing.T) {
 
 	enqueues := collector.Get()
 	assert.Len(t, enqueues, 2)
-	assert.Equal(t, "Reconciler1", enqueues[0].ReconcilerID)
+	assert.Equal(t, ReconcilerID("Reconciler1"), enqueues[0].ReconcilerID)
 	assert.Equal(t, key1, enqueues[0].Request.NamespacedName)
-	assert.Equal(t, "Reconciler2", enqueues[1].ReconcilerID)
+	assert.Equal(t, ReconcilerID("Reconciler2"), enqueues[1].ReconcilerID)
 	assert.Equal(t, key2, enqueues[1].Request.NamespacedName)
 }
 
