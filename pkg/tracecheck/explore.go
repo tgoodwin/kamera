@@ -44,6 +44,10 @@ type ExploreConfig struct {
 	recordPerfStats bool
 	// per-reconciler perturbation config
 	perturbationCfg map[ReconcilerID]PerturbationConfig
+
+	// divergenceCircuitBreakerThreshold limits exploration below certain subtrees
+	// if enough paths below that subtree converge to the same state.
+	divergenceCircuitBreakerThreshold int
 }
 
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
@@ -348,23 +352,6 @@ func (e *Explorer) explore(
 		default:
 		}
 
-		if len(queue) == 1 {
-			remaining := queue[0]
-			logger.WithValues(
-				"StateHash", remaining.Hash(),
-				"OrderHash", remaining.OrderSensitiveHash(),
-				"PendingCount", len(remaining.PendingReconciles),
-				"Depth", remaining.depth,
-				"Mode", remaining.mode,
-			).Info("only one state remaining in queue")
-			if logger.V(1).Enabled() {
-				logger.V(1).WithValues(
-					"DivergenceKey", remaining.divergenceKey,
-					"ReconcileLineage", remaining.ReconcileLineage(),
-				).Info("queue tail details")
-			}
-		}
-
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
@@ -455,13 +442,17 @@ func (e *Explorer) explore(
 			continue
 		}
 
-		// Subtree Circuit-Breaker
-		moveOnThreshold := 20
-		if currentState.divergenceKey != "" {
+		// Divergence Circuit-Breaker: limit exploration when paths from a divergence point
+		// keep converging to the same state.
+		if threshold := e.config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
 			convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
 			repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
-			if repeatedCount > moveOnThreshold {
-				logger.Info("skipping state with too many convergences", "StateKey", stateKey, "ConvergencesUnderKey", len(convergencesUnderKey))
+			if repeatedCount > threshold {
+				logger.V(1).Info("skipping state; subtree circuit breaker triggered",
+					"StateKey", stateKey,
+					"DivergenceKey", currentState.divergenceKey,
+					"Threshold", threshold,
+					"RepeatedConvergences", repeatedCount)
 				continue
 			}
 		}

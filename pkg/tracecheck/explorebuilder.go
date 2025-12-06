@@ -123,6 +123,16 @@ func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc Pertur
 	return b
 }
 
+// WithDivergenceCircuitBreaker enables the divergence circuit breaker.
+// If paths from a divergence point converge to the same state more than `threshold` times,
+// further exploration from that subtree is skipped. This is a performance optimization
+// to limit combinatorial explosion. Currently, divergence points are created for
+// stale-read perturbations.
+func (b *ExplorerBuilder) WithDivergenceCircuitBreaker(threshold int) *ExplorerBuilder {
+	b.config.divergenceCircuitBreakerThreshold = threshold
+	return b
+}
+
 func (b *ExplorerBuilder) WithEmitter(emitter testEmitter) *ExplorerBuilder {
 	b.emitter = emitter
 	return b
