@@ -338,6 +338,7 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 					Name:      obj.GetName(),
 				},
 			},
+			Source: SourceStateChange,
 		}
 	})
 

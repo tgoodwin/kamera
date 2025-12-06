@@ -168,6 +168,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 				Request: reconcile.Request{
 					NamespacedName: nsName,
 				},
+				Source: SourceStateChange,
 			}
 		}
 
@@ -181,6 +182,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 					Request: reconcile.Request{
 						NamespacedName: nsName,
 					},
+					Source: SourceStateChange,
 				}
 			}
 		}
@@ -206,6 +208,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 							Request: reconcile.Request{
 								NamespacedName: ownerNSName,
 							},
+							Source: SourceStateChange,
 						}
 					}
 				}
@@ -250,6 +253,7 @@ func NewPendingReconciles(nsName types.NamespacedName, dependentControllers ...R
 			Request: reconcile.Request{
 				NamespacedName: nsName,
 			},
+			Source: SourceStateChange,
 		}
 	})
 }

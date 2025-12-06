@@ -162,6 +162,7 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 					Name:      obj.GetName(),
 				},
 			},
+			Source: SourceStateChange,
 		}
 	})
 

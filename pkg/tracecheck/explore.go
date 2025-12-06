@@ -881,11 +881,44 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
 	// In DFS, explore newly triggered reconciles first, then existing pending.
-	// Deduplicate by ReconcilerID + NamespacedName (first occurrence wins).
+	// When duplicates exist for the same (ReconcilerID + NamespacedName), if any have Source == StateChange,
+	// that one takes precedence over Requeue or AsyncEnqueue. Otherwise, first occurrence wins.
 	all := append(triggered, currPending...)
-	return lo.UniqBy(all, func(pr PendingReconcile) string {
-		return string(pr.ReconcilerID) + ":" + pr.Request.NamespacedName.String()
-	})
+
+	type dedupKey struct {
+		ReconcilerID   ReconcilerID
+		NamespacedName string
+	}
+
+	resultMap := make(map[dedupKey]PendingReconcile, len(all))
+	for _, pr := range all {
+		key := dedupKey{ReconcilerID: pr.ReconcilerID, NamespacedName: pr.Request.NamespacedName.String()}
+		existing, ok := resultMap[key]
+		if !ok {
+			resultMap[key] = pr
+			continue
+		}
+		// If new is StateChange and existing is not, replace
+		if pr.Source == SourceStateChange && existing.Source != SourceStateChange {
+			resultMap[key] = pr
+		}
+		// Otherwise, keep the existing one (first occurrence or StateChange takes precedence)
+	}
+
+	// preserve original order from "all", but use the winner from resultMap
+	final := make([]PendingReconcile, 0, len(resultMap))
+	seen := make(map[dedupKey]struct{}, len(resultMap))
+	for _, pr := range all {
+		key := dedupKey{ReconcilerID: pr.ReconcilerID, NamespacedName: pr.Request.NamespacedName.String()}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		if winner, exists := resultMap[key]; exists {
+			final = append(final, winner) // Add the winner (may differ from pr due to Source precedence)
+			seen[key] = struct{}{}
+		}
+	}
+	return final
 }
 
 func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions, pr PendingReconcile) (*ReconcileResult, error) {
@@ -957,6 +990,9 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		// after a restart / reconnect, the controller will be stuck at this position
 		// in the stale state, but only for the resource types it has staleness configuration
 		// for.
+		// this feature is for finding / reproducing bugs where the APIServer is run in HA mode and one of the nodes is partitioned.
+		// then, a controller connected to the leader crashes, restarts, and reconnects to the partitioned node,
+		// effectively "going back in time" to the frozen past state of the partitioned node.
 		stuckPositionsForReconciler := make(KindSequences)
 		for k, v := range staleState.KindSequences {
 			if _, exists := config.StaleReadBounds[k]; exists {
@@ -1060,7 +1096,12 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// if the controller returned a response with Requeue = true,
 	// we need to requeue the original request, no matter what.
 	if result.ctrlRes.Requeue {
-		triggeredByChanges = append(triggeredByChanges, reconcileInput)
+		requeued := PendingReconcile{
+			ReconcilerID: reconcileInput.ReconcilerID,
+			Request:      reconcileInput.Request,
+			Source:       SourceRequeue,
+		}
+		triggeredByChanges = append(triggeredByChanges, requeued)
 	}
 
 	allTriggered := append(triggeredByChanges, capturedPending...)

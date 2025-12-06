@@ -76,6 +76,104 @@ func Test_getNewPendingReconciles(t *testing.T) {
 			new:      []PendingReconcile{newPr("controllerA", "namespace1", "name1")},
 			expected: []PendingReconcile{newPr("controllerA", "namespace1", "name1")},
 		},
+		{
+			name: "StateChange takes precedence over Requeue when StateChange comes first",
+			curr: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceRequeue,
+				},
+			},
+			new: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceStateChange,
+				},
+			},
+			expected: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceStateChange,
+				},
+			},
+		},
+		{
+			name: "StateChange takes precedence over Requeue even when Requeue comes first in merged list",
+			curr: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceStateChange,
+				},
+			},
+			new: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceRequeue,
+				},
+			},
+			// new comes first in all[], so order is [Requeue, StateChange]
+			// But StateChange replaces Requeue because StateChange has priority
+			expected: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceStateChange,
+				},
+			},
+		},
+		{
+			name: "StateChange takes precedence over AsyncEnqueue",
+			curr: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceAsyncEnqueue,
+				},
+			},
+			new: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceStateChange,
+				},
+			},
+			expected: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceStateChange,
+				},
+			},
+		},
+		{
+			name: "Requeue vs AsyncEnqueue - first occurrence wins",
+			curr: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceAsyncEnqueue,
+				},
+			},
+			new: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceRequeue,
+				},
+			},
+			expected: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
+					Source:       SourceRequeue, // new comes before curr, so Requeue wins
+				},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -218,7 +316,13 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 				Changes: Changes{},
 			},
 			expected: []PendingReconcile{
-				newPr("controllerA", "namespace1", "name1"),
+				{
+					ReconcilerID: "controllerA",
+					Request: reconcile.Request{
+						NamespacedName: types.NamespacedName{Namespace: "namespace1", Name: "name1"},
+					},
+					Source: SourceRequeue,
+				},
 			},
 		},
 		{

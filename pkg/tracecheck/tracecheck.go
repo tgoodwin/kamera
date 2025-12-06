@@ -191,6 +191,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 					Name:      obj.GetName(),
 				},
 			},
+			Source: SourceStateChange,
 		}
 	})
 

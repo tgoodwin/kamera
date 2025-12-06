@@ -120,6 +120,7 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pod"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -200,12 +201,14 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pod"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "replicaSetController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-rs"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -234,12 +237,14 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-rs"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "deploymentController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-deploy"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -318,18 +323,21 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-1"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "podController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-2"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "serviceController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "svc-1"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -385,12 +393,14 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pod"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "routeConfigController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "route-config-1"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 	actual, err := tm.getTriggered(changes)
@@ -452,6 +462,7 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-job"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -515,6 +526,7 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pod"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
