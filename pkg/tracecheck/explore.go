@@ -39,20 +39,11 @@ type ReconcilerConfig struct {
 	MaxRestarts int
 }
 
-type ExploreMode string
-
-const (
-	DepthFirst   ExploreMode = "stack"
-	BreadthFirst ExploreMode = "queue"
-)
-
 type ExploreConfig struct {
 	MaxDepth     int
 	useStaleness int
 
 	breakEarly bool
-
-	mode ExploreMode
 
 	debug bool
 
@@ -185,31 +176,18 @@ func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
 
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
-func (e *Explorer) getNext(stackQueue []StateNode) (StateNode, []StateNode) {
-	if e.config.mode == DepthFirst {
-		return stackQueue[len(stackQueue)-1], stackQueue[:len(stackQueue)-1]
-	} else if e.config.mode == BreadthFirst {
-		return stackQueue[0], stackQueue[1:]
-	}
-	panic("Invalid mode")
+// getNext pops the next state from the queue using DFS (depth-first) ordering.
+func (e *Explorer) getNext(queue []StateNode) (StateNode, []StateNode) {
+	return queue[len(queue)-1], queue[:len(queue)-1]
 }
 
-func (e *Explorer) addStateToExplore(stackQueue []StateNode, state StateNode) []StateNode {
-	mode := e.config.mode
-	if mode == DepthFirst {
-		// Add to the end for a stack (matching getNext's pop from end)
-		return append(stackQueue, state)
-	} else if mode == BreadthFirst {
-		// Add to the end for a queue (matching getNext's pop from front)
-		return append(stackQueue, state)
-	}
-	return stackQueue
+// addStateToExplore adds a state to the exploration queue.
+func (e *Explorer) addStateToExplore(queue []StateNode, state StateNode) []StateNode {
+	return append(queue, state)
 }
 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
 	logger.Info("starting!")
-
-	e.config.mode = DepthFirst
 
 	exploreCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -917,32 +895,12 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 }
 
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
-	seen := make(map[string]struct{})
-	addUnique := func(list []PendingReconcile, out *[]PendingReconcile) {
-		for _, pr := range list {
-			key := pr.ReconcilerID + ":" + pr.Request.NamespacedName.String()
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-			*out = append(*out, pr)
-		}
-	}
-
-	merged := make([]PendingReconcile, 0, len(currPending)+len(triggered))
-	switch e.config.mode {
-	case DepthFirst:
-		// In DFS, explore newly triggered reconciles first
-		addUnique(triggered, &merged)
-		addUnique(currPending, &merged)
-	case BreadthFirst:
-		// In BFS, finish current queue before newly triggered ones
-		addUnique(currPending, &merged)
-		addUnique(triggered, &merged)
-	default:
-		panic("invalid mode")
-	}
-	return merged
+	// In DFS, explore newly triggered reconciles first, then existing pending.
+	// Deduplicate by ReconcilerID + NamespacedName (first occurrence wins).
+	all := append(triggered, currPending...)
+	return lo.UniqBy(all, func(pr PendingReconcile) string {
+		return pr.ReconcilerID + ":" + pr.Request.NamespacedName.String()
+	})
 }
 
 func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions, pr PendingReconcile) (*ReconcileResult, error) {
