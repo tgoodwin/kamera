@@ -88,9 +88,8 @@ type ResultState struct {
 }
 
 func (e *Explorer) shouldExploreDownstream(frameID string) bool {
-	// TODO make this some actual heursitic. Right now, it's hardcoded against some
-	// test data I was prototyping with.
-	return strings.HasPrefix(frameID, "821c")
+	// TODO make this some actual heursitic.
+	return true
 }
 
 func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
