@@ -181,8 +181,8 @@ func (e *Explorer) getNext(queue []StateNode) (StateNode, []StateNode) {
 	return queue[len(queue)-1], queue[:len(queue)-1]
 }
 
-// addStateToExplore adds a state to the exploration queue.
-func (e *Explorer) addStateToExplore(queue []StateNode, state StateNode) []StateNode {
+// enqueueState adds a state to the exploration queue.
+func (e *Explorer) enqueueState(queue []StateNode, state StateNode) []StateNode {
 	return append(queue, state)
 }
 
@@ -397,7 +397,7 @@ func (e *Explorer) explore(
 					if _, seenOrder := seenStatesPendingOrderSensitive[lineageHash]; !seenOrder {
 						if lineageHash != lineageKey {
 							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", lineageHash)
-							queue = e.addStateToExplore(queue, candidate)
+							queue = e.enqueueState(queue, candidate)
 						}
 						seenStatesPendingOrderSensitive[lineageHash] = true
 					} else {
@@ -571,9 +571,6 @@ func (e *Explorer) explore(
 				seenDepths[newState.depth] = true
 			}
 
-			stateHash := newState.Hash()
-			normalizedHistory := newState.ExecutionHistory.UniqueKey()
-
 			if newState.depth > e.config.MaxDepth {
 				logger.WithValues(
 					"maxDepth", e.config.MaxDepth,
@@ -596,11 +593,38 @@ func (e *Explorer) explore(
 				continue
 			}
 
+			// Deduplication: Skip exploring paths that reach the same state via equivalent mutations.
+			//
+			// Key invariant: Same pending list = Same future possibilities = Safe to skip.
+			//
+			// stateHash includes both object state AND pending reconciles. Two paths only
+			// match when they have identical pending lists. If the pending lists are identical,
+			// then the future exploration from both paths would be identical - same controllers
+			// to run, same state to observe - so exploring both would be redundant.
+			//
+			// Importantly, by the time we reach this check, we've already queued all ordering
+			// variants for the pending list (via expandStateByReconcileOrder at lines 388-410).
+			// Skipping here doesn't mean "we don't care about orderings" - it means "we've
+			// already scheduled those orderings to be explored, no need to schedule them again."
+			//
+			// At intermediate states, different orderings naturally yield different pending
+			// lists because whichever reconcile just ran gets removed:
+			//
+			//   Path A: ...→ Foo@1 → State X, Pending=[Bar]  (Foo removed)
+			//   Path B: ...→ Bar@1 → State X, Pending=[Foo]  (Bar removed)
+			//
+			// Different pending lists → different stateHashes → both fully explored.
+			//
+			// Pruning typically only occurs at convergence (Pending=[]) where all paths
+			// collapse to empty pending lists. The paths that get pruned differ only in
+			// no-op orderings, which by definition cannot produce different outcomes.
+			stateHash := newState.Hash()
 			historySet, alreadyTracked := visitedStatePaths[stateHash]
 			if !alreadyTracked {
 				historySet = make(map[string]struct{})
 				visitedStatePaths[stateHash] = historySet
 			}
+			normalizedHistory := newState.ExecutionHistory.UniqueKey()
 			if _, seenPath := historySet[normalizedHistory]; seenPath {
 				logger.V(1).WithValues(
 					"StateHash", stateHash,
@@ -610,7 +634,7 @@ func (e *Explorer) explore(
 			} else {
 				// enqueue the new state to explore
 				historySet[normalizedHistory] = struct{}{}
-				queue = e.addStateToExplore(queue, newState)
+				queue = e.enqueueState(queue, newState)
 			}
 		}
 	}
