@@ -258,23 +258,26 @@ func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 		return normalizeNoOpSuffix(path)
 	})
 
-	pathsWithoutNoOps := lo.Map(normalized, func(path ExecutionHistory, _ int) ExecutionHistory {
-		return path.FilterNoOps()
-	})
-	// filter out empty paths
-	pathsWithoutNoOps = lo.Filter(pathsWithoutNoOps, func(path ExecutionHistory, _ int) bool {
-		return len(path) > 0
-	})
-	// Deduplicate using UniqueKey() which already includes:
-	// - Controller IDs
-	// - Effects count (for each step)
-	// - Error markers
-	// - Convergence information (via FilterNoOps preserving 0-pending steps)
-	// This is cleaner than manually constructing a key and ensures all relevant
-	// path differences are captured, including convergence status.
-	unique := lo.UniqBy(pathsWithoutNoOps, func(path ExecutionHistory) string {
-		return path.UniqueKey()
-	})
+	// Deduplicate based on the filtered key (ignoring no-ops), but return the
+	// full normalized paths so the inspector can still display no-op steps.
+	unique := make([]ExecutionHistory, 0, len(normalized))
+	seen := make(map[string]struct{}, len(normalized))
+
+	for _, path := range normalized {
+		if len(path) == 0 {
+			continue
+		}
+		// If the path is entirely no-ops, skip it as before.
+		if len(path.FilterNoOps()) == 0 {
+			continue
+		}
+		key := path.UniqueKey()
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, path)
+	}
 
 	return unique
 }

@@ -160,7 +160,22 @@ func Test_GetUniquePaths(t *testing.T) {
 		},
 	}
 	if len(unique) != len(expected) {
-		t.Errorf("Expected %d unique paths, got %d", len(expected), len(unique))
+		t.Fatalf("Expected %d unique paths, got %d", len(expected), len(unique))
+	}
+
+	// Verify no-op reconciles are preserved in the returned paths (used for inspection),
+	// even though they are ignored for dedupe keys.
+	if len(unique[0]) != 2 {
+		t.Fatalf("expected first unique path to retain 2 steps (including trailing no-op), got %d", len(unique[0]))
+	}
+	if len(unique[0][1].Changes.ObjectVersions) != 0 {
+		t.Fatalf("expected trailing step in first path to be a no-op, got %d object versions", len(unique[0][1].Changes.ObjectVersions))
+	}
+	if len(unique[1]) != 3 {
+		t.Fatalf("expected second unique path to retain 3 steps (including leading/trailing no-ops), got %d", len(unique[1]))
+	}
+	if len(unique[1][0].Changes.ObjectVersions) != 0 || len(unique[1][2].Changes.ObjectVersions) != 0 {
+		t.Fatalf("expected no-ops at start/end of second path to be preserved")
 	}
 }
 
