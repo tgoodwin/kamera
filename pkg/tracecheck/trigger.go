@@ -187,6 +187,34 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 			}
 		}
 
+		// Add subscriber reconcilers that watch this kind (registered via WithResourceDep).
+		// This uses identity mapping: when a resource changes, we trigger subscribers with
+		// the changed object's namespace/name. This models controller-runtime's Watches()
+		// with EnqueueRequestForObject, and works for cases like Knative where related
+		// objects share names (e.g., Service, Configuration, Route all named "demo").
+		//
+		// Note: This does NOT support custom mapping (e.g., EnqueueRequestForOwner or
+		// EnqueueRequestsFromMapFunc). For owner-based triggers, use owner references.
+		if subscribers, exists := tm.deps[ownerKey]; exists {
+			for subscriberReconcilerID := range subscribers {
+				// Skip if this subscriber is already the primary reconciler for this kind
+				// (avoids double-triggering the primary)
+				if primaries, isPrimary := tm.owners[ownerKey]; isPrimary && primaries.Contains(subscriberReconcilerID) {
+					continue
+				}
+				reconcileKey := fmt.Sprintf("%s:%s:%s", subscriberReconcilerID, nsName.Namespace, nsName.Name)
+				if _, alreadyAdded := uniqueReconciles[reconcileKey]; !alreadyAdded {
+					uniqueReconciles[reconcileKey] = PendingReconcile{
+						ReconcilerID: subscriberReconcilerID,
+						Request: reconcile.Request{
+							NamespacedName: nsName,
+						},
+						Source: SourceStateChange,
+					}
+				}
+			}
+		}
+
 		// Process owner references if available
 		if objectVal.GetOwnerReferences() != nil {
 			for _, ownerRef := range objectVal.GetOwnerReferences() {

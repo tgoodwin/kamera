@@ -459,6 +459,21 @@ func (e *Explorer) explore(
 		// process the first one
 		pendingReconcile := currentState.PendingReconciles[0]
 
+		// Log all pending reconciles for diagnostic purposes
+		if logger.V(1).Enabled() {
+			pendingIDs := make([]string, len(currentState.PendingReconciles))
+			for i, pr := range currentState.PendingReconciles {
+				pendingIDs[i] = fmt.Sprintf("%s(%s)", pr.ReconcilerID, pr.Source)
+			}
+			logger.V(1).WithValues(
+				"Depth", currentState.depth,
+				"QueueDepth", len(queue),
+				"PendingCount", len(currentState.PendingReconciles),
+				"Pending", pendingIDs,
+				"Processing", pendingReconcile.ReconcilerID,
+			).Info("processing reconcile step")
+		}
+
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state.
 		possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID, currentState.depth)
