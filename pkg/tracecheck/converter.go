@@ -25,7 +25,7 @@ type joinRecord struct {
 
 type converterImpl struct {
 	orderedJoinRecords []joinRecord
-	framesByReconciler map[string][]string
+	framesByReconciler map[ReconcilerID][]string
 	reconcileIDToReads map[string]ObjectVersions
 }
 
@@ -52,10 +52,10 @@ func newConverter(things []joinRecord) *converterImpl {
 		reconcileIDToReads[reconcileID] = out
 	}
 
-	byReconciler := lo.GroupBy(things, func(t joinRecord) string {
-		return t.event.ControllerID
+	byReconciler := lo.GroupBy(things, func(t joinRecord) ReconcilerID {
+		return ReconcilerID(t.event.ControllerID)
 	})
-	framesByReconciler := make(map[string][]string)
+	framesByReconciler := make(map[ReconcilerID][]string)
 	for reconciler, things := range byReconciler {
 		sort.Slice(things, func(i, j int) bool {
 			return things[i].event.Timestamp < things[j].event.Timestamp
@@ -81,7 +81,7 @@ func (c *converterImpl) getStateAtReconcileStart(reconcileID string) (ObjectVers
 	return ov, nil
 }
 
-func (c *converterImpl) getFirstReconcileID(reconcilerID string) (string, error) {
+func (c *converterImpl) getFirstReconcileID(reconcilerID ReconcilerID) (string, error) {
 	frames, ok := c.framesByReconciler[reconcilerID]
 	if !ok {
 		return "", errors.New("reconcilerID not found")
@@ -92,7 +92,7 @@ func (c *converterImpl) getFirstReconcileID(reconcilerID string) (string, error)
 	return frames[0], nil
 }
 
-func (c *converterImpl) getNextReconcile(reconcilerID, frameID string) (string, error) {
+func (c *converterImpl) getNextReconcile(reconcilerID ReconcilerID, frameID string) (string, error) {
 	frames, ok := c.framesByReconciler[reconcilerID]
 	if !ok {
 		return "", errors.New("reconcilerID not found")
@@ -121,7 +121,7 @@ func (c *converterImpl) getStart() StateNode {
 		},
 		PendingReconciles: []PendingReconcile{
 			{
-				ReconcilerID: firstRecord.event.ControllerID,
+				ReconcilerID: ReconcilerID(firstRecord.event.ControllerID),
 				Request:      reconcile.Request{},
 			},
 		},

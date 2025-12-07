@@ -84,6 +84,6 @@ func TestSimClockAdvancesWithExploreDepth(t *testing.T) {
 	}
 
 	for _, step := range converged.Paths[0] {
-		require.Equal(t, "SimClockController", step.ControllerID)
+		require.Equal(t, tracecheck.ReconcilerID("SimClockController"), step.ControllerID)
 	}
 }

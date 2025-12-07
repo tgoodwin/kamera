@@ -138,7 +138,7 @@ func ensureObjectGVK(obj client.Object, scheme *runtime.Scheme) schema.GroupVers
 	return gvk
 }
 
-func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentControllers ...string) StateNode {
+func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
 	gvk := ensureObjectGVK(obj, b.scheme)
 
 	r, err := snapshot.AsRecord(obj, "start")
@@ -153,7 +153,7 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 	sleeveObjectID := tag.GetSleeveObjectID(obj)
 	ikey := snapshot.IdentityKey{Group: gvk.Group, Kind: gvk.Kind, ObjectID: sleeveObjectID}
 
-	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {
+	dependent := lo.Map(dependentControllers, func(s ReconcilerID, _ int) PendingReconcile {
 		return PendingReconcile{
 			ReconcilerID: s,
 			Request: reconcile.Request{
@@ -162,6 +162,7 @@ func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentContro
 					Name:      obj.GetName(),
 				},
 			},
+			Source: SourceStateChange,
 		}
 	})
 

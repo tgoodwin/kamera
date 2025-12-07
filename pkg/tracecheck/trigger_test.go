@@ -70,15 +70,15 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 	nodeKind := canonical("", "Node")
 	namespaceKind := canonical("", "Namespace")
 	deps := ResourceDeps{
-		podKind:       util.NewSet("podController"),
-		nodeKind:      util.NewSet("nodeController"),
-		namespaceKind: util.NewSet("nsController"),
+		podKind:       util.NewSet[ReconcilerID]("podController"),
+		nodeKind:      util.NewSet[ReconcilerID]("nodeController"),
+		namespaceKind: util.NewSet[ReconcilerID]("nsController"),
 	}
 
 	owners := PrimariesByKind{
-		podKind:       util.NewSet("podController"),
-		nodeKind:      util.NewSet("nodeController"),
-		namespaceKind: util.NewSet("nsController"),
+		podKind:       util.NewSet[ReconcilerID]("podController"),
+		nodeKind:      util.NewSet[ReconcilerID]("nodeController"),
+		namespaceKind: util.NewSet[ReconcilerID]("nsController"),
 	}
 
 	// Create test objects
@@ -120,6 +120,7 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pod"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -133,15 +134,15 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 	deploymentKind := canonical("apps", "Deployment")
 	replicaSetKind := canonical("apps", "ReplicaSet")
 	deps := ResourceDeps{
-		podKind:        util.NewSet("podController"),
-		deploymentKind: util.NewSet("deploymentController"),
-		replicaSetKind: util.NewSet("replicaSetController"),
+		podKind:        util.NewSet[ReconcilerID]("podController"),
+		deploymentKind: util.NewSet[ReconcilerID]("deploymentController"),
+		replicaSetKind: util.NewSet[ReconcilerID]("replicaSetController"),
 	}
 
 	owners := PrimariesByKind{
-		podKind:        util.NewSet("podController"),
-		deploymentKind: util.NewSet("deploymentController"),
-		replicaSetKind: util.NewSet("replicaSetController"),
+		podKind:        util.NewSet[ReconcilerID]("podController"),
+		deploymentKind: util.NewSet[ReconcilerID]("deploymentController"),
+		replicaSetKind: util.NewSet[ReconcilerID]("replicaSetController"),
 	}
 
 	// Create owner references
@@ -200,12 +201,14 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pod"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "replicaSetController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-rs"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -234,12 +237,14 @@ func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-rs"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "deploymentController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-deploy"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -254,13 +259,13 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 	podKind := canonical("", "Pod")
 	serviceKind := canonical("", "Service")
 	deps := ResourceDeps{
-		podKind:     util.NewSet("podController"),
-		serviceKind: util.NewSet("serviceController"),
+		podKind:     util.NewSet[ReconcilerID]("podController"),
+		serviceKind: util.NewSet[ReconcilerID]("serviceController"),
 	}
 
 	owners := PrimariesByKind{
-		podKind:     util.NewSet("podController"),
-		serviceKind: util.NewSet("serviceController"),
+		podKind:     util.NewSet[ReconcilerID]("podController"),
+		serviceKind: util.NewSet[ReconcilerID]("serviceController"),
 	}
 
 	// Create test objects
@@ -318,18 +323,21 @@ func TestGetTriggeredMultipleObjects(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-1"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "podController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "pod-2"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "serviceController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "svc-1"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -343,13 +351,13 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 	podKind := canonical("", "Pod")
 	routeConfigKind := canonical("", "RouteConfig")
 	deps := ResourceDeps{
-		podKind:         util.NewSet("podController"),
-		routeConfigKind: util.NewSet("routeConfigController", "podController"),
+		podKind:         util.NewSet[ReconcilerID]("podController"),
+		routeConfigKind: util.NewSet[ReconcilerID]("routeConfigController", "podController"),
 	}
 
 	owners := PrimariesByKind{
-		podKind:         util.NewSet("podController"),
-		routeConfigKind: util.NewSet("routeConfigController"),
+		podKind:         util.NewSet[ReconcilerID]("podController"),
+		routeConfigKind: util.NewSet[ReconcilerID]("routeConfigController"),
 	}
 
 	// Create owner references
@@ -385,12 +393,14 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pod"},
 			},
+			Source: SourceStateChange,
 		},
 		{
 			ReconcilerID: "routeConfigController",
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "route-config-1"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 	actual, err := tm.getTriggered(changes)
@@ -403,13 +413,13 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 	podKind := canonical("", "Pod")
 	jobKind := canonical("batch", "Job")
 	deps := ResourceDeps{
-		podKind: util.NewSet("podController"),
+		podKind: util.NewSet[ReconcilerID]("podController"),
 		// No entry for Job
 	}
 
 	owners := PrimariesByKind{
-		podKind: util.NewSet("podController"),
-		jobKind: util.NewSet("jobController"), // This exists in owners but not in deps
+		podKind: util.NewSet[ReconcilerID]("podController"),
+		jobKind: util.NewSet[ReconcilerID]("jobController"), // This exists in owners but not in deps
 	}
 
 	// Create test objects
@@ -452,6 +462,7 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-job"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -462,12 +473,12 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 	// Set up dependencies
 	podKind := canonical("", "Pod")
 	deps := ResourceDeps{
-		podKind: util.NewSet("podController"),
+		podKind: util.NewSet[ReconcilerID]("podController"),
 		// No entry for "CustomResource"
 	}
 
 	owners := PrimariesByKind{
-		podKind: util.NewSet("podController"),
+		podKind: util.NewSet[ReconcilerID]("podController"),
 		// No entry for "CustomResource"
 	}
 
@@ -515,6 +526,7 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "default", Name: "test-pod"},
 			},
+			Source: SourceStateChange,
 		},
 	}
 
@@ -524,11 +536,11 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 	// Set up dependencies
 	deps := ResourceDeps{
-		"Pod": util.NewSet("podController"),
+		"Pod": util.NewSet[ReconcilerID]("podController"),
 	}
 
 	owners := PrimariesByKind{
-		"Pod": util.NewSet("podController"),
+		"Pod": util.NewSet[ReconcilerID]("podController"),
 	}
 
 	// Create mock resolver with empty objects map

@@ -29,13 +29,13 @@ type testEmitter interface {
 }
 
 type TraceChecker struct {
-	reconcilerFactory map[string]ReconcilerConstructor
+	reconcilerFactory map[ReconcilerID]ReconcilerConstructor
 	ResourceDeps      ResourceDeps
 	manager           *manager
 	scheme            *runtime.Scheme
 
 	// this just determines which top-level object a reconciler is triggered with
-	reconcilerToKind map[string]string
+	reconcilerToKind map[ReconcilerID]string
 
 	knowledgeManager *KnowledgeManager
 
@@ -60,7 +60,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	}
 
 	return &TraceChecker{
-		reconcilerFactory: make(map[string]ReconcilerConstructor),
+		reconcilerFactory: make(map[ReconcilerID]ReconcilerConstructor),
 		ResourceDeps:      readDeps,
 		manager:           mgr,
 		scheme:            scheme,
@@ -72,7 +72,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 		mode: "standalone",
 
 		// TODO refactor
-		reconcilerToKind: make(map[string]string),
+		reconcilerToKind: make(map[ReconcilerID]string),
 	}
 }
 
@@ -127,9 +127,9 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		// now build the read deps
 		if event.IsReadOp(event.OperationType(e.OpType)) {
 			if _, ok := readDeps[e.Kind]; !ok {
-				readDeps[e.Kind] = util.NewSet[string]()
+				readDeps[e.Kind] = util.NewSet[ReconcilerID]()
 			}
-			readDeps[e.Kind].Add(e.ControllerID)
+			readDeps[e.Kind].Add(ReconcilerID(e.ControllerID))
 		}
 	}
 
@@ -146,7 +146,7 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 	}
 
 	return &TraceChecker{
-		reconcilerFactory: make(map[string]ReconcilerConstructor),
+		reconcilerFactory: make(map[ReconcilerID]ReconcilerConstructor),
 		ResourceDeps:      readDeps,
 		manager:           mgr,
 		mode:              "traced",
@@ -154,11 +154,11 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		knowledgeManager: knowledgeManager,
 
 		builder:          b,
-		reconcilerToKind: make(map[string]string),
+		reconcilerToKind: make(map[ReconcilerID]string),
 	}
 }
 
-func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentControllers ...string) StateNode {
+func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
 	r, err := snapshot.AsRecord(obj, "start")
 	if err != nil {
 		panic("converting to unstructured: " + err.Error())
@@ -174,10 +174,15 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 
 	// HACK TODO REFACTOR
 	if tc.builder == nil {
-		tc.builder = &replay.Builder{ReconcilerIDs: util.NewSet(dependentControllers...)}
+		// Convert ReconcilerID to string for the replay.Builder
+		stringIDs := make([]string, len(dependentControllers))
+		for i, id := range dependentControllers {
+			stringIDs[i] = string(id)
+		}
+		tc.builder = &replay.Builder{ReconcilerIDs: util.NewSet(stringIDs...)}
 	}
 
-	dependent := lo.Map(dependentControllers, func(s string, _ int) PendingReconcile {
+	dependent := lo.Map(dependentControllers, func(s ReconcilerID, _ int) PendingReconcile {
 		return PendingReconcile{
 			ReconcilerID: s,
 			Request: reconcile.Request{
@@ -186,6 +191,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 					Name:      obj.GetName(),
 				},
 			},
+			Source: SourceStateChange,
 		}
 	})
 
@@ -210,11 +216,11 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 	}
 }
 
-func (tc *TraceChecker) AddReconciler(reconcilerID string, constructor ReconcilerConstructor) {
+func (tc *TraceChecker) AddReconciler(reconcilerID ReconcilerID, constructor ReconcilerConstructor) {
 	tc.reconcilerFactory[reconcilerID] = constructor
 }
 
-func (tc *TraceChecker) AssignReconcilerToKind(reconcilerID, kind string) {
+func (tc *TraceChecker) AssignReconcilerToKind(reconcilerID ReconcilerID, kind string) {
 	gk := util.ParseGroupKind(kind)
 	tc.reconcilerToKind[reconcilerID] = util.CanonicalGroupKind(gk.Group, gk.Kind)
 }
@@ -223,13 +229,13 @@ func (tc *TraceChecker) AddEmitter(emitter testEmitter) {
 	tc.emitter = emitter
 }
 
-func (tc *TraceChecker) instantiateReconcilers() map[string]*ReconcilerContainer {
+func (tc *TraceChecker) instantiateReconcilers() map[ReconcilerID]*ReconcilerContainer {
 	if tc.emitter == nil {
 		panic("Must set emitter on TraceChecker before instantiating reconcilers")
 	}
-	out := make(map[string]*ReconcilerContainer)
+	out := make(map[ReconcilerID]*ReconcilerContainer)
 	for reconcilerID, constructor := range tc.reconcilerFactory {
-		h, err := tc.builder.BuildHarness(reconcilerID)
+		h, err := tc.builder.BuildHarness(string(reconcilerID))
 		if err != nil {
 			panic(fmt.Sprintf("building harness: %s", err))
 		}
@@ -237,7 +243,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]*ReconcilerContainer
 		// initialize the client's frame manager with traced frames
 		frameManager := replay.NewFrameManager(h.FrameData())
 		replayClient := replay.NewClient(
-			reconcilerID,
+			string(reconcilerID),
 			tc.scheme,
 			frameManager,
 			tc.manager, // this is what calls RecordEffect
@@ -245,10 +251,10 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]*ReconcilerContainer
 
 		wrappedClient := tracegen.New(
 			replayClient,
-			reconcilerID,
+			string(reconcilerID),
 			tc.emitter,
 			tracegen.NewContextTracker(
-				reconcilerID,
+				string(reconcilerID),
 				tc.emitter,
 				replay.FrameIDFromContext,
 			),
@@ -257,7 +263,7 @@ func (tc *TraceChecker) instantiateReconcilers() map[string]*ReconcilerContainer
 
 		container := &ReconcilerContainer{
 			Name:           reconcilerID,
-			Strategy:       NewControllerRuntimeStrategy(r, frameManager, tc.manager, reconcilerID),
+			Strategy:       NewControllerRuntimeStrategy(r, frameManager, tc.manager, string(reconcilerID)),
 			versionManager: tc.manager,
 			effectReader:   tc.manager,
 		}
@@ -309,7 +315,7 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		reconcilers:  reconcilers,
 		dependencies: tc.ResourceDeps,
 		config: &ExploreConfig{
-			MaxDepth: maxDepth,
+			maxDepth: maxDepth,
 		},
 
 		triggerManager: NewTriggerManager(

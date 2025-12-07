@@ -523,7 +523,7 @@ func getAllPossibleViews(baseState *StateSnapshot, relevantKinds []string, kindB
 	return staleViews
 }
 
-func getAllViewsForController(snapshot *StateSnapshot, reconcilerID string, deps ResourceDeps, kindBounds LookbackLimits) ([]*StateSnapshot, error) {
+func getAllViewsForController(snapshot *StateSnapshot, reconcilerID ReconcilerID, deps ResourceDeps, kindBounds LookbackLimits) ([]*StateSnapshot, error) {
 	controllerDeps, err := deps.ForReconciler(reconcilerID)
 	if err != nil {
 		return nil, err

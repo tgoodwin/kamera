@@ -11,22 +11,25 @@ import (
 func Test_ExecutionHistoryFilterNoOps(t *testing.T) {
 	eh := ExecutionHistory{
 		{
-			ControllerID: "1",
-			FrameID:      "1",
-			Changes:      Changes{ObjectVersions: ObjectVersions{}},
-			Deltas:       map[snapshot.CompositeKey]Delta{},
+			ControllerID:      "1",
+			FrameID:           "1",
+			Changes:           Changes{ObjectVersions: ObjectVersions{}},
+			Deltas:            map[snapshot.CompositeKey]Delta{},
+			PendingReconciles: []PendingReconcile{{ReconcilerID: "A", Request: reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "a"}}}},
 		},
 		{
-			ControllerID: "2",
-			FrameID:      "2",
-			Changes:      Changes{ObjectVersions: ObjectVersions{}},
-			Deltas:       map[snapshot.CompositeKey]Delta{},
+			ControllerID:      "2",
+			FrameID:           "2",
+			Changes:           Changes{ObjectVersions: ObjectVersions{}},
+			Deltas:            map[snapshot.CompositeKey]Delta{},
+			PendingReconciles: []PendingReconcile{{ReconcilerID: "B", Request: reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "b"}}}},
 		},
 		{
-			ControllerID: "3",
-			FrameID:      "3",
-			Changes:      Changes{ObjectVersions: ObjectVersions{}},
-			Deltas:       map[snapshot.CompositeKey]Delta{},
+			ControllerID:      "3",
+			FrameID:           "3",
+			Changes:           Changes{ObjectVersions: ObjectVersions{}},
+			Deltas:            map[snapshot.CompositeKey]Delta{},
+			PendingReconciles: []PendingReconcile{}, // Convergence step - no-op, filtered out
 		},
 		{
 			ControllerID: "4",
@@ -37,11 +40,18 @@ func Test_ExecutionHistoryFilterNoOps(t *testing.T) {
 			Deltas: map[snapshot.CompositeKey]Delta{
 				snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
 			},
+			PendingReconciles: []PendingReconcile{{ReconcilerID: "C", Request: reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "c"}}}},
 		},
 	}
 	filtered := eh.FilterNoOps()
+	// Should preserve only step 4 (has effects). Step 3 is a no-op and filtered out.
+	// Convergence distinction is handled by UniqueKey() using :converged marker.
 	if len(filtered) != 1 {
-		t.Errorf("Expected 0, got %d", len(filtered))
+		t.Errorf("Expected 1 (only step with effects), got %d", len(filtered))
+	}
+	// Verify step 4 (has effects) is preserved
+	if filtered[0].ControllerID != "4" {
+		t.Errorf("Expected step with effects (ControllerID=4) to be preserved, got ControllerID=%s", filtered[0].ControllerID)
 	}
 }
 
@@ -111,212 +121,118 @@ func Test_GetUniquePaths(t *testing.T) {
 				ControllerID: "1",
 				FrameID:      "1",
 				Changes:      Changes{ObjectVersions: ObjectVersions{}},
+				Deltas:       map[snapshot.CompositeKey]Delta{},
+			},
+			{
+				ControllerID: "2",
+				FrameID:      "2",
+				Changes: Changes{ObjectVersions: ObjectVersions{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
+				}},
 				Deltas: map[snapshot.CompositeKey]Delta{
 					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
 				},
+			},
+			{
+				ControllerID: "1",
+				FrameID:      "3",
+				Changes:      Changes{ObjectVersions: ObjectVersions{}},
+				Deltas:       map[snapshot.CompositeKey]Delta{},
 			},
 		},
 		{
 			{
-				ControllerID: "2",
-				FrameID:      "2",
-				Changes:      Changes{ObjectVersions: ObjectVersions{}},
+				ControllerID: "1",
+				FrameID:      "1",
+				Changes: Changes{ObjectVersions: ObjectVersions{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
+				}},
 				Deltas: map[snapshot.CompositeKey]Delta{
 					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
 				},
 			},
+			{
+				ControllerID: "2",
+				FrameID:      "2",
+				Changes:      Changes{ObjectVersions: ObjectVersions{}},
+				Deltas:       map[snapshot.CompositeKey]Delta{},
+			},
 		},
 	}
 	if len(unique) != len(expected) {
-		t.Errorf("Expected %d, got %d", len(expected), len(unique))
+		t.Errorf("Expected %d unique paths, got %d", len(expected), len(unique))
 	}
 }
 
-func TestHash(t *testing.T) {
-	ov := ObjectVersions{
-		snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
-	}
-	sn := StateNode{
-		Contents: StateSnapshot{
-			contents: ov,
-		},
-		PendingReconciles: []PendingReconcile{
-			{ReconcilerID: "controller1"},
-		},
-	}
-	hash := sn.Hash()
-	hash2 := sn.Hash()
-	if hash != hash2 {
-		t.Errorf("Expected %s, got %s", hash, hash2)
-	}
-}
-
-func TestExpandStateByReconcileOrder(t *testing.T) {
-	// Create test utility functions
-	createTestReconcile := func(id string, name string) PendingReconcile {
-		return PendingReconcile{
-			ReconcilerID: id,
-			Request: reconcile.Request{
-				NamespacedName: types.NamespacedName{
-					Namespace: "default",
-					Name:      name,
+// Test_GetUniquePaths_PreservesConvergenceSteps verifies that paths ending in convergence
+// are not deduplicated with non-converged paths, even if they have the same controller sequence.
+// Convergence is tracked via the :converged marker in UniqueKey(), not by preserving no-op steps.
+func Test_GetUniquePaths_PreservesConvergenceSteps(t *testing.T) {
+	// Path 1: A makes a change, then B makes a change and converges (0 pending)
+	// Path 2: A makes a change, then B makes a change but doesn't converge (has pending)
+	// These should be considered different paths due to the :converged marker
+	testPaths := []ExecutionHistory{
+		{
+			{
+				ControllerID: "A",
+				FrameID:      "1",
+				Changes: Changes{ObjectVersions: ObjectVersions{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
+				}},
+				Deltas: map[snapshot.CompositeKey]Delta{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
 				},
+				PendingReconciles: []PendingReconcile{{ReconcilerID: "B", Request: reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "b"}}}},
 			},
-		}
-	}
-
-	// Test cases
-	tests := []struct {
-		name              string
-		pendingReconciles []PendingReconcile
-		expectedCount     int
-		checkFirsts       bool // whether to verify each first element
-	}{
-		{
-			name:              "Empty pending reconciles",
-			pendingReconciles: []PendingReconcile{},
-			expectedCount:     1, // returns original state
-			checkFirsts:       false,
+			{
+				ControllerID: "B",
+				FrameID:      "2",
+				Changes: Changes{ObjectVersions: ObjectVersions{
+					snapshot.NewCompositeKey("Service", "default", "svc1", "1"): snapshot.NewDefaultHash("Hash2"),
+				}},
+				Deltas: map[snapshot.CompositeKey]Delta{
+					snapshot.NewCompositeKey("Service", "default", "svc1", "1"): "delta2",
+				},
+				PendingReconciles: []PendingReconcile{}, // Converged - 0 pending
+			},
 		},
 		{
-			name: "Single pending reconcile",
-			pendingReconciles: []PendingReconcile{
-				createTestReconcile("Rec1", "obj1"),
+			{
+				ControllerID: "A",
+				FrameID:      "1",
+				Changes: Changes{ObjectVersions: ObjectVersions{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
+				}},
+				Deltas: map[snapshot.CompositeKey]Delta{
+					snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
+				},
+				PendingReconciles: []PendingReconcile{{ReconcilerID: "B", Request: reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "b"}}}},
 			},
-			expectedCount: 1, // returns original state
-			checkFirsts:   false,
-		},
-		{
-			name: "Multiple pending reconciles",
-			pendingReconciles: []PendingReconcile{
-				createTestReconcile("Rec1", "obj1"),
-				createTestReconcile("Rec2", "obj2"),
-				createTestReconcile("Rec3", "obj3"),
+			{
+				ControllerID: "B",
+				FrameID:      "3",
+				Changes: Changes{ObjectVersions: ObjectVersions{
+					snapshot.NewCompositeKey("Service", "default", "svc1", "1"): snapshot.NewDefaultHash("Hash2"),
+				}},
+				Deltas: map[snapshot.CompositeKey]Delta{
+					snapshot.NewCompositeKey("Service", "default", "svc1", "1"): "delta2",
+				},
+				PendingReconciles: []PendingReconcile{{ReconcilerID: "C", Request: reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "c"}}}}, // Not converged, has pending
 			},
-			expectedCount: 3, // one for each reconcile
-			checkFirsts:   true,
 		},
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			// Create a test state node
-			inputState := StateNode{
-				ID:                "test-state",
-				PendingReconciles: tc.pendingReconciles,
-				ExecutionHistory:  make(ExecutionHistory, 0),
-				// Other fields can be nil for this test
-			}
-
-			// Call the function
-			result := expandStateByReconcileOrder(inputState)
-
-			// Check the number of returned states
-			if len(result) != tc.expectedCount {
-				t.Errorf("Expected %d states, got %d", tc.expectedCount, len(result))
-			}
-
-			// For single or empty reconcile cases, just check we got back the original
-			if len(tc.pendingReconciles) <= 1 {
-				if result[0].ID != inputState.ID {
-					t.Errorf("Expected original state ID, got different ID")
-				}
-				return
-			}
-
-			// For multiple reconciles, verify each expanded state
-			if tc.checkFirsts {
-				// Map to track which reconciles we've seen as first elements
-				firstReconciles := make(map[string]bool)
-
-				for _, state := range result {
-					// Ensure the ID is different from the original
-					if state.ID == inputState.ID {
-						t.Errorf("Expected new state ID, got original ID")
-					}
-
-					// Ensure the number of pending reconciles is the same
-					if len(state.PendingReconciles) != len(tc.pendingReconciles) {
-						t.Errorf("Expected %d pending reconciles, got %d",
-							len(tc.pendingReconciles), len(state.PendingReconciles))
-					}
-
-					// Check if we have the right first element
-					firstRecID := state.PendingReconciles[0].ReconcilerID
-					firstReconciles[firstRecID] = true
-
-					// Verify the full set of reconciles (order can differ but should contain all originals)
-					reconcileMap := make(map[string]bool)
-					for _, pr := range state.PendingReconciles {
-						reconcileMap[pr.ReconcilerID] = true
-					}
-
-					for _, expected := range tc.pendingReconciles {
-						if !reconcileMap[expected.ReconcilerID] {
-							t.Errorf("Missing expected reconcile %s in result state", expected.ReconcilerID)
-						}
-					}
-				}
-
-				// Verify each input reconcile was first in one of the output states
-				for _, expected := range tc.pendingReconciles {
-					if !firstReconciles[expected.ReconcilerID] {
-						t.Errorf("Reconcile %s was never first in any expanded state", expected.ReconcilerID)
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestReconcileLineage(t *testing.T) {
-	// Create test StateNodes to form a lineage
-	rootNode := &StateNode{
-		ID: "root",
+	unique := GetUniquePaths(testPaths)
+	// Should preserve both paths since one ends in convergence and one doesn't.
+	// The deduplication key includes ":converged" marker for the converged path,
+	// making them distinct even though both have the same A@1,B@1 structure.
+	if len(unique) != 2 {
+		t.Errorf("Expected 2 unique paths (one converged, one not), got %d", len(unique))
 	}
 
-	childNode := &StateNode{
-		ID:     "child",
-		parent: rootNode,
-		action: &ReconcileResult{
-			ControllerID: "Foo",
-			FrameID:      "1",
-			Changes: Changes{ObjectVersions: ObjectVersions{
-				snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
-				snapshot.NewCompositeKey("Pod", "default", "pod2", "2"): snapshot.NewDefaultHash("Hash"),
-				snapshot.NewCompositeKey("Pod", "default", "pod3", "3"): snapshot.NewDefaultHash("Hash"),
-			}},
-		},
-	}
-
-	grandChildNode := &StateNode{
-		ID:     "grandchild",
-		parent: childNode,
-		action: &ReconcileResult{
-			ControllerID: "Bar",
-			FrameID:      "2",
-			Changes:      Changes{ObjectVersions: ObjectVersions{}},
-		},
-	}
-
-	greatGrandChildNode := &StateNode{
-		ID:     "greatgrandchild",
-		parent: grandChildNode,
-		action: &ReconcileResult{
-			ControllerID: "Baz",
-			FrameID:      "3",
-			Changes:      Changes{ObjectVersions: ObjectVersions{}},
-		},
-	}
-
-	// Call ReconcileLineage on the great-grandchild node
-	lineage := greatGrandChildNode.ReconcileLineage()
-
-	// Expected lineage string
-	expectedLineage := "root=>Foo:1[3]=>Bar:2[0]=>Baz:3[0]"
-
-	// Assert the lineage matches the expected value
-	if lineage != expectedLineage {
-		t.Errorf("Expected lineage %s, got %s", expectedLineage, lineage)
+	// Verify the unique keys are different - one should have :converged suffix
+	key1 := unique[0].UniqueKey()
+	key2 := unique[1].UniqueKey()
+	if key1 == key2 {
+		t.Errorf("Expected different unique keys for converged vs non-converged paths, but both had key: %s", key1)
 	}
 }

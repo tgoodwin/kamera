@@ -130,6 +130,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 	mainTable := configureTable("States", true)
 	detailTable := configureTable("Details", true)
 	effectsTable := configureTable("Effects", true)
+	pendingReconcilesTable := configureTable("Pending Reconciles", true)
 	detailText := tview.NewTextView()
 	detailText.SetDynamicColors(true)
 	detailText.SetWrap(true)
@@ -158,16 +159,18 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		AddItem(statusBar, 1, 0, false)
 
 	var (
-		selectedState     = 0
-		selectedPath      = 0
-		selectedStep      = 0
-		mode              = modeStates
-		currentDetailMode detailTableMode
-		stateObjects      []stateObjectEntry
-		stepEffects       []effectEntry
-		returnFromText    func()
-		stateDetailRow    = 1
-		stepDetailRow     = 1
+		selectedState         = 0
+		selectedPath          = 0
+		selectedStep          = 0
+		mode                  = modeStates
+		currentDetailMode     detailTableMode
+		stateObjects          []stateObjectEntry
+		stepEffects           []effectEntry
+		stepPendingReconciles []tracecheck.PendingReconcile
+		returnFromText        func()
+		stateDetailRow        = 1
+		stepDetailRow         = 1
+		pendingDetailRow      = 1
 	)
 
 	layoutMode := ""
@@ -612,6 +615,40 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		showDetailText(title, summary, pathStatusMessage)
 	}
 
+	renderPendingReconciles := func(step *tracecheck.ReconcileResult, emptyTitle string) {
+		stepPendingReconciles = stepPendingReconciles[:0]
+		if step != nil {
+			stepPendingReconciles = step.PendingReconciles
+		}
+
+		pendingReconcilesTable.Clear()
+		if len(stepPendingReconciles) == 0 {
+			pendingReconcilesTable.SetTitle(emptyTitle)
+			pendingReconcilesTable.SetCell(0, 0, valueCell("(no pending reconciles)").SetSelectable(false).SetAlign(tview.AlignCenter))
+			pendingReconcilesTable.SetSelectedFunc(nil)
+			pendingDetailRow = 0
+		} else {
+			headers := []string{"Idx", "Reconciler", "Namespace", "Name", "Source"}
+			for col, val := range headers {
+				pendingReconcilesTable.SetCell(0, col, headerCell(val))
+			}
+			if pendingDetailRow <= 0 || pendingDetailRow > len(stepPendingReconciles) {
+				pendingDetailRow = 1
+			}
+			for idx, pr := range stepPendingReconciles {
+				pendingReconcilesTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
+				pendingReconcilesTable.SetCell(idx+1, 1, valueCell(string(pr.ReconcilerID)))
+				pendingReconcilesTable.SetCell(idx+1, 2, valueCell(pr.Request.Namespace))
+				pendingReconcilesTable.SetCell(idx+1, 3, valueCell(pr.Request.Name))
+				pendingReconcilesTable.SetCell(idx+1, 4, valueCell(string(pr.Source)))
+			}
+			pendingReconcilesTable.Select(pendingDetailRow, 0)
+			pendingReconcilesTable.SetTitle(fmt.Sprintf("Pending Reconciles • Step %d (%d)", selectedStep, len(stepPendingReconciles)))
+			pendingReconcilesTable.SetSelectedFunc(nil)
+		}
+		detailContainer.AddItem(pendingReconcilesTable, 0, 2, false)
+	}
+
 	renderStepDetail = func() {
 		if !stepDetailDirty && lastStepState == selectedState && lastStepPath == selectedPath && lastStepIdx == selectedStep {
 			updateStatus(stepStatusMessage)
@@ -741,7 +778,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		controller := "(nil)"
 		frame := "-"
 		if step != nil {
-			controller = step.ControllerID
+			controller = string(step.ControllerID)
 			frame = util.Shorter(step.FrameID)
 		}
 		detailTable.SetTitle(fmt.Sprintf("State • Step %d (%s @ %s)", selectedStep, controller, frame))
@@ -809,6 +846,9 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			effectsTable.SetSelectedFunc(nil)
 		}
 		detailContainer.AddItem(effectsTable, 0, 2, false)
+
+		// Populate pending reconciles panel
+		renderPendingReconciles(step, "Pending Reconciles • (none)")
 		currentDetailMode = detailStateObjects
 		reconcileDirty = true
 		updateStatus(stepStatusMessage)
@@ -850,8 +890,28 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		frame := "-"
 		step := path[selectedStep]
 		if step != nil {
-			controller = step.ControllerID
+			controller = string(step.ControllerID)
 			frame = util.Shorter(step.FrameID)
+		}
+
+		// Populate effects
+		stepEffects = stepEffects[:0]
+		resolverCache := getCache(state.Resolver)
+		if step != nil {
+			for idx, eff := range step.Changes.Effects {
+				gvk := resolveGVK(resolverCache, eff.Version, eff.Key)
+				entry := effectEntry{
+					effect:   eff,
+					cache:    resolverCache,
+					cacheRef: nil, // stepCache not available in this scope
+					cacheIdx: idx,
+					gvk:      gvk,
+				}
+				if val, ok := step.Deltas[eff.Key]; ok {
+					entry.delta = string(val)
+				}
+				stepEffects = append(stepEffects, entry)
+			}
 		}
 
 		effectsTable.Clear()
@@ -860,43 +920,46 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 			effectsTable.SetCell(0, 0, valueCell("(no effects)").SetSelectable(false).SetAlign(tview.AlignCenter))
 			detailText.SetTitle("Effect Detail")
 			detailText.SetText("(no effects to display)")
-			updateStatus(reconcileStatusMessage)
-			return
-		}
-
-		headers := []string{"Idx", "Verb", "GVK", "Namespace", "Name"}
-		for col, val := range headers {
-			effectsTable.SetCell(0, col, headerCell(val))
-		}
-		if stepDetailRow <= 0 || stepDetailRow > len(stepEffects) {
-			stepDetailRow = 1
-		}
-		for idx, entry := range stepEffects {
-			key := entry.effect.Key
-			effectsTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
-			effectsTable.SetCell(idx+1, 1, valueCell(string(entry.effect.OpType)))
-			effectsTable.SetCell(idx+1, 2, valueCell(entry.gvk))
-			effectsTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Namespace))
-			effectsTable.SetCell(idx+1, 4, valueCell(key.ResourceKey.Name))
-		}
-		effectsTable.SetTitle(fmt.Sprintf("Effects • Step %d (%s @ %s)", selectedStep, controller, frame))
-		effectsTable.SetSelectedFunc(func(row, _ int) {
-			if row <= 0 || row-1 >= len(stepEffects) {
-				return
+		} else {
+			headers := []string{"Idx", "Verb", "GVK", "Namespace", "Name"}
+			for col, val := range headers {
+				effectsTable.SetCell(0, col, headerCell(val))
 			}
-			stepDetailRow = row
-			entry := &stepEffects[row-1]
-			title, body := buildEffectDetail(entry)
-			detailText.SetTitle(title)
-			detailText.SetText(body)
-		})
-		effectsTable.Select(stepDetailRow, 0)
-		if stepDetailRow > 0 && stepDetailRow <= len(stepEffects) {
-			entry := &stepEffects[stepDetailRow-1]
-			title, body := buildEffectDetail(entry)
-			detailText.SetTitle(title)
-			detailText.SetText(body)
+			if stepDetailRow <= 0 || stepDetailRow > len(stepEffects) {
+				stepDetailRow = 1
+			}
+			for idx, entry := range stepEffects {
+				key := entry.effect.Key
+				effectsTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
+				effectsTable.SetCell(idx+1, 1, valueCell(string(entry.effect.OpType)))
+				effectsTable.SetCell(idx+1, 2, valueCell(entry.gvk))
+				effectsTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Namespace))
+				effectsTable.SetCell(idx+1, 4, valueCell(key.ResourceKey.Name))
+			}
+			effectsTable.SetTitle(fmt.Sprintf("Effects • Step %d (%s @ %s)", selectedStep, controller, frame))
+			effectsTable.SetSelectedFunc(func(row, _ int) {
+				if row <= 0 || row-1 >= len(stepEffects) {
+					return
+				}
+				stepDetailRow = row
+				entry := &stepEffects[row-1]
+				title, body := buildEffectDetail(entry)
+				detailText.SetTitle(title)
+				detailText.SetText(body)
+			})
+			effectsTable.Select(stepDetailRow, 0)
+			if stepDetailRow > 0 && stepDetailRow <= len(stepEffects) {
+				entry := &stepEffects[stepDetailRow-1]
+				title, body := buildEffectDetail(entry)
+				detailText.SetTitle(title)
+				detailText.SetText(body)
+			}
 		}
+		detailContainer.AddItem(effectsTable, 0, 2, false)
+
+		// Populate pending reconciles
+		renderPendingReconciles(step, fmt.Sprintf("Pending Reconciles • Step %d (none)", selectedStep))
+
 		currentDetailMode = detailStepEffects
 		currentDetailPrim = effectsTable
 		updateStatus(reconcileStatusMessage)
@@ -1307,7 +1370,7 @@ func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx
 		frame := "-"
 		writes := "0"
 		if step != nil {
-			controller = step.ControllerID
+			controller = string(step.ControllerID)
 			frame = util.Shorter(step.FrameID)
 			writes = fmt.Sprintf("%d", len(step.Changes.Effects))
 		}

@@ -15,10 +15,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// ResourceDeps is a map of canonical resource identifiers (group/kind) to the reconcilers that depend on them.
-type ResourceDeps map[string]util.Set[string]
+// ReconcilerID is a type alias for reconciler identifiers, providing type safety
+// and clarity when working with reconciler references throughout the codebase.
+type ReconcilerID string
 
-func (rd ResourceDeps) ForReconciler(reconcilerID string) ([]string, error) {
+// ResourceDeps is a map of canonical resource identifiers (group/kind) to the reconcilers that depend on them.
+type ResourceDeps map[string]util.Set[ReconcilerID]
+
+func (rd ResourceDeps) ForReconciler(reconcilerID ReconcilerID) ([]string, error) {
 	out := make([]string, 0)
 	found := false
 	for kind, reconcilers := range rd {
@@ -35,15 +39,56 @@ func (rd ResourceDeps) ForReconciler(reconcilerID string) ([]string, error) {
 
 // PrimariesByKind tracks the owner of a resource by kind, where owner is the reconciler that
 // has ControllerManagedBy.For called with the kind of the resource
-type PrimariesByKind map[string]util.Set[string]
+type PrimariesByKind map[string]util.Set[ReconcilerID]
+
+// PendingReconcileSource indicates how a reconcile request was triggered
+type PendingReconcileSource string
+
+const (
+	// SourceStateChange indicates the reconcile was triggered by a resource state change
+	SourceStateChange PendingReconcileSource = "State Change"
+	// SourceAsyncEnqueue indicates the reconcile was triggered by an async enqueue (e.g., ticker)
+	SourceAsyncEnqueue PendingReconcileSource = "Async Enqueue"
+
+	SourceRequeue PendingReconcileSource = "Requeue"
+)
 
 type PendingReconcile struct {
-	ReconcilerID string
+	ReconcilerID ReconcilerID
 	Request      reconcile.Request
+	Source       PendingReconcileSource
 }
 
 func (pr PendingReconcile) String() string {
 	return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+}
+
+// allPendingIgnorableForConvergence returns true if all pending reconciles are from
+// sources that don't indicate state changes (async enqueues from tickers, or requeues
+// from controllers that always re-enqueue). This is used to determine convergence:
+// if the only remaining work is time-based re-enqueues or poll-based requeues,
+// the controller logic has effectively converged since no state is changing.
+func allPendingIgnorableForConvergence(pending []PendingReconcile) bool {
+	if len(pending) == 0 {
+		return false // empty list should not be considered "all ignorable"
+	}
+	for _, pr := range pending {
+		if pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue {
+			return false
+		}
+	}
+	return true
+}
+
+// countIgnorableForConvergence counts pending reconciles that are ignorable for convergence
+func countIgnorableForConvergence(pending []PendingReconcile) int {
+	count := 0
+	for _, pr := range pending {
+		if pr.Source == SourceAsyncEnqueue || pr.Source == SourceRequeue {
+			count++
+		}
+	}
+	return count
 }
 
 type hashResolver interface {
@@ -67,14 +112,14 @@ func canonicalKindKey(group, kind string) string {
 }
 
 // NewTriggerManager creates a new instance of TriggerManager
-func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPrimaryKind map[string]string, resolver hashResolver) *TriggerManager {
+func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPrimaryKind map[ReconcilerID]string, resolver hashResolver) *TriggerManager {
 
 	primariesByKind := make(PrimariesByKind)
 	for reconcilerID, kindSpec := range reconcilerToPrimaryKind {
 		gk := util.ParseGroupKind(kindSpec)
 		canonical := canonicalKindKeyFromGroupKind(gk)
 		if _, exists := primariesByKind[canonical]; !exists {
-			primariesByKind[canonical] = make(util.Set[string])
+			primariesByKind[canonical] = make(util.Set[ReconcilerID])
 		}
 		primariesByKind[canonical].Add(reconcilerID)
 	}
@@ -85,7 +130,7 @@ func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPr
 	}
 }
 
-func (tm *TriggerManager) KindDepsForReconciler(reconcilerID string) ([]string, error) {
+func (tm *TriggerManager) KindDepsForReconciler(reconcilerID ReconcilerID) ([]string, error) {
 	return tm.deps.ForReconciler(reconcilerID)
 }
 
@@ -115,7 +160,6 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 			deletionTS := objectVal.GetDeletionTimestamp()
 			if deletionTS.IsZero() {
 				panic("found object marked for deletion but with no deletion timestamp")
-				return nil, fmt.Errorf("object %s marked for deletion but has no deletion timestamp", nsName)
 			}
 			// queue up the CleanupReconciler to handle the actual removal
 			reconcileKey := fmt.Sprintf("%s:%s:%s", cleanupReconcilerID, nsName.Namespace, nsName.Name)
@@ -124,6 +168,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 				Request: reconcile.Request{
 					NamespacedName: nsName,
 				},
+				Source: SourceStateChange,
 			}
 		}
 
@@ -137,6 +182,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 					Request: reconcile.Request{
 						NamespacedName: nsName,
 					},
+					Source: SourceStateChange,
 				}
 			}
 		}
@@ -162,6 +208,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 							Request: reconcile.Request{
 								NamespacedName: ownerNSName,
 							},
+							Source: SourceStateChange,
 						}
 					}
 				}
@@ -199,13 +246,14 @@ func (tm *TriggerManager) GetTriggered(changes Changes) ([]PendingReconcile, err
 	return result, nil
 }
 
-func NewPendingReconciles(nsName types.NamespacedName, dependentControllers ...string) []PendingReconcile {
-	return lo.Map(dependentControllers, func(controllerID string, _ int) PendingReconcile {
+func NewPendingReconciles(nsName types.NamespacedName, dependentControllers ...ReconcilerID) []PendingReconcile {
+	return lo.Map(dependentControllers, func(controllerID ReconcilerID, _ int) PendingReconcile {
 		return PendingReconcile{
 			ReconcilerID: controllerID,
 			Request: reconcile.Request{
 				NamespacedName: nsName,
 			},
+			Source: SourceStateChange,
 		}
 	})
 }

@@ -21,7 +21,11 @@ func Now() time.Time {
 
 // SetDepth sets the current depth and returns a restore func to reset to the previous depth.
 func SetDepth(depth int) func() {
-	prev := currentDepth.Swap(int64(depth))
+	newDepth := int64(depth)
+	prev := currentDepth.Swap(newDepth)
+	if newDepth > prev {
+		advanceTickers(prev, newDepth)
+	}
 	return func() {
 		currentDepth.Store(prev)
 	}

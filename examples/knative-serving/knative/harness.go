@@ -2,10 +2,14 @@ package kamera
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
+
+	jsonpatch "github.com/evanphx/json-patch"
 
 	"github.com/go-logr/logr"
 	"go.uber.org/zap"
@@ -25,9 +29,12 @@ import (
 	"knative.dev/pkg/reconciler"
 	reconcilertesting "knative.dev/pkg/reconciler/testing"
 
+	"reflect"
+
 	kamerascheme "github.com/tgoodwin/kamera/examples/knative-serving/knative/scheme"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -96,21 +103,21 @@ func newFakeUniScaler(decider *scaling.Decider) *fakeUniScaler {
 	}
 }
 
-func (f *fakeUniScaler) Scale(_ *zap.SugaredLogger, _ time.Time) scaling.ScaleResult {
+func (f *fakeUniScaler) Scale(_ *zap.SugaredLogger, now time.Time) scaling.ScaleResult {
 	f.mu.RLock()
 	defer f.mu.RUnlock()
-	// In real Knative, when InitialScale is 0 (scale-to-zero), the autoscaler
-	// scales up to ActivationScale (or 1 if not set) when there's traffic/activation.
-	// In our simulation, we simulate this by returning at least 1 (or ActivationScale if set)
-	// when InitialScale is 0, which allows the activation flow to proceed.
-	desired := f.desired
-	if desired == 0 {
-		if f.activationScale >= 2 {
-			desired = f.activationScale
-		} else {
-			desired = 1
-		}
-	}
+
+	// For scale-to-zero simulation with no traffic: always return 0.
+	// In real Knative, UniScaler uses metrics (concurrent requests) to determine desired scale.
+	// For simulation with no traffic, we return 0 to trigger scale-down.
+	//
+	// Knative's KPA reconciler will:
+	// 1. Apply bounds (min/max/InitialScale) in scale() before handleScaleToZero
+	// 2. So if InitialScale=1, it will scale to 1 initially
+	// 3. handleScaleToZero will enforce timing (60s stable window + 30s grace period)
+	// 4. After timing is met, it will allow scaling to 0
+	desired := int32(0)
+
 	return scaling.ScaleResult{
 		DesiredPodCount:     desired,
 		ExcessBurstCapacity: f.excessBC,
@@ -133,13 +140,27 @@ type fakeDeciders struct {
 	logger           *zap.SugaredLogger
 }
 
+// Get overrides MultiScaler.Get to add logging
+func (f *fakeDeciders) Get(ctx context.Context, namespace, name string) (*scaling.Decider, error) {
+	result, err := f.MultiScaler.Get(ctx, namespace, name)
+	return result, err
+}
+
 // Create overrides MultiScaler.Create to immediately compute and set DesiredScale
+// and register synchronous callbacks for tickers
 func (f *fakeDeciders) Create(ctx context.Context, decider *scaling.Decider) (*scaling.Decider, error) {
+
 	// Create the decider using the underlying MultiScaler
+	// This will call createScaler -> runScalerTicker, which creates a ticker
 	result, err := f.MultiScaler.Create(ctx, decider)
 	if err != nil {
 		return nil, err
 	}
+
+	// Register a synchronous callback for the ticker that was just created.
+	// The ticker should be the most recent one created by runScalerTicker.
+	key := types.NamespacedName{Namespace: decider.Namespace, Name: decider.Name}
+	registerTickerCallbackForDecider(f.MultiScaler, key)
 
 	// Immediately compute the scale to set DesiredScale correctly
 	// This simulates the ticker running immediately in our simulation context
@@ -165,20 +186,271 @@ func (f *fakeDeciders) Create(ctx context.Context, decider *scaling.Decider) (*s
 	return result, nil
 }
 
+// persistentStopCh is a channel that never closes, allowing tickers to persist across reconcile steps
+var persistentStopCh = make(chan struct{})
+
+// persistentMultiScaler is a singleton MultiScaler that persists across reconcile steps.
+// This is necessary because controllers are recreated per reconcile step, but we need
+// the MultiScaler (and its tickers) to persist so tickers can fire across steps.
+var (
+	persistentMultiScalerMu sync.Mutex
+	persistentMultiScaler   kparesources.Deciders
+
+	// persistentEnqueueWrapper is a singleton wrapper that persists across reconcile steps.
+	// This ensures Watch() is only called once on the underlying MultiScaler.
+	persistentEnqueueWrapper *enqueueCapturingDeciders
+)
+
 // NewFakeMultiScaler constructs a MultiScaler suitable for offline simulations.
 // It wraps the MultiScaler to ensure deciders are initialized with correct DesiredScale
 // immediately, rather than waiting for the async ticker. The fake UniScaler ensures that
 // when InitialScale is 0, it returns at least 1 (or ActivationScale if set) to allow activation to proceed.
+//
+// Note: We use a persistent MultiScaler instance (singleton) instead of creating a new one
+// each time, because controllers are recreated per reconcile step. This allows tickers to
+// persist across reconcile steps and fire when depth advances.
 func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) kparesources.Deciders {
-	uniScalerFactory := func(decider *scaling.Decider) (scaling.UniScaler, error) {
-		return newFakeUniScaler(decider), nil
+	persistentMultiScalerMu.Lock()
+	defer persistentMultiScalerMu.Unlock()
+
+	if persistentMultiScaler == nil {
+		uniScalerFactory := func(decider *scaling.Decider) (scaling.UniScaler, error) {
+			return newFakeUniScaler(decider), nil
+		}
+		// Use persistentStopCh instead of stopCh to allow tickers to persist across reconcile steps
+		ms := scaling.NewMultiScaler(persistentStopCh, uniScalerFactory, logger)
+
+		// Wrap the tickProvider to intercept ticker creation and register synchronous callbacks
+		// We use reflection to access the private tickProvider field and replace it with our wrapper
+		wrapMultiScalerTickerProvider(ms)
+
+		persistentMultiScaler = &fakeDeciders{
+			MultiScaler:      ms,
+			uniScalerFactory: uniScalerFactory,
+			logger:           logger,
+		}
 	}
-	ms := scaling.NewMultiScaler(stopCh, uniScalerFactory, logger)
-	return &fakeDeciders{
-		MultiScaler:      ms,
-		uniScalerFactory: uniScalerFactory,
-		logger:           logger,
+
+	return persistentMultiScaler
+}
+
+// mostRecentTicker tracks the most recently created ticker so we can register callbacks
+var (
+	mostRecentTicker   *simclock.Ticker
+	mostRecentTickerMu sync.Mutex
+)
+
+// wrapMultiScalerTickerProvider uses unsafe to replace the MultiScaler's tickProvider
+// with a wrapper that registers synchronous callbacks. When a ticker fires, we'll call
+// tickScaler directly, which will then call Inform, triggering the Watch callback.
+func wrapMultiScalerTickerProvider(ms *scaling.MultiScaler) {
+	// Use reflection to find the tickProvider field offset
+	msValue := reflect.ValueOf(ms).Elem()
+	tickProviderField := msValue.FieldByName("tickProvider")
+	if !tickProviderField.IsValid() {
+		panic("MultiScaler.tickProvider field not found - reflection failed")
 	}
+
+	// Use unsafe to get a pointer to the field and set it
+	// We need to get the address of the struct and add the field offset
+	msPtr := unsafe.Pointer(ms)
+	tickProviderPtr := unsafe.Pointer(uintptr(msPtr) + tickProviderField.UnsafeAddr() - msValue.UnsafeAddr())
+
+	// Create a wrapper that tracks the most recent ticker
+	wrappedProvider := func(d time.Duration) *simclock.Ticker {
+		// Create the ticker directly (same as what the original tickProvider does)
+		ticker := simclock.NewTicker(d)
+
+		// Track the most recent ticker so we can register callbacks when Create is called
+		mostRecentTickerMu.Lock()
+		mostRecentTicker = ticker
+		mostRecentTickerMu.Unlock()
+
+		return ticker
+	}
+
+	// Set the field using unsafe pointer
+	*(*func(time.Duration) *simclock.Ticker)(tickProviderPtr) = wrappedProvider
+
+}
+
+// registerTickerCallbackForDecider registers a synchronous callback for the ticker
+// associated with the given decider. When the ticker fires, it will call tickScaler
+// synchronously, which will then call Inform, triggering the Watch callback.
+func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.NamespacedName) {
+	// Get the most recent ticker (should be the one created for this decider)
+	mostRecentTickerMu.Lock()
+	ticker := mostRecentTicker
+	mostRecentTickerMu.Unlock()
+
+	if ticker == nil {
+		return
+	}
+
+	// Use reflection to access the MultiScaler's internal scalers map
+	msValue := reflect.ValueOf(ms).Elem()
+	scalersField := msValue.FieldByName("scalers")
+	if !scalersField.IsValid() {
+		return
+	}
+
+	// Can't call .Interface() on unexported field, so use unsafe to get a pointer to it
+	msPtr := unsafe.Pointer(ms)
+	scalersPtr := unsafe.Pointer(uintptr(msPtr) + scalersField.UnsafeAddr() - msValue.UnsafeAddr())
+
+	// Get the scaler for this key by using reflection on the unsafe pointer
+	scalersMapValue := reflect.NewAt(scalersField.Type(), scalersPtr).Elem()
+	scalerValue := scalersMapValue.MapIndex(reflect.ValueOf(key))
+	if !scalerValue.IsValid() {
+		return
+	}
+
+	// The scaler is a *scalerRunner. We need to access its fields.
+	// Can't call .Elem() on unexported type, so we need to work with the reflect.Value directly
+	// The scalerValue is a pointer to scalerRunner, so we need to dereference it
+	if scalerValue.Kind() != reflect.Ptr {
+		return
+	}
+
+	runnerValue := scalerValue.Elem()
+	scalerField := runnerValue.FieldByName("scaler")
+	if !scalerField.IsValid() {
+		return
+	}
+
+	// Can't call .Interface() on unexported field, so use unsafe
+	runnerPtr := unsafe.Pointer(scalerValue.Pointer())
+	scalerPtr := unsafe.Pointer(uintptr(runnerPtr) + scalerField.UnsafeAddr() - runnerValue.UnsafeAddr())
+	scalerValuePtr := reflect.NewAt(scalerField.Type(), scalerPtr).Elem()
+
+	// Get the scaler (UniScaler interface)
+	scaler := scalerValuePtr.Interface().(scaling.UniScaler)
+
+	// Use reflection to call the private tickScaler method
+	// tickScaler signature: func (m *MultiScaler) tickScaler(scaler UniScaler, runner *scalerRunner, metricKey types.NamespacedName)
+	tickScalerMethod := reflect.ValueOf(ms).MethodByName("tickScaler")
+	if !tickScalerMethod.IsValid() {
+		// Register a callback that calls Scale, updates decider status, and Inform
+		callback := func() {
+			now := simclock.Now()
+
+			// Call Scale (similar to what tickScaler does)
+			scaleResult := scaler.Scale(nil, now) // logger is nil for now
+
+			if !scaleResult.ScaleValid {
+				return
+			}
+
+			// Get the current decider to update its status
+			// We use a background context since this is called from a ticker callback
+			ctx := context.Background()
+			decider, err := ms.Get(ctx, key.Namespace, key.Name)
+			if err != nil {
+				return
+			}
+
+			// Update decider status (like tickScaler does via updateLatestScale)
+			decider.Status.DesiredScale = scaleResult.DesiredPodCount
+			decider.Status.ExcessBurstCapacity = scaleResult.ExcessBurstCapacity
+
+			// Persist the update
+			_, err = ms.Update(ctx, decider)
+			if err != nil {
+				return
+			}
+
+			// Always inform to trigger reconcile, even if scale didn't change.
+			// This ensures KPA keeps reconciling to check handleScaleToZero timing.
+			// In real Knative, tickScaler calls Inform whenever scale changes OR when
+			// ExcessBurstCapacity sign changes. For scale-to-zero, we need periodic
+			// reconciles to check if enough time has passed.
+			ms.Inform(key)
+		}
+
+		simclock.RegisterTickerCallback(ticker, callback)
+		return
+	}
+
+	// Cannot call tickScaler directly because it is a private method.
+}
+
+// enqueueCapturingDeciders wraps a Deciders implementation to capture Watch callback invocations
+type enqueueCapturingDeciders struct {
+	kparesources.Deciders
+	reconcilerID tracecheck.ReconcilerID
+
+	// watchRegistered tracks whether we've already called Watch() on the underlying MultiScaler.
+	// Since MultiScaler.Watch() can only be called once, we need to make this idempotent.
+	watchRegistered bool
+	watchMu         sync.Mutex
+
+	// currentCallback stores the current controller callback so we can call it when Inform is invoked
+	currentCallback func(types.NamespacedName)
+}
+
+func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
+	e.watchMu.Lock()
+	defer e.watchMu.Unlock()
+
+	// Store the current callback so we can call it when Inform is invoked
+	e.currentCallback = callback
+
+	// Only call the underlying Watch() once, since MultiScaler doesn't support multiple calls
+	if !e.watchRegistered {
+		wrappedCallback := func(key types.NamespacedName) {
+
+			// Call the current controller callback (impl.EnqueueKey) - this enqueues in the controller's workqueue
+			e.watchMu.Lock()
+			cb := e.currentCallback
+			e.watchMu.Unlock()
+
+			if cb != nil {
+				cb(key)
+			}
+
+			// Add to the global async enqueue collector.
+			// The collector is automatically cleared after each Get() call in determineNewPendingReconciles.
+			collector := tracecheck.GetGlobalAsyncEnqueueCollector()
+			collector.Add(e.reconcilerID, key)
+		}
+		e.Deciders.Watch(wrappedCallback)
+		e.watchRegistered = true
+	}
+}
+
+// NewEnqueueCapturingDeciders creates a Deciders wrapper that captures Watch callback invocations.
+// Since the underlying MultiScaler is a singleton, we also use a singleton wrapper to ensure
+// Watch() is only called once.
+// The wrapper uses the global async enqueue collector, which is automatically cleared after each Get() call.
+func NewEnqueueCapturingDeciders(base kparesources.Deciders, reconcilerID tracecheck.ReconcilerID) kparesources.Deciders {
+
+	persistentMultiScalerMu.Lock()
+	defer persistentMultiScalerMu.Unlock()
+
+	// If we already have a persistent wrapper, reuse it.
+	// The context will be updated before SetDepth in takeReconcileStep.
+	if persistentEnqueueWrapper != nil {
+		return persistentEnqueueWrapper
+	}
+
+	// Create a new wrapper and make it persistent
+	wrapper := &enqueueCapturingDeciders{
+		Deciders:        base,
+		reconcilerID:    reconcilerID,
+		watchRegistered: false,
+	}
+	persistentEnqueueWrapper = wrapper
+	return wrapper
+}
+
+// Get forwards to the base Deciders implementation
+func (e *enqueueCapturingDeciders) Get(ctx context.Context, namespace, name string) (*scaling.Decider, error) {
+	return e.Deciders.Get(ctx, namespace, name)
+}
+
+// Create forwards to the base Deciders implementation
+func (e *enqueueCapturingDeciders) Create(ctx context.Context, decider *scaling.Decider) (*scaling.Decider, error) {
+	return e.Deciders.Create(ctx, decider)
 }
 
 // NewKnativeStrategy creates a new KnativeStrategy for a given controller factory.
@@ -204,7 +476,16 @@ func NewKnativeStrategy(factory ControllerFactory, recorder replay.EffectRecorde
 			Name:      autoscalercfg.ConfigName,
 			Namespace: system.Namespace(),
 		},
-		Data: map[string]string{},
+		Data: map[string]string{
+			// Shorten stable-window from default 60s to 6s (minimum allowed)
+			// to speed up scale-to-zero in simulation
+			"stable-window": "6s",
+			// Also shorten scale-to-zero-grace-period from default 30s to 6s
+			"scale-to-zero-grace-period": "6s",
+			// Set TBC to -1 to skip activator probe (activator always in path)
+			// This is needed because the simulation doesn't have network access
+			"target-burst-capacity": "-1",
+		},
 	},
 		// added the following for route reconciler
 		&corev1.ConfigMap{
@@ -305,6 +586,7 @@ func (ks *KnativeStrategy) PrepareState(ctx context.Context, state []runtime.Obj
 
 // newReactor creates a new reactor function that intercepts client actions,
 // records them as effects, and uses the provided trackers to fetch object states.
+// The dynamicClient is used to apply JSON patches for deployment scale operations.
 func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ...testing.ObjectTracker) testing.ReactionFunc {
 	baseLogger := log.FromContext(ctx).WithName("fake-reactor")
 
@@ -362,7 +644,18 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 			op = event.MARK_FOR_DELETION
 		case "patch":
 			a := action.(testing.PatchAction)
-			obj, err = lookup(a.GetResource(), a.GetNamespace(), a.GetName())
+			gvr := a.GetResource()
+			ns := a.GetNamespace()
+			name := a.GetName()
+
+			// Look up the original object
+			obj, err = lookup(gvr, ns, name)
+			if err == nil && obj != nil {
+				// Apply the JSON patch to get the patched object for recording.
+				// Fake clients don't properly apply JSON patches, so we do it ourselves.
+				// Without this, we'd record the OLD object and the simulation state wouldn't reflect the patch.
+				obj = applyJSONPatchToObject(obj, a.GetPatch(), logger)
+			}
 			op = event.PATCH
 		case "updatesubresource":
 			// Handle status updates which use UpdateSubresourceAction
@@ -415,6 +708,56 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 		// Return false to let the default reactor handle the action.
 		return false, nil, err
 	}
+}
+
+// applyJSONPatchToObject applies a JSON Patch (RFC 6902) to any runtime.Object.
+// This is necessary because fake clients don't properly apply JSON patches.
+// Works with both typed objects (e.g., *appsv1.Deployment) and unstructured objects.
+// Returns the patched object, or the original if patching fails.
+func applyJSONPatchToObject(obj runtime.Object, patchBytes []byte, logger logr.Logger) runtime.Object {
+	// Decode the patch
+	patch, err := jsonpatch.DecodePatch(patchBytes)
+	if err != nil {
+		logger.V(1).Info("failed to decode JSON patch, using original object", "error", err)
+		return obj
+	}
+
+	// Convert to unstructured for patching
+	var unstructuredMap map[string]interface{}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		// Already unstructured
+		unstructuredMap = u.Object
+	} else {
+		// Convert typed object to unstructured
+		unstructuredMap, err = runtime.DefaultUnstructuredConverter.ToUnstructured(obj)
+		if err != nil {
+			logger.V(1).Info("failed to convert object to unstructured for patching", "error", err)
+			return obj
+		}
+	}
+
+	// Marshal to JSON
+	original, err := json.Marshal(unstructuredMap)
+	if err != nil {
+		logger.V(1).Info("failed to marshal object for patching", "error", err)
+		return obj
+	}
+
+	// Apply the patch
+	modified, err := patch.Apply(original)
+	if err != nil {
+		logger.V(1).Info("failed to apply JSON patch, using original object", "error", err)
+		return obj
+	}
+
+	// Unmarshal back to unstructured
+	patched := &unstructured.Unstructured{}
+	if err := json.Unmarshal(modified, &patched.Object); err != nil {
+		logger.V(1).Info("failed to unmarshal patched object", "error", err)
+		return obj
+	}
+
+	return patched
 }
 
 func syncPodScalableInformer(ctx context.Context, dep *appsv1.Deployment, op event.OperationType, logger logr.Logger) {
@@ -497,27 +840,56 @@ func makePodScalableFromDeployment(dep *appsv1.Deployment) *autoscalingv1alpha1.
 	return ps
 }
 
+// seedDeploymentToDynamicClient adds a deployment to the dynamic fake client.
+// This is necessary because the KPA scaler uses the dynamic client to patch deployments
+// for scale operations, but deployments created via the typed kubeclient don't automatically
+// appear in the dynamic client's store.
+func seedDeploymentToDynamicClient(ctx context.Context, dep *appsv1.Deployment) error {
+	dynamicClient := dynamicfake.Get(ctx)
+
+	// Convert the deployment to unstructured
+	unstructuredObj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(dep)
+	if err != nil {
+		return fmt.Errorf("failed to convert deployment to unstructured: %w", err)
+	}
+
+	u := &unstructured.Unstructured{Object: unstructuredObj}
+	u.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("Deployment"))
+
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	_, err = dynamicClient.Resource(gvr).Namespace(dep.Namespace).Create(ctx, u, metav1.CreateOptions{})
+	if err != nil && !apierrs.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create deployment in dynamic client: %w", err)
+	}
+
+	return nil
+}
+
 // ReconcileAtState invokes the reconciler for a given state.
 func (ks *KnativeStrategy) ReconcileAtState(ctx context.Context, nsName types.NamespacedName) (reconcile.Result, error) {
 	servingClient := fakeservingclient.Get(ctx)
 	kubeClient := fakekubeclient.Get(ctx)
 	cachingClient := fakecachingclient.Get(ctx)
 	networkingClient := fakenetworkingclient.Get(ctx)
+	dynamicClient := dynamicfake.Get(ctx)
 
 	logger := log.FromContext(ctx).WithName("reconcile").WithValues("key", nsName.String())
 
-	// Create a reactor and attach it to both clients to intercept and record actions.
+	// Create a reactor and attach it to all clients to intercept and record actions.
+	// This includes the dynamic client which KPA uses for scale operations.
 	reactor := newReactor(ctx, ks.recorder,
 		servingClient.Tracker(),
 		kubeClient.Tracker(),
 		cachingClient.Tracker(),
-		networkingClient.Tracker())
+		networkingClient.Tracker(),
+		dynamicClient.Tracker())
 
-	// Add the reactor to both clients.
+	// Add the reactor to all clients.
 	servingClient.PrependReactor("*", "*", reactor)
 	kubeClient.PrependReactor("*", "*", reactor)
 	cachingClient.PrependReactor("*", "*", reactor)
 	networkingClient.PrependReactor("*", "*", reactor)
+	dynamicClient.PrependReactor("*", "*", reactor)
 
 	// must re-initialize the controller each time to reset its informer state
 	ctrl := ks.factory(ctx, nil)
@@ -550,6 +922,7 @@ func (ks *KnativeStrategy) ReconcileAtState(ctx context.Context, nsName types.Na
 	}
 
 	logger.Info("reconcile completed", "requeue", false, "requeueAfter", 0)
+
 	return reconcile.Result{}, nil
 }
 
@@ -557,9 +930,8 @@ func setupClientState(ctx context.Context, state []runtime.Object, selectors ...
 	ctx, cancel := context.WithCancel(ctx)
 	ctx = filteredinformerfactory.WithSelectors(ctx, selectors...)
 	ctx = injection.WithConfig(ctx, &rest.Config{})
-	// Override dynamic client with a scheme that includes Knative types (e.g., PodScalable duck) so
-	// duck informers can list/watch deployments successfully.
-	ctx, _ = dynamicfake.With(ctx, kamerascheme.Default)
+
+	// Set up fake informers first. This creates fake clients including a dynamic client.
 	ctx, informers := injection.Fake.SetupInformers(ctx, &rest.Config{})
 
 	logger := log.FromContext(ctx).WithName("setup")
@@ -571,7 +943,7 @@ func setupClientState(ctx context.Context, state []runtime.Object, selectors ...
 
 	for idx, informer := range informers {
 		typeName := fmt.Sprintf("%T", informer)
-		logger.Info("registered informer", "index", idx, "type", typeName)
+		logger.V(2).Info("registered informer", "index", idx, "type", typeName)
 		metas[idx] = informerMeta{typeName: typeName, informer: informer}
 	}
 
@@ -678,6 +1050,10 @@ func insertObjects(ctx context.Context, objs []runtime.Object) error {
 				return fmt.Errorf("failed to create deployment: %w", err)
 			}
 			ensureGVK(o)
+			// Also seed the deployment to the dynamic client so applyScale can find it
+			if err := seedDeploymentToDynamicClient(ctx, o); err != nil {
+				return fmt.Errorf("failed to seed deployment to dynamic client: %w", err)
+			}
 			logger := log.FromContext(ctx).WithName("seed").WithValues("resource", "deployments", "namespace", o.Namespace, "name", o.Name)
 			syncPodScalableInformer(ctx, o, event.CREATE, logger)
 		case *appsv1.ReplicaSet:

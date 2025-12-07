@@ -32,6 +32,11 @@ func init() {
 	utilruntime.Must(foov1.AddToScheme(scheme))
 }
 
+// canonicalizeKindSequences rewrites the keys of the provided KindSequences map
+// to use canonical "group/kind" string notation. If the key already contains a "/"
+// (i.e., is already canonical), it is copied through as-is. Otherwise, it infers
+// the group using groupForTestKind and rewrites the key using util.CanonicalGroupKind.
+// This ensures that all KindSequences keys are normalized for comparison during tests.
 func canonicalizeKindSequences(seq tracecheck.KindSequences) tracecheck.KindSequences {
 	if seq == nil {
 		return nil
@@ -96,8 +101,6 @@ func TestExhaustiveInterleavings(t *testing.T) {
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
-	// eb.WithDebug()
-	eb.WithEmitter(event.NewInMemoryEmitter())
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
@@ -175,9 +178,8 @@ func TestExhaustiveInterleavings(t *testing.T) {
 func TestConvergedStateIdentification(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
-	eb.WithEmitter(event.NewInMemoryEmitter())
 
-	// Testing two controllers whos behavior is identical
+	// Testing two controllers whose behavior is identical
 	// and who both depend on the same object.
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.FooReconciler{

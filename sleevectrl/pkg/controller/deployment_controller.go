@@ -236,6 +236,17 @@ func (r *DeploymentReconciler) rolloutReplicaSets(
 		}
 	}
 
+	// Handle scale-down of newRS when desiredReplicas < current replicas
+	// (e.g., scaling to 0 for scale-to-zero)
+	if newSpecReplicas > desiredReplicas {
+		if err := r.scaleReplicaSet(ctx, newRS, desiredReplicas); err != nil {
+			logger.Error(err, "failed to scale down new ReplicaSet", "replicaSet", newRS.Name)
+			return err
+		}
+		currentTotal = currentTotal - newSpecReplicas + desiredReplicas
+		newSpecReplicas = desiredReplicas
+	}
+
 	totalReady := newRS.Status.ReadyReplicas
 	for _, rs := range oldReplicaSets {
 		totalReady += rs.Status.ReadyReplicas
