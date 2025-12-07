@@ -233,8 +233,8 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: false,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "FooController@1", "BarController@1"},
-				{"FooController@1", "FooController@1", "FooController@1"},
+				{"FooController@1", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},
 		{
@@ -242,8 +242,8 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: true,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "BarController@1", "FooController@1", "FooController@1", "BarController@1"},
-				{"FooController@1", "BarController@1", "FooController@1", "FooController@1", "FooController@1"},
+				{"FooController@1", "BarController@1", "BarController@0", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "BarController@1", "BarController@0", "FooController@1", "BarController@0", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},
 	}
