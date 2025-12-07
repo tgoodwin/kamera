@@ -157,12 +157,6 @@ func (f *fakeDeciders) Create(ctx context.Context, decider *scaling.Decider) (*s
 		return nil, err
 	}
 
-	// After Create, a ticker should have been created. We need to find it and register a callback.
-	// Since we can't easily access the ticker that was created, we'll use a different approach:
-	// We'll register callbacks for all tickers that match the interval (2s for KPA).
-	// Actually, this is getting complex. Let's try a simpler approach: make the channel read
-	// happen by ensuring the goroutine is running. But we can't ensure that.
-
 	// Register a synchronous callback for the ticker that was just created.
 	// The ticker should be the most recent one created by runScalerTicker.
 	key := types.NamespacedName{Namespace: decider.Namespace, Name: decider.Name}
@@ -235,7 +229,6 @@ func NewFakeMultiScaler(stopCh <-chan struct{}, logger *zap.SugaredLogger) kpare
 			uniScalerFactory: uniScalerFactory,
 			logger:           logger,
 		}
-	} else {
 	}
 
 	return persistentMultiScaler
@@ -337,18 +330,6 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 	// tickScaler signature: func (m *MultiScaler) tickScaler(scaler UniScaler, runner *scalerRunner, metricKey types.NamespacedName)
 	tickScalerMethod := reflect.ValueOf(ms).MethodByName("tickScaler")
 	if !tickScalerMethod.IsValid() {
-		// tickScaler is private, so we can't call it via MethodByName
-		// We need to use a different approach: call it via the unexported method
-		// Actually, we can't call private methods via reflection easily.
-		// Let's try a different approach: make Inform get called directly.
-
-		// Actually, the simplest approach is to register a callback that calls Inform
-		// when the ticker fires. But we need to know when to call Inform (when scale changes).
-		// That requires calling tickScaler, which we can't do easily.
-
-		// Let's try yet another approach: Register a callback that manually calls Scale
-		// and then Inform if the scale changed. This mimics what tickScaler does.
-
 		// Register a callback that calls Scale, updates decider status, and Inform
 		callback := func() {
 			now := simclock.Now()
@@ -390,14 +371,7 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 		return
 	}
 
-	// If we could call tickScaler, we would do:
-	// tickScalerMethod.Call([]reflect.Value{
-	//     reflect.ValueOf(scaler),
-	//     scalerValue,
-	//     reflect.ValueOf(key),
-	// })
-	// But since it's private, we can't do this easily.
-
+	// Cannot call tickScaler directly because it is a private method.
 }
 
 // enqueueCapturingDeciders wraps a Deciders implementation to capture Watch callback invocations
@@ -441,7 +415,6 @@ func (e *enqueueCapturingDeciders) Watch(callback func(types.NamespacedName)) {
 		}
 		e.Deciders.Watch(wrappedCallback)
 		e.watchRegistered = true
-	} else {
 	}
 }
 
