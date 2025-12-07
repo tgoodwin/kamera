@@ -107,14 +107,14 @@ func TestExhaustiveInterleavings(t *testing.T) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind)
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind)
-	eb.WithResourceDep(fooKind, "FooController", "BarController")
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
@@ -185,13 +185,13 @@ func TestConvergedStateIdentification(t *testing.T) {
 			Scheme: scheme,
 		}
 	}).For("webapp.discrete.events/Foo")
+
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.BarReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
 	}).For("webapp.discrete.events/Foo")
-	eb.WithResourceDep("webapp.discrete.events/Foo", "FooController", "BarController")
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
@@ -214,7 +214,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	sb := eb.NewStateEventBuilder()
 	initialState := sb.AddTopLevelObject(topLevelObj, "FooController", "BarController")
 	initialState.Contents.KindSequences = canonicalizeKindSequences(initialState.Contents.KindSequences)
-	explorer, err := eb.Build("standalone")
+	explorer, err := eb.Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,14 +291,13 @@ func BenchmarkExhaustiveInterleavingsExplore(b *testing.B) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind)
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind)
-	eb.WithResourceDep(fooKind, "FooController", "BarController")
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{

@@ -41,6 +41,24 @@ func (rd ResourceDeps) ForReconciler(reconcilerID ReconcilerID) ([]string, error
 // Given a changed object, it returns the reconcile requests that should be enqueued.
 type WatchMapper func(obj *unstructured.Unstructured) []reconcile.Request
 
+func EnqueueRequestForObject() WatchMapper {
+	return func(obj *unstructured.Unstructured) []reconcile.Request {
+		if obj == nil {
+			return nil
+		}
+		nsName := types.NamespacedName{
+			Namespace: obj.GetNamespace(),
+			Name:      obj.GetName(),
+		}
+		if nsName.Namespace == "" || nsName.Name == "" {
+			return nil
+		}
+		return []reconcile.Request{
+			{NamespacedName: nsName},
+		}
+	}
+}
+
 type WatchRegistration struct {
 	Mapper       WatchMapper
 	ReconcilerID ReconcilerID
