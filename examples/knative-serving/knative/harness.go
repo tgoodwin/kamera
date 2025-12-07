@@ -143,9 +143,6 @@ type fakeDeciders struct {
 // Get overrides MultiScaler.Get to add logging
 func (f *fakeDeciders) Get(ctx context.Context, namespace, name string) (*scaling.Decider, error) {
 	result, err := f.MultiScaler.Get(ctx, namespace, name)
-	if err != nil {
-	} else {
-	}
 	return result, err
 }
 
