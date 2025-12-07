@@ -615,6 +615,40 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		showDetailText(title, summary, pathStatusMessage)
 	}
 
+	renderPendingReconciles := func(step *tracecheck.ReconcileResult, emptyTitle string) {
+		stepPendingReconciles = stepPendingReconciles[:0]
+		if step != nil {
+			stepPendingReconciles = step.PendingReconciles
+		}
+
+		pendingReconcilesTable.Clear()
+		if len(stepPendingReconciles) == 0 {
+			pendingReconcilesTable.SetTitle(emptyTitle)
+			pendingReconcilesTable.SetCell(0, 0, valueCell("(no pending reconciles)").SetSelectable(false).SetAlign(tview.AlignCenter))
+			pendingReconcilesTable.SetSelectedFunc(nil)
+			pendingDetailRow = 0
+		} else {
+			headers := []string{"Idx", "Reconciler", "Namespace", "Name", "Source"}
+			for col, val := range headers {
+				pendingReconcilesTable.SetCell(0, col, headerCell(val))
+			}
+			if pendingDetailRow <= 0 || pendingDetailRow > len(stepPendingReconciles) {
+				pendingDetailRow = 1
+			}
+			for idx, pr := range stepPendingReconciles {
+				pendingReconcilesTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
+				pendingReconcilesTable.SetCell(idx+1, 1, valueCell(string(pr.ReconcilerID)))
+				pendingReconcilesTable.SetCell(idx+1, 2, valueCell(pr.Request.Namespace))
+				pendingReconcilesTable.SetCell(idx+1, 3, valueCell(pr.Request.Name))
+				pendingReconcilesTable.SetCell(idx+1, 4, valueCell(string(pr.Source)))
+			}
+			pendingReconcilesTable.Select(pendingDetailRow, 0)
+			pendingReconcilesTable.SetTitle(fmt.Sprintf("Pending Reconciles • Step %d (%d)", selectedStep, len(stepPendingReconciles)))
+			pendingReconcilesTable.SetSelectedFunc(nil)
+		}
+		detailContainer.AddItem(pendingReconcilesTable, 0, 2, false)
+	}
+
 	renderStepDetail = func() {
 		if !stepDetailDirty && lastStepState == selectedState && lastStepPath == selectedPath && lastStepIdx == selectedStep {
 			updateStatus(stepStatusMessage)
@@ -814,37 +848,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		detailContainer.AddItem(effectsTable, 0, 2, false)
 
 		// Populate pending reconciles panel
-		stepPendingReconciles = stepPendingReconciles[:0]
-		if step != nil {
-			stepPendingReconciles = step.PendingReconciles
-		}
-
-		pendingReconcilesTable.Clear()
-		if len(stepPendingReconciles) == 0 {
-			pendingReconcilesTable.SetTitle("Pending Reconciles • (none)")
-			pendingReconcilesTable.SetCell(0, 0, valueCell("(no pending reconciles)").SetSelectable(false).SetAlign(tview.AlignCenter))
-			pendingReconcilesTable.SetSelectedFunc(nil)
-			pendingDetailRow = 0
-		} else {
-			headers := []string{"Idx", "Reconciler", "Namespace", "Name", "Source"}
-			for col, val := range headers {
-				pendingReconcilesTable.SetCell(0, col, headerCell(val))
-			}
-			if pendingDetailRow <= 0 || pendingDetailRow > len(stepPendingReconciles) {
-				pendingDetailRow = 1
-			}
-			for idx, pr := range stepPendingReconciles {
-				pendingReconcilesTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
-				pendingReconcilesTable.SetCell(idx+1, 1, valueCell(string(pr.ReconcilerID)))
-				pendingReconcilesTable.SetCell(idx+1, 2, valueCell(pr.Request.Namespace))
-				pendingReconcilesTable.SetCell(idx+1, 3, valueCell(pr.Request.Name))
-				pendingReconcilesTable.SetCell(idx+1, 4, valueCell(string(pr.Source)))
-			}
-			pendingReconcilesTable.Select(pendingDetailRow, 0)
-			pendingReconcilesTable.SetTitle(fmt.Sprintf("Pending Reconciles • Step %d (%d)", selectedStep, len(stepPendingReconciles)))
-			pendingReconcilesTable.SetSelectedFunc(nil)
-		}
-		detailContainer.AddItem(pendingReconcilesTable, 0, 2, false)
+		renderPendingReconciles(step, "Pending Reconciles • (none)")
 		currentDetailMode = detailStateObjects
 		reconcileDirty = true
 		updateStatus(stepStatusMessage)
@@ -954,37 +958,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		detailContainer.AddItem(effectsTable, 0, 2, false)
 
 		// Populate pending reconciles
-		stepPendingReconciles = stepPendingReconciles[:0]
-		if step != nil {
-			stepPendingReconciles = step.PendingReconciles
-		}
-
-		pendingReconcilesTable.Clear()
-		if len(stepPendingReconciles) == 0 {
-			pendingReconcilesTable.SetTitle(fmt.Sprintf("Pending Reconciles • Step %d (none)", selectedStep))
-			pendingReconcilesTable.SetCell(0, 0, valueCell("(no pending reconciles)").SetSelectable(false).SetAlign(tview.AlignCenter))
-			pendingReconcilesTable.SetSelectedFunc(nil)
-			pendingDetailRow = 0
-		} else {
-			headers := []string{"Idx", "Reconciler", "Namespace", "Name", "Source"}
-			for col, val := range headers {
-				pendingReconcilesTable.SetCell(0, col, headerCell(val))
-			}
-			if pendingDetailRow <= 0 || pendingDetailRow > len(stepPendingReconciles) {
-				pendingDetailRow = 1
-			}
-			for idx, pr := range stepPendingReconciles {
-				pendingReconcilesTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
-				pendingReconcilesTable.SetCell(idx+1, 1, valueCell(string(pr.ReconcilerID)))
-				pendingReconcilesTable.SetCell(idx+1, 2, valueCell(pr.Request.Namespace))
-				pendingReconcilesTable.SetCell(idx+1, 3, valueCell(pr.Request.Name))
-				pendingReconcilesTable.SetCell(idx+1, 4, valueCell(string(pr.Source)))
-			}
-			pendingReconcilesTable.Select(pendingDetailRow, 0)
-			pendingReconcilesTable.SetTitle(fmt.Sprintf("Pending Reconciles • Step %d (%d)", selectedStep, len(stepPendingReconciles)))
-			pendingReconcilesTable.SetSelectedFunc(nil)
-		}
-		detailContainer.AddItem(pendingReconcilesTable, 0, 2, false)
+		renderPendingReconciles(step, fmt.Sprintf("Pending Reconciles • Step %d (none)", selectedStep))
 
 		currentDetailMode = detailStepEffects
 		currentDetailPrim = effectsTable
