@@ -371,14 +371,7 @@ func registerTickerCallbackForDecider(ms *scaling.MultiScaler, key types.Namespa
 		return
 	}
 
-	// If we could call tickScaler, we would do:
-	// tickScalerMethod.Call([]reflect.Value{
-	//     reflect.ValueOf(scaler),
-	//     scalerValue,
-	//     reflect.ValueOf(key),
-	// })
-	// But since it's private, we can't do this easily.
-
+	// Cannot call tickScaler directly because it is a private method.
 }
 
 // enqueueCapturingDeciders wraps a Deciders implementation to capture Watch callback invocations
