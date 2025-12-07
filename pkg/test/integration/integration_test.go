@@ -101,22 +101,20 @@ func TestExhaustiveInterleavings(t *testing.T) {
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
+	fooKind := "webapp.discrete.events/Foo"
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
+	}).For(fooKind)
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
-	fooKind := "webapp.discrete.events/Foo"
+	}).For(fooKind)
 	eb.WithResourceDep(fooKind, "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", fooKind)
-	eb.AssignReconcilerToKind("BarController", fooKind)
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
@@ -186,16 +184,14 @@ func TestConvergedStateIdentification(t *testing.T) {
 			Client: c,
 			Scheme: scheme,
 		}
-	})
+	}).For("webapp.discrete.events/Foo")
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.BarReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
+	}).For("webapp.discrete.events/Foo")
 	eb.WithResourceDep("webapp.discrete.events/Foo", "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", "webapp.discrete.events/Foo")
-	eb.AssignReconcilerToKind("BarController", "webapp.discrete.events/Foo")
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
@@ -289,22 +285,20 @@ func BenchmarkExhaustiveInterleavingsExplore(b *testing.B) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
 	eb.WithEmitter(event.NewInMemoryEmitter())
+	fooKind := "webapp.discrete.events/Foo"
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
+	}).For(fooKind)
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
-	fooKind := "webapp.discrete.events/Foo"
+	}).For(fooKind)
 	eb.WithResourceDep(fooKind, "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", fooKind)
-	eb.AssignReconcilerToKind("BarController", fooKind)
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{

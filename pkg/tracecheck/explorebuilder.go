@@ -45,6 +45,38 @@ type ExplorerBuilder struct {
 	builder *replay.Builder
 }
 
+// ReconcilerBuilder enables chaining reconciler-specific configuration
+// (e.g. For, Watches) without repeatedly passing the reconciler ID.
+type ReconcilerBuilder struct {
+	parent *ExplorerBuilder
+	id     ReconcilerID
+}
+
+func (rb *ReconcilerBuilder) For(kind string) *ReconcilerBuilder {
+	rb.parent.AssignReconcilerToKind(rb.id, kind)
+	return rb
+}
+
+func (rb *ReconcilerBuilder) ForGK(gk schema.GroupKind) *ReconcilerBuilder {
+	rb.parent.AssignReconcilerToKind(rb.id, util.CanonicalGroupKind(gk.Group, gk.Kind))
+	return rb
+}
+
+func (rb *ReconcilerBuilder) Watches(kind string, mapper WatchMapper) *ReconcilerBuilder {
+	rb.parent.WithWatch(kind, mapper, rb.id)
+	return rb
+}
+
+func (rb *ReconcilerBuilder) WatchesGK(gk schema.GroupKind, mapper WatchMapper) *ReconcilerBuilder {
+	rb.parent.WithWatchGK(gk, mapper, rb.id)
+	return rb
+}
+
+// Done returns the parent ExplorerBuilder to continue builder-style chaining.
+func (rb *ReconcilerBuilder) Done() *ExplorerBuilder {
+	return rb.parent
+}
+
 func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	utilruntime.Must(appsv1.AddToScheme(scheme))
 	utilruntime.Must(corev1.AddToScheme(scheme))
@@ -70,19 +102,19 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	return builder
 }
 
-func (b *ExplorerBuilder) WithReconciler(id ReconcilerID, constructor ReconcilerConstructor) *ExplorerBuilder {
+func (b *ExplorerBuilder) WithReconciler(id ReconcilerID, constructor ReconcilerConstructor) *ReconcilerBuilder {
 	b.reconcilers[id] = constructor
-	return b
+	return &ReconcilerBuilder{parent: b, id: id}
 }
 
-func (b *ExplorerBuilder) WithCustomStrategy(id ReconcilerID, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
+func (b *ExplorerBuilder) WithCustomStrategy(id ReconcilerID, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ReconcilerBuilder {
 	{
 		b.recorderInjectedStrategies[id] = strategyFunc
-		return b
+		return &ReconcilerBuilder{parent: b, id: id}
 	}
 }
 
-func (b *ExplorerBuilder) WithStrategy(id ReconcilerID, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ExplorerBuilder {
+func (b *ExplorerBuilder) WithStrategy(id ReconcilerID, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ReconcilerBuilder {
 	return b.WithCustomStrategy(id, strategyFunc)
 }
 
@@ -180,8 +212,8 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			Client: c,
 			Scheme: b.scheme,
 		}
-	})
-	b.AssignReconcilerToKind(deploymentControllerID, "apps/Deployment")
+	}).For("apps/Deployment")
+
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, deploymentControllerID)
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, deploymentControllerID)
 
@@ -191,8 +223,8 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			Client: c,
 			Scheme: b.scheme,
 		}
-	})
-	b.AssignReconcilerToKind("ReplicaSetController", "apps/ReplicaSet")
+	}).For("apps/ReplicaSet")
+
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, "ReplicaSetController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "ReplicaSetController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, "ReplicaSetController")
@@ -205,8 +237,8 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			controller.NewDefaultPodLifecycleFactory(),
 			0,
 		)
-	})
-	b.AssignReconcilerToKind("PodLifecycleController", "Pod")
+	}).For("Pod")
+
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "PodLifecycleController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "PodTemplate"}, "PodLifecycleController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "ReplicaSet"}, "PodLifecycleController")
@@ -221,8 +253,8 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			Client: c,
 			Scheme: b.scheme,
 		}
-	})
-	b.AssignReconcilerToKind("ServiceController", "Service")
+	}).For("Service")
+
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "ServiceController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "ServiceController")
 
@@ -232,8 +264,8 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			Client: c,
 			Scheme: b.scheme,
 		}
-	})
-	b.AssignReconcilerToKind("EndpointsController", "Service")
+	}).For("Service")
+
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")

@@ -111,18 +111,14 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 	// Set up the AlwaysRequeue strategy to keep exploration going
 	builder.WithCustomStrategy("AlwaysRequeue", func(r replay.EffectRecorder) Strategy {
 		return &AlwaysRequeueStrategy{recorder: r}
-	})
+	}).For("core/Pod")
 
 	// Set up the TickerBased strategy
 	tickerStrategy := &TickerBasedStrategy{}
 	builder.WithCustomStrategy("TickerBased", func(r replay.EffectRecorder) Strategy {
 		tickerStrategy.recorder = r
 		return tickerStrategy
-	})
-
-	// Assign reconcilers to kinds
-	builder.AssignReconcilerToKind("AlwaysRequeue", "core/Pod")
-	builder.AssignReconcilerToKind("TickerBased", "core/Service")
+	}).For("core/Service")
 
 	// Build the explorer
 	explorer, err := builder.Build("test")

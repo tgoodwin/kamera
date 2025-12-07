@@ -113,7 +113,8 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("RevisionReconciler"))
 		return strategy
-	})
+	}).For("serving.knative.dev/Revision")
+
 	builder.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 			// Create MultiScaler and wrap it to capture enqueues.
@@ -130,7 +131,8 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("KPAReconciler"))
 		return strategy
-	})
+	}).For("autoscaling.internal.knative.dev/PodAutoscaler")
+
 	builder.WithCustomStrategy("ServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(servicecontroller.NewController, r)
 		if err != nil {
@@ -138,7 +140,8 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("ServiceReconciler"))
 		return strategy
-	})
+	}).For("serving.knative.dev/Service")
+
 	builder.WithCustomStrategy("RouteReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(routecontroller.NewController, r)
 		if err != nil {
@@ -146,46 +149,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("RouteReconciler"))
 		return strategy
-	})
-
-	builder.WithCustomStrategy("ServerlessServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := knativeharness.NewKnativeStrategy(serverlessservicecontroller.NewController, r)
-		if err != nil {
-			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
-		}
-		strategy.SetLogger(logf.Log.WithName("ServerlessServiceReconciler"))
-		return strategy
-	})
-	builder.AssignReconcilerToKind("ServerlessServiceReconciler", "networking.internal.knative.dev/ServerlessService")
-	builder.WithResourceDep("networking.internal.knative.dev/ServerlessService", "ServerlessServiceReconciler", "KPA")
-
-	builder.WithCustomStrategy("ConfigurationReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
-		strategy, err := knativeharness.NewKnativeStrategy(configuration.NewController, r)
-		if err != nil {
-			panic(err)
-		}
-		strategy.SetLogger(logf.Log.WithName("ConfigurationReconciler"))
-		return strategy
-	})
-	builder.AssignReconcilerToKind("ConfigurationReconciler", "serving.knative.dev/Configuration")
-	builder.WithResourceDep("Configuration", "ConfigurationReconciler", "RevisionReconciler")
-
-	builder.AssignReconcilerToKind("RevisionReconciler", "serving.knative.dev/Revision")
-	builder.AssignReconcilerToKind("KPA", "autoscaling.internal.knative.dev/PodAutoscaler")
-	builder.AssignReconcilerToKind("ServiceReconciler", "serving.knative.dev/Service")
-	builder.AssignReconcilerToKind("RouteReconciler", "serving.knative.dev/Route")
-
-	builder.WithReconciler("RevisionDigestStub", func(c client.Client) tracecheck.Reconciler {
-		return &revisionDigestStub{Client: c}
-	})
-	builder.AssignReconcilerToKind("RevisionDigestStub", "serving.knative.dev/Revision")
-
-	builder.WithReconciler("IngressStatusStub", func(c client.Client) tracecheck.Reconciler {
-		return &knativeharness.IngressStatusStub{Client: c}
-	})
-	builder.AssignReconcilerToKind("IngressStatusStub", "networking.internal.knative.dev/Ingress")
-
-	builder.WithWatch("serving.knative.dev/Configuration", func(u *unstructured.Unstructured) []reconcile.Request {
+	}).For("serving.knative.dev/Route").Watches("serving.knative.dev/Configuration", func(u *unstructured.Unstructured) []reconcile.Request {
 		labels := u.GetLabels()
 		svcName := labels[serving.ServiceLabelKey]
 		if svcName == "" {
@@ -195,7 +159,37 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		return []reconcile.Request{
 			{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: svcName}},
 		}
-	}, "RouteReconciler")
+	})
+
+	builder.WithCustomStrategy("ServerlessServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
+		strategy, err := knativeharness.NewKnativeStrategy(serverlessservicecontroller.NewController, r)
+		if err != nil {
+			panic(fmt.Sprintf("NewKnativeStrategy() error = %v", err))
+		}
+		strategy.SetLogger(logf.Log.WithName("ServerlessServiceReconciler"))
+		return strategy
+	}).For("networking.internal.knative.dev/ServerlessService")
+
+	builder.WithResourceDep("networking.internal.knative.dev/ServerlessService", "ServerlessServiceReconciler", "KPA")
+
+	builder.WithCustomStrategy("ConfigurationReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
+		strategy, err := knativeharness.NewKnativeStrategy(configuration.NewController, r)
+		if err != nil {
+			panic(err)
+		}
+		strategy.SetLogger(logf.Log.WithName("ConfigurationReconciler"))
+		return strategy
+	}).For("serving.knative.dev/Configuration")
+
+	builder.WithResourceDep("Configuration", "ConfigurationReconciler", "RevisionReconciler")
+
+	builder.WithReconciler("RevisionDigestStub", func(c client.Client) tracecheck.Reconciler {
+		return &revisionDigestStub{Client: c}
+	}).For("serving.knative.dev/Revision")
+
+	builder.WithReconciler("IngressStatusStub", func(c client.Client) tracecheck.Reconciler {
+		return &knativeharness.IngressStatusStub{Client: c}
+	}).For("networking.internal.knative.dev/Ingress")
 
 	// builder.WithResourceDep("serving.knative.dev/Revision", "RevisionDigestStub", "RevisionReconciler", "KPA", "ServiceReconciler")
 	// builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "KPA", "ServerlessServiceReconciler")
