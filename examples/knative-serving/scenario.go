@@ -12,6 +12,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
@@ -26,6 +27,7 @@ import (
 	servicecontroller "knative.dev/serving/pkg/reconciler/service"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const defaultMaxDepth = 100
@@ -183,12 +185,24 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 	})
 	builder.AssignReconcilerToKind("IngressStatusStub", "networking.internal.knative.dev/Ingress")
 
-	builder.WithResourceDep("serving.knative.dev/Revision", "RevisionDigestStub", "RevisionReconciler", "KPA", "ServiceReconciler")
-	builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "KPA", "ServerlessServiceReconciler")
-	builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "RevisionReconciler")
-	builder.WithResourceDep("serving.knative.dev/Service", "ServiceReconciler")
-	builder.WithResourceDep("serving.knative.dev/Configuration", "ServiceReconciler", "RevisionReconciler", "RouteReconciler")
-	builder.WithResourceDep("serving.knative.dev/Route", "RouteReconciler", "ServiceReconciler")
-	builder.WithResourceDep("networking.internal.knative.dev/Ingress", "IngressStatusStub", "RouteReconciler", "ServerlessServiceReconciler")
-	builder.WithResourceDep("apps/Deployment", "RevisionReconciler")
+	builder.WithWatch("serving.knative.dev/Configuration", func(u *unstructured.Unstructured) []reconcile.Request {
+		labels := u.GetLabels()
+		svcName := labels[serving.ServiceLabelKey]
+		if svcName == "" {
+			return nil
+		}
+
+		return []reconcile.Request{
+			{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: svcName}},
+		}
+	}, "RouteReconciler")
+
+	// builder.WithResourceDep("serving.knative.dev/Revision", "RevisionDigestStub", "RevisionReconciler", "KPA", "ServiceReconciler")
+	// builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "KPA", "ServerlessServiceReconciler")
+	// builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "RevisionReconciler")
+	// builder.WithResourceDep("serving.knative.dev/Service", "ServiceReconciler")
+	// builder.WithResourceDep("serving.knative.dev/Configuration", "ServiceReconciler", "RevisionReconciler", "RouteReconciler")
+	// builder.WithResourceDep("serving.knative.dev/Route", "RouteReconciler", "ServiceReconciler")
+	// builder.WithResourceDep("networking.internal.knative.dev/Ingress", "IngressStatusStub", "RouteReconciler", "ServerlessServiceReconciler")
+	// builder.WithResourceDep("apps/Deployment", "RevisionReconciler")
 }

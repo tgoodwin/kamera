@@ -31,6 +31,7 @@ type ExplorerBuilder struct {
 	reconcilers                map[ReconcilerID]ReconcilerConstructor
 	recorderInjectedStrategies map[ReconcilerID]func(recorder replay.EffectRecorder) Strategy
 	resourceDeps               ResourceDeps
+	watchers                   WatchRegistrations
 	scheme                     *runtime.Scheme
 	emitter                    testEmitter
 	snapStore                  *snapshot.Store
@@ -52,6 +53,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		reconcilers:                make(map[ReconcilerID]ReconcilerConstructor),
 		recorderInjectedStrategies: make(map[ReconcilerID]func(recorder replay.EffectRecorder) Strategy),
 		resourceDeps:               make(ResourceDeps),
+		watchers:                   make(WatchRegistrations),
 		scheme:                     scheme,
 		emitter:                    event.NewInMemoryEmitter(),
 		snapStore:                  snapshot.NewStore(),
@@ -101,6 +103,26 @@ func (b *ExplorerBuilder) WithResourceDepGK(gk schema.GroupKind, reconcilerIDs .
 	for _, id := range reconcilerIDs {
 		b.resourceDeps[key].Add(id)
 	}
+	return b
+}
+
+func (b *ExplorerBuilder) WithWatch(kind string, mapper WatchMapper, reconcilerID ReconcilerID) *ExplorerBuilder {
+	return b.WithWatchGK(parseKindString(kind), mapper, reconcilerID)
+}
+
+func (b *ExplorerBuilder) WithWatchGK(gk schema.GroupKind, mapper WatchMapper, reconcilerID ReconcilerID) *ExplorerBuilder {
+	if mapper == nil {
+		return b
+	}
+	if b.watchers == nil {
+		b.watchers = make(WatchRegistrations)
+	}
+	key := util.CanonicalGroupKind(gk.Group, gk.Kind)
+	reg := WatchRegistration{
+		Mapper:       mapper,
+		ReconcilerID: reconcilerID,
+	}
+	b.watchers[key] = append(b.watchers[key], reg)
 	return b
 }
 
@@ -433,6 +455,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 	triggerManager := NewTriggerManager(
 		b.resourceDeps,
 		b.reconcilerToKind,
+		b.watchers,
 		mgr.snapStore,
 	)
 
