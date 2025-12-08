@@ -79,11 +79,10 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 			Client: c,
 			Scheme: scheme,
 		}
-	})
+	}).For("zookeeper.pravega.io/ZookeeperCluster")
 
 	eb.WithResourceDep("zookeeper.pravega.io/ZookeeperCluster", "ZookeeperReconciler")
 	eb.WithResourceDep("core/PersistentVolumeClaim", "ZookeeperReconciler")
-	eb.AssignReconcilerToKind("ZookeeperReconciler", "zookeeper.pravega.io/ZookeeperCluster")
 
 	emitter := event.NewDebugEmitter()
 	eb.WithEmitter(emitter)

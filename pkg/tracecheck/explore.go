@@ -87,89 +87,6 @@ type ResultState struct {
 	Resolver        VersionManager
 }
 
-func (e *Explorer) shouldExploreDownstream(frameID string) bool {
-	// TODO make this some actual heursitic.
-	return true
-}
-
-func (e *Explorer) Walk(reconciles []replay.ReconcileEvent) *Result {
-	currExecutionHistory := make(ExecutionHistory, 0)
-
-	result := &Result{
-		ConvergedStates: make([]ResultState, 0),
-	}
-
-	var rebuiltState *StateSnapshot
-	for _, reconcile := range reconciles {
-		reconcilerID := ReconcilerID(reconcile.ControllerID)
-		if _, ok := e.reconcilers[reconcilerID]; !ok {
-			panic(fmt.Sprintf("reconciler %s not found", reconcilerID))
-		}
-		// this just contains the traced reconcile.Request object
-		frame := reconcile.Frame
-		logger.Info("\nReplaying ReconcileID", frame.ID, "for reconciler", reconcilerID)
-
-		rebuiltState = e.knowledgeManager.GetStateAtReconcileID(reconcile.ReconcileID)
-		logger.Info("rebuilt state ahead of reconcile", "ReconcileID", util.Shorter(reconcile.ReconcileID), "objects", len(rebuiltState.contents))
-		rebuiltState.contents.Summarize()
-
-		reconciler := e.reconcilers[reconcilerID]
-		ctx := replay.WithFrameID(context.Background(), frame.ID)
-		res, err := reconciler.replayReconcile(ctx, frame.Req)
-		if err != nil {
-			logger.Error(err, "replaying reconcile")
-			return nil
-		}
-
-		changes := res.Changes
-		// TODO this is not working due to anonymization
-		res.Deltas = reconciler.computeDeltas(rebuiltState.contents, changes.ObjectVersions)
-
-		logger.Info("Reconcile result - # changes:", len(changes.ObjectVersions))
-		changes.ObjectVersions.Summarize()
-
-		resultingState := e.knowledgeManager.GetStateAfterReconcileID(reconcile.ReconcileID)
-		logger.Info("resulting state after reconcile", "ReconcileID", util.Shorter(reconcile.ReconcileID), "objects", len(resultingState.contents))
-		resultingState.contents.Summarize()
-
-		currExecutionHistory = append(currExecutionHistory, res)
-
-		// breaking off to explore to find alternative outcomes of the reconcile we just replayed.
-		if e.shouldExploreDownstream(reconcile.ReconcileID) {
-			logger.Info("exploring downstream from reconcileID", reconcile.ReconcileID)
-
-			// TODO have the list of effects by the input to getTriggeredReconcilers
-			// to properly handle deletes
-			triggeredByLastChange := e.getTriggeredReconcilers(changes)
-			sn := StateNode{
-				DivergencePoint: reconcile.ReconcileID,
-				// top-level state to explore
-				Contents:          *resultingState,
-				PendingReconciles: triggeredByLastChange,
-				ExecutionHistory:  slices.Clone(currExecutionHistory),
-			}
-			logger.Info("exploring state space at reconcileID", reconcile.ReconcileID)
-			subRes := e.Explore(context.Background(), sn)
-			result.ConvergedStates = append(result.ConvergedStates, subRes.ConvergedStates...)
-			logger.Info("explored state space", "# converged states", len(subRes.ConvergedStates))
-		}
-	}
-
-	currExecutionHistory.Summarize()
-
-	// the end of the trace trivially converges
-	traceWalkResult := ResultState{
-		State:    StateNode{Contents: *rebuiltState, DivergencePoint: "TRACE_START"},
-		Paths:    []ExecutionHistory{currExecutionHistory},
-		Reason:   "trace",
-		Resolver: e.versionManager,
-	}
-	result.ConvergedStates = append(result.ConvergedStates, traceWalkResult)
-	logger.Info("len curr execution history", len(currExecutionHistory))
-
-	return result
-}
-
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
 // getNext pops the next state from the queue using DFS (depth-first) ordering.
@@ -354,6 +271,7 @@ func (e *Explorer) explore(
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
+		alreadySeen := seenStates[orderKey]
 		lineageKey := currentState.LineageHash()
 
 		if logger.V(1).Enabled() {
@@ -367,7 +285,11 @@ func (e *Explorer) explore(
 		// before taking the reconcile step so that we can explore a branch entirely in a DFS manner.
 		// if we wanted to explore in a BFS manner, we would do this after taking the reconcile step.
 		if len(currentState.PendingReconciles) > 1 {
-			if !seenStates[orderKey] || true {
+			// Branch on the order of pending reconciles. We branch if we haven't seen this
+			// specific ordering (lineageHash) before. This allows the same logical state
+			// to be branched from multiple times if reached via different execution paths,
+			// which is necessary to explore all possible interleavings.
+			if _, seenOrdering := seenStatesPendingOrderSensitive[lineageKey]; !seenOrdering {
 				expandedStates := expandStateByReconcileOrder(currentState)
 				if logger.V(2).Enabled() {
 					branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
@@ -376,28 +298,34 @@ func (e *Explorer) explore(
 					logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
 				}
 				for _, candidate := range expandedStates {
-					lineageHash := candidate.LineageHash()
-					if _, seenOrder := seenStatesPendingOrderSensitive[lineageHash]; !seenOrder {
-						if lineageHash != lineageKey {
-							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", lineageHash)
+					candidateLineageHash := candidate.LineageHash()
+					if _, seenCandidateOrder := seenStatesPendingOrderSensitive[candidateLineageHash]; !seenCandidateOrder {
+						if candidateLineageHash != lineageKey {
+							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", candidateLineageHash)
 							queue = e.enqueueState(queue, candidate)
 						}
-						seenStatesPendingOrderSensitive[lineageHash] = true
+						seenStatesPendingOrderSensitive[candidateLineageHash] = true
 					} else {
-						logger.V(2).Info("already seen branch, not queueing", "OrderKey", lineageHash)
+						logger.V(2).Info("already seen branch, not queueing", "OrderKey", candidateLineageHash)
 					}
 				}
+				// Mark this specific ordering as seen to avoid re-branching from the same ordering
+				seenStatesPendingOrderSensitive[lineageKey] = true
 			} else {
-				logger.WithValues("StateKey", stateKey, "OrderKey", lineageKey).V(2).Info("already seen, not expanding")
+				logger.WithValues("StateKey", stateKey, "OrderKey", lineageKey).V(2).Info("already seen this ordering, not expanding")
 			}
 		}
 
-		seenStates[orderKey] = true
+		if alreadySeen {
+			e.stats.SkippedNodeVisits++
+		} else {
+			e.stats.UniqueNodeVisits++
+			seenStates[orderKey] = true
+		}
 		e.stats.TotalNodeVisits++
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
-			e.stats.UniqueNodeVisits++
 		}
 		executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 		if cancelled := sendWithCancel(ctx, executionPathsCh, currentState); cancelled {
@@ -458,6 +386,21 @@ func (e *Explorer) explore(
 
 		// process the first one
 		pendingReconcile := currentState.PendingReconciles[0]
+
+		// Log all pending reconciles for diagnostic purposes
+		if logger.V(1).Enabled() {
+			pendingIDs := make([]string, len(currentState.PendingReconciles))
+			for i, pr := range currentState.PendingReconciles {
+				pendingIDs[i] = fmt.Sprintf("%s(%s)", pr.ReconcilerID, pr.Source)
+			}
+			logger.V(1).WithValues(
+				"Depth", currentState.depth,
+				"QueueDepth", len(queue),
+				"PendingCount", len(currentState.PendingReconciles),
+				"Pending", pendingIDs,
+				"Processing", pendingReconcile.ReconcilerID,
+			).Info("processing reconcile step")
+		}
 
 		// Each controller in the pending reconciles list is a potential branch point
 		// from the current state.
@@ -620,6 +563,7 @@ func (e *Explorer) explore(
 					"StateHash", stateHash,
 					"PathSignature", normalizedHistory,
 				).Info("skipping duplicate state reached via equivalent mutation history")
+				e.stats.SkippedPaths++
 				continue
 			} else {
 				// enqueue the new state to explore

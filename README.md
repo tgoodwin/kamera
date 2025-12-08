@@ -49,25 +49,33 @@ go run .
     eb.WithMaxDepth(100) // optional
     ```
 
-4. **Register each controller-runtime reconciler.** Supply a factory that accepts a controller-runtime `client.Client`. For alternative controller implementations, see [below](#using-non-controller-runtime-controllers).
+4. **Register each controller-runtime reconciler.** Supply a factory that accepts a controller-runtime `client.Client`. The returned `ReconcilerBuilder` lets you chain `.For()` (primary resource) and `.Watches()` registrations. For non controller-runtime implementations, see [below](#using-non-controller-runtime-controllers).
 
     ```go
     eb.WithReconciler("FooController", func(c client.Client) tracecheck.Reconciler {
         return &fooctrl.FooReconciler{Client: c, Scheme: scheme}
-    })
+    }).For("mygroup.example.com/Foo")
+
     eb.WithReconciler("BarController", func(c client.Client) tracecheck.Reconciler {
         return &barctrl.BarReconciler{Client: c, Scheme: scheme}
-    })
+    }).For("mygroup.example.com/Bar")
     ```
 
-5. **Describe controller dependencies and ownership.** `WithResourceDep` declares which reconcilers subscribe to watch/read a kind, while `AssignReconcilerToKind` identifies the primary owners that should be triggered when objects of that kind change. These dependencies determine which controllers will be queued to reconcile in response to resource state changes during the exploration process.
+5. **Describe controller dependencies and ownership.** Use `.For()` on the reconciler builder to declare primaries (controller-runtime `For()` semantics). Add explicit watches with `.Watches(kind, mapper)` on the reconciler builder when you need custom trigger mappings (controller-runtime `Watches()` semantics). `WithResourceDep` is deprecated; prefer explicit `.For()`/`.Watches()` declarations.
 
     ```go
     const fooKind = "mygroup.example.com/Foo"
     const barKind = "mygroup.example.com/Bar"
-    eb.AssignReconcilerToKind("FooController", fooKind)          // FooController owns Foo resources
-    eb.AssignReconcilerToKind("BarController", barKind)          // BarController  owns Bar resources
-    eb.WithResourceDep(fooKind, "FooController", "BarController") // both controllers watch Foo objects
+    eb.WithReconciler("FooController", func(c client.Client) tracecheck.Reconciler {
+        return &fooctrl.FooReconciler{Client: c, Scheme: scheme}
+    }).For(fooKind)
+
+    eb.WithReconciler("BarController", func(c client.Client) tracecheck.Reconciler {
+        return &barctrl.BarReconciler{Client: c, Scheme: scheme}
+    }).For(barKind)
+
+    // Optional: explicit watch mapping if names/owners aren’t enough
+    // .Watches("othergroup/Other", func(u *unstructured.Unstructured) []reconcile.Request { ... })
     ```
 
 6. **Seed the initial cluster state.** Use the state builder helpers to create a `StateNode` that includes your top-level objects and the initial pending reconciles for that state.
@@ -95,19 +103,18 @@ That’s enough to start evaluating how your controllers interact across differe
 
 ### Using non-controller-runtime controllers
 
-If your controllers aren’t built with `controller-runtime`, implement the `tracecheck.Strategy` interface (the same contract Kamera uses internally) and register it with the builder:
+If your controllers aren’t built with `controller-runtime`, that's fine! Kamera exposes a `tracecheck.Strategy` interface to support alternative controller structures via an adapter layer. Implement this interface and register it with the builder:
 
 ```go
-eb.WithStrategy("MyCustomController", func(recorder replay.EffectRecorder) tracecheck.Strategy {
+eb.WithStrategy("MyCustomResourceController", func(recorder replay.EffectRecorder) tracecheck.Strategy {
     return &MyStrategyImpl{
         Recorder: recorder,
         // ...inject whatever else your reconciler needs...
     }
-})
-eb.WithResourceDep("mygroup.example.com/Foo", "MyCustomController")
+}).For("mygroup.example.com/MyCustomResource")
 ```
 
-`WithStrategy` receives a `replay.EffectRecorder` so your custom strategy can record controller actions like the controller-runtime strategy does automatically. You'll use the effect recorder to implement your own write set recording. Everything else (state tracking, pending reconcile management, and path exploration) works the same, which makes it straightforward to mix and match controller-runtime reconcilers with bespoke logic in the same Explorer setup.
+`WithStrategy` receives a `replay.EffectRecorder` so your custom strategy can record controller actions like the controller-runtime strategy does automatically. You'll use the effect recorder to implement your own strategy for capturing controller actions. Everything else (state tracking, pending reconcile management, and path exploration) works the same, which makes it straightforward to mix and match controller-runtime reconcilers with bespoke logic in the same Explorer setup.
 
 ### Inspecting exploration results
 
@@ -124,12 +131,12 @@ if err := interactive.RunStateInspectorTUIView(states, true); err != nil {
 You can also save a snapshot for later review:
 
 ```go
-if err := interactive.SaveInspectorDump(states, "camera_inspector_dump.json"); err != nil {
+if err := interactive.SaveInspectorDump(states, "inspector_dump.json"); err != nil {
     log.Fatal(err)
 }
 ```
 
-Dump files can be reopened at any time via `go run ./cmd/inspect --dump camera_inspector_dump.json`, which restores the same UI. The inspector provides keyboard shortcuts (shown in the status bar) to switch between states, examine individual reconcile steps, and export dumps from within the UI.
+Dump files can be reopened at any time via `go run ./cmd/inspect --dump inspector_dump.json`, which restores the same UI. The inspector provides keyboard shortcuts (shown in the status bar) to switch between states, examine individual reconcile steps, and export dumps from within the UI.
 
 ## License
 

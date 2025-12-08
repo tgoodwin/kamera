@@ -37,6 +37,36 @@ func (rd ResourceDeps) ForReconciler(reconcilerID ReconcilerID) ([]string, error
 	return out, nil
 }
 
+// WatchMapper mirrors controller-runtime's enqueue mapping behavior for Watches().
+// Given a changed object, it returns the reconcile requests that should be enqueued.
+type WatchMapper func(obj *unstructured.Unstructured) []reconcile.Request
+
+func EnqueueRequestForObject() WatchMapper {
+	return func(obj *unstructured.Unstructured) []reconcile.Request {
+		if obj == nil {
+			return nil
+		}
+		nsName := types.NamespacedName{
+			Namespace: obj.GetNamespace(),
+			Name:      obj.GetName(),
+		}
+		if nsName.Namespace == "" || nsName.Name == "" {
+			return nil
+		}
+		return []reconcile.Request{
+			{NamespacedName: nsName},
+		}
+	}
+}
+
+type WatchRegistration struct {
+	Mapper       WatchMapper
+	ReconcilerID ReconcilerID
+}
+
+// WatchRegistrations maps canonical group/kind strings to watch registrations.
+type WatchRegistrations map[string][]WatchRegistration
+
 // PrimariesByKind tracks the owner of a resource by kind, where owner is the reconciler that
 // has ControllerManagedBy.For called with the kind of the resource
 type PrimariesByKind map[string]util.Set[ReconcilerID]
@@ -100,6 +130,7 @@ type hashResolver interface {
 type TriggerManager struct {
 	deps     ResourceDeps
 	owners   PrimariesByKind
+	watchers WatchRegistrations
 	resolver hashResolver
 }
 
@@ -111,8 +142,29 @@ func canonicalKindKey(group, kind string) string {
 	return util.CanonicalGroupKind(group, kind)
 }
 
+func identityWatchMapper(obj *unstructured.Unstructured) []reconcile.Request {
+	if obj == nil {
+		return nil
+	}
+	nsName := types.NamespacedName{
+		Namespace: obj.GetNamespace(),
+		Name:      obj.GetName(),
+	}
+	if nsName.Namespace == "" || nsName.Name == "" {
+		return nil
+	}
+	return []reconcile.Request{
+		{NamespacedName: nsName},
+	}
+}
+
 // NewTriggerManager creates a new instance of TriggerManager
-func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPrimaryKind map[ReconcilerID]string, resolver hashResolver) *TriggerManager {
+func NewTriggerManager(
+	subscribingReconcilersByKind ResourceDeps,
+	reconcilerToPrimaryKind map[ReconcilerID]string,
+	watchers WatchRegistrations,
+	resolver hashResolver,
+) *TriggerManager {
 
 	primariesByKind := make(PrimariesByKind)
 	for reconcilerID, kindSpec := range reconcilerToPrimaryKind {
@@ -123,9 +175,14 @@ func NewTriggerManager(subscribingReconcilersByKind ResourceDeps, reconcilerToPr
 		}
 		primariesByKind[canonical].Add(reconcilerID)
 	}
+	if watchers == nil {
+		watchers = make(WatchRegistrations)
+	}
+
 	return &TriggerManager{
 		deps:     subscribingReconcilersByKind,
 		owners:   primariesByKind,
+		watchers: watchers,
 		resolver: resolver,
 	}
 }
@@ -183,6 +240,34 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 						NamespacedName: nsName,
 					},
 					Source: SourceStateChange,
+				}
+			}
+		}
+
+		// Add reconcilers registered via watches (controller-runtime Watches semantics).
+		// Mapping from changed object -> reconcile requests is delegated to the mapper.
+		if watchRegs, exists := tm.watchers[ownerKey]; exists {
+			for _, reg := range watchRegs {
+				if reg.Mapper == nil {
+					continue
+				}
+				requests := reg.Mapper(objectVal)
+				for _, req := range requests {
+					nsName := req.NamespacedName
+					if nsName.Namespace == "" || nsName.Name == "" {
+						continue
+					}
+					reconcileKey := fmt.Sprintf("%s:%s:%s", reg.ReconcilerID, nsName.Namespace, nsName.Name)
+					if _, alreadyAdded := uniqueReconciles[reconcileKey]; alreadyAdded {
+						continue
+					}
+					uniqueReconciles[reconcileKey] = PendingReconcile{
+						ReconcilerID: reg.ReconcilerID,
+						Request: reconcile.Request{
+							NamespacedName: nsName,
+						},
+						Source: SourceStateChange,
+					}
 				}
 			}
 		}
