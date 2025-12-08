@@ -12,6 +12,7 @@ type ExploreStats struct {
 	UniqueNodeVisits  int
 	TotalNodeVisits   int
 	SkippedNodeVisits int
+	SkippedPaths      int
 
 	RestartsPerReconciler map[ReconcilerID]int
 
@@ -90,6 +91,7 @@ func (s *ExploreStats) Print() {
 			"totalTime", s.endTime.Sub(*s.startTime),
 			"totalNodeVisits", s.TotalNodeVisits,
 			"uniqueNodeVisits", s.UniqueNodeVisits,
+			"skippedPaths", s.SkippedPaths,
 			"abortedPaths", s.AbortedPaths,
 			"reconcileSteps", s.TotalReconcileSteps,
 			"avgStepLatency", avgStep,
@@ -101,6 +103,7 @@ func (s *ExploreStats) Print() {
 	fmt.Printf("Total node visits: %d\n", s.TotalNodeVisits)
 	fmt.Printf("Unique node visits: %d\n", s.UniqueNodeVisits)
 	fmt.Printf("Skipped node visits: %d\n", s.SkippedNodeVisits)
+	fmt.Printf("Skipped paths: %d\n", s.SkippedPaths)
 	fmt.Printf("Aborted paths: %d\n", s.AbortedPaths)
 	fmt.Printf("Reconcile steps: %d\n", s.TotalReconcileSteps)
 	fmt.Printf("Avg step latency: %v\n", avgStep)

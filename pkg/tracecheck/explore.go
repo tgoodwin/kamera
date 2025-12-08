@@ -559,6 +559,7 @@ func (e *Explorer) explore(
 					"StateHash", stateHash,
 					"PathSignature", normalizedHistory,
 				).Info("skipping duplicate state reached via equivalent mutation history")
+				e.stats.SkippedPaths++
 				continue
 			} else {
 				// enqueue the new state to explore
