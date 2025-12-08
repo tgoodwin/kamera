@@ -245,7 +245,11 @@ func (e *Explorer) explore(
 	// but we do track the states we've seen
 	seenStates := make(map[OrderHash]bool)
 
-	seenStatesPendingOrderSensitive := make(map[string]bool)
+	// Track which logical states (order-insensitive) have already been expanded
+	// for reconcile-order permutations. Branching once per StateHash is enough,
+	// because expandStateByReconcileOrder enqueues every first-position choice
+	// and recursion covers the full permutation space.
+	seenBranchingByState := make(map[StateHash]bool)
 
 	// we do track the seen converged states so we can attribute multiple execution paths to them
 	seenConvergedStates := make(map[StateHash]StateNode)
@@ -272,24 +276,18 @@ func (e *Explorer) explore(
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
 		alreadySeen := seenStates[orderKey]
-		lineageKey := currentState.LineageHash()
-
 		if logger.V(1).Enabled() {
 			logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", currentState.DetailedLineage())
 		}
 
-		// we reconcile on the first pending reconcile for this state,
-		// but if there are multiple pending reconciles, we want to explore what would happen
-		// if each pending reconcile had gone first. So, we enqueue copies of this state
-		// with each pending reconcile as the first one before proceeding. We do this FIRST
-		// before taking the reconcile step so that we can explore a branch entirely in a DFS manner.
-		// if we wanted to explore in a BFS manner, we would do this after taking the reconcile step.
+		// We reconcile the first pending reconcile for this state, but if there are
+		// multiple pending reconciles, we need to explore every ordering. Expanding
+		// once per logical state (StateHash) is sufficient: the expansion enqueues
+		// every first-position choice, and recursive exploration will enumerate the
+		// full permutation space. Re-reaching the same StateHash with a different
+		// ordering does not add new permutations, so we skip re-branching.
 		if len(currentState.PendingReconciles) > 1 {
-			// Branch on the order of pending reconciles. We branch if we haven't seen this
-			// specific ordering (lineageHash) before. This allows the same logical state
-			// to be branched from multiple times if reached via different execution paths,
-			// which is necessary to explore all possible interleavings.
-			if _, seenOrdering := seenStatesPendingOrderSensitive[lineageKey]; !seenOrdering {
+			if !seenBranchingByState[stateKey] {
 				expandedStates := expandStateByReconcileOrder(currentState)
 				if logger.V(2).Enabled() {
 					branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
@@ -298,21 +296,17 @@ func (e *Explorer) explore(
 					logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
 				}
 				for _, candidate := range expandedStates {
-					candidateLineageHash := candidate.LineageHash()
-					if _, seenCandidateOrder := seenStatesPendingOrderSensitive[candidateLineageHash]; !seenCandidateOrder {
-						if candidateLineageHash != lineageKey {
-							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", candidateLineageHash)
-							queue = e.enqueueState(queue, candidate)
-						}
-						seenStatesPendingOrderSensitive[candidateLineageHash] = true
-					} else {
-						logger.V(2).Info("already seen branch, not queueing", "OrderKey", candidateLineageHash)
+					// Skip the current ordering; it is already being explored.
+					if candidate.OrderSensitiveHash() == orderKey {
+						continue
 					}
+					logger.V(2).Info("adding new branch to explore", "StateKey", stateKey, "EnqueuedOrder", candidate.OrderSensitiveHash())
+					queue = e.enqueueState(queue, candidate)
 				}
-				// Mark this specific ordering as seen to avoid re-branching from the same ordering
-				seenStatesPendingOrderSensitive[lineageKey] = true
+				// Mark this logical state as expanded to avoid re-branching.
+				seenBranchingByState[stateKey] = true
 			} else {
-				logger.WithValues("StateKey", stateKey, "OrderKey", lineageKey).V(2).Info("already seen this ordering, not expanding")
+				logger.WithValues("StateKey", stateKey).V(2).Info("already expanded pending orderings for this state, not branching")
 			}
 		}
 
