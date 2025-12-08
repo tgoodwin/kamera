@@ -1,8 +1,11 @@
 package tracecheck
 
 import (
+	"slices"
 	"testing"
 
+	"github.com/samber/lo"
+	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -249,5 +252,91 @@ func Test_GetUniquePaths_PreservesConvergenceSteps(t *testing.T) {
 	key2 := unique[1].UniqueKey()
 	if key1 == key2 {
 		t.Errorf("Expected different unique keys for converged vs non-converged paths, but both had key: %s", key1)
+	}
+}
+
+func TestExpandStateByReconcileOrder(t *testing.T) {
+	type testCase struct {
+		name          string
+		pending       []PendingReconcile
+		wantNumStates int
+		wantOrders    [][]string // ordered list of reconcilerIDs, for each result
+	}
+	makePR := func(reconcilerID ReconcilerID) PendingReconcile {
+		return PendingReconcile{
+			ReconcilerID: reconcilerID,
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: "default", Name: string(reconcilerID)},
+			},
+			Source: "test",
+		}
+	}
+
+	cases := []testCase{
+		{
+			name:          "no pending reconciles (converged)",
+			pending:       []PendingReconcile{},
+			wantNumStates: 1,
+			wantOrders:    [][]string{{}},
+		},
+		{
+			name:          "single pending reconcile",
+			pending:       []PendingReconcile{makePR("A")},
+			wantNumStates: 1,
+			wantOrders:    [][]string{{"A"}},
+		},
+		{
+			name:          "two pending reconciles",
+			pending:       []PendingReconcile{makePR("A"), makePR("B")},
+			wantNumStates: 2,
+			wantOrders: [][]string{
+				{"A", "B"},
+				{"B", "A"},
+			},
+		},
+		{
+			name:          "three pending reconciles",
+			pending:       []PendingReconcile{makePR("A"), makePR("B"), makePR("C")},
+			wantNumStates: 3,
+			wantOrders: [][]string{
+				{"A", "B", "C"},
+				{"B", "A", "C"},
+				{"C", "A", "B"},
+			}, // only permuting first item
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			state := StateNode{PendingReconciles: tc.pending}
+			results := expandStateByReconcileOrder(state)
+			if len(results) != tc.wantNumStates {
+				t.Errorf("Expected %d result states, got %d", tc.wantNumStates, len(results))
+			}
+			for _, result := range results {
+				if !result.Contents.All().Equals(state.Contents.All()) {
+					t.Errorf("Expected state contents to be the same")
+				}
+			}
+			var gotOrders [][]string
+			for _, st := range results {
+				var order []string
+				for _, pr := range st.PendingReconciles {
+					order = append(order, string(pr.ReconcilerID))
+				}
+				gotOrders = append(gotOrders, order)
+			}
+
+			// Check we have the right number of orderings
+			assert.Equal(t, len(tc.wantOrders), len(gotOrders), "Expected %d orderings, got %d", len(tc.wantOrders), len(gotOrders))
+
+			// Check all expected orders are present in result (order doesn't matter)
+			for _, wantOrder := range tc.wantOrders {
+				found := lo.ContainsBy(gotOrders, func(gotOrder []string) bool {
+					return slices.Equal(gotOrder, wantOrder)
+				})
+				assert.True(t, found, "Result missing wanted ordering: %v (all orders: %v)", wantOrder, gotOrders)
+			}
+		})
 	}
 }

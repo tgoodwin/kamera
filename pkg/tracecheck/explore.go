@@ -243,7 +243,7 @@ func (e *Explorer) explore(
 
 	// we dont skip over seen states because we want to track all the ways a state can be reached
 	// but we do track the states we've seen
-	seenStates := make(map[StateHash]bool)
+	seenStates := make(map[OrderHash]bool)
 
 	seenStatesPendingOrderSensitive := make(map[string]bool)
 
@@ -270,8 +270,8 @@ func (e *Explorer) explore(
 
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
-		alreadySeen := seenStates[stateKey]
-		// orderKey := currentState.OrderSensitiveHash()
+		orderKey := currentState.OrderSensitiveHash()
+		alreadySeen := seenStates[orderKey]
 		lineageKey := currentState.LineageHash()
 
 		if logger.V(1).Enabled() {
@@ -285,9 +285,11 @@ func (e *Explorer) explore(
 		// before taking the reconcile step so that we can explore a branch entirely in a DFS manner.
 		// if we wanted to explore in a BFS manner, we would do this after taking the reconcile step.
 		if len(currentState.PendingReconciles) > 1 {
-			// Only branch once per logical state (order-insensitive); avoid re-branching
-			// when we pop the same state with a different pending order.
-			if !alreadySeen {
+			// Branch on the order of pending reconciles. We branch if we haven't seen this
+			// specific ordering (lineageHash) before. This allows the same logical state
+			// to be branched from multiple times if reached via different execution paths,
+			// which is necessary to explore all possible interleavings.
+			if _, seenOrdering := seenStatesPendingOrderSensitive[lineageKey]; !seenOrdering {
 				expandedStates := expandStateByReconcileOrder(currentState)
 				if logger.V(2).Enabled() {
 					branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
@@ -296,19 +298,21 @@ func (e *Explorer) explore(
 					logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
 				}
 				for _, candidate := range expandedStates {
-					lineageHash := candidate.LineageHash()
-					if _, seenOrder := seenStatesPendingOrderSensitive[lineageHash]; !seenOrder {
-						if lineageHash != lineageKey {
-							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", lineageHash)
+					candidateLineageHash := candidate.LineageHash()
+					if _, seenCandidateOrder := seenStatesPendingOrderSensitive[candidateLineageHash]; !seenCandidateOrder {
+						if candidateLineageHash != lineageKey {
+							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", candidateLineageHash)
 							queue = e.enqueueState(queue, candidate)
 						}
-						seenStatesPendingOrderSensitive[lineageHash] = true
+						seenStatesPendingOrderSensitive[candidateLineageHash] = true
 					} else {
-						logger.V(2).Info("already seen branch, not queueing", "OrderKey", lineageHash)
+						logger.V(2).Info("already seen branch, not queueing", "OrderKey", candidateLineageHash)
 					}
 				}
+				// Mark this specific ordering as seen to avoid re-branching from the same ordering
+				seenStatesPendingOrderSensitive[lineageKey] = true
 			} else {
-				logger.WithValues("StateKey", stateKey, "OrderKey", lineageKey).V(2).Info("already seen, not expanding")
+				logger.WithValues("StateKey", stateKey, "OrderKey", lineageKey).V(2).Info("already seen this ordering, not expanding")
 			}
 		}
 
@@ -316,7 +320,7 @@ func (e *Explorer) explore(
 			e.stats.SkippedNodeVisits++
 		} else {
 			e.stats.UniqueNodeVisits++
-			seenStates[stateKey] = true
+			seenStates[orderKey] = true
 		}
 		e.stats.TotalNodeVisits++
 
