@@ -270,6 +270,7 @@ func (e *Explorer) explore(
 
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
+		alreadySeen := seenStates[stateKey]
 		// orderKey := currentState.OrderSensitiveHash()
 		lineageKey := currentState.LineageHash()
 
@@ -286,7 +287,7 @@ func (e *Explorer) explore(
 		if len(currentState.PendingReconciles) > 1 {
 			// Only branch once per logical state (order-insensitive); avoid re-branching
 			// when we pop the same state with a different pending order.
-			if !seenStates[stateKey] {
+			if !alreadySeen {
 				expandedStates := expandStateByReconcileOrder(currentState)
 				if logger.V(2).Enabled() {
 					branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
@@ -311,12 +312,16 @@ func (e *Explorer) explore(
 			}
 		}
 
-		seenStates[stateKey] = true
+		if alreadySeen {
+			e.stats.SkippedNodeVisits++
+		} else {
+			e.stats.UniqueNodeVisits++
+			seenStates[stateKey] = true
+		}
 		e.stats.TotalNodeVisits++
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
-			e.stats.UniqueNodeVisits++
 		}
 		executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
 		if cancelled := sendWithCancel(ctx, executionPathsCh, currentState); cancelled {
