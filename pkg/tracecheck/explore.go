@@ -258,6 +258,13 @@ func (e *Explorer) explore(
 	// This lets us prune branches that only differ by no-op reads.
 	visitedStatePaths := make(map[StateHash]map[string]struct{})
 
+	// Track completion status for (stateHash, history) pairs.
+	// We only skip duplicate paths if we've COMPLETED exploration (converged or aborted),
+	// not just started it. This prevents skipping a path before we know its outcome.
+	// Key: stateHash + "|" + normalizedHistory
+	// Value: true = completed (safe to skip future duplicates)
+	completedPaths := make(map[string]bool)
+
 	// Track which (objectsHash, reconcilerID, request) combinations produced no changes.
 	// Used to skip orderings that put known no-ops first.
 	knownNoOps := make(map[string]bool)
@@ -429,6 +436,11 @@ func (e *Explorer) explore(
 			if logger.V(2).Enabled() {
 				logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
 			}
+
+			// Mark this (state, history) as completed - safe to skip future duplicates
+			completionKey := fmt.Sprintf("%s|%s", stateKey, currentState.ExecutionHistory.UniqueKey())
+			completedPaths[completionKey] = true
+
 			seenConvergedStates[stateKey] = currentState
 			// Also record by ObjectsHash so early convergence detection can find it
 			seenConvergedStates[StateHash(currentState.ObjectsHash())] = currentState
@@ -621,6 +633,12 @@ func (e *Explorer) explore(
 				e.stats.AbortedPaths++
 				stateKey := newState.Hash()
 				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], newState.ExecutionHistory)
+
+				// NOTE: We intentionally do NOT mark max-depth aborts as completed.
+				// Max depth is path-dependent (a state reached at depth 99 hits the limit,
+				// but the same state reached at depth 50 can continue). Marking completion
+				// here would incorrectly skip paths that could have converged.
+
 				select {
 				case abortedStatesCh <- ResultState{
 					ID:       fmt.Sprintf("aborted-%s", stateKey),
@@ -667,34 +685,35 @@ func (e *Explorer) explore(
 				visitedStatePaths[stateHash] = historySet
 			}
 
-			// TODO this is not fully correct; can lead to skipping states we've already "seen" due to equivalent mutation history
-			// but that prevents us from reaching the bottom of the execution branch. need to make it smarter to only skip
-			// if we've already explored the subtree below.
+			// Deduplication based on completion status:
+			// Only skip if we've COMPLETED exploration of this (state, history) pair.
+			// This prevents skipping paths that are still in-flight and might fail,
+			// which would cause us to miss valid convergence paths.
 			normalizedHistory := newState.ExecutionHistory.UniqueKey()
-			_, seenPath := historySet[normalizedHistory]
-			enableSkip := seenPath && false // TODO: enable this when we have a smarter way to track subtrees
-			if enableSkip {
+			completionKey := fmt.Sprintf("%s|%s", stateHash, normalizedHistory)
+
+			if completed := completedPaths[completionKey]; completed {
 				logger.V(1).WithValues(
 					"StateHash", stateHash,
 					"PathSignature", normalizedHistory,
-				).Info("skipping duplicate state reached via equivalent mutation history")
+				).Info("skipping - path already completed exploration")
 				e.stats.SkippedPaths++
 				continue
-			} else {
-				// enqueue the new state to explore
-				historySet[normalizedHistory] = struct{}{}
-
-				// Also track in exploredLogicalStates for cache prediction
-				pendingStrs := lo.Map(newState.PendingReconciles, func(pr PendingReconcile, _ int) string {
-					return pr.String()
-				})
-				slices.Sort(pendingStrs)
-				pendingSignature := strings.Join(pendingStrs, ",")
-				logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.ObjectsHash(), pendingSignature, normalizedHistory)
-				exploredLogicalStates[logicalStateKey] = struct{}{}
-
-				queue = e.enqueueState(queue, newState)
 			}
+
+			// Track that we've enqueued this path (for stats/debugging)
+			historySet[normalizedHistory] = struct{}{}
+
+			// Also track in exploredLogicalStates for cache prediction
+			pendingStrs := lo.Map(newState.PendingReconciles, func(pr PendingReconcile, _ int) string {
+				return pr.String()
+			})
+			slices.Sort(pendingStrs)
+			pendingSignature := strings.Join(pendingStrs, ",")
+			logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.ObjectsHash(), pendingSignature, normalizedHistory)
+			exploredLogicalStates[logicalStateKey] = struct{}{}
+
+			queue = e.enqueueState(queue, newState)
 		}
 	}
 
