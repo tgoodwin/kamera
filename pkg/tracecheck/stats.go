@@ -14,6 +14,8 @@ type ExploreStats struct {
 	SkippedNodeVisits      int
 	SkippedPaths           int
 	SkippedOrderExpansions int
+	SkippedSubtrees        int // entire subtrees skipped (same logical state already explored)
+	EarlyConvergence       int // states treated as converged because all pending are known no-ops
 	NoOpReconciles         int // reconciles that produced no changes
 	SkippedNoOpOrderings   int // orderings skipped because they put a known no-op first
 	CachePredictedSkips    int // reconciles skipped via cache prediction (would be duplicates)
@@ -131,6 +133,8 @@ func (s *ExploreStats) Print() {
 	fmt.Printf("Skipped node visits: %d\n", s.SkippedNodeVisits)
 	fmt.Printf("Skipped paths: %d\n", s.SkippedPaths)
 	fmt.Printf("Skipped order expansions: %d\n", s.SkippedOrderExpansions)
+	fmt.Printf("Skipped subtrees: %d\n", s.SkippedSubtrees)
+	fmt.Printf("Early convergence: %d\n", s.EarlyConvergence)
 	fmt.Printf("No-op reconciles: %d\n", s.NoOpReconciles)
 	fmt.Printf("Skipped no-op orderings: %d\n", s.SkippedNoOpOrderings)
 	fmt.Printf("Cache predicted skips: %d\n", s.CachePredictedSkips)

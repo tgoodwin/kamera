@@ -187,6 +187,15 @@ func (b *ExplorerBuilder) WithDivergenceCircuitBreaker(threshold int) *ExplorerB
 	return b
 }
 
+// WithoutOptimizations disables all exploration optimizations.
+// Useful for tests that need deterministic, exhaustive exploration.
+func (b *ExplorerBuilder) WithoutOptimizations() *ExplorerBuilder {
+	b.config.DisableEarlyConvergence = true
+	b.config.DisableCachePrediction = true
+	b.config.DisableNoOpOrderingSkip = true
+	return b
+}
+
 func (b *ExplorerBuilder) WithEmitter(emitter testEmitter) *ExplorerBuilder {
 	b.emitter = emitter
 	return b

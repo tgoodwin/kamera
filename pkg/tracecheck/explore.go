@@ -48,6 +48,17 @@ type ExploreConfig struct {
 	// divergenceCircuitBreakerThreshold limits exploration below certain subtrees
 	// if enough paths below that subtree converge to the same state.
 	divergenceCircuitBreakerThreshold int
+
+	// Optimization flags (opt-out: false = enabled, true = disabled)
+	// DisableEarlyConvergence disables skipping states where all pending are known
+	// no-ops and we've already found a converged path to this logical state.
+	DisableEarlyConvergence bool
+	// DisableCachePrediction disables using cached reconcile results to predict
+	// and skip reconciles that would produce duplicate states.
+	DisableCachePrediction bool
+	// DisableNoOpOrderingSkip disables skipping ordering branches that put a
+	// known no-op reconciler first.
+	DisableNoOpOrderingSkip bool
 }
 
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
@@ -257,6 +268,12 @@ func (e *Explorer) explore(
 	// This allows prediction-based deduplication using only predictable components.
 	exploredLogicalStates := make(map[string]struct{})
 
+	// Subtree Circuit Breaker: track which logical states (objectsHash + pendingSignature) we've
+	// already explored. Future exploration depends only on (objects, pending), NOT on history.
+	// If we reach the same logical state via different paths, the subtrees would be identical,
+	// so we skip re-exploration entirely.
+	exploredSubtrees := make(map[string]struct{})
+
 	var queue []StateNode
 
 	// executionPathsToState is a map of stateKey -> ExecutionHistory
@@ -298,6 +315,14 @@ func (e *Explorer) explore(
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
+
+		// Subtree Circuit Breaker: check if we've already explored from this logical state.
+		// DISABLED: Current implementation marks subtrees as "explored" when we START,
+		// not when we FINISH. This causes missed convergence when first exploration
+		// doesn't complete (errors, depth limits, etc.). Need to track completion properly.
+		// TODO: Re-enable with proper completion tracking.
+		_ = exploredSubtrees // Keep variable to avoid removing related code
+
 		alreadySeen := seenStates[orderKey]
 		if logger.V(1).Enabled() {
 			logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", currentState.DetailedLineage())
@@ -309,7 +334,23 @@ func (e *Explorer) explore(
 		// every first-position choice, and recursive exploration will enumerate the
 		// full permutation space. Re-reaching the same StateHash with a different
 		// ordering does not add new permutations, so we skip re-branching.
-		if len(currentState.PendingReconciles) > 1 {
+		//
+		// Early Convergence Optimization: if ALL pending reconciles are known no-ops,
+		// and we've already found a converged path to this logical state, skip entirely.
+		// The first path runs through the no-ops to reach actual convergence; subsequent
+		// paths can skip since they'd produce the same result.
+		allPendingAreNoOps := e.checkEarlyConvergence(currentState, knownNoOps)
+		if allPendingAreNoOps && !e.config.DisableEarlyConvergence {
+			objectsHash := currentState.ObjectsHash()
+			if _, alreadyConverged := seenConvergedStates[StateHash(objectsHash)]; alreadyConverged {
+				e.stats.EarlyConvergence++
+				logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
+					"depth", currentState.depth, "pendingCount", len(currentState.PendingReconciles))
+				continue
+			}
+		}
+
+		if len(currentState.PendingReconciles) > 1 && !allPendingAreNoOps {
 			if !seenBranchingByState[stateKey] {
 				expandedStates := expandStateByReconcileOrder(currentState)
 				if logger.V(2).Enabled() {
@@ -328,11 +369,13 @@ func (e *Explorer) explore(
 					}
 
 					// Check if the first reconciler in this ordering is a known no-op.
-					firstPending := candidate.PendingReconciles[0]
-					noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, firstPending.ReconcilerID, firstPending.Request.NamespacedName.String())
-					if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
-						e.stats.SkippedNoOpOrderings++
-						continue
+					if !e.config.DisableNoOpOrderingSkip {
+						firstPending := candidate.PendingReconciles[0]
+						noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, firstPending.ReconcilerID, firstPending.Request.NamespacedName.String())
+						if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
+							e.stats.SkippedNoOpOrderings++
+							continue
+						}
 					}
 
 					logger.V(2).Info("adding new branch to explore", "StateKey", stateKey, "EnqueuedOrder", candidate.OrderSensitiveHash())
@@ -387,6 +430,8 @@ func (e *Explorer) explore(
 				logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
 			}
 			seenConvergedStates[stateKey] = currentState
+			// Also record by ObjectsHash so early convergence detection can find it
+			seenConvergedStates[StateHash(currentState.ObjectsHash())] = currentState
 
 			// track how many times we've arrived at this state from some common ancestor
 			if currentState.divergenceKey != "" {
@@ -496,10 +541,12 @@ func (e *Explorer) explore(
 			cacheKey := fmt.Sprintf("%s:%s:%s", stateView.ObjectsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
 			// Check cache: can we predict the output state without running the reconcile?
-			if e.skipViaCachePrediction(reconcileCache, exploredLogicalStates, cacheKey, stateView, pendingReconcile) {
-				stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
-				e.stats.CachePredictedSkips++
-				continue
+			if !e.config.DisableCachePrediction {
+				if e.skipViaCachePrediction(reconcileCache, exploredLogicalStates, cacheKey, stateView, pendingReconcile) {
+					stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
+					e.stats.CachePredictedSkips++
+					continue
+				}
 			}
 
 			stepLogger.Info("Taking reconcile step")
@@ -1180,6 +1227,35 @@ func (e *Explorer) skipViaCachePrediction(
 		}
 	}
 	return false
+}
+
+// checkEarlyConvergence detects if all pending reconciles are known no-ops.
+// When true, we can skip exploring different orderings since they're all equivalent.
+func (e *Explorer) checkEarlyConvergence(state StateNode, knownNoOps map[string]bool) bool {
+	if len(state.PendingReconciles) == 0 {
+		return false
+	}
+
+	objectsHash := state.ObjectsHash()
+	for _, pr := range state.PendingReconciles {
+		noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, pr.ReconcilerID, pr.Request.NamespacedName.String())
+		if isNoOp, known := knownNoOps[noOpKey]; !known || !isNoOp {
+			return false
+		}
+	}
+	return true
+}
+
+// computeSubtreeKey returns a key representing the logical state for subtree deduplication.
+// Uses order-sensitive pending to distinguish different exploration orderings.
+// Two states with the same objects and same pending ORDER will explore identical subtrees.
+func (e *Explorer) computeSubtreeKey(state StateNode) string {
+	// Use order-sensitive pending: different orderings can produce different outcomes
+	pendingStrs := lo.Map(state.PendingReconciles, func(pr PendingReconcile, _ int) string {
+		return pr.String()
+	})
+	// NOT sorted - order matters for subtree identity
+	return fmt.Sprintf("%s|%s", state.ObjectsHash(), strings.Join(pendingStrs, ","))
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {

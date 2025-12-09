@@ -101,6 +101,7 @@ func TestExhaustiveInterleavings(t *testing.T) {
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
+	eb.WithoutOptimizations() // Disable optimizations to test exhaustive exploration
 	fooKind := "webapp.discrete.events/Foo"
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
@@ -209,6 +210,7 @@ func TestExhaustiveInterleavings(t *testing.T) {
 func TestConvergedStateIdentification(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
+	eb.WithoutOptimizations() // Disable optimizations to test exhaustive exploration
 
 	// Testing two controllers whose behavior is identical
 	// and who both depend on the same object.
