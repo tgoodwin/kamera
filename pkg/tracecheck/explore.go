@@ -306,6 +306,7 @@ func (e *Explorer) explore(
 				// Mark this logical state as expanded to avoid re-branching.
 				seenBranchingByState[stateKey] = true
 			} else {
+				e.stats.SkippedOrderExpansions++
 				logger.WithValues("StateKey", stateKey).V(2).Info("already expanded pending orderings for this state, not branching")
 			}
 		}

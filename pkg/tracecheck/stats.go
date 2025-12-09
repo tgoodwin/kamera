@@ -6,13 +6,14 @@ import (
 )
 
 type ExploreStats struct {
-	startTime         *time.Time
-	endTime           *time.Time
-	AbortedPaths      int
-	UniqueNodeVisits  int
-	TotalNodeVisits   int
-	SkippedNodeVisits int
-	SkippedPaths      int
+	startTime              *time.Time
+	endTime                *time.Time
+	AbortedPaths           int
+	UniqueNodeVisits       int
+	TotalNodeVisits        int
+	SkippedNodeVisits      int
+	SkippedPaths           int
+	SkippedOrderExpansions int
 
 	RestartsPerReconciler map[ReconcilerID]int
 
@@ -104,6 +105,7 @@ func (s *ExploreStats) Print() {
 	fmt.Printf("Unique node visits: %d\n", s.UniqueNodeVisits)
 	fmt.Printf("Skipped node visits: %d\n", s.SkippedNodeVisits)
 	fmt.Printf("Skipped paths: %d\n", s.SkippedPaths)
+	fmt.Printf("Skipped order expansions: %d\n", s.SkippedOrderExpansions)
 	fmt.Printf("Aborted paths: %d\n", s.AbortedPaths)
 	fmt.Printf("Reconcile steps: %d\n", s.TotalReconcileSteps)
 	fmt.Printf("Avg step latency: %v\n", avgStep)
