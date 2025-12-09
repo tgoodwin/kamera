@@ -132,7 +132,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("KPAReconciler"))
 		return strategy
-	}).For("autoscaling.internal.knative.dev/PodAutoscaler").PermuteOrder()
+	}).For("autoscaling.internal.knative.dev/PodAutoscaler")
 
 	builder.WithCustomStrategy("ServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(servicecontroller.NewController, r)
@@ -141,7 +141,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("ServiceReconciler"))
 		return strategy
-	}).For("serving.knative.dev/Service").PermuteOrder()
+	}).For("serving.knative.dev/Service")
 
 	builder.WithCustomStrategy("RouteReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(routecontroller.NewController, r)
@@ -150,17 +150,19 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("RouteReconciler"))
 		return strategy
-	}).For("serving.knative.dev/Route").Watches("serving.knative.dev/Configuration", func(u *unstructured.Unstructured) []reconcile.Request {
-		labels := u.GetLabels()
-		svcName := labels[serving.ServiceLabelKey]
-		if svcName == "" {
-			return nil
-		}
+	}).For("serving.knative.dev/Route").Watches(
+		"serving.knative.dev/Configuration",
+		func(u *unstructured.Unstructured) []reconcile.Request {
+			labels := u.GetLabels()
+			svcName := labels[serving.ServiceLabelKey]
+			if svcName == "" {
+				return nil
+			}
 
-		return []reconcile.Request{
-			{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: svcName}},
-		}
-	})
+			return []reconcile.Request{
+				{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: svcName}},
+			}
+		})
 
 	builder.WithCustomStrategy("ServerlessServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(serverlessservicecontroller.NewController, r)
