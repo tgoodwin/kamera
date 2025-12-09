@@ -175,9 +175,13 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	// if we broke out early, collect partial results, summarize them, and return
 	result := &Result{ConvergedStates: make([]ResultState, 0), AbortedStates: abortedCollected}
+	rawPaths := 0
+	dedupedPaths := 0
 	for i, stateKey := range lo.Keys(seenConvergedStates) {
 		state := seenConvergedStates[stateKey]
+		rawPaths = rawPaths + len(executionPathsToState[stateKey])
 		paths := normalizeAndDedupePaths(executionPathsToState[stateKey])
+		dedupedPaths = dedupedPaths + len(paths)
 		state.DivergencePoint = initialState.DivergencePoint
 		convergedState := ResultState{
 			ID:       fmt.Sprintf("state-%d", i),
@@ -195,6 +199,8 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 			result.AbortedStates[i].Paths = GetUniquePaths(mergedPaths)
 		}
 	}
+	fmt.Printf("paths pre dedupe: %d\n", rawPaths)
+	fmt.Printf("paths post dedupe: %d\n", dedupedPaths)
 	summarize(result)
 	return result
 }
@@ -233,6 +239,20 @@ func (e *Explorer) explore(
 	// Track explored state hashes keyed by the sequence of state-changing reconciles.
 	// This lets us prune branches that only differ by no-op reads.
 	visitedStatePaths := make(map[StateHash]map[string]struct{})
+
+	// Track which (objectsHash, reconcilerID, request) combinations produced no changes.
+	// Used to skip orderings that put known no-ops first.
+	knownNoOps := make(map[string]bool)
+
+	// Cache reconcile results to predict output states before running expensive reconciles.
+	// Key: "inputStateHash:reconcilerID:request" (full input state, not just objects)
+	// This lets us check if a reconcile would produce a duplicate state BEFORE running it.
+	type reconcileResultCache struct {
+		outputStateHash StateHash // the actual output state hash (from newState.Hash())
+		wasNoOp         bool      // did it produce changes?
+		numEffects      int       // number of effects (for history signature)
+	}
+	reconcileCache := make(map[string]*reconcileResultCache)
 
 	var queue []StateNode
 
@@ -295,11 +315,23 @@ func (e *Explorer) explore(
 					})
 					logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
 				}
+
+				// Optimization: skip orderings that put a known no-op reconciler first.
+				objectsHash := currentState.ObjectsHash()
 				for _, candidate := range expandedStates {
 					// Skip the current ordering; it is already being explored.
 					if candidate.OrderSensitiveHash() == orderKey {
 						continue
 					}
+
+					// Check if the first reconciler in this ordering is a known no-op.
+					firstPending := candidate.PendingReconciles[0]
+					noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, firstPending.ReconcilerID, firstPending.Request.NamespacedName.String())
+					if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
+						e.stats.SkippedNoOpOrderings++
+						continue
+					}
+
 					logger.V(2).Info("adding new branch to explore", "StateKey", stateKey, "EnqueuedOrder", candidate.OrderSensitiveHash())
 					queue = e.enqueueState(queue, candidate)
 				}
@@ -318,6 +350,9 @@ func (e *Explorer) explore(
 			seenStates[orderKey] = true
 		}
 		e.stats.TotalNodeVisits++
+
+		// Record depth distribution stats
+		e.stats.RecordVisit(currentState.depth, len(currentState.PendingReconciles), len(queue))
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
@@ -454,10 +489,63 @@ func (e *Explorer) explore(
 			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
+			// Cache key uses FULL input state hash (includes pending list ordering matters for output)
+			cacheKey := fmt.Sprintf("%s:%s:%s", stateView.Hash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
+
+			// Check cache: can we predict the output state without running the reconcile?
+			if cached, ok := reconcileCache[cacheKey]; ok {
+				// We've run this exact (state, reconciler, request) before.
+				// We know exactly what the output state hash will be.
+
+				// Predict the history signature after this step
+				currentHistory := stateView.ExecutionHistory.UniqueKey()
+				var predictedHistory string
+				if cached.wasNoOp {
+					// No-op: history unchanged
+					predictedHistory = currentHistory
+				} else {
+					// Non-no-op: append this step to history
+					stepSig := fmt.Sprintf("%s@%d", reconcilerID, cached.numEffects)
+					if currentHistory == "" {
+						predictedHistory = stepSig
+					} else {
+						predictedHistory = fmt.Sprintf("%s,%s", currentHistory, stepSig)
+					}
+				}
+
+				// Check if we've already explored this output state + history combination
+				if historySet, exists := visitedStatePaths[cached.outputStateHash]; exists {
+					if _, seen := historySet[predictedHistory]; seen {
+						stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
+						e.stats.CachePredictedSkips++
+						continue
+					}
+				}
+			}
+
 			stepLogger.Info("Taking reconcile step")
 
 			// for each view, create a new branch in exploration
 			newState, stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+
+			// Track whether this was a no-op (used by ordering optimization)
+			// Use objectsHash for no-op tracking (ordering optimization needs object-level granularity)
+			noOpKey := fmt.Sprintf("%s:%s:%s", stateView.ObjectsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
+			wasNoOp := err == nil && stepResult != nil && len(stepResult.Changes.ObjectVersions) == 0 && stepResult.Error == ""
+			knownNoOps[noOpKey] = wasNoOp
+			if wasNoOp {
+				e.stats.NoOpReconciles++
+			}
+
+			// Update cache with this reconcile's result (uses full state hash as key)
+			if err == nil && stepResult != nil {
+				reconcileCache[cacheKey] = &reconcileResultCache{
+					outputStateHash: newState.Hash(),
+					wasNoOp:         wasNoOp,
+					numEffects:      len(stepResult.Changes.Effects),
+				}
+			}
+
 			if err != nil {
 				// if we encounter an error during reconciliation, just abandon this branch
 				stepLogger.Error(err, "error taking reconcile step; abandoning branch")
@@ -522,7 +610,7 @@ func (e *Explorer) explore(
 			}
 
 			// Deduplication: Skip exploring paths that reach the same state via equivalent mutations.
-			//
+			///Skipped
 			// Key invariant: Same pending list = Same future possibilities = Safe to skip.
 			//
 			// stateHash includes both object state AND pending reconciles. Two paths only

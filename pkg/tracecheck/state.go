@@ -486,6 +486,40 @@ func (sn StateNode) Hash() StateHash {
 	return StateHash(util.ShortenHash(s))
 }
 
+// ObjectsHash returns a hash of just the object contents, excluding pending reconciles.
+// This is useful for caching reconcile results since reconciler behavior only depends on objects.
+func (sn StateNode) ObjectsHash() string {
+	objectKeys := make([]snapshot.CompositeKey, 0, len(sn.Objects()))
+	for objKey := range sn.Objects() {
+		objectKeys = append(objectKeys, objKey)
+	}
+	sort.Slice(objectKeys, func(i, j int) bool {
+		ai, aj := objectKeys[i], objectKeys[j]
+		if ai.ResourceKey.Group != aj.ResourceKey.Group {
+			return ai.ResourceKey.Group < aj.ResourceKey.Group
+		}
+		if ai.ResourceKey.Kind != aj.ResourceKey.Kind {
+			return ai.ResourceKey.Kind < aj.ResourceKey.Kind
+		}
+		if ai.ResourceKey.Namespace != aj.ResourceKey.Namespace {
+			return ai.ResourceKey.Namespace < aj.ResourceKey.Namespace
+		}
+		if ai.ResourceKey.Name != aj.ResourceKey.Name {
+			return ai.ResourceKey.Name < aj.ResourceKey.Name
+		}
+		return ai.ObjectID < aj.ObjectID
+	})
+
+	var buf strings.Builder
+	for _, ck := range objectKeys {
+		buf.WriteString(serializeCompositeKey(ck))
+		buf.WriteString("=")
+		buf.WriteString(sn.Objects()[ck].Value)
+		buf.WriteString(";")
+	}
+	return util.ShortenHash(buf.String())
+}
+
 func (sn *StateSnapshot) trimForInspection() {
 	if sn == nil {
 		return
