@@ -950,8 +950,9 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
 	// Ordering: existing pending first, then newly triggered.
 	// This prevents reconcilers that frequently requeue/trigger from starving others.
-	// When duplicates exist for the same (ReconcilerID + NamespacedName), if any have Source == StateChange,
-	// that one takes precedence over Requeue or AsyncEnqueue. Otherwise, first occurrence wins.
+	// Among duplicates for the same (ReconcilerID + NamespacedName):
+	//   - Any StateChange source overrides others.
+	//   - Otherwise, the first occurrence in this merged list wins.
 	all := append(currPending, triggered...)
 
 	type dedupKey struct {
@@ -967,11 +968,11 @@ func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingRecon
 			resultMap[key] = pr
 			continue
 		}
-		// If new is StateChange and existing is not, replace
+		// StateChange overrides any previously seen entry.
 		if pr.Source == SourceStateChange && existing.Source != SourceStateChange {
 			resultMap[key] = pr
 		}
-		// Otherwise, keep the existing one (first occurrence or StateChange takes precedence)
+		// Otherwise, keep the existing one (first occurrence wins).
 	}
 
 	// preserve original order from "all", but use the winner from resultMap

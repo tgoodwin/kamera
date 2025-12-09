@@ -162,46 +162,37 @@ func TestExhaustiveInterleavings(t *testing.T) {
 
 	// State0: A/{Foo, Bar}  (Initial pending list respects argument order: [Foo, Bar])
 	//
-	// Path 1 (Current: Foo):
+	// Path 1 (current head Foo):
 	//   ├─ Foo@1 →
-	//   │   State1: A-1/{Foo, Bar} (Triggered set is sorted alphabetically: [Bar, Foo])
-	//   │     BRANCH #2 (StateHash A-1) - expands pending [Bar, Foo]
+	//   │   State1: A-1/{Foo, Bar} (Triggered set sorted: [Bar, Foo])
+	//   │     BRANCH #2 (StateHash A-1) expands pending [Bar, Foo]
 	//   │     ├─ (current) Bar@1 →
 	//   │     │   State2: A-Final/{Foo, Bar} (Pending [Bar, Foo])
 	//   │     │     BRANCH #3 (StateHash A-Final)
-	//   │     │     ├─ (current) Bar@0 → Foo@0 (no-op tail normalized to Bar..Foo)
-	//   │     │     └─ (enqueued) Foo@0 → Bar@0 (no-op tail normalized to Bar..Foo)
+	//   │     │     ├─ (current) Bar@0 → Foo@0 (no-op tail)
+	//   │     │     └─ (enqueued) Foo@0 → Bar@0 (no-op tail)
 	//   │     └─ (from BRANCH #2 enqueued) Foo@1 →
-	//   │         State2': A-Final/{Foo, Bar}
-	//   │         Matches State2 hash → branching skipped.
-	//   │         Only runs current head (Bar).
+	//   │         State2': A-Final/{Foo, Bar} (matches State2 hash; branching skipped)
+	//   │         Proceeds with current head (Bar) as triggered (Foo) are added to the back.
 	//   │         └─ Bar@0 → Foo@0 (no-op tail)
 	//
-	// Path 2 (Enqueued: Bar):
+	// Path 2 (enqueued head Bar):
 	//   └─ Bar@1 →
-	//       State1': A-1/{Foo, Bar}
-	//       Matches State1 hash (visited in Path 1) → branching skipped.
-	//       Only runs current head of pending [Bar, Foo] which is Bar.
-	//       The alternative branch (Foo) is NOT taken because we assume State1 expansion covers it.
-	//       └─ Bar@1 →
-	//           State2'': A-Final/{Foo, Bar}
-	//           Matches State2 hash → branching skipped.
-	//           Runs current Bar.
-	//           └─ Bar@0...
+	//       State1': A-1/{Foo, Bar} (matches State1 hash; branching skipped)
+	//       Only runs current head of pending [Foo, Bar] which is Foo. (trigged Bar added to back of pending)
+	//       Alternative branch (Bar) not taken because State1 expansion covers it.
+	//       └─ Foo@1 → Bar@0 → Foo@0
 	//
 	// Resulting Paths:
-	//   1. Foo@1 → Bar@1 (from Path 1, current branch)
-	//   2. Foo@1 → Foo@1 (from Path 1, enqueued branch)
-	//   3. Bar@1 → Bar@1 (from Path 2, current branch)
-	//   (Missing/Pruned: Bar@1 → Foo@1, because State1' skipped branching to Foo)
-	//
-	// Note: All paths end with normalized no-op suffixes (Bar@0, Foo@0).
+	//   1. Foo@1 → Bar@1 → Bar@0 → Foo@0
+	//   2. Foo@1 → Foo@1 → Bar@0 → Foo@0
+	//   3. Bar@1 → Foo@1 → Bar@0 → Foo@0
 
 	actual := formatResults(convergedState.Paths)
 	expectedAll := [][]string{
 		{"FooController@1", "BarController@1", "BarController@0", "FooController@0"},
 		{"FooController@1", "FooController@1", "BarController@0", "FooController@0"},
-		{"BarController@1", "BarController@1", "BarController@0", "FooController@0"},
+		{"BarController@1", "FooController@1", "BarController@0", "FooController@0"},
 	}
 	assert.Len(t, actual, 3)
 	assert.ElementsMatch(t, expectedAll, actual)
@@ -277,8 +268,8 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: true,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "BarController@1", "BarController@0", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
-				{"FooController@1", "BarController@1", "BarController@0", "FooController@1", "BarController@0", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},
 	}
