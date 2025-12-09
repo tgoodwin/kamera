@@ -37,6 +37,9 @@ type ExplorerBuilder struct {
 	snapStore                  *snapshot.Store
 	reconcilerToKind           map[ReconcilerID]string
 
+	// permuteOrderReconcilers tracks which reconcilers should have permuteOrder=true
+	permuteOrderReconcilers map[ReconcilerID]bool
+
 	priorityBuilder *PriorityStrategyBuilder
 
 	config *ExploreConfig
@@ -72,6 +75,14 @@ func (rb *ReconcilerBuilder) WatchesGK(gk schema.GroupKind, mapper WatchMapper) 
 	return rb
 }
 
+// PermuteOrder marks this reconciler as eligible for order permutation during exploration.
+// When enabled, the explorer will consider alternative orderings where this reconciler
+// is processed first among pending reconciles.
+func (rb *ReconcilerBuilder) PermuteOrder() *ReconcilerBuilder {
+	rb.parent.permuteOrderReconcilers[rb.id] = true
+	return rb
+}
+
 // Done returns the parent ExplorerBuilder to continue builder-style chaining.
 func (rb *ReconcilerBuilder) Done() *ExplorerBuilder {
 	return rb.parent
@@ -90,6 +101,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		emitter:                    event.NewInMemoryEmitter(),
 		snapStore:                  snapshot.NewStore(),
 		reconcilerToKind:           make(map[ReconcilerID]string),
+		permuteOrderReconcilers:    make(map[ReconcilerID]bool),
 
 		config: &ExploreConfig{
 			maxDepth:        10,
@@ -315,6 +327,11 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[ReconcilerID]
 		// Create reconciler implementation
 		rImpl := Wrap(reconcilerID, r, mgr, frameManager, mgr)
 
+		// Apply permuteOrder setting if configured
+		if b.permuteOrderReconcilers[reconcilerID] {
+			rImpl.permuteOrder = true
+		}
+
 		containers[reconcilerID] = rImpl
 	}
 
@@ -326,6 +343,7 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[ReconcilerID]
 			Strategy:       strategy,
 			effectReader:   mgr,
 			versionManager: mgr,
+			permuteOrder:   b.permuteOrderReconcilers[name],
 		}
 		containers[container.Name] = container
 	}

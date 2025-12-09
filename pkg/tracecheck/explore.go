@@ -352,7 +352,7 @@ func (e *Explorer) explore(
 
 		if len(currentState.PendingReconciles) > 1 && !allPendingAreNoOps {
 			if !seenBranchingByState[stateKey] {
-				expandedStates := expandStateByReconcileOrder(currentState)
+				expandedStates := e.expandStateByReconcileOrder(currentState)
 				if logger.V(2).Enabled() {
 					branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
 						return sn.LineageHash()
@@ -534,7 +534,7 @@ func (e *Explorer) explore(
 				stateView.DumpPending()
 			}
 
-			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
+			stepLogger := logger.WithValues("Depth", stateView.depth, "# Distinct States", e.stats.UniqueNodeVisits, "Total States", e.stats.TotalNodeVisits)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
 			// Cache key uses OBJECTS hash only - pending list doesn't affect reconciler behavior

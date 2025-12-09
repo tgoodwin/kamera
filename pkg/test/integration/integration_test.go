@@ -108,14 +108,14 @@ func TestExhaustiveInterleavings(t *testing.T) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
 
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
@@ -219,14 +219,14 @@ func TestConvergedStateIdentification(t *testing.T) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For("webapp.discrete.events/Foo")
+	}).For("webapp.discrete.events/Foo").PermuteOrder()
 
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.BarReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For("webapp.discrete.events/Foo")
+	}).For("webapp.discrete.events/Foo").PermuteOrder()
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
@@ -326,13 +326,13 @@ func BenchmarkExhaustiveInterleavingsExplore(b *testing.B) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{

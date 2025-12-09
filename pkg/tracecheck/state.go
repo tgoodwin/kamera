@@ -593,17 +593,27 @@ func (sn StateNode) ReconcileLineage() string {
 // expandStateByReconcileOrder takes a StateNode and returns a slice of new StateNodes,
 // where each new StateNode is a clone of the input but with a different pending reconcile
 // as the first element in its PendingReconciles list.
-func expandStateByReconcileOrder(state StateNode) []StateNode {
+// Only reconcilers with permuteOrder=true will have alternative orderings generated.
+func (e *Explorer) expandStateByReconcileOrder(state StateNode) []StateNode {
 	// If there are no pending reconciles or just one, just return the original state
 	if len(state.PendingReconciles) <= 1 {
 		return []StateNode{state}
 	}
 
 	originalPending := state.PendingReconciles
-	result := make([]StateNode, len(originalPending))
+	var result []StateNode
 
-	// For each pending reconcile, create a new StateNode with that reconcile first
+	// For each pending reconcile, create a new StateNode with that reconcile first,
+	// but only for reconcilers that have permuteOrder=true
 	for i := 0; i < len(originalPending); i++ {
+		reconcilerID := originalPending[i].ReconcilerID
+		container, ok := e.reconcilers[reconcilerID]
+
+		// Skip creating alternative orderings for reconcilers that don't have permuteOrder set
+		if !ok || !container.permuteOrder {
+			continue
+		}
+
 		// Create a new ordering with this reconcile first
 		alternativeOrder := make([]PendingReconcile, len(originalPending))
 		alternativeOrder[0] = originalPending[i] // Put the ith reconcile first
@@ -620,7 +630,13 @@ func expandStateByReconcileOrder(state StateNode) []StateNode {
 		cloned := state.Clone()
 		cloned.PendingReconciles = alternativeOrder
 		cloned.ID = string(cloned.OrderSensitiveHash()) // Generate a new deterministic ID based on the new ordering
-		result[i] = cloned
+		result = append(result, cloned)
+	}
+
+	// If no alternative orderings were created (no reconcilers with permuteOrder=true),
+	// return the original state
+	if len(result) == 0 {
+		return []StateNode{state}
 	}
 
 	return result

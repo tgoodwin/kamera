@@ -257,10 +257,11 @@ func Test_GetUniquePaths_PreservesConvergenceSteps(t *testing.T) {
 
 func TestExpandStateByReconcileOrder(t *testing.T) {
 	type testCase struct {
-		name          string
-		pending       []PendingReconcile
-		wantNumStates int
-		wantOrders    [][]string // ordered list of reconcilerIDs, for each result
+		name           string
+		pending        []PendingReconcile
+		permuteEnabled map[ReconcilerID]bool // which reconcilers have permuteOrder=true
+		wantNumStates  int
+		wantOrders     [][]string // ordered list of reconcilerIDs, for each result
 	}
 	makePR := func(reconcilerID ReconcilerID) PendingReconcile {
 		return PendingReconcile{
@@ -274,42 +275,90 @@ func TestExpandStateByReconcileOrder(t *testing.T) {
 
 	cases := []testCase{
 		{
-			name:          "no pending reconciles (converged)",
-			pending:       []PendingReconcile{},
-			wantNumStates: 1,
-			wantOrders:    [][]string{{}},
+			name:           "no pending reconciles (converged)",
+			pending:        []PendingReconcile{},
+			permuteEnabled: map[ReconcilerID]bool{},
+			wantNumStates:  1,
+			wantOrders:     [][]string{{}},
 		},
 		{
-			name:          "single pending reconcile",
-			pending:       []PendingReconcile{makePR("A")},
-			wantNumStates: 1,
-			wantOrders:    [][]string{{"A"}},
+			name:           "single pending reconcile with permuteOrder",
+			pending:        []PendingReconcile{makePR("A")},
+			permuteEnabled: map[ReconcilerID]bool{"A": true},
+			wantNumStates:  1,
+			wantOrders:     [][]string{{"A"}},
 		},
 		{
-			name:          "two pending reconciles",
-			pending:       []PendingReconcile{makePR("A"), makePR("B")},
-			wantNumStates: 2,
+			name:           "single pending reconcile without permuteOrder",
+			pending:        []PendingReconcile{makePR("A")},
+			permuteEnabled: map[ReconcilerID]bool{"A": false},
+			wantNumStates:  1,
+			wantOrders:     [][]string{{"A"}},
+		},
+		{
+			name:           "two pending reconciles both with permuteOrder",
+			pending:        []PendingReconcile{makePR("A"), makePR("B")},
+			permuteEnabled: map[ReconcilerID]bool{"A": true, "B": true},
+			wantNumStates:  2,
 			wantOrders: [][]string{
 				{"A", "B"},
 				{"B", "A"},
 			},
 		},
 		{
-			name:          "three pending reconciles",
-			pending:       []PendingReconcile{makePR("A"), makePR("B"), makePR("C")},
-			wantNumStates: 3,
+			name:           "two pending reconciles only B with permuteOrder",
+			pending:        []PendingReconcile{makePR("A"), makePR("B")},
+			permuteEnabled: map[ReconcilerID]bool{"A": false, "B": true},
+			wantNumStates:  1,
+			wantOrders: [][]string{
+				{"B", "A"}, // only B can be moved to first
+			},
+		},
+		{
+			name:           "two pending reconciles neither with permuteOrder",
+			pending:        []PendingReconcile{makePR("A"), makePR("B")},
+			permuteEnabled: map[ReconcilerID]bool{"A": false, "B": false},
+			wantNumStates:  1,
+			wantOrders: [][]string{
+				{"A", "B"}, // original order preserved, no permutation
+			},
+		},
+		{
+			name:           "three pending reconciles all with permuteOrder",
+			pending:        []PendingReconcile{makePR("A"), makePR("B"), makePR("C")},
+			permuteEnabled: map[ReconcilerID]bool{"A": true, "B": true, "C": true},
+			wantNumStates:  3,
 			wantOrders: [][]string{
 				{"A", "B", "C"},
 				{"B", "A", "C"},
 				{"C", "A", "B"},
 			}, // only permuting first item
 		},
+		{
+			name:           "three pending reconciles only B with permuteOrder",
+			pending:        []PendingReconcile{makePR("A"), makePR("B"), makePR("C")},
+			permuteEnabled: map[ReconcilerID]bool{"A": false, "B": true, "C": false},
+			wantNumStates:  1,
+			wantOrders: [][]string{
+				{"B", "A", "C"}, // only B can be moved to first
+			},
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			// Create an Explorer with reconcilers configured for permuteOrder
+			reconcilers := make(map[ReconcilerID]*ReconcilerContainer)
+			for id, enabled := range tc.permuteEnabled {
+				reconcilers[id] = &ReconcilerContainer{
+					Name:         id,
+					permuteOrder: enabled,
+				}
+			}
+			explorer := &Explorer{reconcilers: reconcilers}
+
 			state := StateNode{PendingReconciles: tc.pending}
-			results := expandStateByReconcileOrder(state)
+			results := explorer.expandStateByReconcileOrder(state)
 			if len(results) != tc.wantNumStates {
 				t.Errorf("Expected %d result states, got %d", tc.wantNumStates, len(results))
 			}
