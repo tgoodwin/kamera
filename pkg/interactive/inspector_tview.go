@@ -9,6 +9,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/pkg/util"
@@ -1298,9 +1299,23 @@ func configureTable(title string, selectable bool) *tview.Table {
 	return table
 }
 
+func pathHistoryHash(path tracecheck.ExecutionHistory) string {
+	return util.ShortenHash(path.UniqueKey())
+}
+
+func countDistinctPathHashes(paths []tracecheck.ExecutionHistory) int {
+	if len(paths) == 0 {
+		return 0
+	}
+	uniq := lo.UniqBy(paths, func(path tracecheck.ExecutionHistory) string {
+		return path.UniqueKey()
+	})
+	return len(uniq)
+}
+
 func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 	table.Clear()
-	headers := []string{"Idx", "Hash", "Objects", "Paths", "Pending", "Reason"}
+	headers := []string{"Idx", "Hash", "Objects", "Paths", "Hashes", "Pending", "Reason"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -1312,7 +1327,8 @@ func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 		table.SetCell(row+1, 1, tview.NewTableCell(util.ShortenHash(hash)))
 		table.SetCell(row+1, 2, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
 		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
-		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
+		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", countDistinctPathHashes(state.Paths))))
+		table.SetCell(row+1, 5, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
 		reason := state.Reason
 		if state.Error != "" {
 			snippet := truncateString(state.Error, 48)
@@ -1322,13 +1338,13 @@ func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 				reason = fmt.Sprintf("%s (%s)", reason, snippet)
 			}
 		}
-		table.SetCell(row+1, 5, tview.NewTableCell(reason))
+		table.SetCell(row+1, 6, tview.NewTableCell(reason))
 	}
 }
 
 func populatePaths(table *tview.Table, states []tracecheck.ResultState, stateIdx int) {
 	table.Clear()
-	headers := []string{"Idx", "Steps", "Summary"}
+	headers := []string{"Idx", "Steps", "Hash", "Summary"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -1343,7 +1359,8 @@ func populatePaths(table *tview.Table, states []tracecheck.ResultState, stateIdx
 	for row, path := range state.Paths {
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
 		table.SetCell(row+1, 1, tview.NewTableCell(fmt.Sprintf("%d", len(path))))
-		table.SetCell(row+1, 2, tview.NewTableCell(summarizePath(path)))
+		table.SetCell(row+1, 2, tview.NewTableCell(pathHistoryHash(path)))
+		table.SetCell(row+1, 3, tview.NewTableCell(summarizePath(path)))
 	}
 }
 
