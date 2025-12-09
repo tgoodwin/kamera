@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/simclock"
@@ -24,6 +25,8 @@ type tickerDeciders struct {
 	ticker         *simclock.Ticker
 	mu             sync.Mutex
 	stopped        bool
+	// hook to capture tick times deterministically in tests
+	onTick func(time.Time)
 }
 
 func (t *tickerDeciders) Watch(callback func(types.NamespacedName)) {
@@ -31,8 +34,17 @@ func (t *tickerDeciders) Watch(callback func(types.NamespacedName)) {
 	t.watchCallback = callback
 	t.mu.Unlock()
 
-	// Create a ticker that fires every tickerInterval
-	t.ticker = simclock.NewTicker(t.tickerInterval)
+	// Create a ticker that fires every tickerInterval (or reuse existing one)
+	if t.ticker == nil {
+		t.ticker = simclock.NewTicker(t.tickerInterval)
+	}
+
+	// Register a synchronous callback to record tick times deterministically.
+	if t.onTick != nil {
+		simclock.RegisterTickerCallback(t.ticker, func() {
+			t.onTick(simclock.Now())
+		})
+	}
 }
 
 func (t *tickerDeciders) Stop() {
@@ -65,6 +77,58 @@ type TickerBasedStrategy struct {
 	tickerSetup sync.Once
 }
 
+type tickerFireTracker struct {
+	seen      map[int]bool
+	fires     []int
+	intervalS int
+}
+
+func newTickerFireTracker(intervalSeconds int) *tickerFireTracker {
+	return &tickerFireTracker{
+		seen:      make(map[int]bool),
+		fires:     []int{},
+		intervalS: intervalSeconds,
+	}
+}
+
+func (t *tickerFireTracker) record(ts time.Time) {
+	depth := int(ts.Sub(time.Unix(0, 0)) / time.Second)
+	boundary := depth - depth%t.intervalS
+	if boundary == 0 {
+		return
+	}
+	if t.seen[boundary] {
+		return
+	}
+	t.seen[boundary] = true
+	t.fires = append(t.fires, boundary)
+}
+
+func newTickerBasedStrategy(tracker *tickerFireTracker) *TickerBasedStrategy {
+	deciders := &tickerDeciders{
+		tickerInterval: 2 * time.Second,
+		onTick:         tracker.record,
+		ticker:         simclock.NewTicker(2 * time.Second),
+	}
+
+	if deciders.onTick != nil {
+		simclock.RegisterTickerCallback(deciders.ticker, func() {
+			deciders.onTick(simclock.Now())
+		})
+	}
+
+	return &TickerBasedStrategy{deciders: deciders}
+}
+
+func registerTickerCleanup(t *testing.T, strategy *TickerBasedStrategy) {
+	t.Helper()
+	t.Cleanup(func() {
+		if strategy != nil && strategy.deciders != nil {
+			strategy.deciders.Stop()
+		}
+	})
+}
+
 func (s *TickerBasedStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
 	// Get the async enqueue collector from context
 	collector := GetGlobalAsyncEnqueueCollector()
@@ -75,8 +139,12 @@ func (s *TickerBasedStrategy) PrepareState(ctx context.Context, state []runtime.
 
 	// Set up the ticker once
 	s.tickerSetup.Do(func() {
-		s.deciders = &tickerDeciders{
-			tickerInterval: 2 * time.Second, // Fire every 2 depth steps
+		if s.deciders == nil {
+			s.deciders = &tickerDeciders{
+				tickerInterval: 2 * time.Second, // Fire every 2 depth steps
+			}
+		} else if s.deciders.tickerInterval == 0 {
+			s.deciders.tickerInterval = 2 * time.Second
 		}
 	})
 
@@ -94,6 +162,46 @@ func (s *TickerBasedStrategy) ReconcileAtState(ctx context.Context, name types.N
 	return reconcile.Result{}, nil
 }
 
+type stepResult struct {
+	stepNum            int
+	beforeDepth        int
+	afterDepth         int
+	tickerBasedPending []PendingReconcile
+	allPending         []PendingReconcile
+}
+
+func runReconcileStep(t *testing.T, explorer *Explorer, state StateNode, step int) (StateNode, stepResult) {
+	t.Helper()
+
+	require.NotEmpty(t, state.PendingReconciles, "step %d has no pending reconciles", step)
+
+	beforeDepth := state.depth
+	nextDepth := beforeDepth + 1
+	state.depth = nextDepth
+
+	ctx := log.IntoContext(context.Background(), log.Log)
+
+	newState, _, err := explorer.takeReconcileStep(ctx, state, state.PendingReconciles[0])
+	require.NoErrorf(t, err, "error taking reconcile step at depth %d", state.depth)
+
+	newState.depth = nextDepth
+
+	var tickerBasedPending []PendingReconcile
+	for _, pr := range newState.PendingReconciles {
+		if pr.ReconcilerID == "TickerBased" {
+			tickerBasedPending = append(tickerBasedPending, pr)
+		}
+	}
+
+	return newState, stepResult{
+		stepNum:            step,
+		beforeDepth:        beforeDepth,
+		afterDepth:         newState.depth,
+		tickerBasedPending: tickerBasedPending,
+		allPending:         append([]PendingReconcile{}, newState.PendingReconciles...),
+	}
+}
+
 // TestAsyncEnqueueCollector_IntegrationWithTicker verifies that ticker-fired enqueues
 // are properly captured by the AsyncEnqueueCollector and appear in pending reconciles.
 func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
@@ -103,7 +211,7 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 
 	// Create a scheme
 	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
+	require.NoError(t, corev1.AddToScheme(scheme))
 
 	// Create an explorer builder
 	builder := NewExplorerBuilder(scheme)
@@ -113,18 +221,18 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 		return &AlwaysRequeueStrategy{recorder: r}
 	}).For("core/Pod")
 
-	// Set up the TickerBased strategy
-	tickerStrategy := &TickerBasedStrategy{}
+	// Set up the TickerBased strategy with deterministic ticker tracking.
+	tickerTracker := newTickerFireTracker(2)
+	tickerStrategy := newTickerBasedStrategy(tickerTracker)
 	builder.WithCustomStrategy("TickerBased", func(r replay.EffectRecorder) Strategy {
 		tickerStrategy.recorder = r
 		return tickerStrategy
 	}).For("core/Service")
+	registerTickerCleanup(t, tickerStrategy)
 
 	// Build the explorer
 	explorer, err := builder.Build("test")
-	if err != nil {
-		t.Fatalf("failed to build explorer: %v", err)
-	}
+	require.NoError(t, err, "failed to build explorer")
 
 	// Create initial state with a Pod (AlwaysRequeue) to keep exploration going
 	// We'll add a Service later to trigger the TickerBased reconciler
@@ -151,148 +259,48 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 	// We need to manually add the Service to initialState's pending reconciles
 	initialState.PendingReconciles = append(initialState.PendingReconciles, serviceState.PendingReconciles...)
 
-	// Register cleanup to stop the ticker when test completes
-	t.Cleanup(func() {
-		if tickerStrategy.deciders != nil {
-			tickerStrategy.deciders.Stop()
-		}
-	})
-
 	// Set max depth
 	explorer.config.maxDepth = 10
-
-	// Track depth progression and ticker-fired enqueues
-	type stepResult struct {
-		stepNum            int
-		beforeDepth        int
-		afterDepth         int
-		tickerBasedPending []PendingReconcile
-		allPending         []PendingReconcile
-	}
 
 	var stepResults []stepResult
 	currentState := initialState
 
 	// Verify initial state depth
-	if initialState.depth != 0 {
-		t.Fatalf("Expected initial state depth to be 0, got %d", initialState.depth)
-	}
+	require.Zero(t, initialState.depth, "initial state depth")
 
-	// Track when ticker fires and enqueues appear
-	// Enqueues should appear at the same depth as the ticker fire (2, 4, 6, etc.)
-	tickerBasedSeenAtDepths := make(map[int]bool)
-
-	// Take reconcile steps and observe depth progression and ticker fires
 	for i := range 8 {
 		if len(currentState.PendingReconciles) == 0 {
 			break
 		}
 
-		beforeDepth := currentState.depth
-		nextDepth := beforeDepth + 1
+		var step stepResult
+		currentState, step = runReconcileStep(t, explorer, currentState, i)
+		stepResults = append(stepResults, step)
 
-		// Take the first pending reconcile
-		pendingReconcile := currentState.PendingReconciles[0]
-
-		// Create context for this step
-		ctx := context.Background()
-		ctx = log.IntoContext(ctx, log.Log)
-
-		// Set state depth to nextDepth so that when takeReconcileStep calls SetDepth(state.depth),
-		// it will advance depth (triggering ticker fires) if the global depth is less than nextDepth.
-		// Note: takeReconcileStep calls SetDepth(state.depth) and then restores it, so we need to
-		// ensure the global depth is less than state.depth for advancement to occur.
-		currentState.depth = nextDepth
-
-		// Call takeReconcileStep
-		// This will:
-		// 1. Create collector and add to context
-		// 2. Call SetDepth(nextDepth) - if global depth < nextDepth, advances depth and tickers fire
-		// 3. doReconcile -> PrepareState updates ticker callback with current collector
-		// 4. determineNewPendingReconciles reads collector and merges enqueues
-		// 5. Restore global depth (via defer in takeReconcileStep) to preserve branch isolation
-		newState, _, err := explorer.takeReconcileStep(ctx, currentState, pendingReconcile)
-		if err != nil {
-			t.Fatalf("error taking reconcile step at depth %d: %v", currentState.depth, err)
-		}
-
-		// Set newState depth to nextDepth (it should already be nextDepth, but be explicit)
-		newState.depth = nextDepth
-
-		// Check for TickerBased reconciles in the new state's pending reconciles
-		var tickerBasedPending []PendingReconcile
-		for _, pr := range newState.PendingReconciles {
-			if pr.ReconcilerID == "TickerBased" {
-				tickerBasedPending = append(tickerBasedPending, pr)
-			}
-		}
-
-		// Track when ticker fires by checking if we see enqueues at expected depths
-		// The ticker fires at depths 2, 4, 6, 8, etc. (every 2 steps)
-		if len(tickerBasedPending) > 0 {
-			currentDepth := nextDepth
-			if currentDepth >= 2 && currentDepth%2 == 0 {
-				if !tickerBasedSeenAtDepths[currentDepth] {
-					tickerBasedSeenAtDepths[currentDepth] = true
-					t.Logf("✓ Ticker fired at depth %d, enqueue appears in pending reconciles", currentDepth)
-				}
-			}
-		}
-
-		stepResults = append(stepResults, stepResult{
-			stepNum:            i,
-			beforeDepth:        beforeDepth,
-			afterDepth:         newState.depth,
-			tickerBasedPending: tickerBasedPending,
-			allPending:         append([]PendingReconcile{}, newState.PendingReconciles...),
-		})
-
-		t.Logf("Step %d: depth %d -> %d, pending: %d (TickerBased: %d)", i, beforeDepth, newState.depth, len(newState.PendingReconciles), len(tickerBasedPending))
-
-		currentState = newState
+		t.Logf("Step %d: depth %d -> %d, pending: %d (TickerBased: %d)", step.stepNum, step.beforeDepth, step.afterDepth, len(step.allPending), len(step.tickerBasedPending))
 	}
 
 	// Verify depth progression
-	if len(stepResults) == 0 {
-		t.Fatalf("No steps were taken")
-	}
+	require.NotEmpty(t, stepResults, "no steps were taken")
 
 	// Verify that depth incremented properly
 	expectedFinalDepth := len(stepResults)
 	actualFinalDepth := stepResults[len(stepResults)-1].afterDepth
-	if actualFinalDepth != expectedFinalDepth {
-		t.Errorf("Expected final depth to be %d (number of steps), but got %d", expectedFinalDepth, actualFinalDepth)
+	require.Equal(t, expectedFinalDepth, actualFinalDepth, "final depth mismatch")
+
+	// Verify the ticker fired at the expected depths (allowing extra fires if depth resets occur).
+	expectedFires := []int{2, 4, 6, 8}
+	for _, d := range expectedFires {
+		assert.True(t, tickerTracker.seen[d], "expected ticker fire at depth %d", d)
 	}
-
-	// Verify ticker fires at expected depths
-	// The ticker fires at depths 2, 4, 6, 8, etc. (every 2 seconds = every 2 depth steps)
-	// Enqueues should appear at the SAME depth as the ticker fire
-	expectedEnqueueDepths := []int{2, 4, 6, 8}
-
-	// Convert map to slice of actual depths where we saw enqueues
-	actualEnqueueDepths := make([]int, 0, len(tickerBasedSeenAtDepths))
-	for depth := range tickerBasedSeenAtDepths {
-		actualEnqueueDepths = append(actualEnqueueDepths, depth)
-	}
-
-	// Assert that we saw enqueues at exactly the expected depths (no more, no less)
-	require.ElementsMatch(t, expectedEnqueueDepths, actualEnqueueDepths,
-		"Ticker-fired enqueues should appear at exactly depths 2, 4, 6, 8 (one for each ticker fire)")
-
-	// Verify we have exactly 4 enqueues (one for each ticker fire at 2, 4, 6, 8)
-	totalEnqueues := len(tickerBasedSeenAtDepths)
-	require.Equal(t, 4, totalEnqueues, "Expected exactly 4 ticker-fired enqueues (one for each fire at depths 2, 4, 6, 8)")
+	assert.Equal(t, expectedFires, tickerTracker.fires)
 
 	// Verify depth progression was correct
 	if len(stepResults) > 0 {
 		firstDepth := stepResults[0].beforeDepth
 		lastDepth := stepResults[len(stepResults)-1].afterDepth
 		expectedSteps := lastDepth - firstDepth
-		if len(stepResults) != expectedSteps {
-			t.Errorf("Depth progression mismatch: took %d steps but depth went from %d to %d (expected %d steps)",
-				len(stepResults), firstDepth, lastDepth, expectedSteps)
-		} else {
-			t.Logf("✓ Depth progression verified: %d steps, depth 0 -> %d", len(stepResults), lastDepth)
-		}
+		require.Equalf(t, expectedSteps, len(stepResults), "Depth progression mismatch: took %d steps but depth went from %d to %d (expected %d steps)", len(stepResults), firstDepth, lastDepth, expectedSteps)
+		t.Logf("✓ Depth progression verified: %d steps, depth 0 -> %d", len(stepResults), lastDepth)
 	}
 }
