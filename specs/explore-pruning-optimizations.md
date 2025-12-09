@@ -17,6 +17,8 @@ This document captures potential optimizations for pruning the DFS state space e
 
 Track `(ReconcilerID, StateHash) -> producedChanges bool`. If a reconciler produced no changes at a state before, it's likely idempotent there.
 
+TODO this could probably be extended past no-ops, if we rely on the assumption that controllers are deterministic.
+
 ```go
 // After a reconcile step completes with no effects:
 if len(reconcileResult.Changes.Effects) == 0 {
@@ -147,6 +149,8 @@ if len(expandedStates) > maxOrderingsPerState {
 ### 7. Subsume Equivalent Converged States
 
 If multiple converged states are "semantically equivalent" (same objects, just different metadata like timestamps), treat them as one:
+
+This has been done already
 
 ```go
 // Define semantic equivalence that ignores non-essential fields
