@@ -114,19 +114,7 @@ func (s *ExploreStats) Print() {
 	if s.TotalReconcileSteps > 0 {
 		avgStep = time.Duration(int64(s.TotalStepLatency) / int64(s.TotalReconcileSteps))
 	}
-	if logger.GetSink() != nil {
-		logger.Info("explore stats",
-			"totalTime", s.endTime.Sub(*s.startTime),
-			"totalNodeVisits", s.TotalNodeVisits,
-			"uniqueNodeVisits", s.UniqueNodeVisits,
-			"skippedPaths", s.SkippedPaths,
-			"abortedPaths", s.AbortedPaths,
-			"reconcileSteps", s.TotalReconcileSteps,
-			"avgStepLatency", avgStep,
-			"maxStepLatency", s.MaxStepLatency,
-			"stepLatencyByReconciler", s.latencyByReconcilerSummary(),
-		)
-	}
+
 	fmt.Printf("Total time: %v\n", s.endTime.Sub(*s.startTime))
 	fmt.Printf("Total node visits: %d\n", s.TotalNodeVisits)
 	fmt.Printf("Unique node visits: %d\n", s.UniqueNodeVisits)

@@ -659,14 +659,21 @@ func (e *Explorer) explore(
 			// Pruning typically only occurs at convergence (Pending=[]) where all paths
 			// collapse to empty pending lists. The paths that get pruned differ only in
 			// no-op orderings, which by definition cannot produce different outcomes.
+
 			stateHash := newState.Hash()
 			historySet, alreadyTracked := visitedStatePaths[stateHash]
 			if !alreadyTracked {
 				historySet = make(map[string]struct{})
 				visitedStatePaths[stateHash] = historySet
 			}
+
+			// TODO this is not fully correct; can lead to skipping states we've already "seen" due to equivalent mutation history
+			// but that prevents us from reaching the bottom of the execution branch. need to make it smarter to only skip
+			// if we've already explored the subtree below.
 			normalizedHistory := newState.ExecutionHistory.UniqueKey()
-			if _, seenPath := historySet[normalizedHistory]; seenPath && !e.config.DisableCachePrediction {
+			_, seenPath := historySet[normalizedHistory]
+			enableSkip := seenPath && false // TODO: enable this when we have a smarter way to track subtrees
+			if enableSkip {
 				logger.V(1).WithValues(
 					"StateHash", stateHash,
 					"PathSignature", normalizedHistory,

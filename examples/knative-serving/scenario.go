@@ -50,6 +50,7 @@ func newKnativeExplorerAndState(maxDepth int, perfStats bool) (*tracecheck.Explo
 		builder.WithPerfStats()
 	}
 
+	builder.WithoutOptimizations()
 	explorer, err := builder.Build("standalone")
 	if err != nil {
 		return nil, tracecheck.StateNode{}, fmt.Errorf("build explorer: %w", err)
@@ -113,7 +114,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("RevisionReconciler"))
 		return strategy
-	}).For("serving.knative.dev/Revision")
+	}).For("serving.knative.dev/Revision").PermuteOrder()
 
 	builder.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
@@ -131,7 +132,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("KPAReconciler"))
 		return strategy
-	}).For("autoscaling.internal.knative.dev/PodAutoscaler")
+	}).For("autoscaling.internal.knative.dev/PodAutoscaler").PermuteOrder()
 
 	builder.WithCustomStrategy("ServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(servicecontroller.NewController, r)
@@ -140,7 +141,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("ServiceReconciler"))
 		return strategy
-	}).For("serving.knative.dev/Service")
+	}).For("serving.knative.dev/Service").PermuteOrder()
 
 	builder.WithCustomStrategy("RouteReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(routecontroller.NewController, r)
