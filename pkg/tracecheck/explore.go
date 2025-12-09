@@ -666,7 +666,7 @@ func (e *Explorer) explore(
 				visitedStatePaths[stateHash] = historySet
 			}
 			normalizedHistory := newState.ExecutionHistory.UniqueKey()
-			if _, seenPath := historySet[normalizedHistory]; seenPath {
+			if _, seenPath := historySet[normalizedHistory]; seenPath && !e.config.DisableCachePrediction {
 				logger.V(1).WithValues(
 					"StateHash", stateHash,
 					"PathSignature", normalizedHistory,
@@ -941,10 +941,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 }
 
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
-	// In DFS, explore newly triggered reconciles first, then existing pending.
+	// Ordering: existing pending first, then newly triggered.
+	// This prevents reconcilers that frequently requeue/trigger from starving others.
 	// When duplicates exist for the same (ReconcilerID + NamespacedName), if any have Source == StateChange,
 	// that one takes precedence over Requeue or AsyncEnqueue. Otherwise, first occurrence wins.
-	all := append(triggered, currPending...)
+	all := append(currPending, triggered...)
 
 	type dedupKey struct {
 		ReconcilerID   ReconcilerID
