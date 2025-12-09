@@ -87,6 +87,13 @@ type ResultState struct {
 	Resolver        VersionManager
 }
 
+type reconcileResultCache struct {
+	outputObjectsHash   string             // hash of output objects (from newState.ObjectsHash())
+	wasNoOp             bool               // did it produce changes?
+	numEffects          int                // number of effects (for history signature)
+	triggeredReconciles []PendingReconcile // reconciles triggered by the changes
+}
+
 // Explore takes an initial state and explores the state space to find all execution paths
 // that end in a converged state.
 // getNext pops the next state from the queue using DFS (depth-first) ordering.
@@ -244,15 +251,11 @@ func (e *Explorer) explore(
 	// Used to skip orderings that put known no-ops first.
 	knownNoOps := make(map[string]bool)
 
-	// Cache reconcile results to predict output states before running expensive reconciles.
-	// Key: "inputStateHash:reconcilerID:request" (full input state, not just objects)
-	// This lets us check if a reconcile would produce a duplicate state BEFORE running it.
-	type reconcileResultCache struct {
-		outputStateHash StateHash // the actual output state hash (from newState.Hash())
-		wasNoOp         bool      // did it produce changes?
-		numEffects      int       // number of effects (for history signature)
-	}
 	reconcileCache := make(map[string]*reconcileResultCache)
+
+	// Track which (objectsHash, pendingSignature, historyKey) combinations we've committed to explore.
+	// This allows prediction-based deduplication using only predictable components.
+	exploredLogicalStates := make(map[string]struct{})
 
 	var queue []StateNode
 
@@ -489,38 +492,14 @@ func (e *Explorer) explore(
 			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
-			// Cache key uses FULL input state hash (includes pending list ordering matters for output)
-			cacheKey := fmt.Sprintf("%s:%s:%s", stateView.Hash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
+			// Cache key uses OBJECTS hash only - pending list doesn't affect reconciler behavior
+			cacheKey := fmt.Sprintf("%s:%s:%s", stateView.ObjectsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
 			// Check cache: can we predict the output state without running the reconcile?
-			if cached, ok := reconcileCache[cacheKey]; ok {
-				// We've run this exact (state, reconciler, request) before.
-				// We know exactly what the output state hash will be.
-
-				// Predict the history signature after this step
-				currentHistory := stateView.ExecutionHistory.UniqueKey()
-				var predictedHistory string
-				if cached.wasNoOp {
-					// No-op: history unchanged
-					predictedHistory = currentHistory
-				} else {
-					// Non-no-op: append this step to history
-					stepSig := fmt.Sprintf("%s@%d", reconcilerID, cached.numEffects)
-					if currentHistory == "" {
-						predictedHistory = stepSig
-					} else {
-						predictedHistory = fmt.Sprintf("%s,%s", currentHistory, stepSig)
-					}
-				}
-
-				// Check if we've already explored this output state + history combination
-				if historySet, exists := visitedStatePaths[cached.outputStateHash]; exists {
-					if _, seen := historySet[predictedHistory]; seen {
-						stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
-						e.stats.CachePredictedSkips++
-						continue
-					}
-				}
+			if e.skipViaCachePrediction(reconcileCache, exploredLogicalStates, cacheKey, stateView, pendingReconcile) {
+				stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
+				e.stats.CachePredictedSkips++
+				continue
 			}
 
 			stepLogger.Info("Taking reconcile step")
@@ -529,20 +508,19 @@ func (e *Explorer) explore(
 			newState, stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
 
 			// Track whether this was a no-op (used by ordering optimization)
-			// Use objectsHash for no-op tracking (ordering optimization needs object-level granularity)
-			noOpKey := fmt.Sprintf("%s:%s:%s", stateView.ObjectsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 			wasNoOp := err == nil && stepResult != nil && len(stepResult.Changes.ObjectVersions) == 0 && stepResult.Error == ""
-			knownNoOps[noOpKey] = wasNoOp
+			knownNoOps[cacheKey] = wasNoOp // cacheKey already uses objectsHash
 			if wasNoOp {
 				e.stats.NoOpReconciles++
 			}
 
-			// Update cache with this reconcile's result (uses full state hash as key)
+			// Update cache with this reconcile's result
 			if err == nil && stepResult != nil {
 				reconcileCache[cacheKey] = &reconcileResultCache{
-					outputStateHash: newState.Hash(),
-					wasNoOp:         wasNoOp,
-					numEffects:      len(stepResult.Changes.Effects),
+					outputObjectsHash:   newState.ObjectsHash(),
+					wasNoOp:             wasNoOp,
+					numEffects:          len(stepResult.Changes.Effects),
+					triggeredReconciles: e.getTriggeredReconcilers(stepResult.Changes),
 				}
 			}
 
@@ -651,6 +629,16 @@ func (e *Explorer) explore(
 			} else {
 				// enqueue the new state to explore
 				historySet[normalizedHistory] = struct{}{}
+
+				// Also track in exploredLogicalStates for cache prediction
+				pendingStrs := lo.Map(newState.PendingReconciles, func(pr PendingReconcile, _ int) string {
+					return pr.String()
+				})
+				slices.Sort(pendingStrs)
+				pendingSignature := strings.Join(pendingStrs, ",")
+				logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.ObjectsHash(), pendingSignature, normalizedHistory)
+				exploredLogicalStates[logicalStateKey] = struct{}{}
+
 				queue = e.enqueueState(queue, newState)
 			}
 		}
@@ -1132,6 +1120,66 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 
 	allTriggered := append(triggeredByChanges, capturedPending...)
 	return e.getNewPendingReconciles(stillPending, allTriggered)
+}
+
+func (e *Explorer) skipViaCachePrediction(
+	reconcileCache map[string]*reconcileResultCache,
+	exploredLogicalStates map[string]struct{},
+	cacheKey string,
+	stateView StateNode,
+	pendingReconcile PendingReconcile,
+) bool {
+	// Check cache: can we predict the output state without running the reconcile?
+	if cached, ok := reconcileCache[cacheKey]; ok {
+		// We've run this (objects, reconciler, request) before.
+		// We can predict what the output will be.
+
+		//                     reconcileCache                exploredLogicalStates
+		//                     (input → output)              (output → seen?)
+		//                           │                              │
+		// State A ──────────────────┼──────► Output X ────────────┼──────► Already queued? YES → skip
+		// (objects=O, pending=[1,2])│        (objs=O', pend=[2])  │
+		//                           │                              │
+		// State B ──────────────────┼──────► Output X ────────────┼──────► Already queued? YES → skip
+		// (objects=O, pending=[1,3])│        (objs=O', pend=[3])  │
+		//                           ▲                              │
+		//                      SAME cache key!              DIFFERENT outputs
+		//                      (same objects, same R1)      (different pending)
+
+		// Predict output pending: current pending - this reconcile + triggered
+		predictedPending := lo.Filter(stateView.PendingReconciles, func(pr PendingReconcile, _ int) bool {
+			return pr != pendingReconcile
+		})
+		predictedPending = e.getNewPendingReconciles(predictedPending, cached.triggeredReconciles)
+
+		// Build pending signature (sorted for determinism)
+		pendingStrs := lo.Map(predictedPending, func(pr PendingReconcile, _ int) string {
+			return pr.String()
+		})
+		slices.Sort(pendingStrs)
+		pendingSignature := strings.Join(pendingStrs, ",")
+
+		// Predict the history signature after this step
+		currentHistory := stateView.ExecutionHistory.UniqueKey()
+		var predictedHistory string
+		if cached.wasNoOp {
+			predictedHistory = currentHistory
+		} else {
+			stepSig := fmt.Sprintf("%s@%d", pendingReconcile.ReconcilerID, cached.numEffects)
+			if currentHistory == "" {
+				predictedHistory = stepSig
+			} else {
+				predictedHistory = fmt.Sprintf("%s,%s", currentHistory, stepSig)
+			}
+		}
+
+		// Check if we've already committed to exploring this logical state
+		logicalStateKey := fmt.Sprintf("%s|%s|%s", cached.outputObjectsHash, pendingSignature, predictedHistory)
+		if _, explored := exploredLogicalStates[logicalStateKey]; explored {
+			return true
+		}
+	}
+	return false
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {
