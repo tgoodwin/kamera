@@ -193,13 +193,9 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	// if we broke out early, collect partial results, summarize them, and return
 	result := &Result{ConvergedStates: make([]ResultState, 0), AbortedStates: abortedCollected}
-	rawPaths := 0
-	dedupedPaths := 0
 	for i, stateKey := range lo.Keys(seenConvergedStates) {
 		state := seenConvergedStates[stateKey]
-		rawPaths = rawPaths + len(executionPathsToState[stateKey])
 		paths := normalizeAndDedupePaths(executionPathsToState[stateKey])
-		dedupedPaths = dedupedPaths + len(paths)
 		state.DivergencePoint = initialState.DivergencePoint
 		convergedState := ResultState{
 			ID:       fmt.Sprintf("state-%d", i),
@@ -217,8 +213,6 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 			result.AbortedStates[i].Paths = GetUniquePaths(mergedPaths)
 		}
 	}
-	fmt.Printf("paths pre dedupe: %d\n", rawPaths)
-	fmt.Printf("paths post dedupe: %d\n", dedupedPaths)
 	summarize(result)
 	return result
 }
