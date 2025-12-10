@@ -228,7 +228,10 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 		tickerStrategy.recorder = r
 		return tickerStrategy
 	}).For("core/Service")
-	registerTickerCleanup(t, tickerStrategy)
+
+	t.Cleanup(func() {
+		tickerStrategy.deciders.Stop()
+	})
 
 	// Build the explorer
 	explorer, err := builder.Build("test")
@@ -290,9 +293,6 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 
 	// Verify the ticker fired at the expected depths (allowing extra fires if depth resets occur).
 	expectedFires := []int{2, 4, 6, 8}
-	for _, d := range expectedFires {
-		assert.True(t, tickerTracker.seen[d], "expected ticker fire at depth %d", d)
-	}
 	assert.Equal(t, expectedFires, tickerTracker.fires)
 
 	// Verify depth progression was correct
