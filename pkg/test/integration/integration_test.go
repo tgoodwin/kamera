@@ -101,22 +101,20 @@ func TestExhaustiveInterleavings(t *testing.T) {
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
+	fooKind := "webapp.discrete.events/Foo"
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
-	fooKind := "webapp.discrete.events/Foo"
-	eb.WithResourceDep(fooKind, "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", fooKind)
-	eb.AssignReconcilerToKind("BarController", fooKind)
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
@@ -186,16 +184,14 @@ func TestConvergedStateIdentification(t *testing.T) {
 			Client: c,
 			Scheme: scheme,
 		}
-	})
+	}).For("webapp.discrete.events/Foo")
+
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.BarReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
-	eb.WithResourceDep("webapp.discrete.events/Foo", "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", "webapp.discrete.events/Foo")
-	eb.AssignReconcilerToKind("BarController", "webapp.discrete.events/Foo")
+	}).For("webapp.discrete.events/Foo")
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
@@ -218,7 +214,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	sb := eb.NewStateEventBuilder()
 	initialState := sb.AddTopLevelObject(topLevelObj, "FooController", "BarController")
 	initialState.Contents.KindSequences = canonicalizeKindSequences(initialState.Contents.KindSequences)
-	explorer, err := eb.Build("standalone")
+	explorer, err := eb.Build()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,8 +233,8 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: false,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "FooController@1", "BarController@1"},
-				{"FooController@1", "FooController@1", "FooController@1"},
+				{"FooController@1", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},
 		{
@@ -246,8 +242,8 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: true,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "BarController@1", "FooController@1", "FooController@1", "BarController@1"},
-				{"FooController@1", "BarController@1", "FooController@1", "FooController@1", "FooController@1"},
+				{"FooController@1", "BarController@1", "BarController@0", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "BarController@1", "BarController@0", "FooController@1", "BarController@0", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},
 	}
@@ -289,22 +285,19 @@ func BenchmarkExhaustiveInterleavingsExplore(b *testing.B) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
 	eb.WithEmitter(event.NewInMemoryEmitter())
+	fooKind := "webapp.discrete.events/Foo"
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	})
-	fooKind := "webapp.discrete.events/Foo"
-	eb.WithResourceDep(fooKind, "FooController", "BarController")
-	eb.AssignReconcilerToKind("FooController", fooKind)
-	eb.AssignReconcilerToKind("BarController", fooKind)
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{

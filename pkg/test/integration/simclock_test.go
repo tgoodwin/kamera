@@ -26,13 +26,12 @@ func TestSimClockAdvancesWithExploreDepth(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(5)
 	eb.WithEmitter(event.NewInMemoryEmitter())
+	fooKind := util.CanonicalGroupKind("webapp.discrete.events", "Foo")
 	eb.WithReconciler("SimClockController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.SimClockReconciler{Client: c, Scheme: scheme}
-	})
+	}).For(fooKind)
 
-	fooKind := util.CanonicalGroupKind("webapp.discrete.events", "Foo")
 	eb.WithResourceDep(fooKind, "SimClockController")
-	eb.AssignReconcilerToKind("SimClockController", fooKind)
 
 	foo := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{

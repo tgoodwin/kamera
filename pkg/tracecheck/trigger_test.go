@@ -376,7 +376,12 @@ func TestGetTriggeredThroughOwnerRefs(t *testing.T) {
 			rcHash: routeConfigObj,
 		},
 	}
-	tm := &TriggerManager{deps, owners, resolver}
+	tm := &TriggerManager{
+		deps:     deps,
+		owners:   owners,
+		watchers: make(WatchRegistrations),
+		resolver: resolver,
+	}
 
 	changes := Changes{
 		Effects: []Effect{
@@ -437,6 +442,7 @@ func TestGetTriggeredMissingPrimaryReconciler(t *testing.T) {
 	tm := &TriggerManager{
 		deps:     deps,
 		owners:   owners,
+		watchers: make(WatchRegistrations),
 		resolver: resolver,
 	}
 
@@ -502,7 +508,12 @@ func TestGetTriggeredMissingOwnerReconciler(t *testing.T) {
 	}
 
 	// Create trigger manager
-	tm := &TriggerManager{deps, owners, resolver}
+	tm := &TriggerManager{
+		deps:     deps,
+		owners:   owners,
+		watchers: make(WatchRegistrations),
+		resolver: resolver,
+	}
 
 	// Create test change set
 	changes := Changes{
@@ -549,7 +560,12 @@ func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 	}
 
 	// Create trigger manager
-	tm := &TriggerManager{deps, owners, resolver}
+	tm := &TriggerManager{
+		deps:     deps,
+		owners:   owners,
+		watchers: make(WatchRegistrations),
+		resolver: resolver,
+	}
 
 	// Create test change set with a hash that doesn't exist
 	changes := Changes{

@@ -292,6 +292,7 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		triggerManager: NewTriggerManager(
 			tc.ResourceDeps,
 			tc.reconcilerToKind,
+			nil,
 			tc.manager.snapStore,
 		),
 

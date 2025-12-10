@@ -12,6 +12,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
@@ -26,6 +27,7 @@ import (
 	servicecontroller "knative.dev/serving/pkg/reconciler/service"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const defaultMaxDepth = 100
@@ -96,7 +98,8 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("RevisionReconciler"))
 		return strategy
-	})
+	}).For("serving.knative.dev/Revision")
+
 	builder.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
 			// Create MultiScaler and wrap it to capture enqueues.
@@ -113,7 +116,8 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("KPAReconciler"))
 		return strategy
-	})
+	}).For("autoscaling.internal.knative.dev/PodAutoscaler")
+
 	builder.WithCustomStrategy("ServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(servicecontroller.NewController, r)
 		if err != nil {
@@ -121,7 +125,8 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("ServiceReconciler"))
 		return strategy
-	})
+	}).For("serving.knative.dev/Service")
+
 	builder.WithCustomStrategy("RouteReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(routecontroller.NewController, r)
 		if err != nil {
@@ -129,6 +134,16 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("RouteReconciler"))
 		return strategy
+	}).For("serving.knative.dev/Route").Watches("serving.knative.dev/Configuration", func(u *unstructured.Unstructured) []reconcile.Request {
+		labels := u.GetLabels()
+		svcName := labels[serving.ServiceLabelKey]
+		if svcName == "" {
+			return nil
+		}
+
+		return []reconcile.Request{
+			{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: svcName}},
+		}
 	})
 
 	builder.WithCustomStrategy("ServerlessServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
@@ -138,8 +153,8 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("ServerlessServiceReconciler"))
 		return strategy
-	})
-	builder.AssignReconcilerToKind("ServerlessServiceReconciler", "networking.internal.knative.dev/ServerlessService")
+	}).For("networking.internal.knative.dev/ServerlessService")
+
 	builder.WithResourceDep("networking.internal.knative.dev/ServerlessService", "ServerlessServiceReconciler", "KPA")
 
 	builder.WithCustomStrategy("ConfigurationReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
@@ -149,31 +164,24 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("ConfigurationReconciler"))
 		return strategy
-	})
-	builder.AssignReconcilerToKind("ConfigurationReconciler", "serving.knative.dev/Configuration")
-	builder.WithResourceDep("Configuration", "ConfigurationReconciler", "RevisionReconciler")
+	}).For("serving.knative.dev/Configuration")
 
-	builder.AssignReconcilerToKind("RevisionReconciler", "serving.knative.dev/Revision")
-	builder.AssignReconcilerToKind("KPA", "autoscaling.internal.knative.dev/PodAutoscaler")
-	builder.AssignReconcilerToKind("ServiceReconciler", "serving.knative.dev/Service")
-	builder.AssignReconcilerToKind("RouteReconciler", "serving.knative.dev/Route")
+	builder.WithResourceDep("Configuration", "ConfigurationReconciler", "RevisionReconciler")
 
 	builder.WithReconciler("RevisionDigestStub", func(c client.Client) tracecheck.Reconciler {
 		return &revisionDigestStub{Client: c}
-	})
-	builder.AssignReconcilerToKind("RevisionDigestStub", "serving.knative.dev/Revision")
+	}).For("serving.knative.dev/Revision")
 
 	builder.WithReconciler("IngressStatusStub", func(c client.Client) tracecheck.Reconciler {
 		return &knativeharness.IngressStatusStub{Client: c}
-	})
-	builder.AssignReconcilerToKind("IngressStatusStub", "networking.internal.knative.dev/Ingress")
+	}).For("networking.internal.knative.dev/Ingress")
 
-	builder.WithResourceDep("serving.knative.dev/Revision", "RevisionDigestStub", "RevisionReconciler", "KPA", "ServiceReconciler")
-	builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "KPA", "ServerlessServiceReconciler")
-	builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "RevisionReconciler")
-	builder.WithResourceDep("serving.knative.dev/Service", "ServiceReconciler")
-	builder.WithResourceDep("serving.knative.dev/Configuration", "ServiceReconciler", "RevisionReconciler")
-	builder.WithResourceDep("serving.knative.dev/Route", "RouteReconciler", "ServiceReconciler")
-	builder.WithResourceDep("networking.internal.knative.dev/Ingress", "IngressStatusStub", "RouteReconciler", "ServerlessServiceReconciler")
-	builder.WithResourceDep("apps/Deployment", "RevisionReconciler")
+	// builder.WithResourceDep("serving.knative.dev/Revision", "RevisionDigestStub", "RevisionReconciler", "KPA", "ServiceReconciler")
+	// builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "KPA", "ServerlessServiceReconciler")
+	// builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "RevisionReconciler")
+	// builder.WithResourceDep("serving.knative.dev/Service", "ServiceReconciler")
+	// builder.WithResourceDep("serving.knative.dev/Configuration", "ServiceReconciler", "RevisionReconciler", "RouteReconciler")
+	// builder.WithResourceDep("serving.knative.dev/Route", "RouteReconciler", "ServiceReconciler")
+	// builder.WithResourceDep("networking.internal.knative.dev/Ingress", "IngressStatusStub", "RouteReconciler", "ServerlessServiceReconciler")
+	// builder.WithResourceDep("apps/Deployment", "RevisionReconciler")
 }
