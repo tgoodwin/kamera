@@ -25,8 +25,6 @@ import (
 	v1 "knative.dev/serving/pkg/apis/serving/v1"
 	revisionreconciler "knative.dev/serving/pkg/reconciler/revision"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -147,28 +145,11 @@ func (r *revisionDigestStub) Reconcile(ctx context.Context, req reconcile.Reques
 }
 
 func main() {
-	logLevel := flag.String("log-level", "info", "logging level (debug, info, warn, error)")
-	searchDepth := flag.Int("depth", 10, "exploration search depth")
 	interactiveFlag := flag.Bool("interactive", true, "launch interactive trace inspector")
-	emitStatsFlag := flag.Bool("emit-stats", false, "record and emit reconcile performance stats")
 	dumpPathFlag := flag.String("dump-output", "", "optional path to write exploration results (converged + aborted) to disk")
-	timeoutFlag := flag.Duration("timeout", 0, "abort exploration after this duration (0 disables)")
 	flag.Parse()
 
-	level, err := parseLogLevel(*logLevel)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid log level %q: %v\n", *logLevel, err)
-		os.Exit(2)
-	}
-
-	logf.SetLogger(ctrlzap.New(
-		ctrlzap.UseDevMode(level <= zapcore.DebugLevel),
-		ctrlzap.Level(level),
-	))
-
-	tracecheck.SetLogger(logf.Log.WithName("tracecheck"))
-
-	explorer, initialState, err := newKnativeExplorerAndState(*searchDepth, *emitStatsFlag)
+	explorer, initialState, err := newKnativeExplorerAndState()
 	if err != nil {
 		panic(fmt.Sprintf("Build() error = %v", err))
 	}
@@ -176,9 +157,9 @@ func main() {
 	fmt.Printf("[main] initial pending: %v\n", initialState.PendingReconciles)
 
 	ctx := context.Background()
-	if *timeoutFlag > 0 {
+	if explorer.Config.Timeout > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *timeoutFlag)
+		ctx, cancel = context.WithTimeout(ctx, explorer.Config.Timeout)
 		defer cancel()
 	}
 
@@ -208,7 +189,31 @@ func main() {
 		return
 	}
 
-	interactive.RunStateInspectorTUIView(states, true)
+	restartFn := func(seed tracecheck.RestartSeed) ([]tracecheck.ResultState, error) {
+		builder := newKnativeExplorerBuilder()
+		explorer, err := builder.Build("standalone")
+		if err != nil {
+			return nil, fmt.Errorf("build explorer: %w", err)
+		}
+		state, err := tracecheck.SeedToStateNode(seed, builder)
+		if err != nil {
+			return nil, err
+		}
+
+		ctx := context.Background()
+		if explorer.Config.Timeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, explorer.Config.Timeout)
+			defer cancel()
+		}
+
+		restartRes := explorer.Explore(ctx, state)
+		restartStates := append([]tracecheck.ResultState{}, restartRes.ConvergedStates...)
+		restartStates = append(restartStates, restartRes.AbortedStates...)
+		return restartStates, nil
+	}
+
+	interactive.RunStateInspectorTUIView(states, true, restartFn)
 }
 
 // mergeStateNodes is a helper that merges multiple StateNode instances into one

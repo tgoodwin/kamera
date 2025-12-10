@@ -40,8 +40,9 @@ type PerturbationConfig struct {
 }
 
 type ExploreConfig struct {
-	maxDepth        int
-	recordPerfStats bool
+	MaxDepth        int
+	RecordPerfStats bool
+	Timeout         time.Duration
 	// per-reconciler perturbation config
 	perturbationCfg map[ReconcilerID]PerturbationConfig
 
@@ -72,7 +73,7 @@ type Explorer struct {
 
 	priorityHandler PriorityHandler // prioritize possible views to explore
 
-	config *ExploreConfig
+	Config *ExploreConfig
 
 	stats *ExploreStats
 }
@@ -218,7 +219,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	summarize := func(res *Result) {
 		logger.V(1).Info("explore summary")
-		if e.config != nil && e.config.recordPerfStats {
+		if e.Config != nil && e.Config.RecordPerfStats {
 			e.stats.Print()
 		}
 		res.Summarize()
@@ -298,8 +299,8 @@ func (e *Explorer) explore(
 		close(abortedStatesCh)
 	}()
 
-	if e.config.maxDepth == 0 {
-		e.config.maxDepth = DefaultMaxDepth
+	if e.Config.MaxDepth == 0 {
+		e.Config.MaxDepth = DefaultMaxDepth
 	}
 
 	if logger.V(2).Enabled() {
@@ -443,7 +444,7 @@ func (e *Explorer) explore(
 
 		// Divergence Circuit-Breaker: limit exploration when paths from a divergence point
 		// keep converging to the same state.
-		if threshold := e.config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
+		if threshold := e.Config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
 			convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
 			repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
 			if repeatedCount > threshold {
@@ -559,10 +560,10 @@ func (e *Explorer) explore(
 				seenDepths[newState.depth] = true
 			}
 
-			if newState.depth > e.config.maxDepth {
+			if newState.depth > e.Config.MaxDepth {
 				if logger.V(1).Enabled() {
 					logger.WithValues(
-						"maxDepth", e.config.maxDepth,
+						"maxDepth", e.Config.MaxDepth,
 						"currentDepth", newState.depth,
 						"Lineage", newState.ReconcileLineage(),
 					).Info("aborting path due to max depth")
@@ -575,7 +576,7 @@ func (e *Explorer) explore(
 					ID:       fmt.Sprintf("aborted-%s", stateKey),
 					State:    newState,
 					Paths:    []ExecutionHistory{newState.ExecutionHistory},
-					Reason:   fmt.Sprintf("max depth %d", e.config.maxDepth),
+					Reason:   fmt.Sprintf("max depth %d", e.Config.MaxDepth),
 					Resolver: e.versionManager,
 				}:
 				case <-ctx.Done():
@@ -637,7 +638,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	stepLog := log.FromContext(ctx)
 	startWall := time.Now()
 	defer func() {
-		if e.stats != nil && e.config != nil && e.config.recordPerfStats {
+		if e.stats != nil && e.Config != nil && e.Config.RecordPerfStats {
 			e.stats.RecordStep(pr.ReconcilerID, time.Since(startWall))
 		}
 	}()
@@ -950,7 +951,7 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID ReconcilerID, currDepth int) ([]StateNode, error) {
 	currSnapshot := currState.Contents
-	config, ok := e.config.perturbationCfg[reconcilerID]
+	config, ok := e.Config.perturbationCfg[reconcilerID]
 	if !ok {
 		logger.V(2).Info("no staleness bounds configured for reconciler", "ReconcilerID", reconcilerID)
 		// no staleness bounds configured for this reconciler, so dont compute stale states
@@ -963,7 +964,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return []StateNode{currState}, nil
 	}
 
-	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.config.maxDepth)
+	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.Config.MaxDepth)
 	possiblePastViews, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.StaleReadBounds)
 	if err != nil {
 		return nil, errors.Wrap(err, "getting possible views")

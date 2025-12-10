@@ -178,7 +178,7 @@ func Test_getNewPendingReconciles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := &Explorer{config: &ExploreConfig{}}
+			e := &Explorer{Config: &ExploreConfig{}}
 			actual := e.getNewPendingReconciles(tt.curr, tt.new)
 			if !assert.Equal(t, tt.expected, actual) {
 				t.Errorf("getNewPendingReconciles() = %v, want %v", actual, tt.expected)
@@ -376,7 +376,7 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			}
 			e := &Explorer{
 				triggerManager: mockTriggered,
-				config:         &ExploreConfig{},
+				Config:         &ExploreConfig{},
 			}
 
 			state := StateNode{
