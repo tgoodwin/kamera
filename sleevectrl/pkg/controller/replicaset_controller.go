@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,7 +51,7 @@ type ReplicaSetReconciler struct {
 // move the current state of the cluster closer to the desired state.
 func (r *ReplicaSetReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
-	now := metav1.Now()
+	now := metav1.NewTime(simclock.Now())
 
 	// Fetch the ReplicaSet instance
 	rs := &appsv1.ReplicaSet{}

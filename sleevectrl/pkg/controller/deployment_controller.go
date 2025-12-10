@@ -23,6 +23,7 @@ import (
 	"sort"
 
 	"github.com/davecgh/go-spew/spew"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -551,7 +552,7 @@ func (r *DeploymentReconciler) calculateStatus(
 }
 
 func mergeDeploymentConditions(existing, desired []appsv1.DeploymentCondition) []appsv1.DeploymentCondition {
-	now := metav1.Now()
+	now := metav1.NewTime(simclock.Now())
 	existingByType := make(map[appsv1.DeploymentConditionType]appsv1.DeploymentCondition, len(existing))
 	for _, cond := range existing {
 		existingByType[cond.Type] = cond
