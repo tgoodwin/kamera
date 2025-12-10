@@ -3,24 +3,23 @@ package snapshot
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
-var hashPrinter = &spew.ConfigState{
-	Indent:         "",
-	SortKeys:       true,
-	DisableMethods: true,
-	SpewKeys:       true,
-}
-
 func stableHashString(obj interface{}) string {
-	hasher := sha256.New()
-	hashPrinter.Fprintf(hasher, "%#v", obj)
-	return hex.EncodeToString(hasher.Sum(nil))
+	canon, err := CanonicalJSON(obj)
+	if err != nil {
+		// fallback to spew-like approach if canonicalization fails
+		hasher := sha256.New()
+		hasher.Write([]byte(fmt.Sprintf("%#v", obj)))
+		return hex.EncodeToString(hasher.Sum(nil))
+	}
+	sum := sha256.Sum256(canon)
+	return hex.EncodeToString(sum[:])
 }
 
 type VersionHash struct {

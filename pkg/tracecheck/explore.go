@@ -339,6 +339,7 @@ func (e *Explorer) explore(
 		//    from tickers, or requeues from poll-based controllers). These don't indicate
 		//    state changes, just time-based or polling behavior.
 		if len(currentState.PendingReconciles) == 0 || allPendingIgnorableForConvergence(currentState.PendingReconciles) {
+			convergenceKey := currentState.ConvergenceHash()
 			reason := "no pending reconciles"
 			if len(currentState.PendingReconciles) > 0 {
 				reason = "only async enqueues/requeues remaining"
@@ -346,7 +347,7 @@ func (e *Explorer) explore(
 			if logger.V(1).Enabled() {
 				logger.V(1).WithValues(
 					"Depth", currentState.depth,
-					"StateKey", currentState.Hash(),
+					"StateKey", convergenceKey,
 					"Reason", reason,
 					"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
 				).Info("arrived at converged state")
@@ -354,14 +355,20 @@ func (e *Explorer) explore(
 			if logger.V(2).Enabled() {
 				logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
 			}
-			seenConvergedStates[stateKey] = currentState
+			seenConvergedStates[convergenceKey] = currentState
+			if convergenceKey != stateKey {
+				if _, ok := executionPathsToState[convergenceKey]; !ok {
+					executionPathsToState[convergenceKey] = make([]ExecutionHistory, 0)
+				}
+				executionPathsToState[convergenceKey] = append(executionPathsToState[convergenceKey], currentState.ExecutionHistory)
+			}
 
 			// track how many times we've arrived at this state from some common ancestor
 			if currentState.divergenceKey != "" {
 				if _, seen := convergencesByDivergenceKey[currentState.divergenceKey]; !seen {
 					convergencesByDivergenceKey[currentState.divergenceKey] = make([]StateHash, 0)
 				}
-				convergencesByDivergenceKey[currentState.divergenceKey] = append(convergencesByDivergenceKey[currentState.divergenceKey], stateKey)
+				convergencesByDivergenceKey[currentState.divergenceKey] = append(convergencesByDivergenceKey[currentState.divergenceKey], convergenceKey)
 			}
 
 			if cancelled := sendWithCancel(ctx, convergedStatesCh, currentState); cancelled {

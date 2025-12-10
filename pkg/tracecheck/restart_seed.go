@@ -32,6 +32,10 @@ type RestartSeed struct {
 type RestartRequest struct {
 	Seed   RestartSeed
 	Config ExploreConfig
+	// PreserveHistory indicates whether the reconcile prefix leading to the selected
+	// state should be prepended to restarted execution paths.
+	PreserveHistory bool
+	Prefix          ExecutionHistory
 }
 
 // BuildRestartSeedFromState resolves ObjectVersions to concrete objects and produces a serializable seed.
@@ -40,6 +44,7 @@ func BuildRestartSeedFromState(objects ObjectVersions, resolver VersionManager, 
 		return RestartSeed{}, fmt.Errorf("resolver is nil")
 	}
 
+	// ensure deterministic hashing for seeds
 	keys := make([]snapshot.CompositeKey, 0, len(objects))
 	for key := range objects {
 		keys = append(keys, key)
@@ -64,7 +69,7 @@ func BuildRestartSeedFromState(objects ObjectVersions, resolver VersionManager, 
 			gvk = util.GetGroupVersionKind(obj)
 			obj.SetGroupVersionKind(gvk)
 		}
-		data, err := obj.MarshalJSON()
+		data, err := snapshot.CanonicalJSON(obj.Object)
 		if err != nil {
 			return RestartSeed{}, fmt.Errorf("marshal object %s: %w", key, err)
 		}

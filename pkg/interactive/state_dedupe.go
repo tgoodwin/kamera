@@ -16,7 +16,7 @@ func dedupeResultStates(states []tracecheck.ResultState) []tracecheck.ResultStat
 	indexByHash := make(map[tracecheck.StateHash]int, len(states))
 
 	for _, state := range states {
-		hash := state.State.Hash()
+		hash := state.State.ConvergenceHash()
 
 		if idx, exists := indexByHash[hash]; exists {
 			mergedPaths := append(unique[idx].Paths, state.Paths...)

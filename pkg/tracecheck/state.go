@@ -486,6 +486,17 @@ func (sn StateNode) Hash() StateHash {
 	return StateHash(util.ShortenHash(s))
 }
 
+// ConvergenceHash returns a hash normalized for convergence by dropping pending reconciles
+// that are ignorable for convergence (async enqueues / requeues).
+func (sn StateNode) ConvergenceHash() StateHash {
+	filtered := lo.Filter(sn.PendingReconciles, func(pr PendingReconcile, _ int) bool {
+		return pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue
+	})
+	clone := sn
+	clone.PendingReconciles = filtered
+	return StateHash(util.ShortenHash(clone.Serialize()))
+}
+
 func (sn *StateSnapshot) trimForInspection() {
 	if sn == nil {
 		return
