@@ -391,6 +391,12 @@ func (sn StateNode) Clone() StateNode {
 	}
 }
 
+// WithDepth returns a copy of the state node with the provided depth set.
+func (sn StateNode) WithDepth(d int) StateNode {
+	sn.depth = d
+	return sn
+}
+
 func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 	// collect and sort object keys for deterministic ordering. Multiple
 	// resources can share the same sleeve ObjectID, so compare on the full

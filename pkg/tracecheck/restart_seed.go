@@ -26,6 +26,7 @@ type SeedObject struct {
 type RestartSeed struct {
 	Objects           []SeedObject       `json:"objects"`
 	PendingReconciles []PendingReconcile `json:"pendingReconciles"`
+	Depth             int                `json:"depth"`
 }
 
 // RestartRequest bundles a seed plus config overrides for the next run.
@@ -113,5 +114,12 @@ func SeedToStateNode(seed RestartSeed, builder *ExplorerBuilder) (StateNode, err
 		objs = append(objs, &u)
 	}
 
-	return builder.BuildStartStateFromObjects(objs, seed.PendingReconciles)
+	state, err := builder.BuildStartStateFromObjects(objs, seed.PendingReconciles)
+	if err != nil {
+		return StateNode{}, err
+	}
+	if seed.Depth > 0 {
+		state = state.WithDepth(seed.Depth)
+	}
+	return state, nil
 }

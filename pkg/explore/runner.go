@@ -7,6 +7,7 @@ import (
 
 	"github.com/tgoodwin/kamera/pkg/interactive"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
+	"golang.org/x/exp/slices"
 )
 
 // Runner coordinates exploration runs and the inspector UI, including restart requests.
@@ -134,6 +135,12 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 		nextState, err := tracecheck.SeedToStateNode(restart.Seed, r.builder)
 		if err != nil {
 			return fmt.Errorf("seed to state: %w", err)
+		}
+		if restart.Seed.Depth > 0 {
+			nextState = nextState.WithDepth(restart.Seed.Depth)
+		}
+		if len(restart.Prefix) > 0 {
+			nextState.ExecutionHistory = slices.Clone(restart.Prefix)
 		}
 
 		nextRes, err := runOnce(ctx, nextState)

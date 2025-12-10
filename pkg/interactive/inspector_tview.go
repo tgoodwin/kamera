@@ -335,7 +335,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 		form := tview.NewForm().
 			AddInputField("Max Depth", fmt.Sprintf("%d", currentConfig.MaxDepth), 0, nil, nil).
 			AddInputField("Timeout", currentConfig.Timeout.String(), 0, nil, nil).
-			AddCheckbox("Preserve history", false, nil)
+			AddCheckbox("Preserve history", true, nil)
 		form.AddButton("OK", func() {
 			maxDepthStr := form.GetFormItemByLabel("Max Depth").(*tview.InputField).GetText()
 			timeoutStr := form.GetFormItemByLabel("Timeout").(*tview.InputField).GetText()
@@ -369,6 +369,9 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 			pages.RemovePage("confirm")
 			app.SetFocus(mainTable)
 		})
+		form.SetButtonsAlign(tview.AlignCenter)
+		// Focus the first button (OK) so Enter immediately confirms.
+		form.SetFocus(form.GetFormItemCount())
 		form.SetBorder(true).SetTitle("Restart Config").SetTitleAlign(tview.AlignLeft)
 		pages.AddAndSwitchToPage("confirm", form, true)
 		app.SetFocus(form)
@@ -528,6 +531,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 
 		state := states[selectedState]
 		prefix := slices.Clone(state.Paths[selectedPath][:selectedStep+1])
+		seed.Depth = len(prefix)
 		showConfirm(seed, prefix)
 	}
 

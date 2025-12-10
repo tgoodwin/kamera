@@ -12,6 +12,9 @@ import (
 func canonicalize(v interface{}) interface{} {
 	switch t := v.(type) {
 	case map[string]interface{}:
+		if t == nil {
+			return map[string]interface{}{}
+		}
 		keys := make([]string, 0, len(t))
 		for k := range t {
 			keys = append(keys, k)
@@ -23,6 +26,9 @@ func canonicalize(v interface{}) interface{} {
 		}
 		return out
 	case []interface{}:
+		if t == nil {
+			return []interface{}{}
+		}
 		out := make([]interface{}, len(t))
 		for i, elem := range t {
 			out[i] = canonicalize(elem)
