@@ -14,11 +14,13 @@ type ExploreStats struct {
 	SkippedNodeVisits      int
 	SkippedPaths           int
 	SkippedOrderExpansions int
-	SkippedSubtrees        int // entire subtrees skipped (same logical state already explored)
-	EarlyConvergence       int // states treated as converged because all pending are known no-ops
-	NoOpReconciles         int // reconciles that produced no changes
-	SkippedNoOpOrderings   int // orderings skipped because they put a known no-op first
-	CachePredictedSkips    int // reconciles skipped via cache prediction (would be duplicates)
+	SkippedSubtrees        int
+	SkippedNoOpOrderings   int
+	EarlyConvergence       int
+	NoOpReconciles         int
+	CachePredictedSkips    int
+
+	VisitsByDepth map[int]int
 
 	RestartsPerReconciler map[ReconcilerID]int
 
@@ -27,12 +29,6 @@ type ExploreStats struct {
 	TotalStepLatency    time.Duration
 	MaxStepLatency      time.Duration
 	StepLatencyByRecon  map[ReconcilerID]*latencyStat
-
-	// depth tracking
-	VisitsByDepth       map[int]int
-	PendingCountByDepth map[int][]int // track pending reconcile counts at each depth
-	MaxQueueDepth       int
-	QueueDepthSamples   []int // sample queue depth periodically
 }
 
 type latencyStat struct {
@@ -47,25 +43,18 @@ func NewExploreStats() *ExploreStats {
 		startTime:    nil,
 		AbortedPaths: 0,
 
+		VisitsByDepth:         make(map[int]int),
 		RestartsPerReconciler: make(map[ReconcilerID]int),
 		StepLatencyByRecon:    make(map[ReconcilerID]*latencyStat),
-
-		VisitsByDepth:       make(map[int]int),
-		PendingCountByDepth: make(map[int][]int),
-		QueueDepthSamples:   make([]int, 0),
 	}
 }
 
-func (s *ExploreStats) RecordVisit(depth int, pendingCount int, queueDepth int) {
+func (s *ExploreStats) RecordVisit(depth int, pendingCount int, queueSize int) {
+	if s.VisitsByDepth == nil {
+		s.VisitsByDepth = make(map[int]int)
+	}
 	s.VisitsByDepth[depth]++
-	s.PendingCountByDepth[depth] = append(s.PendingCountByDepth[depth], pendingCount)
-	if queueDepth > s.MaxQueueDepth {
-		s.MaxQueueDepth = queueDepth
-	}
-	// sample queue depth every 100 visits
-	if s.TotalNodeVisits%100 == 0 {
-		s.QueueDepthSamples = append(s.QueueDepthSamples, queueDepth)
-	}
+	// pendingCount and queueSize available for future analysis
 }
 
 func (s *ExploreStats) Start() {
@@ -114,7 +103,19 @@ func (s *ExploreStats) Print() {
 	if s.TotalReconcileSteps > 0 {
 		avgStep = time.Duration(int64(s.TotalStepLatency) / int64(s.TotalReconcileSteps))
 	}
-
+	if logger.GetSink() != nil {
+		logger.Info("explore stats",
+			"totalTime", s.endTime.Sub(*s.startTime),
+			"totalNodeVisits", s.TotalNodeVisits,
+			"uniqueNodeVisits", s.UniqueNodeVisits,
+			"skippedPaths", s.SkippedPaths,
+			"abortedPaths", s.AbortedPaths,
+			"reconcileSteps", s.TotalReconcileSteps,
+			"avgStepLatency", avgStep,
+			"maxStepLatency", s.MaxStepLatency,
+			"stepLatencyByReconciler", s.latencyByReconcilerSummary(),
+		)
+	}
 	fmt.Printf("Total time: %v\n", s.endTime.Sub(*s.startTime))
 	fmt.Printf("Total node visits: %d\n", s.TotalNodeVisits)
 	fmt.Printf("Unique node visits: %d\n", s.UniqueNodeVisits)
@@ -122,9 +123,9 @@ func (s *ExploreStats) Print() {
 	fmt.Printf("Skipped paths: %d\n", s.SkippedPaths)
 	fmt.Printf("Skipped order expansions: %d\n", s.SkippedOrderExpansions)
 	fmt.Printf("Skipped subtrees: %d\n", s.SkippedSubtrees)
+	fmt.Printf("Skipped no-op orderings: %d\n", s.SkippedNoOpOrderings)
 	fmt.Printf("Early convergence: %d\n", s.EarlyConvergence)
 	fmt.Printf("No-op reconciles: %d\n", s.NoOpReconciles)
-	fmt.Printf("Skipped no-op orderings: %d\n", s.SkippedNoOpOrderings)
 	fmt.Printf("Cache predicted skips: %d\n", s.CachePredictedSkips)
 	fmt.Printf("Aborted paths: %d\n", s.AbortedPaths)
 	fmt.Printf("Reconcile steps: %d\n", s.TotalReconcileSteps)
@@ -132,63 +133,6 @@ func (s *ExploreStats) Print() {
 	fmt.Printf("Max step latency: %v\n", s.MaxStepLatency)
 	fmt.Println("Step latency by reconciler:")
 	s.printLatencyTable()
-
-	// Print depth distribution
-	s.printDepthDistribution()
-}
-
-func (s *ExploreStats) printDepthDistribution() {
-	if len(s.VisitsByDepth) == 0 {
-		return
-	}
-
-	fmt.Println("\nVisits by depth:")
-	// Find min and max depth
-	minDepth, maxDepth := -1, -1
-	for d := range s.VisitsByDepth {
-		if minDepth == -1 || d < minDepth {
-			minDepth = d
-		}
-		if d > maxDepth {
-			maxDepth = d
-		}
-	}
-
-	// Print in 10-depth buckets for readability
-	fmt.Printf("  %-15s %-10s %-15s\n", "Depth Range", "Visits", "Avg Pending")
-	for bucketStart := minDepth; bucketStart <= maxDepth; bucketStart += 10 {
-		bucketEnd := bucketStart + 9
-		if bucketEnd > maxDepth {
-			bucketEnd = maxDepth
-		}
-
-		totalVisits := 0
-		totalPending := 0
-		pendingCount := 0
-		for d := bucketStart; d <= bucketEnd; d++ {
-			if v, ok := s.VisitsByDepth[d]; ok {
-				totalVisits += v
-			}
-			if pending, ok := s.PendingCountByDepth[d]; ok {
-				for _, p := range pending {
-					totalPending += p
-					pendingCount++
-				}
-			}
-		}
-
-		avgPending := 0.0
-		if pendingCount > 0 {
-			avgPending = float64(totalPending) / float64(pendingCount)
-		}
-
-		fmt.Printf("  %-15s %-10d %-15.2f\n", fmt.Sprintf("%d-%d", bucketStart, bucketEnd), totalVisits, avgPending)
-	}
-
-	fmt.Printf("\nMax queue depth: %d\n", s.MaxQueueDepth)
-	if len(s.QueueDepthSamples) > 0 {
-		fmt.Printf("Queue depth samples (every 100 visits): %v\n", s.QueueDepthSamples)
-	}
 }
 
 func (s *ExploreStats) latencyByReconcilerSummary() map[string]map[string]any {

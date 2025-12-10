@@ -293,6 +293,13 @@ const (
 	NodeModeHypothetical NodeMode = "hypothetical"
 )
 
+// BranchingAncestor tracks a state where we expanded orderings on the path to here.
+// Used for memoizing subtree exploration results.
+type BranchingAncestor struct {
+	StateHash  StateHash
+	HistoryLen int // length of ExecutionHistory when we branched at this state
+}
+
 type StateNode struct {
 	ID       string
 	Contents StateSnapshot
@@ -318,6 +325,11 @@ type StateNode struct {
 	// tracks what KindSequences a controller may be "stuck" on
 	// e.g. if a controller's watches are connected to a partitioned APIServer
 	stuckReconcilerPositions map[ReconcilerID]KindSequences
+
+	// BranchingAncestors tracks states where we expanded orderings on the path to here.
+	// Used for memoizing subtree results - when we converge, we record the suffix
+	// from each branching ancestor so we can replay paths without re-exploring.
+	BranchingAncestors []BranchingAncestor
 }
 
 func (sn StateNode) ObserveAs(reconcilerID ReconcilerID) ObjectVersions {

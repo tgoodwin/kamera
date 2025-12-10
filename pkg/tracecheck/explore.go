@@ -269,11 +269,20 @@ func (e *Explorer) explore(
 	// This allows prediction-based deduplication using only predictable components.
 	exploredLogicalStates := make(map[string]struct{})
 
-	// Subtree Circuit Breaker: track which logical states (objectsHash + pendingSignature) we've
-	// already explored. Future exploration depends only on (objects, pending), NOT on history.
-	// If we reach the same logical state via different paths, the subtrees would be identical,
-	// so we skip re-exploration entirely.
-	exploredSubtrees := make(map[string]struct{})
+	// Subtree Deduplication: Stack-based approach that mimics recursive DFS.
+	// We track "active" branching points in a stack. When we pop a state that
+	// doesn't have a branching point in its ancestors, that subtree is complete.
+	// This naturally detects when DFS "moves up" to process siblings/uncles.
+	activeBranches := []StateHash{}             // stack of open branching points
+	subtreeComplete := make(map[StateHash]bool) // true when subtree fully explored
+
+	// Subtree Memoization: When a subtree completes, we've collected all paths
+	// through it. When we skip a completed subtree, we replay memoized suffixes.
+	type memoizedSuffix struct {
+		convergedStateHash StateHash
+		suffix             ExecutionHistory
+	}
+	subtreeMemo := make(map[StateHash][]memoizedSuffix)
 
 	var queue []StateNode
 
@@ -317,12 +326,61 @@ func (e *Explorer) explore(
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
 
-		// Subtree Circuit Breaker: check if we've already explored from this logical state.
-		// DISABLED: Current implementation marks subtrees as "explored" when we START,
-		// not when we FINISH. This causes missed convergence when first exploration
-		// doesn't complete (errors, depth limits, etc.). Need to track completion properly.
-		// TODO: Re-enable with proper completion tracking.
-		_ = exploredSubtrees // Keep variable to avoid removing related code
+		// Stack-based subtree completion detection:
+		// Check if we've "moved up" in the DFS tree by exiting any active branches.
+		// A branch is exited when the current state doesn't have it in its ancestors.
+		for len(activeBranches) > 0 {
+			topBranch := activeBranches[len(activeBranches)-1]
+			// Check if topBranch is in currentState's ancestors
+			isAncestor := false
+			for _, ancestor := range currentState.BranchingAncestors {
+				if ancestor.StateHash == topBranch {
+					isAncestor = true
+					break
+				}
+			}
+			if !isAncestor {
+				// We've exited this subtree - mark it complete
+				activeBranches = activeBranches[:len(activeBranches)-1]
+				subtreeComplete[topBranch] = true
+				logger.V(1).Info("subtree complete (DFS moved up)",
+					"branchHash", topBranch,
+					"currentDepth", currentState.depth,
+					"memoizedPaths", len(subtreeMemo[topBranch]))
+			} else {
+				break // still inside this subtree
+			}
+		}
+
+		// Subtree Deduplication: skip if this subtree was already fully explored
+		if subtreeComplete[stateKey] {
+			// Replay memoized paths with current prefix
+			if memoized := subtreeMemo[stateKey]; len(memoized) > 0 {
+				logger.V(1).Info("replaying memoized paths for completed subtree",
+					"stateKey", stateKey,
+					"depth", currentState.depth,
+					"memoizedPaths", len(memoized))
+				for _, memo := range memoized {
+					combinedHistory := make(ExecutionHistory, len(currentState.ExecutionHistory)+len(memo.suffix))
+					copy(combinedHistory, currentState.ExecutionHistory)
+					copy(combinedHistory[len(currentState.ExecutionHistory):], memo.suffix)
+
+					if convergedState, found := seenConvergedStates[memo.convergedStateHash]; found {
+						executionPathsToState[memo.convergedStateHash] = append(
+							executionPathsToState[memo.convergedStateHash],
+							combinedHistory,
+						)
+						replayedState := convergedState
+						replayedState.ExecutionHistory = combinedHistory
+						if cancelled := sendWithCancel(ctx, convergedStatesCh, replayedState); cancelled {
+							return nil
+						}
+					}
+				}
+			}
+			e.stats.SkippedSubtrees++
+			continue
+		}
 
 		alreadySeen := seenStates[orderKey]
 		if logger.V(1).Enabled() {
@@ -361,15 +419,33 @@ func (e *Explorer) explore(
 					logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
 				}
 
-				// Optimization: skip orderings that put a known no-op reconciler first.
+				// Push this branching point onto the active stack.
+				// It will be popped when DFS exits this subtree.
+				activeBranches = append(activeBranches, stateKey)
+
+				// Track this state as a branching ancestor for descendants.
+				// This enables memoization and subtree completion detection.
+				newAncestor := BranchingAncestor{
+					StateHash:  stateKey,
+					HistoryLen: len(currentState.ExecutionHistory),
+				}
+				currentState.BranchingAncestors = append(currentState.BranchingAncestors, newAncestor)
+
+				// Enqueue ordering variants
+				enqueuedCount := 0
 				objectsHash := currentState.ObjectsHash()
-				for _, candidate := range expandedStates {
+				for i := range expandedStates {
+					candidate := &expandedStates[i]
+
+					// Propagate branching ancestors to variants
+					candidate.BranchingAncestors = append(candidate.BranchingAncestors, currentState.BranchingAncestors...)
+
 					// Skip the current ordering; it is already being explored.
 					if candidate.OrderSensitiveHash() == orderKey {
 						continue
 					}
 
-					// Check if the first reconciler in this ordering is a known no-op.
+					// Optimization: skip orderings that put a known no-op reconciler first.
 					if !e.config.DisableNoOpOrderingSkip {
 						firstPending := candidate.PendingReconciles[0]
 						noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, firstPending.ReconcilerID, firstPending.Request.NamespacedName.String())
@@ -380,13 +456,17 @@ func (e *Explorer) explore(
 					}
 
 					logger.V(2).Info("adding new branch to explore", "StateKey", stateKey, "EnqueuedOrder", candidate.OrderSensitiveHash())
-					queue = e.enqueueState(queue, candidate)
+					queue = e.enqueueState(queue, *candidate)
+					enqueuedCount++
 				}
-				// Mark this logical state as expanded to avoid re-branching.
+
+				logger.V(1).Info("expanded orderings", "stateKey", stateKey, "enqueuedVariants", enqueuedCount)
 				seenBranchingByState[stateKey] = true
 			} else {
+				// Already expanded orderings for this stateKey - just continue processing.
+				// The stack-based completion detection handles deduplication.
 				e.stats.SkippedOrderExpansions++
-				logger.WithValues("StateKey", stateKey).V(2).Info("already expanded pending orderings for this state, not branching")
+				logger.V(2).Info("already expanded orderings for this state", "stateKey", stateKey)
 			}
 		}
 
@@ -435,6 +515,19 @@ func (e *Explorer) explore(
 			completionKey := fmt.Sprintf("%s|%s", stateKey, currentState.ExecutionHistory.UniqueKey())
 			completedPaths[completionKey] = true
 
+			// Memoize the suffix from each branching ancestor to this converged state.
+			// This allows us to replay paths when we skip completed subtrees later.
+			for _, ancestor := range currentState.BranchingAncestors {
+				suffix := currentState.ExecutionHistory[ancestor.HistoryLen:]
+				subtreeMemo[ancestor.StateHash] = append(subtreeMemo[ancestor.StateHash], memoizedSuffix{
+					convergedStateHash: stateKey,
+					suffix:             suffix,
+				})
+			}
+			logger.V(1).Info("memoized convergence suffixes",
+				"stateKey", stateKey,
+				"numAncestors", len(currentState.BranchingAncestors))
+
 			seenConvergedStates[stateKey] = currentState
 			// Also record by ObjectsHash so early convergence detection can find it
 			seenConvergedStates[StateHash(currentState.ObjectsHash())] = currentState
@@ -450,6 +543,8 @@ func (e *Explorer) explore(
 			if cancelled := sendWithCancel(ctx, convergedStatesCh, currentState); cancelled {
 				return nil
 			}
+			// Note: We don't mark subtree complete at convergence since converged states
+			// have empty pending (different hash than branching points).
 			continue
 		}
 
@@ -612,6 +707,8 @@ func (e *Explorer) explore(
 			}
 
 			newState.depth = currentState.depth + 1
+			// Propagate branching ancestors from parent to child
+			newState.BranchingAncestors = currentState.BranchingAncestors
 			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
 				seenDepths[newState.depth] = true
 			}
@@ -1266,18 +1363,6 @@ func (e *Explorer) checkEarlyConvergence(state StateNode, knownNoOps map[string]
 		}
 	}
 	return true
-}
-
-// computeSubtreeKey returns a key representing the logical state for subtree deduplication.
-// Uses order-sensitive pending to distinguish different exploration orderings.
-// Two states with the same objects and same pending ORDER will explore identical subtrees.
-func (e *Explorer) computeSubtreeKey(state StateNode) string {
-	// Use order-sensitive pending: different orderings can produce different outcomes
-	pendingStrs := lo.Map(state.PendingReconciles, func(pr PendingReconcile, _ int) string {
-		return pr.String()
-	})
-	// NOT sorted - order matters for subtree identity
-	return fmt.Sprintf("%s|%s", state.ObjectsHash(), strings.Join(pendingStrs, ","))
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {
