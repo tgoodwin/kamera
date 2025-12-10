@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"strings"
 	"time"
 	"unsafe"
 
@@ -18,7 +17,6 @@ import (
 	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"knative.dev/pkg/controller"
@@ -220,25 +218,4 @@ func mergeStateNodes(primary tracecheck.StateNode, others ...tracecheck.StateNod
 	merged.PendingReconciles = pending
 	merged.Contents.KindSequences = kindSeq
 	return merged
-}
-
-func parseLogLevel(level string) (zapcore.Level, error) {
-	switch strings.ToLower(level) {
-	case "debug":
-		return zapcore.DebugLevel, nil
-	case "info":
-		return zapcore.InfoLevel, nil
-	case "warn", "warning":
-		return zapcore.WarnLevel, nil
-	case "error":
-		return zapcore.ErrorLevel, nil
-	case "dpanic":
-		return zapcore.DPanicLevel, nil
-	case "panic":
-		return zapcore.PanicLevel, nil
-	case "fatal":
-		return zapcore.FatalLevel, nil
-	default:
-		return zapcore.InfoLevel, fmt.Errorf("supported values: debug, info, warn, error")
-	}
 }
