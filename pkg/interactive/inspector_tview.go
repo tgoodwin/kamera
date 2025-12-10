@@ -103,13 +103,14 @@ type stepCache struct {
 
 // RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
 // When allowDump is false, the dump shortcut is disabled (used for trace-hydrated sessions).
-func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) error {
+// If the user requests a restart, the inspector exits and returns the RestartSeed to the caller.
+func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) (*tracecheck.RestartSeed, error) {
 	states = validateResultStates(states)
 	states = tracecheck.TrimStatesForInspection(states)
 	states = dedupeResultStates(states)
 
 	if len(states) == 0 {
-		return fmt.Errorf("no converged states supplied")
+		return nil, fmt.Errorf("no converged states supplied")
 	}
 
 	resolverCaches := make(map[tracecheck.VersionManager]*objectCache)
@@ -148,6 +149,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		dumpHint = " • [yellow]s/Ctrl+S[-] dump"
 		dumpShortcut = dumpHint
 	}
+	restartHint := " • [yellow]r[-] restart"
 
 	statusBar := tview.NewTextView().
 		SetDynamicColors(true).
@@ -182,6 +184,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 	lastStepPath := -1
 	lastStepIdx := -1
 	stepCaches := make(map[*tracecheck.ReconcileResult]*stepCache)
+	var restartSeed *tracecheck.RestartSeed
 
 	getStepCache := func(step *tracecheck.ReconcileResult) *stepCache {
 		if step == nil {
@@ -212,8 +215,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 	stateStatusMessage := `[yellow]Enter/d[-] describe object • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
 	stateDescribeStatus := `[yellow]Esc[-] back` + dumpShortcut + baseQuit
 	pathStatusMessage := `[yellow]Enter[-] open steps • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
-	stepStatusMessage := `[yellow]Enter/d[-] inspect reconcile • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
-	reconcileStatusMessage := `[yellow]Esc[-] back • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
+	stepStatusMessage := `[yellow]Enter/d[-] inspect reconcile • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + dumpShortcut + baseQuit
+	reconcileStatusMessage := `[yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + dumpShortcut + baseQuit
 
 	var (
 		stateSelectionChanged func(int, int)
@@ -345,6 +348,44 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		}
 	}
 
+	restartFromStep := func() {
+		if selectedState < 0 || selectedState >= len(states) {
+			updateStatus("[yellow]select a state first[-]")
+			return
+		}
+		if selectedPath < 0 || selectedPath >= len(states[selectedState].Paths) {
+			updateStatus("[yellow]select a path first[-]")
+			return
+		}
+		path := states[selectedState].Paths[selectedPath]
+		if len(path) == 0 {
+			updateStatus("[yellow]selected path is empty[-]")
+			return
+		}
+		if selectedStep < 0 || selectedStep >= len(path) {
+			selectedStep = len(path) - 1
+		}
+		step := path[selectedStep]
+		if step == nil || step.StateAfter == nil {
+			updateStatus("[red]selected step has no state snapshot[-]")
+			return
+		}
+		if states[selectedState].Resolver == nil {
+			updateStatus("[red]resolver unavailable for restart[-]")
+			return
+		}
+
+		seed, err := tracecheck.BuildRestartSeedFromState(step.StateAfter, states[selectedState].Resolver, step.PendingReconciles)
+		if err != nil {
+			updateStatus(fmt.Sprintf("[red]restart seed failed: %v[-]", err))
+			return
+		}
+
+		restartSeed = &seed
+		updateStatus("[yellow]restart requested; closing inspector…[-]")
+		app.Stop()
+	}
+
 	mainTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyTab:
@@ -359,6 +400,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		case 'q', 'Q':
 			app.Stop()
 			return nil
+		case 'r', 'R':
+			if mode == modeSteps || mode == modeReconcile {
+				restartFromStep()
+				return nil
+			}
 		}
 		return event
 	})
@@ -1285,7 +1331,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 
 	applyMode(modeStates)
 
-	return app.SetRoot(root, true).EnableMouse(true).Run()
+	err := app.SetRoot(root, true).EnableMouse(true).Run()
+	return restartSeed, err
 }
 
 func configureTable(title string, selectable bool) *tview.Table {

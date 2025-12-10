@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 
 	rcv1 "github.com/tgoodwin/kamera/examples/racecondition/api/v1"
 	"github.com/tgoodwin/kamera/examples/racecondition/internal/controller"
@@ -70,5 +71,7 @@ func main() {
 		return
 	}
 
-	interactive.RunStateInspectorTUIView(states, true)
+	if _, err := interactive.RunStateInspectorTUIView(states, true); err != nil {
+		fmt.Fprintf(os.Stderr, "inspector error: %v\n", err)
+	}
 }

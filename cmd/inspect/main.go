@@ -24,7 +24,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := interactive.RunStateInspectorTUIView(states, false); err != nil {
+	if _, err := interactive.RunStateInspectorTUIView(states, false); err != nil {
 		fmt.Fprintf(os.Stderr, "run inspector: %v\n", err)
 		os.Exit(1)
 	}

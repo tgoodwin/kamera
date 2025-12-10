@@ -15,7 +15,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn/k8schain"
 	"github.com/google/go-containerregistry/pkg/name"
 	knativescheme "github.com/tgoodwin/kamera/examples/knative-serving/knative/scheme"
-	"github.com/tgoodwin/kamera/pkg/interactive"
+	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -145,75 +145,20 @@ func (r *revisionDigestStub) Reconcile(ctx context.Context, req reconcile.Reques
 }
 
 func main() {
-	interactiveFlag := flag.Bool("interactive", true, "launch interactive trace inspector")
-	dumpPathFlag := flag.String("dump-output", "", "optional path to write exploration results (converged + aborted) to disk")
 	flag.Parse()
 
-	explorer, initialState, err := newKnativeExplorerAndState()
-	if err != nil {
-		panic(fmt.Sprintf("Build() error = %v", err))
-	}
-
-	fmt.Printf("[main] initial pending: %v\n", initialState.PendingReconciles)
-
 	ctx := context.Background()
-	if explorer.Config.Timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, explorer.Config.Timeout)
-		defer cancel()
+	builder := newKnativeExplorerBuilder()
+	initialState := buildInitialKnativeState(builder)
+	runner, err := explore.NewRunner(builder)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
+		os.Exit(1)
 	}
-
-	res := explorer.Explore(ctx, initialState)
-
-	fmt.Println("converged states:", len(res.ConvergedStates))
-	fmt.Println("aborted states:", len(res.AbortedStates))
-
-	states := append([]tracecheck.ResultState{}, res.ConvergedStates...)
-	states = append(states, res.AbortedStates...)
-	if len(states) == 0 {
-		fmt.Println("no states returned from exploration")
-		return
+	if err := runner.Run(ctx, initialState); err != nil {
+		fmt.Fprintf(os.Stderr, "session error: %v\n", err)
+		os.Exit(1)
 	}
-
-	if *dumpPathFlag != "" {
-		if err := interactive.SaveInspectorDump(states, *dumpPathFlag); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to dump results to %s: %v\n", *dumpPathFlag, err)
-			os.Exit(1)
-		}
-		fmt.Printf("wrote results to %s\n", *dumpPathFlag)
-	}
-
-	if !*interactiveFlag {
-		fmt.Printf("interactive inspector disabled; states available: %d (converged=%d, aborted=%d)\n",
-			len(states), len(res.ConvergedStates), len(res.AbortedStates))
-		return
-	}
-
-	restartFn := func(seed tracecheck.RestartSeed) ([]tracecheck.ResultState, error) {
-		builder := newKnativeExplorerBuilder()
-		explorer, err := builder.Build("standalone")
-		if err != nil {
-			return nil, fmt.Errorf("build explorer: %w", err)
-		}
-		state, err := tracecheck.SeedToStateNode(seed, builder)
-		if err != nil {
-			return nil, err
-		}
-
-		ctx := context.Background()
-		if explorer.Config.Timeout > 0 {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, explorer.Config.Timeout)
-			defer cancel()
-		}
-
-		restartRes := explorer.Explore(ctx, state)
-		restartStates := append([]tracecheck.ResultState{}, restartRes.ConvergedStates...)
-		restartStates = append(restartStates, restartRes.AbortedStates...)
-		return restartStates, nil
-	}
-
-	interactive.RunStateInspectorTUIView(states, true, restartFn)
 }
 
 // mergeStateNodes is a helper that merges multiple StateNode instances into one

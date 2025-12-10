@@ -30,12 +30,7 @@ import (
 
 const defaultMaxDepth = 100
 
-func newKnativeExplorerAndState(maxDepth int, perfStats bool) (*tracecheck.Explorer, tracecheck.StateNode, error) {
-	depth := maxDepth
-	if depth <= 0 {
-		depth = defaultMaxDepth
-	}
-
+func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Configure simclock to use 2s steps instead of 1s to speed up scale-to-zero simulation
 	// (60s stable window + 30s grace period = 90s total, which is 45 steps at 2s/step)
 	// Note: 2s matches the KPA ticker interval (tickInterval = 2s), so tickers work correctly
@@ -43,18 +38,8 @@ func newKnativeExplorerAndState(maxDepth int, perfStats bool) (*tracecheck.Explo
 
 	builder := tracecheck.NewExplorerBuilder(scheme)
 	configureKnativeExplorer(builder)
-	builder.WithMaxDepth(depth)
-	if perfStats {
-		builder.WithPerfStats()
-	}
-
-	explorer, err := builder.Build("standalone")
-	if err != nil {
-		return nil, tracecheck.StateNode{}, fmt.Errorf("build explorer: %w", err)
-	}
-
-	initialState := buildInitialKnativeState(builder)
-	return explorer, initialState, nil
+	builder.WithMaxDepth(defaultMaxDepth)
+	return builder
 }
 
 func buildInitialKnativeState(builder *tracecheck.ExplorerBuilder) tracecheck.StateNode {
