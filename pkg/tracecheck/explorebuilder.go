@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -167,6 +168,11 @@ func (b *ExplorerBuilder) WithMaxDepth(depth int) *ExplorerBuilder {
 	return b
 }
 
+func (b *ExplorerBuilder) WithTimeout(d time.Duration) *ExplorerBuilder {
+	b.config.Timeout = d
+	return b
+}
+
 func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
 	b.config.RecordPerfStats = true
 	return b
@@ -195,6 +201,14 @@ func (b *ExplorerBuilder) WithEmitter(emitter testEmitter) *ExplorerBuilder {
 func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBuilder {
 	b.builder = builder
 	return b
+}
+
+// Config returns a copy of the current builder configuration.
+func (b *ExplorerBuilder) Config() ExploreConfig {
+	if b.config == nil {
+		return ExploreConfig{}
+	}
+	return *b.config
 }
 
 // AssignReconcilerToKind configures which resource a reconciler "owns"

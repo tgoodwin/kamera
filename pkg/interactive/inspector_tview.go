@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -103,8 +105,8 @@ type stepCache struct {
 
 // RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
 // When allowDump is false, the dump shortcut is disabled (used for trace-hydrated sessions).
-// If the user requests a restart, the inspector exits and returns the RestartSeed to the caller.
-func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) (*tracecheck.RestartSeed, error) {
+// If the user requests a restart, the inspector exits and returns a RestartRequest to the caller.
+func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, cfg tracecheck.ExploreConfig) (*tracecheck.RestartRequest, error) {
 	states = validateResultStates(states)
 	states = tracecheck.TrimStatesForInspection(states)
 	states = dedupeResultStates(states)
@@ -127,6 +129,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) (
 	}
 
 	app := tview.NewApplication()
+	pages := tview.NewPages()
 
 	mainTable := configureTable("States", true)
 	detailTable := configureTable("Details", true)
@@ -159,6 +162,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) (
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(contentFlex, 0, 1, true).
 		AddItem(statusBar, 1, 0, false)
+	pages.AddPage("main", root, true, true)
 
 	var (
 		selectedState         = 0
@@ -180,11 +184,12 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) (
 	pathDetailDirty := true
 	stepDetailDirty := true
 	reconcileDirty := true
+	currentConfig := cfg
 	lastStepState := -1
 	lastStepPath := -1
 	lastStepIdx := -1
 	stepCaches := make(map[*tracecheck.ReconcileResult]*stepCache)
-	var restartSeed *tracecheck.RestartSeed
+	var restartRequest *tracecheck.RestartRequest
 
 	getStepCache := func(step *tracecheck.ReconcileResult) *stepCache {
 		if step == nil {
@@ -324,6 +329,45 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) (
 		}
 	}
 
+	showConfirm := func(seed tracecheck.RestartSeed) {
+		form := tview.NewForm().
+			AddInputField("Max Depth", fmt.Sprintf("%d", currentConfig.MaxDepth), 0, nil, nil).
+			AddInputField("Timeout", currentConfig.Timeout.String(), 0, nil, nil)
+		form.AddButton("OK", func() {
+			maxDepthStr := form.GetFormItemByLabel("Max Depth").(*tview.InputField).GetText()
+			timeoutStr := form.GetFormItemByLabel("Timeout").(*tview.InputField).GetText()
+			nextCfg := currentConfig
+			if strings.TrimSpace(maxDepthStr) != "" {
+				if val, err := strconv.Atoi(strings.TrimSpace(maxDepthStr)); err == nil && val > 0 {
+					nextCfg.MaxDepth = val
+				} else {
+					updateStatus("[red]invalid max depth[-]")
+					return
+				}
+			}
+			if strings.TrimSpace(timeoutStr) != "" {
+				if d, err := time.ParseDuration(strings.TrimSpace(timeoutStr)); err == nil {
+					nextCfg.Timeout = d
+				} else {
+					updateStatus("[red]invalid timeout[-]")
+					return
+				}
+			}
+			restartRequest = &tracecheck.RestartRequest{
+				Seed:   seed,
+				Config: nextCfg,
+			}
+			app.Stop()
+		})
+		form.AddButton("Cancel", func() {
+			pages.RemovePage("confirm")
+			app.SetFocus(mainTable)
+		})
+		form.SetBorder(true).SetTitle("Restart Config").SetTitleAlign(tview.AlignLeft)
+		pages.AddAndSwitchToPage("confirm", form, true)
+		app.SetFocus(form)
+	}
+
 	var applyMode func(inspectorMode)
 
 	goBack := func() bool {
@@ -381,9 +425,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) (
 			return
 		}
 
-		restartSeed = &seed
-		updateStatus("[yellow]restart requested; closing inspector…[-]")
-		app.Stop()
+		showConfirm(seed)
 	}
 
 	mainTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
@@ -1331,8 +1373,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) (
 
 	applyMode(modeStates)
 
-	err := app.SetRoot(root, true).EnableMouse(true).Run()
-	return restartSeed, err
+	err := app.SetRoot(pages, true).EnableMouse(true).Run()
+	return restartRequest, err
 }
 
 func configureTable(title string, selectable bool) *tview.Table {

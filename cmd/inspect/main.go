@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/tgoodwin/kamera/pkg/interactive"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
 )
 
 func main() {
@@ -24,7 +25,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if _, err := interactive.RunStateInspectorTUIView(states, false); err != nil {
+	if _, err := interactive.RunStateInspectorTUIView(states, false, tracecheck.ExploreConfig{}); err != nil {
 		fmt.Fprintf(os.Stderr, "run inspector: %v\n", err)
 		os.Exit(1)
 	}

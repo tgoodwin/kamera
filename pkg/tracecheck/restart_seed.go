@@ -28,6 +28,12 @@ type RestartSeed struct {
 	PendingReconciles []PendingReconcile `json:"pendingReconciles"`
 }
 
+// RestartRequest bundles a seed plus config overrides for the next run.
+type RestartRequest struct {
+	Seed   RestartSeed
+	Config ExploreConfig
+}
+
 // BuildRestartSeedFromState resolves ObjectVersions to concrete objects and produces a serializable seed.
 func BuildRestartSeedFromState(objects ObjectVersions, resolver VersionManager, pending []PendingReconcile) (RestartSeed, error) {
 	if resolver == nil {

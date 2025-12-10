@@ -31,7 +31,12 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 		return fmt.Errorf("explore runner: builder is required")
 	}
 
+	currentConfig := r.builder.Config()
+	baseline := initialState.Clone()
+
 	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, error) {
+		r.builder.WithMaxDepth(currentConfig.MaxDepth)
+		r.builder.WithTimeout(currentConfig.Timeout)
 		// get a fresh explorer for each run
 		explorer, err := r.builder.Build("standalone")
 		if err != nil {
@@ -48,7 +53,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 		return explorer.Explore(runCtx, state), nil
 	}
 
-	res, err := runOnce(ctx, initialState.Clone())
+	res, err := runOnce(ctx, baseline.Clone())
 	if err != nil {
 		return err
 	}
@@ -76,15 +81,17 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 	for {
 		// seed is an intermediate state node that can be used to restart the exploration
 		// from that point. If the user decides not to restart, seed will be nil.
-		seed, err := interactive.RunStateInspectorTUIView(states, true)
+		restart, err := interactive.RunStateInspectorTUIView(states, true, currentConfig)
 		if err != nil {
 			return fmt.Errorf("inspector error: %w", err)
 		}
-		if seed == nil {
+		if restart == nil {
 			break
 		}
 
-		nextState, err := tracecheck.SeedToStateNode(*seed, r.builder)
+		currentConfig = restart.Config
+
+		nextState, err := tracecheck.SeedToStateNode(restart.Seed, r.builder)
 		if err != nil {
 			return fmt.Errorf("seed to state: %w", err)
 		}
