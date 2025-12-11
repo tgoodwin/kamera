@@ -5,24 +5,22 @@ import (
 
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 type versionStore struct {
 	*snapshot.Store
-	mu sync.RWMutex
+	scheme *runtime.Scheme
+	mu     sync.RWMutex
 }
 
 var _ VersionManager = (*versionStore)(nil)
 
-func newVersionStore(store *snapshot.Store) *versionStore {
+func NewVersionStore(store *snapshot.Store, scheme *runtime.Scheme) *versionStore {
 	return &versionStore{
-		Store: store,
+		Store:  store,
+		scheme: scheme,
 	}
-}
-
-// NewVersionStore constructs a VersionManager backed by the provided snapshot store.
-func NewVersionStore(store *snapshot.Store) VersionManager {
-	return newVersionStore(store)
 }
 
 func (vs *versionStore) DebugKey(key string) {
@@ -30,6 +28,7 @@ func (vs *versionStore) DebugKey(key string) {
 }
 
 func (vs *versionStore) Resolve(hash snapshot.VersionHash) *unstructured.Unstructured {
+	// TODO change Resolve signature to return an error
 	res, ok := vs.ResolveWithStrategy(hash, hash.Strategy)
 	if !ok {
 		return nil
@@ -41,6 +40,7 @@ func (vs *versionStore) Publish(obj *unstructured.Unstructured) snapshot.Version
 	vs.mu.Lock()
 	defer vs.mu.Unlock()
 
+	ensureObjectGVK(obj, vs.scheme)
 	return vs.PublishWithStrategy(obj, snapshot.AnonymizedHash)
 }
 

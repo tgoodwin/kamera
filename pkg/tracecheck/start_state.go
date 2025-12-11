@@ -34,11 +34,7 @@ func buildStartStateFromObjects(store *snapshot.Store, scheme *runtime.Scheme, o
 		// Ensure the object carries a stable sleeve ID before publishing.
 		tag.AddSleeveObjectID(obj)
 
-		rec, err := snapshot.AsRecord(obj, "start")
-		if err != nil {
-			return StateNode{}, fmt.Errorf("converting object %d to record: %w", idx, err)
-		}
-		u, err := rec.ToUnstructured()
+		u, err := util.ConvertToUnstructured(obj)
 		if err != nil {
 			return StateNode{}, fmt.Errorf("converting object %d to unstructured: %w", idx, err)
 		}

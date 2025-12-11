@@ -8,7 +8,6 @@ import (
 
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/tag"
-	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -66,10 +65,6 @@ func BuildRestartSeedFromState(objects ObjectVersions, resolver VersionManager, 
 			return RestartSeed{}, fmt.Errorf("failed to resolve object %s with hash %s", key, hash.Value)
 		}
 		gvk := obj.GroupVersionKind()
-		if gvk.Empty() {
-			gvk = util.GetGroupVersionKind(obj)
-			obj.SetGroupVersionKind(gvk)
-		}
 		data, err := snapshot.CanonicalJSON(obj.Object)
 		if err != nil {
 			return RestartSeed{}, fmt.Errorf("marshal object %s: %w", key, err)

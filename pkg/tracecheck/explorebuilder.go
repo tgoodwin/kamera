@@ -377,9 +377,7 @@ func (b *ExplorerBuilder) NewStateEventBuilder() *StateEventBuilder {
 }
 
 func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
-	return NewStateClassifier(
-		newVersionStore(b.snapStore),
-	)
+	return NewStateClassifier(NewVersionStore(b.snapStore, b.scheme))
 }
 
 // BuildStartStateFromObjects constructs a starting StateNode from concrete objects and an initial pending list.
@@ -425,15 +423,14 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 	}
 
 	// Create version store and knowledge manager
-	vStore := newVersionStore(b.snapStore)
+	vStore := NewVersionStore(b.snapStore, b.scheme)
 
 	// Create manager
 	mgr := &manager{
 		versionStore: vStore,
 		effects:      make(map[string]reconcileEffects),
 
-		snapStore: b.snapStore,
-		scheme:    b.scheme,
+		scheme: b.scheme,
 
 		// effectContext tracks the state of the world at the time of reconcile
 		// and this is separate from snapshot store because we want this context
@@ -475,7 +472,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		b.resourceDeps,
 		b.reconcilerToKind,
 		b.watchers,
-		mgr.snapStore,
+		mgr.versionStore,
 	)
 
 	// Construct the Explorer
@@ -504,9 +501,8 @@ func (b *ExplorerBuilder) BuildLensManager(traceFilePath string) (*LensManager, 
 	}
 	rollup := CausalRollup(traces)
 	mgr := &manager{
-		versionStore: newVersionStore(b.snapStore),
+		versionStore: NewVersionStore(b.snapStore, b.scheme),
 		effects:      make(map[string]reconcileEffects),
-		snapStore:    b.snapStore,
 		scheme:       b.scheme,
 		effectRKeys:  make(map[string]util.Set[string]),
 		effectIKeys:  make(map[string]util.Set[snapshot.IdentityKey]),

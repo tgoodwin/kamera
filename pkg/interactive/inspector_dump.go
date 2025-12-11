@@ -223,7 +223,7 @@ func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
 			return nil, fmt.Errorf("stored object hash mismatch for %s (%s)", util.ShortenHash(obj.Hash.Value), obj.Hash.Strategy)
 		}
 	}
-	versionManager := tracecheck.NewVersionStore(store)
+	versionManager := tracecheck.NewVersionStore(store, nil)
 
 	keyResolver := newDumpKeyResolver(d.Objects)
 
@@ -265,7 +265,8 @@ func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
 			State:           stateNode,
 			Paths:           paths,
 			FailedReconcile: failedCopy,
-			Resolver:        versionManager,
+			// TODO refactor to remove this from ResultState
+			Resolver: versionManager,
 		}
 	}
 

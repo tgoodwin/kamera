@@ -48,7 +48,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	readDeps := make(ResourceDeps)
 	snapStore := snapshot.NewStore()
 
-	vStore := newVersionStore(snapStore)
+	vStore := NewVersionStore(snapStore, scheme)
 	KnowledgeManager := NewKnowledgeManager(snapStore)
 
 	mgr := &manager{
@@ -74,12 +74,14 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	}
 }
 
+// Deprecated: FromBuilder is deprecated.
+// Use ExplorerBuilder instead.
 func FromBuilder(b *replay.Builder) *TraceChecker {
 	readDeps := make(ResourceDeps)
 
 	//snapshot store
 	snapshotStore := snapshot.NewStore()
-	vStore := newVersionStore(snapshotStore)
+	vStore := NewVersionStore(snapshotStore, nil)
 
 	store := b.Store()
 	// eventsByReconcile := lo.GroupBy(b.Events(), func(e event.Event) string {
@@ -293,7 +295,7 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 			tc.ResourceDeps,
 			tc.reconcilerToKind,
 			nil,
-			tc.manager.snapStore,
+			tc.manager.versionStore,
 		),
 
 		knowledgeManager: knowledgeManager,
