@@ -159,7 +159,7 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 	})
 
 	// Set max depth
-	explorer.config.maxDepth = 10
+	explorer.Config.MaxDepth = 10
 
 	// Track depth progression and ticker-fired enqueues
 	type stepResult struct {

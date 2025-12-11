@@ -5,13 +5,16 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/pkg/util"
+	"golang.org/x/exp/slices"
 )
 
 type inspectorMode int
@@ -103,13 +106,14 @@ type stepCache struct {
 
 // RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
 // When allowDump is false, the dump shortcut is disabled (used for trace-hydrated sessions).
-func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) error {
+// If the user requests a restart, the inspector exits and returns a RestartRequest to the caller.
+func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, cfg tracecheck.ExploreConfig) (*tracecheck.RestartRequest, error) {
 	states = validateResultStates(states)
 	states = tracecheck.TrimStatesForInspection(states)
 	states = dedupeResultStates(states)
 
 	if len(states) == 0 {
-		return fmt.Errorf("no converged states supplied")
+		return nil, fmt.Errorf("no converged states supplied")
 	}
 
 	resolverCaches := make(map[tracecheck.VersionManager]*objectCache)
@@ -126,6 +130,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 	}
 
 	app := tview.NewApplication()
+	pages := tview.NewPages()
+	const comparePageName = "compare"
 
 	mainTable := configureTable("States", true)
 	detailTable := configureTable("Details", true)
@@ -148,6 +154,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		dumpHint = " • [yellow]s/Ctrl+S[-] dump"
 		dumpShortcut = dumpHint
 	}
+	restartHint := " • [yellow]r[-] restart"
 
 	statusBar := tview.NewTextView().
 		SetDynamicColors(true).
@@ -157,6 +164,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
 		AddItem(contentFlex, 0, 1, true).
 		AddItem(statusBar, 1, 0, false)
+	pages.AddPage("main", root, true, true)
 
 	var (
 		selectedState         = 0
@@ -178,10 +186,12 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 	pathDetailDirty := true
 	stepDetailDirty := true
 	reconcileDirty := true
+	currentConfig := cfg
 	lastStepState := -1
 	lastStepPath := -1
 	lastStepIdx := -1
 	stepCaches := make(map[*tracecheck.ReconcileResult]*stepCache)
+	var restartRequest *tracecheck.RestartRequest
 
 	getStepCache := func(step *tracecheck.ReconcileResult) *stepCache {
 		if step == nil {
@@ -209,11 +219,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 	}
 
 	baseQuit := " • [yellow]q[-] quit"
-	stateStatusMessage := `[yellow]Enter/d[-] describe object • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
+	stateStatusMessage := `[yellow]Enter/d[-] describe object • [yellow]c[-] compare across states • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
 	stateDescribeStatus := `[yellow]Esc[-] back` + dumpShortcut + baseQuit
 	pathStatusMessage := `[yellow]Enter[-] open steps • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
-	stepStatusMessage := `[yellow]Enter/d[-] inspect reconcile • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
-	reconcileStatusMessage := `[yellow]Esc[-] back • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
+	stepStatusMessage := `[yellow]Enter/d[-] inspect reconcile • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + dumpShortcut + baseQuit
+	reconcileStatusMessage := `[yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + dumpShortcut + baseQuit
 
 	var (
 		stateSelectionChanged func(int, int)
@@ -321,6 +331,147 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		}
 	}
 
+	showConfirm := func(seed tracecheck.RestartSeed, prefix tracecheck.ExecutionHistory) {
+		form := tview.NewForm().
+			AddInputField("Max Depth", fmt.Sprintf("%d", currentConfig.MaxDepth), 0, nil, nil).
+			AddInputField("Timeout", currentConfig.Timeout.String(), 0, nil, nil).
+			AddCheckbox("Preserve history", true, nil)
+		form.AddButton("OK", func() {
+			maxDepthStr := form.GetFormItemByLabel("Max Depth").(*tview.InputField).GetText()
+			timeoutStr := form.GetFormItemByLabel("Timeout").(*tview.InputField).GetText()
+			preserveHistory := form.GetFormItemByLabel("Preserve history").(*tview.Checkbox).IsChecked()
+			nextCfg := currentConfig
+			if strings.TrimSpace(maxDepthStr) != "" {
+				if val, err := strconv.Atoi(strings.TrimSpace(maxDepthStr)); err == nil && val > 0 {
+					nextCfg.MaxDepth = val
+				} else {
+					updateStatus("[red]invalid max depth[-]")
+					return
+				}
+			}
+			if strings.TrimSpace(timeoutStr) != "" {
+				if d, err := time.ParseDuration(strings.TrimSpace(timeoutStr)); err == nil {
+					nextCfg.Timeout = d
+				} else {
+					updateStatus("[red]invalid timeout[-]")
+					return
+				}
+			}
+			restartRequest = &tracecheck.RestartRequest{
+				Seed:            seed,
+				Config:          nextCfg,
+				PreserveHistory: preserveHistory,
+				Prefix:          prefix,
+			}
+			app.Stop()
+		})
+		form.AddButton("Cancel", func() {
+			pages.RemovePage("confirm")
+			app.SetFocus(mainTable)
+		})
+		form.SetButtonsAlign(tview.AlignCenter)
+		// Focus the first button (OK) so Enter immediately confirms.
+		form.SetFocus(form.GetFormItemCount())
+		form.SetBorder(true).SetTitle("Restart Config").SetTitleAlign(tview.AlignLeft)
+		pages.AddAndSwitchToPage("confirm", form, true)
+		app.SetFocus(form)
+	}
+
+	showCompare := func(entry stateObjectEntry) {
+		type compareEntry struct {
+			stateIdx int
+			hash     snapshot.VersionHash
+			cache    *objectCache
+		}
+		compareEntries := make([]compareEntry, 0)
+		for idx, st := range states {
+			if hv, ok := st.State.Objects()[entry.key]; ok {
+				compareEntries = append(compareEntries, compareEntry{
+					stateIdx: idx,
+					hash:     hv,
+					cache:    getCache(st.Resolver),
+				})
+			}
+		}
+		if len(compareEntries) == 0 {
+			updateStatus("[yellow]object not found in other states[-]")
+			return
+		}
+
+		table := configureTable("States with object", true)
+		yamlView := tview.NewTextView()
+		yamlView.SetDynamicColors(true)
+		yamlView.SetWrap(true)
+		yamlView.SetBorder(true)
+		yamlView.SetTitle("Object YAML")
+
+		renderSelection := func(row int) {
+			if row < 1 || row-1 >= len(compareEntries) {
+				yamlView.SetText("(no selection)")
+				return
+			}
+			ce := compareEntries[row-1]
+			yamlStr := "(unavailable)"
+			if ce.cache != nil {
+				if txt, err := ce.cache.YAML(ce.hash); err == nil {
+					yamlStr = txt
+				} else {
+					yamlStr = formatResolveError(ce.hash, err)
+				}
+			} else {
+				yamlStr = formatResolverUnavailable(ce.hash)
+			}
+			yamlView.SetTitle(fmt.Sprintf("State %d • Hash %s", ce.stateIdx, util.ShortenHash(ce.hash.Value)))
+			yamlView.SetText(yamlStr)
+		}
+
+		table.SetCell(0, 0, headerCell("Idx"))
+		table.SetCell(0, 1, headerCell("State"))
+		table.SetCell(0, 2, headerCell("Hash"))
+		for i, ce := range compareEntries {
+			table.SetCell(i+1, 0, valueCell(fmt.Sprintf("%d", i)))
+			table.SetCell(i+1, 1, valueCell(fmt.Sprintf("%d", ce.stateIdx)))
+			table.SetCell(i+1, 2, valueCell(util.ShortenHash(ce.hash.Value)))
+		}
+		table.SetSelectedFunc(func(row, _ int) {
+			renderSelection(row)
+		})
+		table.SetSelectionChangedFunc(func(row, _ int) {
+			renderSelection(row)
+		})
+		if len(compareEntries) > 0 {
+			table.Select(1, 0)
+			renderSelection(1)
+		}
+
+		modal := tview.NewFlex().SetDirection(tview.FlexColumn).
+			AddItem(table, 0, 1, true).
+			AddItem(yamlView, 0, 2, false)
+		modal.SetBorder(true).SetTitle("Object across states")
+
+		overlay := tview.NewFlex().SetDirection(tview.FlexRow).
+			AddItem(modal, 0, 1, true)
+
+		pages.AddAndSwitchToPage(comparePageName, overlay, true)
+		app.SetFocus(table)
+
+		overlay.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			switch event.Key() {
+			case tcell.KeyEscape:
+				pages.RemovePage(comparePageName)
+				app.SetFocus(mainTable)
+				return nil
+			}
+			switch event.Rune() {
+			case 'q', 'Q':
+				pages.RemovePage(comparePageName)
+				app.SetFocus(mainTable)
+				return nil
+			}
+			return event
+		})
+	}
+
 	var applyMode func(inspectorMode)
 
 	goBack := func() bool {
@@ -345,6 +496,45 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		}
 	}
 
+	restartFromStep := func() {
+		if selectedState < 0 || selectedState >= len(states) {
+			updateStatus("[yellow]select a state first[-]")
+			return
+		}
+		if selectedPath < 0 || selectedPath >= len(states[selectedState].Paths) {
+			updateStatus("[yellow]select a path first[-]")
+			return
+		}
+		path := states[selectedState].Paths[selectedPath]
+		if len(path) == 0 {
+			updateStatus("[yellow]selected path is empty[-]")
+			return
+		}
+		if selectedStep < 0 || selectedStep >= len(path) {
+			selectedStep = len(path) - 1
+		}
+		step := path[selectedStep]
+		if step == nil || step.StateAfter == nil {
+			updateStatus("[red]selected step has no state snapshot[-]")
+			return
+		}
+		if states[selectedState].Resolver == nil {
+			updateStatus("[red]resolver unavailable for restart[-]")
+			return
+		}
+
+		seed, err := tracecheck.BuildRestartSeedFromState(step.StateAfter, states[selectedState].Resolver, step.PendingReconciles)
+		if err != nil {
+			updateStatus(fmt.Sprintf("[red]restart seed failed: %v[-]", err))
+			return
+		}
+
+		state := states[selectedState]
+		prefix := slices.Clone(state.Paths[selectedPath][:selectedStep+1])
+		seed.Depth = len(prefix)
+		showConfirm(seed, prefix)
+	}
+
 	mainTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyTab:
@@ -359,6 +549,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		case 'q', 'Q':
 			app.Stop()
 			return nil
+		case 'r', 'R':
+			if mode == modeSteps || mode == modeReconcile {
+				restartFromStep()
+				return nil
+			}
 		}
 		return event
 	})
@@ -388,6 +583,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		case 'q', 'Q':
 			app.Stop()
 			return nil
+		case 'c', 'C':
+			if currentDetailMode == detailStateObjects && mode == modeStates && stateDetailRow > 0 && stateDetailRow-1 < len(stateObjects) {
+				showCompare(stateObjects[stateDetailRow-1])
+				return nil
+			}
 		case 'd', 'D':
 			if performDetailAction != nil {
 				performDetailAction()
@@ -449,6 +649,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 		case 'q', 'Q':
 			app.Stop()
 			return nil
+		case 'c', 'C':
+			if currentDetailMode == detailStateObjects && mode == modeStates && stateDetailRow > 0 && stateDetailRow-1 < len(stateObjects) {
+				showCompare(stateObjects[stateDetailRow-1])
+				return nil
+			}
 		}
 		return event
 	})
@@ -1285,7 +1490,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool) e
 
 	applyMode(modeStates)
 
-	return app.SetRoot(root, true).EnableMouse(true).Run()
+	err := app.SetRoot(pages, true).EnableMouse(true).Run()
+	return restartRequest, err
 }
 
 func configureTable(title string, selectable bool) *tview.Table {

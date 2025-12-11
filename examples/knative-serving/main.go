@@ -8,25 +8,21 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"strings"
 	"time"
 	"unsafe"
 
 	"github.com/google/go-containerregistry/pkg/authn/k8schain"
 	"github.com/google/go-containerregistry/pkg/name"
 	knativescheme "github.com/tgoodwin/kamera/examples/knative-serving/knative/scheme"
-	"github.com/tgoodwin/kamera/pkg/interactive"
+	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"knative.dev/pkg/controller"
 	v1 "knative.dev/serving/pkg/apis/serving/v1"
 	revisionreconciler "knative.dev/serving/pkg/reconciler/revision"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/log"
-	ctrlzap "sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -147,68 +143,20 @@ func (r *revisionDigestStub) Reconcile(ctx context.Context, req reconcile.Reques
 }
 
 func main() {
-	logLevel := flag.String("log-level", "info", "logging level (debug, info, warn, error)")
-	searchDepth := flag.Int("depth", 10, "exploration search depth")
-	interactiveFlag := flag.Bool("interactive", true, "launch interactive trace inspector")
-	emitStatsFlag := flag.Bool("emit-stats", false, "record and emit reconcile performance stats")
-	dumpPathFlag := flag.String("dump-output", "", "optional path to write exploration results (converged + aborted) to disk")
-	timeoutFlag := flag.Duration("timeout", 0, "abort exploration after this duration (0 disables)")
 	flag.Parse()
 
-	level, err := parseLogLevel(*logLevel)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "invalid log level %q: %v\n", *logLevel, err)
-		os.Exit(2)
-	}
-
-	logf.SetLogger(ctrlzap.New(
-		ctrlzap.UseDevMode(level <= zapcore.DebugLevel),
-		ctrlzap.Level(level),
-	))
-
-	tracecheck.SetLogger(logf.Log.WithName("tracecheck"))
-
-	explorer, initialState, err := newKnativeExplorerAndState(*searchDepth, *emitStatsFlag)
-	if err != nil {
-		panic(fmt.Sprintf("Build() error = %v", err))
-	}
-
-	fmt.Printf("[main] initial pending: %v\n", initialState.PendingReconciles)
-
 	ctx := context.Background()
-	if *timeoutFlag > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, *timeoutFlag)
-		defer cancel()
+	builder := newKnativeExplorerBuilder()
+	initialState := buildInitialKnativeState(builder)
+	runner, err := explore.NewRunner(builder)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
+		os.Exit(1)
 	}
-
-	res := explorer.Explore(ctx, initialState)
-
-	fmt.Println("converged states:", len(res.ConvergedStates))
-	fmt.Println("aborted states:", len(res.AbortedStates))
-
-	states := append([]tracecheck.ResultState{}, res.ConvergedStates...)
-	states = append(states, res.AbortedStates...)
-	if len(states) == 0 {
-		fmt.Println("no states returned from exploration")
-		return
+	if err := runner.Run(ctx, initialState); err != nil {
+		fmt.Fprintf(os.Stderr, "session error: %v\n", err)
+		os.Exit(1)
 	}
-
-	if *dumpPathFlag != "" {
-		if err := interactive.SaveInspectorDump(states, *dumpPathFlag); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to dump results to %s: %v\n", *dumpPathFlag, err)
-			os.Exit(1)
-		}
-		fmt.Printf("wrote results to %s\n", *dumpPathFlag)
-	}
-
-	if !*interactiveFlag {
-		fmt.Printf("interactive inspector disabled; states available: %d (converged=%d, aborted=%d)\n",
-			len(states), len(res.ConvergedStates), len(res.AbortedStates))
-		return
-	}
-
-	interactive.RunStateInspectorTUIView(states, true)
 }
 
 // mergeStateNodes is a helper that merges multiple StateNode instances into one
@@ -270,25 +218,4 @@ func mergeStateNodes(primary tracecheck.StateNode, others ...tracecheck.StateNod
 	merged.PendingReconciles = pending
 	merged.Contents.KindSequences = kindSeq
 	return merged
-}
-
-func parseLogLevel(level string) (zapcore.Level, error) {
-	switch strings.ToLower(level) {
-	case "debug":
-		return zapcore.DebugLevel, nil
-	case "info":
-		return zapcore.InfoLevel, nil
-	case "warn", "warning":
-		return zapcore.WarnLevel, nil
-	case "error":
-		return zapcore.ErrorLevel, nil
-	case "dpanic":
-		return zapcore.DPanicLevel, nil
-	case "panic":
-		return zapcore.PanicLevel, nil
-	case "fatal":
-		return zapcore.FatalLevel, nil
-	default:
-		return zapcore.InfoLevel, fmt.Errorf("supported values: debug, info, warn, error")
-	}
 }

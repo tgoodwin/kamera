@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -240,7 +241,7 @@ func applyStatusStep(pod *corev1.Pod, step PodStatusStep) bool {
 	}
 
 	if len(step.Conditions) > 0 {
-		now := metav1.Now()
+		now := metav1.NewTime(simclock.Now())
 		condMap := make(map[corev1.PodConditionType]corev1.PodCondition)
 		for _, cond := range pod.Status.Conditions {
 			condMap[cond.Type] = cond

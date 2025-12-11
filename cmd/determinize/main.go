@@ -41,7 +41,8 @@ func main() {
 	flag.Parse()
 	targets := flag.Args()
 	if len(targets) == 0 {
-		targets = []string{"."}
+		flag.Usage()
+		os.Exit(2)
 	}
 
 	files, err := collectGoFiles(targets)

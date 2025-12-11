@@ -27,10 +27,12 @@ func BenchmarkExploreKnative(b *testing.B) {
 	klog.SetLogger(zapr.NewLogger(nopZap))
 	tracecheck.SetLogger(logf.Log.WithName("tracecheck"))
 
-	explorer, initialState, err := newKnativeExplorerAndState(1, false)
+	builder := newKnativeExplorerBuilder()
+	explorer, err := builder.Build("standalone")
 	if err != nil {
-		b.Fatalf("setup explorer: %v", err)
+		b.Fatalf("build explorer: %v", err)
 	}
+	initialState := buildInitialKnativeState(builder)
 
 	ctx := logging.WithLogger(context.Background(), nopZap.Sugar())
 

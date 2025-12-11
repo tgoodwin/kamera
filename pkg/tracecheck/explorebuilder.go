@@ -8,7 +8,6 @@ import (
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
-	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracegen"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
@@ -92,7 +91,9 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		reconcilerToKind:           make(map[ReconcilerID]string),
 
 		config: &ExploreConfig{
-			maxDepth:        10,
+			MaxDepth:        *searchDepth,
+			RecordPerfStats: *emitStats,
+			Timeout:         *timeout,
 			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
 		},
 	}
@@ -116,11 +117,6 @@ func (b *ExplorerBuilder) WithCustomStrategy(id ReconcilerID, strategyFunc func(
 
 func (b *ExplorerBuilder) WithStrategy(id ReconcilerID, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ReconcilerBuilder {
 	return b.WithCustomStrategy(id, strategyFunc)
-}
-
-func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
-	b.config.recordPerfStats = true
-	return b
 }
 
 func (b *ExplorerBuilder) WithResourceDep(kind string, reconcilerIDs ...ReconcilerID) *ExplorerBuilder {
@@ -168,7 +164,17 @@ func (b *ExplorerBuilder) WithPriorityStrategy(p *PriorityStrategyBuilder) *Expl
 }
 
 func (b *ExplorerBuilder) WithMaxDepth(depth int) *ExplorerBuilder {
-	b.config.maxDepth = depth
+	b.config.MaxDepth = depth
+	return b
+}
+
+func (b *ExplorerBuilder) WithTimeout(d time.Duration) *ExplorerBuilder {
+	b.config.Timeout = d
+	return b
+}
+
+func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
+	b.config.RecordPerfStats = true
 	return b
 }
 
@@ -195,6 +201,14 @@ func (b *ExplorerBuilder) WithEmitter(emitter testEmitter) *ExplorerBuilder {
 func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBuilder {
 	b.builder = builder
 	return b
+}
+
+// Config returns a copy of the current builder configuration.
+func (b *ExplorerBuilder) Config() ExploreConfig {
+	if b.config == nil {
+		return ExploreConfig{}
+	}
+	return *b.config
 }
 
 // AssignReconcilerToKind configures which resource a reconciler "owns"
@@ -363,26 +377,15 @@ func (b *ExplorerBuilder) NewStateEventBuilder() *StateEventBuilder {
 }
 
 func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
-	return NewStateClassifier(
-		newVersionStore(b.snapStore),
-	)
+	return NewStateClassifier(NewVersionStore(b.snapStore, b.scheme))
+}
+
+// BuildStartStateFromObjects constructs a starting StateNode from concrete objects and an initial pending list.
+func (b *ExplorerBuilder) BuildStartStateFromObjects(objs []client.Object, pending []PendingReconcile) (StateNode, error) {
+	return buildStartStateFromObjects(b.snapStore, b.scheme, objs, pending)
 }
 
 func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
-	gvk := ensureObjectGVK(obj, b.scheme)
-
-	r, err := snapshot.AsRecord(obj, "start")
-	if err != nil {
-		panic("converting to unstructured: " + err.Error())
-	}
-	u, err := r.ToUnstructured()
-	if err != nil {
-		panic("converting to unstructured: " + err.Error())
-	}
-	vHash := b.snapStore.PublishWithStrategy(u, snapshot.AnonymizedHash)
-	sleeveObjectID := tag.GetSleeveObjectID(obj)
-	ikey := snapshot.IdentityKey{Group: gvk.Group, Kind: gvk.Kind, ObjectID: sleeveObjectID}
-
 	dependent := lo.Map(dependentControllers, func(s ReconcilerID, _ int) PendingReconcile {
 		return PendingReconcile{
 			ReconcilerID: s,
@@ -396,29 +399,11 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 		}
 	})
 
-	key := snapshot.NewCompositeKeyWithGroup(gvk.Group, ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
-
-	return StateNode{
-		Contents: NewStateSnapshot(
-			ObjectVersions{key: vHash},
-			KindSequences{
-				util.CanonicalGroupKind(gvk.Group, gvk.Kind): 1,
-			},
-			[]StateEvent{
-				{
-					ReconcileID: "TOP",
-					Timestamp:   event.FormatTimeStr(time.Now()),
-					Sequence:    1,
-					Effect: newEffect(
-						key,
-						vHash,
-						event.CREATE,
-					),
-				},
-			},
-		),
-		PendingReconciles: dependent,
+	state, err := b.BuildStartStateFromObjects([]client.Object{obj}, dependent)
+	if err != nil {
+		panic("building start state: " + err.Error())
 	}
+	return state
 }
 
 func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
@@ -438,15 +423,14 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 	}
 
 	// Create version store and knowledge manager
-	vStore := newVersionStore(b.snapStore)
+	vStore := NewVersionStore(b.snapStore, b.scheme)
 
 	// Create manager
 	mgr := &manager{
 		versionStore: vStore,
 		effects:      make(map[string]reconcileEffects),
 
-		snapStore: b.snapStore,
-		scheme:    b.scheme,
+		scheme: b.scheme,
 
 		// effectContext tracks the state of the world at the time of reconcile
 		// and this is separate from snapshot store because we want this context
@@ -488,7 +472,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		b.resourceDeps,
 		b.reconcilerToKind,
 		b.watchers,
-		mgr.snapStore,
+		mgr.versionStore,
 	)
 
 	// Construct the Explorer
@@ -497,7 +481,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		dependencies:         b.resourceDeps,
 		triggerManager:       triggerManager,
 		knowledgeManager:     knowledgeManager,
-		config:               b.config,
+		Config:               b.config,
 		effectContextManager: mgr,
 		versionManager:       vStore,
 
@@ -517,9 +501,8 @@ func (b *ExplorerBuilder) BuildLensManager(traceFilePath string) (*LensManager, 
 	}
 	rollup := CausalRollup(traces)
 	mgr := &manager{
-		versionStore: newVersionStore(b.snapStore),
+		versionStore: NewVersionStore(b.snapStore, b.scheme),
 		effects:      make(map[string]reconcileEffects),
-		snapStore:    b.snapStore,
 		scheme:       b.scheme,
 		effectRKeys:  make(map[string]util.Set[string]),
 		effectIKeys:  make(map[string]util.Set[snapshot.IdentityKey]),

@@ -64,8 +64,6 @@ func newEffectWithPrecondition(key snapshot.CompositeKey, version snapshot.Versi
 type manager struct {
 	*versionStore // maps hashes to full object values
 
-	snapStore *snapshot.Store
-
 	scheme *runtime.Scheme
 
 	// need to add frame data to the manager as well for reconciler reads
@@ -76,8 +74,6 @@ type manager struct {
 
 	effectRKeys map[string]util.Set[string]
 	effectIKeys map[string]util.Set[snapshot.IdentityKey]
-
-	keysMarkedForDeletion map[string]util.Set[snapshot.IdentityKey]
 
 	mu sync.RWMutex
 }
@@ -326,7 +322,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		// Existing resource just gets updated, no change to tracking state
 
 	case event.REMOVE:
-		// need to ensure the object being removed is already marked for deletion
+		// need to egnsure the object being removed is already marked for deletion
 		// TODO remove tracking rKeys and iKeys here...
 	default:
 		panic("unhandled operation type in validateEffect: " + string(op))

@@ -121,8 +121,8 @@ func countIgnorableForConvergence(pending []PendingReconcile) int {
 	return count
 }
 
-type hashResolver interface {
-	GetByHash(hash snapshot.VersionHash, strategy snapshot.HashStrategy) (*unstructured.Unstructured, bool)
+type Resolver interface {
+	Resolve(hash snapshot.VersionHash) *unstructured.Unstructured
 }
 
 // TriggerManager handles the dependency graph between resources and reconcilers
@@ -131,7 +131,7 @@ type TriggerManager struct {
 	deps     ResourceDeps
 	owners   PrimariesByKind
 	watchers WatchRegistrations
-	resolver hashResolver
+	resolver Resolver
 }
 
 func canonicalKindKeyFromGroupKind(gk schema.GroupKind) string {
@@ -163,7 +163,7 @@ func NewTriggerManager(
 	subscribingReconcilersByKind ResourceDeps,
 	reconcilerToPrimaryKind map[ReconcilerID]string,
 	watchers WatchRegistrations,
-	resolver hashResolver,
+	resolver Resolver,
 ) *TriggerManager {
 
 	primariesByKind := make(PrimariesByKind)
@@ -199,9 +199,9 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 
 	for _, effect := range changes.Effects {
 		objKey, vHash := effect.Key.IdentityKey, effect.Version
-		objectVal, ok := tm.resolver.GetByHash(vHash, vHash.Strategy)
-		if !ok {
-			return nil, fmt.Errorf("object not found for hash %s", vHash)
+		objectVal := tm.resolver.Resolve(vHash)
+		if objectVal == nil {
+			return nil, fmt.Errorf("unable to resolve object for key %s with hash %s", objKey, vHash.Value)
 		}
 
 		nsName := types.NamespacedName{
