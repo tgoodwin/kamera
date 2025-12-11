@@ -57,9 +57,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 	}
 
 	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, error) {
-		r.builder.WithMaxDepth(currentConfig.MaxDepth)
-		r.builder.WithTimeout(currentConfig.Timeout)
-		r.builder.WithPermuteOrders(currentConfig.PermuteOrder)
+		r.builder.SetConfig(currentConfig)
 		// get a fresh explorer for each run
 		explorer, err := r.builder.Build("standalone")
 		if err != nil {

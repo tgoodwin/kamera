@@ -238,6 +238,26 @@ func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *Explor
 	return b
 }
 
+// SetConfig replaces the builder's config wholesale.
+// Maps are cloned and missing permute entries are defaulted for known reconcilers.
+func (b *ExplorerBuilder) SetConfig(cfg ExploreConfig) *ExplorerBuilder {
+	cloned := cfg.Clone()
+	if cloned.PermuteOrder == nil {
+		cloned.PermuteOrder = make(map[ReconcilerID]bool)
+	}
+	if cloned.perturbationCfg == nil {
+		cloned.perturbationCfg = make(map[ReconcilerID]PerturbationConfig)
+	}
+	b.config = &cloned
+	for id := range b.reconcilers {
+		b.ensurePermuteOrderEntry(id)
+	}
+	for id := range b.recorderInjectedStrategies {
+		b.ensurePermuteOrderEntry(id)
+	}
+	return b
+}
+
 // WithDivergenceCircuitBreaker enables the divergence circuit breaker.
 // If paths from a divergence point converge to the same state more than `threshold` times,
 // further exploration from that subtree is skipped. This is a performance optimization
