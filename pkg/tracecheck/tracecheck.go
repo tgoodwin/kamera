@@ -2,13 +2,11 @@ package tracecheck
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
-	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracegen"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -50,7 +48,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	readDeps := make(ResourceDeps)
 	snapStore := snapshot.NewStore()
 
-	vStore := newVersionStore(snapStore)
+	vStore := NewVersionStore(snapStore, scheme)
 	KnowledgeManager := NewKnowledgeManager(snapStore)
 
 	mgr := &manager{
@@ -76,12 +74,14 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	}
 }
 
+// Deprecated: FromBuilder is deprecated.
+// Use ExplorerBuilder instead.
 func FromBuilder(b *replay.Builder) *TraceChecker {
 	readDeps := make(ResourceDeps)
 
 	//snapshot store
 	snapshotStore := snapshot.NewStore()
-	vStore := newVersionStore(snapshotStore)
+	vStore := NewVersionStore(snapshotStore, nil)
 
 	store := b.Store()
 	// eventsByReconcile := lo.GroupBy(b.Events(), func(e event.Event) string {
@@ -159,29 +159,6 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 }
 
 func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
-	r, err := snapshot.AsRecord(obj, "start")
-	if err != nil {
-		panic("converting to unstructured: " + err.Error())
-	}
-	u, err := r.ToUnstructured()
-	if err != nil {
-		panic("converting to unstructured: " + err.Error())
-	}
-	vHash := tc.manager.versionStore.Publish(u)
-	sleeveObjectID := tag.GetSleeveObjectID(obj)
-	gvk := util.GetGroupVersionKind(obj)
-	ikey := snapshot.IdentityKey{Group: gvk.Group, Kind: gvk.Kind, ObjectID: sleeveObjectID}
-
-	// HACK TODO REFACTOR
-	if tc.builder == nil {
-		// Convert ReconcilerID to string for the replay.Builder
-		stringIDs := make([]string, len(dependentControllers))
-		for i, id := range dependentControllers {
-			stringIDs[i] = string(id)
-		}
-		tc.builder = &replay.Builder{ReconcilerIDs: util.NewSet(stringIDs...)}
-	}
-
 	dependent := lo.Map(dependentControllers, func(s ReconcilerID, _ int) PendingReconcile {
 		return PendingReconcile{
 			ReconcilerID: s,
@@ -195,25 +172,21 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 		}
 	})
 
-	key := snapshot.NewCompositeKeyWithGroup(gvk.Group, ikey.Kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
-
-	return StateNode{
-		Contents: StateSnapshot{
-			contents: ObjectVersions{key: vHash},
-			KindSequences: KindSequences{
-				util.CanonicalGroupKind(ikey.Group, ikey.Kind): 1,
-			},
-			stateEvents: []StateEvent{
-				{
-					ReconcileID: "TOP",
-					Timestamp:   event.FormatTimeStr(time.Now()),
-					Sequence:    1,
-					Effect:      newEffect(key, vHash, event.CREATE),
-				},
-			},
-		},
-		PendingReconciles: dependent,
+	// HACK TODO REFACTOR
+	if tc.builder == nil {
+		// Convert ReconcilerID to string for the replay.Builder
+		stringIDs := make([]string, len(dependentControllers))
+		for i, id := range dependentControllers {
+			stringIDs[i] = string(id)
+		}
+		tc.builder = &replay.Builder{ReconcilerIDs: util.NewSet(stringIDs...)}
 	}
+
+	state, err := buildStartStateFromObjects(tc.manager.Store, tc.manager.scheme, []client.Object{obj}, dependent)
+	if err != nil {
+		panic("building start state: " + err.Error())
+	}
+	return state
 }
 
 func (tc *TraceChecker) AddReconciler(reconcilerID ReconcilerID, constructor ReconcilerConstructor) {
@@ -314,15 +287,15 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 	return &Explorer{
 		reconcilers:  reconcilers,
 		dependencies: tc.ResourceDeps,
-		config: &ExploreConfig{
-			maxDepth: maxDepth,
+		Config: &ExploreConfig{
+			MaxDepth: maxDepth,
 		},
 
 		triggerManager: NewTriggerManager(
 			tc.ResourceDeps,
 			tc.reconcilerToKind,
 			nil,
-			tc.manager.snapStore,
+			tc.manager.versionStore,
 		),
 
 		knowledgeManager: knowledgeManager,

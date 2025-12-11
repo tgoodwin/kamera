@@ -40,8 +40,9 @@ type PerturbationConfig struct {
 }
 
 type ExploreConfig struct {
-	maxDepth        int
-	recordPerfStats bool
+	MaxDepth        int
+	RecordPerfStats bool
+	Timeout         time.Duration
 	// per-reconciler perturbation config
 	perturbationCfg map[ReconcilerID]PerturbationConfig
 
@@ -83,7 +84,7 @@ type Explorer struct {
 
 	priorityHandler PriorityHandler // prioritize possible views to explore
 
-	config *ExploreConfig
+	Config *ExploreConfig
 
 	stats *ExploreStats
 }
@@ -153,7 +154,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	summarize := func(res *Result) {
 		logger.V(1).Info("explore summary")
-		if e.config != nil && e.config.recordPerfStats {
+		if e.Config != nil && e.Config.RecordPerfStats {
 			e.stats.Print()
 		}
 		res.Summarize()
@@ -233,8 +234,8 @@ func (e *Explorer) explore(
 		close(abortedStatesCh)
 	}()
 
-	if e.config.maxDepth == 0 {
-		e.config.maxDepth = DefaultMaxDepth
+	if e.Config.MaxDepth == 0 {
+		e.Config.MaxDepth = DefaultMaxDepth
 	}
 
 	if logger.V(2).Enabled() {
@@ -341,7 +342,7 @@ func (e *Explorer) explore(
 		// The first path runs through the no-ops to reach actual convergence; subsequent
 		// paths can skip since they'd produce the same result.
 		allPendingAreNoOps := e.checkEarlyConvergence(currentState, knownNoOps)
-		if allPendingAreNoOps && !e.config.DisableEarlyConvergence {
+		if allPendingAreNoOps && !e.Config.DisableEarlyConvergence {
 			objectsHash := currentState.ObjectsHash()
 			if _, alreadyConverged := seenConvergedStates[StateHash(objectsHash)]; alreadyConverged {
 				e.stats.EarlyConvergence++
@@ -370,7 +371,7 @@ func (e *Explorer) explore(
 					}
 
 					// Check if the first reconciler in this ordering is a known no-op.
-					if !e.config.DisableNoOpOrderingSkip {
+					if !e.Config.DisableNoOpOrderingSkip {
 						firstPending := candidate.PendingReconciles[0]
 						noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, firstPending.ReconcilerID, firstPending.Request.NamespacedName.String())
 						if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
@@ -415,6 +416,7 @@ func (e *Explorer) explore(
 		//    from tickers, or requeues from poll-based controllers). These don't indicate
 		//    state changes, just time-based or polling behavior.
 		if len(currentState.PendingReconciles) == 0 || allPendingIgnorableForConvergence(currentState.PendingReconciles) {
+			convergenceKey := currentState.ConvergenceHash()
 			reason := "no pending reconciles"
 			if len(currentState.PendingReconciles) > 0 {
 				reason = "only async enqueues/requeues remaining"
@@ -422,7 +424,7 @@ func (e *Explorer) explore(
 			if logger.V(1).Enabled() {
 				logger.V(1).WithValues(
 					"Depth", currentState.depth,
-					"StateKey", currentState.Hash(),
+					"StateKey", convergenceKey,
 					"Reason", reason,
 					"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
 				).Info("arrived at converged state")
@@ -435,16 +437,22 @@ func (e *Explorer) explore(
 			completionKey := fmt.Sprintf("%s|%s", stateKey, currentState.ExecutionHistory.UniqueKey())
 			completedPaths[completionKey] = true
 
-			seenConvergedStates[stateKey] = currentState
-			// Also record by ObjectsHash so early convergence detection can find it
+			seenConvergedStates[convergenceKey] = currentState
+			// Also record by ObjectsHash (drops pending reconciles) so early convergence detection can find it
 			seenConvergedStates[StateHash(currentState.ObjectsHash())] = currentState
+			if convergenceKey != stateKey {
+				if _, ok := executionPathsToState[convergenceKey]; !ok {
+					executionPathsToState[convergenceKey] = make([]ExecutionHistory, 0)
+				}
+				executionPathsToState[convergenceKey] = append(executionPathsToState[convergenceKey], currentState.ExecutionHistory)
+			}
 
 			// track how many times we've arrived at this state from some common ancestor
 			if currentState.divergenceKey != "" {
 				if _, seen := convergencesByDivergenceKey[currentState.divergenceKey]; !seen {
 					convergencesByDivergenceKey[currentState.divergenceKey] = make([]StateHash, 0)
 				}
-				convergencesByDivergenceKey[currentState.divergenceKey] = append(convergencesByDivergenceKey[currentState.divergenceKey], stateKey)
+				convergencesByDivergenceKey[currentState.divergenceKey] = append(convergencesByDivergenceKey[currentState.divergenceKey], convergenceKey)
 			}
 
 			if cancelled := sendWithCancel(ctx, convergedStatesCh, currentState); cancelled {
@@ -455,7 +463,7 @@ func (e *Explorer) explore(
 
 		// Divergence Circuit-Breaker: limit exploration when paths from a divergence point
 		// keep converging to the same state.
-		if threshold := e.config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
+		if threshold := e.Config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
 			convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
 			repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
 			if repeatedCount > threshold {
@@ -547,7 +555,7 @@ func (e *Explorer) explore(
 			cacheKey := fmt.Sprintf("%s:%s:%s", stateView.ObjectsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
 			// Check cache: can we predict the output state without running the reconcile?
-			if !e.config.DisableCachePrediction {
+			if !e.Config.DisableCachePrediction {
 				if e.skipViaCachePrediction(reconcileCache, exploredLogicalStates, cacheKey, stateView, pendingReconcile) {
 					stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
 					e.stats.CachePredictedSkips++
@@ -616,10 +624,10 @@ func (e *Explorer) explore(
 				seenDepths[newState.depth] = true
 			}
 
-			if newState.depth > e.config.maxDepth {
+			if newState.depth > e.Config.MaxDepth {
 				if logger.V(1).Enabled() {
 					logger.WithValues(
-						"maxDepth", e.config.maxDepth,
+						"maxDepth", e.Config.MaxDepth,
 						"currentDepth", newState.depth,
 						"Lineage", newState.ReconcileLineage(),
 					).Info("aborting path due to max depth")
@@ -638,7 +646,7 @@ func (e *Explorer) explore(
 					ID:       fmt.Sprintf("aborted-%s", stateKey),
 					State:    newState,
 					Paths:    []ExecutionHistory{newState.ExecutionHistory},
-					Reason:   fmt.Sprintf("max depth %d", e.config.maxDepth),
+					Reason:   fmt.Sprintf("max depth %d", e.Config.MaxDepth),
 					Resolver: e.versionManager,
 				}:
 				case <-ctx.Done():
@@ -719,7 +727,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	stepLog := log.FromContext(ctx)
 	startWall := time.Now()
 	defer func() {
-		if e.stats != nil && e.config != nil && e.config.recordPerfStats {
+		if e.stats != nil && e.Config != nil && e.Config.RecordPerfStats {
 			e.stats.RecordStep(pr.ReconcilerID, time.Since(startWall))
 		}
 	}()
@@ -1034,7 +1042,7 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID ReconcilerID, currDepth int) ([]StateNode, error) {
 	currSnapshot := currState.Contents
-	config, ok := e.config.perturbationCfg[reconcilerID]
+	config, ok := e.Config.perturbationCfg[reconcilerID]
 	if !ok {
 		logger.V(2).Info("no staleness bounds configured for reconciler", "ReconcilerID", reconcilerID)
 		// no staleness bounds configured for this reconciler, so dont compute stale states
@@ -1047,7 +1055,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return []StateNode{currState}, nil
 	}
 
-	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.config.maxDepth)
+	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.Config.MaxDepth)
 	possiblePastViews, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.StaleReadBounds)
 	if err != nil {
 		return nil, errors.Wrap(err, "getting possible views")

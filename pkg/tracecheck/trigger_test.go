@@ -20,9 +20,8 @@ type mockHashResolver struct {
 	objects map[snapshot.VersionHash]*unstructured.Unstructured
 }
 
-func (m *mockHashResolver) GetByHash(hash snapshot.VersionHash, strategy snapshot.HashStrategy) (*unstructured.Unstructured, bool) {
-	obj, exists := m.objects[hash]
-	return obj, exists
+func (m *mockHashResolver) Resolve(hash snapshot.VersionHash) *unstructured.Unstructured {
+	return m.objects[hash]
 }
 
 func gvkForKind(kind string) schema.GroupVersionKind {

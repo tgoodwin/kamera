@@ -263,7 +263,7 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 	initialState.PendingReconciles = append(initialState.PendingReconciles, serviceState.PendingReconciles...)
 
 	// Set max depth
-	explorer.config.maxDepth = 10
+	explorer.Config.MaxDepth = 10
 
 	var stepResults []stepResult
 	currentState := initialState

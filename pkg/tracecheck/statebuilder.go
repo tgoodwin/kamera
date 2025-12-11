@@ -117,7 +117,7 @@ func ensureObjectGVK(obj client.Object, scheme *runtime.Scheme) schema.GroupVers
 	}
 
 	gvk := obj.GetObjectKind().GroupVersionKind()
-	if gvk.Kind != "" && gvk.Version != "" && gvk.Group != "" {
+	if !gvk.Empty() {
 		return gvk
 	}
 

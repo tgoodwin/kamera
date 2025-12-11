@@ -391,6 +391,12 @@ func (sn StateNode) Clone() StateNode {
 	}
 }
 
+// WithDepth returns a copy of the state node with the provided depth set.
+func (sn StateNode) WithDepth(d int) StateNode {
+	sn.depth = d
+	return sn
+}
+
 func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 	// collect and sort object keys for deterministic ordering. Multiple
 	// resources can share the same sleeve ObjectID, so compare on the full
@@ -518,6 +524,17 @@ func (sn StateNode) ObjectsHash() string {
 		buf.WriteString(";")
 	}
 	return util.ShortenHash(buf.String())
+}
+
+// ConvergenceHash returns a hash normalized for convergence by dropping pending reconciles
+// that are ignorable for convergence (async enqueues / requeues).
+func (sn StateNode) ConvergenceHash() StateHash {
+	filtered := lo.Filter(sn.PendingReconciles, func(pr PendingReconcile, _ int) bool {
+		return pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue
+	})
+	clone := sn
+	clone.PendingReconciles = filtered
+	return StateHash(util.ShortenHash(clone.Serialize()))
 }
 
 func (sn *StateSnapshot) trimForInspection() {

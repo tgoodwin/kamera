@@ -148,11 +148,21 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 
 	// convert ObjectVersions to []runtime.Object
 	var objects []runtime.Object
-	for _, hash := range observableState {
+	var unresolvedKeys []string
+	for key, hash := range observableState {
 		obj := r.versionManager.Resolve(hash)
 		if obj != nil {
 			objects = append(objects, obj)
+		} else {
+			unresolvedKeys = append(unresolvedKeys, key.String())
 		}
+	}
+	if len(unresolvedKeys) > 0 {
+		// FAIL LOUDLY: This should never happen in normal operation
+		errMsg := fmt.Sprintf("%d/%d objects could not be resolved for reconciler %s. Unresolved: %v",
+			len(unresolvedKeys), len(observableState), r.Name, unresolvedKeys)
+		logger.Error(errors.New(errMsg), "error resolving objects")
+		panic(errMsg)
 	}
 
 	ctx, cleanup, err := r.Strategy.PrepareState(ctx, objects)
