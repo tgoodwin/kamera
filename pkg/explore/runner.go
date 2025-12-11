@@ -56,25 +56,6 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 		return out
 	}
 
-	applyPrefix := func(states []tracecheck.ResultState, prefix tracecheck.ExecutionHistory) []tracecheck.ResultState {
-		if len(prefix) == 0 {
-			return states
-		}
-		out := make([]tracecheck.ResultState, len(states))
-		for i, st := range states {
-			out[i] = st
-			prefixed := make([]tracecheck.ExecutionHistory, len(st.Paths))
-			for j, path := range st.Paths {
-				combined := make(tracecheck.ExecutionHistory, 0, len(prefix)+len(path))
-				combined = append(combined, prefix...)
-				combined = append(combined, path...)
-				prefixed[j] = combined
-			}
-			out[i].Paths = prefixed
-		}
-		return out
-	}
-
 	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, error) {
 		r.builder.WithMaxDepth(currentConfig.MaxDepth)
 		r.builder.WithTimeout(currentConfig.Timeout)
@@ -139,6 +120,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 		if restart.Seed.Depth > 0 {
 			nextState = nextState.WithDepth(restart.Seed.Depth)
 		}
+		// apply the prefix to the next state so that new paths include the prefix leading to the selected subtree
 		if len(restart.Prefix) > 0 {
 			nextState.ExecutionHistory = slices.Clone(restart.Prefix)
 		}
@@ -150,7 +132,6 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 		newStates := append([]tracecheck.ResultState{}, nextRes.ConvergedStates...)
 		newStates = append(newStates, nextRes.AbortedStates...)
 		if restart.PreserveHistory {
-			newStates = applyPrefix(newStates, restart.Prefix)
 			states = mergeStates(states, newStates)
 		} else {
 			states = newStates
