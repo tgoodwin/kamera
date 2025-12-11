@@ -366,8 +366,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 
 		form := tview.NewForm().
 			AddInputField("Max Depth", fmt.Sprintf("%d", nextCfg.MaxDepth), 0, nil, nil).
-			AddInputField("Timeout", nextCfg.Timeout.String(), 0, nil, nil).
-			AddCheckbox("Preserve history", true, nil)
+			AddInputField("Timeout", nextCfg.Timeout.String(), 0, nil, nil)
 		for _, id := range reconcilerIDs {
 			id := id
 			form.AddCheckbox(fmt.Sprintf("Permute order: %s", id), permuteSelections[id], func(checked bool) {
@@ -377,7 +376,6 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 		form.AddButton("OK", func() {
 			maxDepthStr := form.GetFormItemByLabel("Max Depth").(*tview.InputField).GetText()
 			timeoutStr := form.GetFormItemByLabel("Timeout").(*tview.InputField).GetText()
-			preserveHistory := form.GetFormItemByLabel("Preserve history").(*tview.Checkbox).IsChecked()
 			if strings.TrimSpace(maxDepthStr) != "" {
 				if val, err := strconv.Atoi(strings.TrimSpace(maxDepthStr)); err == nil && val > 0 {
 					nextCfg.MaxDepth = val
@@ -398,7 +396,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 			restartRequest = &tracecheck.RestartRequest{
 				Seed:            seed,
 				Config:          nextCfg,
-				PreserveHistory: preserveHistory,
+				PreserveHistory: true,
 				Prefix:          prefix,
 			}
 			app.Stop()
