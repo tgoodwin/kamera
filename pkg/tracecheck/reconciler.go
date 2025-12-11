@@ -135,8 +135,6 @@ type ReconcilerContainer struct {
 	// The name of the reconciler
 	Name ReconcilerID
 
-	permuteOrder bool
-
 	Strategy     Strategy
 	effectReader effectReader
 

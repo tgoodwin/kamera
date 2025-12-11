@@ -349,13 +349,16 @@ func TestExpandStateByReconcileOrder(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create an Explorer with reconcilers configured for permuteOrder
 			reconcilers := make(map[ReconcilerID]*ReconcilerContainer)
-			for id, enabled := range tc.permuteEnabled {
+			for id := range tc.permuteEnabled {
 				reconcilers[id] = &ReconcilerContainer{
-					Name:         id,
-					permuteOrder: enabled,
+					Name: id,
 				}
 			}
-			explorer := &Explorer{reconcilers: reconcilers}
+			cfg := ExploreConfig{PermuteOrder: make(map[ReconcilerID]bool)}
+			for id, enabled := range tc.permuteEnabled {
+				cfg.PermuteOrder[id] = enabled
+			}
+			explorer := &Explorer{reconcilers: reconcilers, Config: &cfg}
 
 			state := StateNode{PendingReconciles: tc.pending}
 			results := explorer.expandStateByReconcileOrder(state)

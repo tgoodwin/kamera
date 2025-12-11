@@ -617,6 +617,10 @@ func (e *Explorer) expandStateByReconcileOrder(state StateNode) []StateNode {
 		return []StateNode{state}
 	}
 
+	if e.Config == nil || e.Config.PermuteOrder == nil {
+		return []StateNode{state}
+	}
+
 	originalPending := state.PendingReconciles
 	var result []StateNode
 
@@ -624,10 +628,10 @@ func (e *Explorer) expandStateByReconcileOrder(state StateNode) []StateNode {
 	// but only for reconcilers that have permuteOrder=true
 	for i := 0; i < len(originalPending); i++ {
 		reconcilerID := originalPending[i].ReconcilerID
-		container, ok := e.reconcilers[reconcilerID]
+		_, ok := e.reconcilers[reconcilerID]
 
 		// Skip creating alternative orderings for reconcilers that don't have permuteOrder set
-		if !ok || !container.permuteOrder {
+		if !ok || !e.Config.PermuteOrder[reconcilerID] {
 			continue
 		}
 

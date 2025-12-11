@@ -43,6 +43,9 @@ type ExploreConfig struct {
 	MaxDepth        int
 	RecordPerfStats bool
 	Timeout         time.Duration
+	// PermuteOrder enables order permutation for specific reconcilers during exploration.
+	// When true, alternative pending reconcile orderings are generated with that reconciler first.
+	PermuteOrder map[ReconcilerID]bool
 	// per-reconciler perturbation config
 	perturbationCfg map[ReconcilerID]PerturbationConfig
 
@@ -60,6 +63,14 @@ type ExploreConfig struct {
 	// DisableNoOpOrderingSkip disables skipping ordering branches that put a
 	// known no-op reconciler first.
 	DisableNoOpOrderingSkip bool
+}
+
+// Clone returns a deep copy of the ExploreConfig, including map fields.
+func (cfg ExploreConfig) Clone() ExploreConfig {
+	out := cfg
+	out.perturbationCfg = maps.Clone(cfg.perturbationCfg)
+	out.PermuteOrder = maps.Clone(cfg.PermuteOrder)
+	return out
 }
 
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler

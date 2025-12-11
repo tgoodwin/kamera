@@ -36,9 +36,6 @@ type ExplorerBuilder struct {
 	snapStore                  *snapshot.Store
 	reconcilerToKind           map[ReconcilerID]string
 
-	// permuteOrderReconcilers tracks which reconcilers should have permuteOrder=true
-	permuteOrderReconcilers map[ReconcilerID]bool
-
 	priorityBuilder *PriorityStrategyBuilder
 
 	config *ExploreConfig
@@ -78,7 +75,8 @@ func (rb *ReconcilerBuilder) WatchesGK(gk schema.GroupKind, mapper WatchMapper) 
 // When enabled, the explorer will consider alternative orderings where this reconciler
 // is processed first among pending reconciles.
 func (rb *ReconcilerBuilder) PermuteOrder() *ReconcilerBuilder {
-	rb.parent.permuteOrderReconcilers[rb.id] = true
+	rb.parent.ensurePermuteOrderEntry(rb.id)
+	rb.parent.config.PermuteOrder[rb.id] = true
 	return rb
 }
 
@@ -100,12 +98,12 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		emitter:                    event.NewInMemoryEmitter(),
 		snapStore:                  snapshot.NewStore(),
 		reconcilerToKind:           make(map[ReconcilerID]string),
-		permuteOrderReconcilers:    make(map[ReconcilerID]bool),
 
 		config: &ExploreConfig{
 			MaxDepth:        *searchDepth,
 			RecordPerfStats: *emitStats,
 			Timeout:         *timeout,
+			PermuteOrder:    make(map[ReconcilerID]bool),
 			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
 		},
 	}
@@ -117,12 +115,14 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 
 func (b *ExplorerBuilder) WithReconciler(id ReconcilerID, constructor ReconcilerConstructor) *ReconcilerBuilder {
 	b.reconcilers[id] = constructor
+	b.ensurePermuteOrderEntry(id)
 	return &ReconcilerBuilder{parent: b, id: id}
 }
 
 func (b *ExplorerBuilder) WithCustomStrategy(id ReconcilerID, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ReconcilerBuilder {
 	{
 		b.recorderInjectedStrategies[id] = strategyFunc
+		b.ensurePermuteOrderEntry(id)
 		return &ReconcilerBuilder{parent: b, id: id}
 	}
 }
@@ -170,6 +170,21 @@ func parseKindString(kind string) schema.GroupKind {
 	return util.ParseGroupKind(kind)
 }
 
+func (b *ExplorerBuilder) ensurePermuteOrderEntry(id ReconcilerID) {
+	if b.config == nil {
+		b.config = &ExploreConfig{
+			PermuteOrder:    make(map[ReconcilerID]bool),
+			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
+		}
+	}
+	if b.config.PermuteOrder == nil {
+		b.config.PermuteOrder = make(map[ReconcilerID]bool)
+	}
+	if _, ok := b.config.PermuteOrder[id]; !ok {
+		b.config.PermuteOrder[id] = false
+	}
+}
+
 func (b *ExplorerBuilder) WithPriorityStrategy(p *PriorityStrategyBuilder) *ExplorerBuilder {
 	b.priorityBuilder = p
 	return b
@@ -192,6 +207,34 @@ func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
 
 func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc PerturbationConfig) *ExplorerBuilder {
 	b.config.perturbationCfg[reconcilerID] = rc
+	return b
+}
+
+// WithPermuteOrders sets the per-reconciler permute-order configuration.
+// Entries missing for known reconcilers are defaulted to false so the UI can display them.
+func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *ExplorerBuilder {
+	if b.config == nil {
+		b.config = &ExploreConfig{}
+	}
+	target := perms
+	if target == nil && b.config.PermuteOrder != nil {
+		target = b.config.PermuteOrder
+	}
+	b.config.PermuteOrder = make(map[ReconcilerID]bool, len(target))
+	for id, enabled := range target {
+		b.config.PermuteOrder[id] = enabled
+	}
+	// ensure all reconcilers are represented even if not provided in perms
+	for id := range b.reconcilers {
+		if _, ok := b.config.PermuteOrder[id]; !ok {
+			b.config.PermuteOrder[id] = false
+		}
+	}
+	for id := range b.recorderInjectedStrategies {
+		if _, ok := b.config.PermuteOrder[id]; !ok {
+			b.config.PermuteOrder[id] = false
+		}
+	}
 	return b
 }
 
@@ -229,7 +272,7 @@ func (b *ExplorerBuilder) Config() ExploreConfig {
 	if b.config == nil {
 		return ExploreConfig{}
 	}
-	return *b.config
+	return b.config.Clone()
 }
 
 // AssignReconcilerToKind configures which resource a reconciler "owns"
@@ -341,11 +384,6 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[ReconcilerID]
 		// Create reconciler implementation
 		rImpl := Wrap(reconcilerID, r, mgr, frameManager, mgr)
 
-		// Apply permuteOrder setting if configured
-		if b.permuteOrderReconcilers[reconcilerID] {
-			rImpl.permuteOrder = true
-		}
-
 		containers[reconcilerID] = rImpl
 	}
 
@@ -357,7 +395,6 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[ReconcilerID]
 			Strategy:       strategy,
 			effectReader:   mgr,
 			versionManager: mgr,
-			permuteOrder:   b.permuteOrderReconcilers[name],
 		}
 		containers[container.Name] = container
 	}

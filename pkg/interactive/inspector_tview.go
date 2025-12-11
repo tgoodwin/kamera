@@ -16,6 +16,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"golang.org/x/exp/slices"
+	"maps"
 )
 
 type inspectorMode int
@@ -187,7 +188,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 	pathDetailDirty := true
 	stepDetailDirty := true
 	reconcileDirty := true
-	currentConfig := cfg
+	currentConfig := cfg.Clone()
 	lastStepState := -1
 	lastStepPath := -1
 	lastStepIdx := -1
@@ -333,15 +334,50 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 	}
 
 	showConfirm := func(seed tracecheck.RestartSeed, prefix tracecheck.ExecutionHistory) {
+		nextCfg := currentConfig.Clone()
+		permuteSelections := maps.Clone(nextCfg.PermuteOrder)
+		if permuteSelections == nil {
+			permuteSelections = make(map[tracecheck.ReconcilerID]bool)
+		}
+
+		reconcilerIDs := lo.Keys(permuteSelections)
+		if len(reconcilerIDs) == 0 {
+			observed := make(map[tracecheck.ReconcilerID]struct{})
+			for _, st := range states {
+				for _, pr := range st.State.PendingReconciles {
+					observed[pr.ReconcilerID] = struct{}{}
+				}
+				for _, path := range st.Paths {
+					for _, step := range path {
+						if step != nil {
+							observed[step.ControllerID] = struct{}{}
+						}
+					}
+				}
+			}
+			for id := range observed {
+				if _, ok := permuteSelections[id]; !ok {
+					permuteSelections[id] = false
+				}
+			}
+			reconcilerIDs = lo.Keys(permuteSelections)
+		}
+		sort.Slice(reconcilerIDs, func(i, j int) bool { return string(reconcilerIDs[i]) < string(reconcilerIDs[j]) })
+
 		form := tview.NewForm().
-			AddInputField("Max Depth", fmt.Sprintf("%d", currentConfig.MaxDepth), 0, nil, nil).
-			AddInputField("Timeout", currentConfig.Timeout.String(), 0, nil, nil).
+			AddInputField("Max Depth", fmt.Sprintf("%d", nextCfg.MaxDepth), 0, nil, nil).
+			AddInputField("Timeout", nextCfg.Timeout.String(), 0, nil, nil).
 			AddCheckbox("Preserve history", true, nil)
+		for _, id := range reconcilerIDs {
+			id := id
+			form.AddCheckbox(fmt.Sprintf("Permute order: %s", id), permuteSelections[id], func(checked bool) {
+				permuteSelections[id] = checked
+			})
+		}
 		form.AddButton("OK", func() {
 			maxDepthStr := form.GetFormItemByLabel("Max Depth").(*tview.InputField).GetText()
 			timeoutStr := form.GetFormItemByLabel("Timeout").(*tview.InputField).GetText()
 			preserveHistory := form.GetFormItemByLabel("Preserve history").(*tview.Checkbox).IsChecked()
-			nextCfg := currentConfig
 			if strings.TrimSpace(maxDepthStr) != "" {
 				if val, err := strconv.Atoi(strings.TrimSpace(maxDepthStr)); err == nil && val > 0 {
 					nextCfg.MaxDepth = val
@@ -358,6 +394,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 					return
 				}
 			}
+			nextCfg.PermuteOrder = permuteSelections
 			restartRequest = &tracecheck.RestartRequest{
 				Seed:            seed,
 				Config:          nextCfg,
