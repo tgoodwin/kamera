@@ -110,8 +110,8 @@ type ResultState struct {
 	Resolver        VersionManager
 }
 
-type reconcileResultCache struct {
-	outputObjectsHash   string             // hash of output objects (from newState.ObjectsHash())
+type cachedReconcileResult struct {
+	outputObjectsHash   ContentsHash       // hash of output objects (from newState.ObjectsHash())
 	wasNoOp             bool               // did it produce changes?
 	numEffects          int                // number of effects (for history signature)
 	triggeredReconciles []PendingReconcile // reconciles triggered by the changes
@@ -275,7 +275,7 @@ func (e *Explorer) explore(
 	// Used to skip orderings that put known no-ops first.
 	knownNoOps := make(map[string]bool)
 
-	reconcileCache := make(map[string]*reconcileResultCache)
+	reconcileResCache := make(map[string]*cachedReconcileResult)
 
 	// Track which (objectsHash, pendingSignature, historyKey) combinations we've committed to explore.
 	// This allows prediction-based deduplication using only predictable components.
@@ -354,7 +354,7 @@ func (e *Explorer) explore(
 		// paths can skip since they'd produce the same result.
 		allPendingAreNoOps := e.checkEarlyConvergence(currentState, knownNoOps)
 		if allPendingAreNoOps && !e.Config.DisableEarlyConvergence {
-			objectsHash := currentState.ObjectsHash()
+			objectsHash := currentState.ContentsHash()
 			if _, alreadyConverged := seenConvergedStates[StateHash(objectsHash)]; alreadyConverged {
 				e.stats.EarlyConvergence++
 				logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
@@ -374,7 +374,7 @@ func (e *Explorer) explore(
 				}
 
 				// Optimization: skip orderings that put a known no-op reconciler first.
-				objectsHash := currentState.ObjectsHash()
+				objectsHash := currentState.ContentsHash()
 				for _, candidate := range expandedStates {
 					// Skip the current ordering; it is already being explored.
 					if candidate.OrderSensitiveHash() == orderKey {
@@ -450,7 +450,7 @@ func (e *Explorer) explore(
 
 			seenConvergedStates[convergenceKey] = currentState
 			// Also record by ObjectsHash (drops pending reconciles) so early convergence detection can find it
-			seenConvergedStates[StateHash(currentState.ObjectsHash())] = currentState
+			seenConvergedStates[StateHash(currentState.ContentsHash())] = currentState
 			if convergenceKey != stateKey {
 				if _, ok := executionPathsToState[convergenceKey]; !ok {
 					executionPathsToState[convergenceKey] = make([]ExecutionHistory, 0)
@@ -562,12 +562,12 @@ func (e *Explorer) explore(
 			stepLogger := logger.WithValues("Depth", stateView.depth, "# Distinct States", e.stats.UniqueNodeVisits, "Total States", e.stats.TotalNodeVisits)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
-			// Cache key uses OBJECTS hash only - pending list doesn't affect reconciler behavior
-			cacheKey := fmt.Sprintf("%s:%s:%s", stateView.ObjectsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
+			// key uses OBJECTS hash only - pending list doesn't affect reconciler behavior
+			reconcileResKey := fmt.Sprintf("%s:%s:%s", stateView.ContentsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
 			// Check cache: can we predict the output state without running the reconcile?
 			if !e.Config.DisableCachePrediction {
-				if e.skipViaCachePrediction(reconcileCache, exploredLogicalStates, cacheKey, stateView, pendingReconcile) {
+				if e.skipViaCachePrediction(reconcileResCache, exploredLogicalStates, reconcileResKey, stateView, pendingReconcile) {
 					stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
 					e.stats.CachePredictedSkips++
 					continue
@@ -580,16 +580,16 @@ func (e *Explorer) explore(
 			newState, stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
 
 			// Track whether this was a no-op (used by ordering optimization)
-			wasNoOp := err == nil && stepResult != nil && len(stepResult.Changes.ObjectVersions) == 0 && stepResult.Error == ""
-			knownNoOps[cacheKey] = wasNoOp // cacheKey already uses objectsHash
+			wasNoOp := err == nil && stepResult.wasNoOp()
+			knownNoOps[reconcileResKey] = wasNoOp // cacheKey already uses objectsHash
 			if wasNoOp {
 				e.stats.NoOpReconciles++
 			}
 
 			// Update cache with this reconcile's result
 			if err == nil && stepResult != nil {
-				reconcileCache[cacheKey] = &reconcileResultCache{
-					outputObjectsHash:   newState.ObjectsHash(),
+				reconcileResCache[reconcileResKey] = &cachedReconcileResult{
+					outputObjectsHash:   newState.ContentsHash(),
 					wasNoOp:             wasNoOp,
 					numEffects:          len(stepResult.Changes.Effects),
 					triggeredReconciles: e.getTriggeredReconcilers(stepResult.Changes),
@@ -723,7 +723,7 @@ func (e *Explorer) explore(
 			})
 			slices.Sort(pendingStrs)
 			pendingSignature := strings.Join(pendingStrs, ",")
-			logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.ObjectsHash(), pendingSignature, normalizedHistory)
+			logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.ContentsHash(), pendingSignature, normalizedHistory)
 			exploredLogicalStates[logicalStateKey] = struct{}{}
 
 			queue = e.enqueueState(queue, newState)
@@ -1211,7 +1211,7 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 }
 
 func (e *Explorer) skipViaCachePrediction(
-	reconcileCache map[string]*reconcileResultCache,
+	reconcileCache map[string]*cachedReconcileResult,
 	exploredLogicalStates map[string]struct{},
 	cacheKey string,
 	stateView StateNode,
@@ -1277,7 +1277,7 @@ func (e *Explorer) checkEarlyConvergence(state StateNode, knownNoOps map[string]
 		return false
 	}
 
-	objectsHash := state.ObjectsHash()
+	objectsHash := state.ContentsHash()
 	for _, pr := range state.PendingReconciles {
 		noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, pr.ReconcilerID, pr.Request.NamespacedName.String())
 		if isNoOp, known := knownNoOps[noOpKey]; !known || !isNoOp {
@@ -1296,7 +1296,7 @@ func (e *Explorer) computeSubtreeKey(state StateNode) string {
 		return pr.String()
 	})
 	// NOT sorted - order matters for subtree identity
-	return fmt.Sprintf("%s|%s", state.ObjectsHash(), strings.Join(pendingStrs, ","))
+	return fmt.Sprintf("%s|%s", state.ContentsHash(), strings.Join(pendingStrs, ","))
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {

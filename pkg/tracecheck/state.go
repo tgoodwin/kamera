@@ -96,6 +96,10 @@ type ReconcileResult struct {
 	ctrlRes reconcile.Result
 }
 
+func (r *ReconcileResult) wasNoOp() bool {
+	return r != nil && len(r.Changes.ObjectVersions) == 0 && r.Error == ""
+}
+
 type ExecutionHistory []*ReconcileResult
 
 func (eh ExecutionHistory) UniqueKey() string {
@@ -486,15 +490,18 @@ func serializeCompositeKey(ck snapshot.CompositeKey) string {
 // StateHash represents the contents of the state node and the pending reconciles, unaffected by the order of pending reconciles.
 type StateHash string
 
+// ContentsHash represents the contents of the state node only, excluding metadata such as pending reconciles.
+type ContentsHash string
+
 // Hash returns a hash of the state node, unaffected by the order of pending reconciles.
 func (sn StateNode) Hash() StateHash {
 	s := sn.Serialize()
 	return StateHash(util.ShortenHash(s))
 }
 
-// ObjectsHash returns a hash of just the object contents, excluding pending reconciles.
+// ContentsHash returns a hash of just the object contents, excluding pending reconciles.
 // This is useful for caching reconcile results since reconciler behavior only depends on objects.
-func (sn StateNode) ObjectsHash() string {
+func (sn StateNode) ContentsHash() ContentsHash {
 	objectKeys := make([]snapshot.CompositeKey, 0, len(sn.Objects()))
 	for objKey := range sn.Objects() {
 		objectKeys = append(objectKeys, objKey)
@@ -523,7 +530,7 @@ func (sn StateNode) ObjectsHash() string {
 		buf.WriteString(sn.Objects()[ck].Value)
 		buf.WriteString(";")
 	}
-	return util.ShortenHash(buf.String())
+	return ContentsHash(util.ShortenHash(buf.String()))
 }
 
 // ConvergenceHash returns a hash normalized for convergence by dropping pending reconciles
