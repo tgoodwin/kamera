@@ -217,12 +217,6 @@ func (c *Client) Remove(ctx context.Context, obj client.Object) error {
 
 func (c *Client) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
 	preconditions := ExtractUpdatePreconditions(opts)
-	// labels := obj.GetLabels()
-	// // TODO SLE-28 diagnose why this case even exists
-	// if _, ok := labels[tag.TraceyObjectID]; !ok {
-	// 	logger.Error(nil, "no tracey object ID found on object")
-	// tag.AddSleeveObjectID(obj)
-	// }
 	return c.handleEffect(ctx, obj, event.UPDATE, &preconditions)
 }
 
