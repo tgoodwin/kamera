@@ -290,13 +290,6 @@ type ObservableState interface {
 	Objects() ObjectVersions
 }
 
-type NodeMode string
-
-const (
-	NodeModeNatural      NodeMode = "natural"
-	NodeModeHypothetical NodeMode = "hypothetical"
-)
-
 type StateNode struct {
 	ID       string
 	Contents StateSnapshot
@@ -309,8 +302,6 @@ type StateNode struct {
 
 	// ExecutionHistory tracks the sequence of reconciles that led to this state
 	ExecutionHistory ExecutionHistory
-
-	mode NodeMode // used to track if we are in a natural or hypothetical state
 
 	// used to track children of a divergence point of interest
 	divergenceKey StateHash
@@ -387,9 +378,7 @@ func (sn StateNode) Clone() StateNode {
 		ExecutionHistory:  slices.Clone(sn.ExecutionHistory),
 		depth:             sn.depth,
 		DivergencePoint:   sn.DivergencePoint, // TODO deprecate
-
-		mode:          sn.mode,
-		divergenceKey: sn.divergenceKey,
+		divergenceKey:     sn.divergenceKey,
 
 		stuckReconcilerPositions: maps.Clone(sn.stuckReconcilerPositions),
 	}

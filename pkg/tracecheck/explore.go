@@ -965,9 +965,6 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		parent:            &state,
 		action:            reconcileResult,
 
-		// inherit the mode from the parent
-		mode: state.mode,
-
 		// inherit divergence point from the parent
 		divergenceKey: state.divergenceKey,
 
@@ -1111,8 +1108,6 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 			action:            currState.action,
 			ExecutionHistory:  slices.Clone(currState.ExecutionHistory),
 
-			// identify the produced node as a "hypothetical" state
-			mode:          NodeModeHypothetical,
 			divergenceKey: divergenceHash,
 
 			stuckReconcilerPositions: stuckPositions,
