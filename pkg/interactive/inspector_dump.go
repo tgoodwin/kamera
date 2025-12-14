@@ -2,6 +2,7 @@ package interactive
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -58,13 +59,11 @@ type dumpObject struct {
 }
 
 type dumpResultState struct {
-	ID              string                       `json:"id"`
-	Reason          string                       `json:"reason"`
-	Error           string                       `json:"error,omitempty"`
-	DivergencePoint string                       `json:"divergencePoint"`
-	State           dumpStateNode                `json:"state"`
-	Paths           [][]dumpReconcileResult      `json:"paths"`
-	FailedReconcile *tracecheck.PendingReconcile `json:"failedReconcile,omitempty"`
+	ID              string                  `json:"id"`
+	Error           string                  `json:"error,omitempty"`
+	DivergencePoint string                  `json:"divergencePoint"`
+	State           dumpStateNode           `json:"state"`
+	Paths           [][]dumpReconcileResult `json:"paths"`
 }
 
 type dumpStateNode struct {
@@ -153,10 +152,13 @@ func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error)
 			return nil, err
 		}
 
+		errMsg := ""
+		if state.Error != nil {
+			errMsg = state.Error.Error()
+		}
 		dumpState := dumpResultState{
 			ID:              state.ID,
-			Reason:          state.Reason,
-			Error:           state.Error,
+			Error:           errMsg,
 			DivergencePoint: state.State.DivergencePoint,
 			State: dumpStateNode{
 				Contents: dumpStateSnapshot{
@@ -164,10 +166,6 @@ func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error)
 					KindSequences: state.State.Contents.KindSequences,
 				},
 			},
-		}
-		if state.FailedReconcile != nil {
-			copy := *state.FailedReconcile
-			dumpState.FailedReconcile = &copy
 		}
 
 		paths := make([][]dumpReconcileResult, len(state.Paths))
@@ -229,6 +227,10 @@ func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
 
 	states := make([]tracecheck.ResultState, len(d.States))
 	for i, dumped := range d.States {
+		var errVal error
+		if dumped.Error != "" {
+			errVal = errors.New(dumped.Error)
+		}
 		stateNode := tracecheck.StateNode{
 			ID: dumped.ID,
 			Contents: tracecheck.NewStateSnapshot(
@@ -252,19 +254,11 @@ func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
 			paths[j] = results
 		}
 
-		var failedCopy *tracecheck.PendingReconcile
-		if dumped.FailedReconcile != nil {
-			copy := *dumped.FailedReconcile
-			failedCopy = &copy
-		}
-
 		states[i] = tracecheck.ResultState{
-			ID:              dumped.ID,
-			Reason:          dumped.Reason,
-			Error:           dumped.Error,
-			State:           stateNode,
-			Paths:           paths,
-			FailedReconcile: failedCopy,
+			ID:    dumped.ID,
+			Error: errVal,
+			State: stateNode,
+			Paths: paths,
 			// TODO refactor to remove this from ResultState
 			Resolver: versionManager,
 		}

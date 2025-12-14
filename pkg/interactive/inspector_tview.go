@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"maps"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 	"github.com/samber/lo"
@@ -16,7 +18,6 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"golang.org/x/exp/slices"
-	"maps"
 )
 
 type inspectorMode int
@@ -813,11 +814,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 		}
 
 		title := fmt.Sprintf("Objects • State %d", selectedState)
-		if state.Reason != "" {
-			title = fmt.Sprintf("%s (%s)", title, state.Reason)
-		}
-		if state.Error != "" {
-			title = fmt.Sprintf("%s – %s", title, truncateString(state.Error, 64))
+		if state.Error != nil {
+			title = fmt.Sprintf("%s – %s", title, truncateString(state.Error.Error(), 64))
 		}
 		detailTable.SetTitle(title)
 		showDetailTable()
@@ -1556,7 +1554,7 @@ func countDistinctPathHashes(paths []tracecheck.ExecutionHistory) int {
 
 func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 	table.Clear()
-	headers := []string{"Idx", "Hash", "Objects", "Paths", "Hashes", "Pending", "Reason"}
+	headers := []string{"Idx", "Hash", "Objects", "Paths", "Hashes", "Pending", "Status"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -1570,16 +1568,11 @@ func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
 		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", countDistinctPathHashes(state.Paths))))
 		table.SetCell(row+1, 5, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
-		reason := state.Reason
-		if state.Error != "" {
-			snippet := truncateString(state.Error, 48)
-			if reason == "" {
-				reason = snippet
-			} else {
-				reason = fmt.Sprintf("%s (%s)", reason, snippet)
-			}
+		status := "converged"
+		if state.Error != nil {
+			status = truncateString(state.Error.Error(), 48)
 		}
-		table.SetCell(row+1, 6, tview.NewTableCell(reason))
+		table.SetCell(row+1, 6, tview.NewTableCell(status))
 	}
 }
 
@@ -1694,23 +1687,12 @@ func formatPathSummary(state tracecheck.ResultState, pathIdx int) string {
 	}
 
 	b.WriteString("\nOutcome:\n")
-	if len(state.State.PendingReconciles) == 0 && state.Error == "" && state.FailedReconcile == nil {
+	if len(state.State.PendingReconciles) == 0 && state.Error == nil {
 		b.WriteString("  Converged\n")
-	} else if state.Reason != "" {
-		fmt.Fprintf(&b, "  %s\n", state.Reason)
 	} else {
 		b.WriteString("  Aborted\n")
-	}
-	if state.Reason != "" || state.Error != "" || state.FailedReconcile != nil {
-		if state.Reason != "" {
-			fmt.Fprintf(&b, "  Reason: %s\n", state.Reason)
-		}
-		if state.Error != "" {
-			fmt.Fprintf(&b, "  Error: %s\n", state.Error)
-		}
-		if state.FailedReconcile != nil {
-			req := state.FailedReconcile.Request.NamespacedName
-			fmt.Fprintf(&b, "  Failed Reconcile: %s %s/%s\n", state.FailedReconcile.ReconcilerID, req.Namespace, req.Name)
+		if state.Error != nil {
+			fmt.Fprintf(&b, "  Error: %s\n", state.Error.Error())
 		}
 	}
 	return b.String()

@@ -199,8 +199,8 @@ func runReconcileStep(t *testing.T, explorer *Explorer, state StateNode, step in
 
 	newPending := explorer.determineNewPendingReconciles(ctx, state, pr, reconcileResult)
 
-	reconcileResult.StateAfter = maps.Clone(nextState)
-	reconcileResult.KindSeqAfter = maps.Clone(nextSequences)
+	reconcileResult.StateAfter = nextState
+	reconcileResult.KindSeqAfter = nextSequences
 	reconcileResult.PendingReconciles = newPending
 
 	newState := StateNode{

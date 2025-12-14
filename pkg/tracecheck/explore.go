@@ -102,13 +102,11 @@ type Explorer struct {
 }
 
 type ResultState struct {
-	ID              string
-	State           StateNode
-	Paths           []ExecutionHistory
-	Reason          string
-	Error           string
-	FailedReconcile *PendingReconcile
-	Resolver        VersionManager
+	ID       string
+	State    StateNode
+	Paths    []ExecutionHistory
+	Error    error
+	Resolver VersionManager
 }
 
 type cachedReconcileResult struct {
@@ -214,7 +212,6 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 			ID:       fmt.Sprintf("state-%d", i),
 			State:    state,
 			Paths:    paths,
-			Reason:   "converged",
 			Resolver: e.versionManager,
 		}
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
@@ -245,10 +242,6 @@ func (e *Explorer) explore(
 		close(executionPathsCh)
 		close(abortedStatesCh)
 	}()
-
-	if e.Config.MaxDepth == 0 {
-		e.Config.MaxDepth = DefaultMaxDepth
-	}
 
 	if logger.V(2).Enabled() {
 		logger.V(2).Info("initial state")
@@ -511,15 +504,6 @@ func (e *Explorer) explore(
 			return errors.Wrap(err, "getting possible views")
 		}
 
-		prioritizedViews := lo.Filter(possibleViews, func(s StateNode, _ int) bool {
-			return s.Contents.Priority != Skip
-		})
-		logger.V(2).WithValues(
-			"PreFilteredCount", len(possibleViews),
-			"FilteredCount", len(prioritizedViews),
-		).Info("filtered possible views based on priority")
-		possibleViews = prioritizedViews
-
 		if len(possibleViews) == 0 {
 			logger.WithValues(
 				"StateKey", stateKey,
@@ -527,21 +511,8 @@ func (e *Explorer) explore(
 				"PendingCount", len(currentState.PendingReconciles),
 			).Info("no eligible views for pending reconcile; marking state as aborted")
 
-			e.stats.AbortedPaths++
-			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
-			abortReason := fmt.Sprintf("no eligible views for %s", pendingReconcile.ReconcilerID)
-
-			reconcileCopy := pendingReconcile
-			select {
-			case abortedStatesCh <- ResultState{
-				ID:              fmt.Sprintf("aborted-%s", stateKey),
-				State:           currentState,
-				Paths:           []ExecutionHistory{currentState.ExecutionHistory},
-				Reason:          abortReason,
-				FailedReconcile: &reconcileCopy,
-				Resolver:        e.versionManager,
-			}:
-			case <-ctx.Done():
+			abortErr := errors.New(fmt.Sprintf("no eligible views for %s", pendingReconcile.ReconcilerID))
+			if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
 				return nil
 			}
 
@@ -633,25 +604,11 @@ func (e *Explorer) explore(
 			if err != nil {
 				// if we encounter an error during reconciliation, just abandon this branch
 				stepLogger.Error(err, "error taking reconcile step; abandoning branch")
-				e.stats.AbortedPaths++
 				failurePath := stateView.ExecutionHistory
 				if stepResult != nil {
 					failurePath = append(slices.Clone(stateView.ExecutionHistory), stepResult)
 				}
-				stateKey := stateView.Hash()
-				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], failurePath)
-				reconcileCopy := pendingReconcile
-				select {
-				case abortedStatesCh <- ResultState{
-					ID:              fmt.Sprintf("aborted-%s", stateKey),
-					State:           stateView,
-					Paths:           []ExecutionHistory{failurePath},
-					Reason:          "error",
-					Error:           err.Error(),
-					FailedReconcile: &reconcileCopy,
-					Resolver:        e.versionManager,
-				}:
-				case <-ctx.Done():
+				if e.emitAbortedState(ctx, abortedStatesCh, stateView, executionPathsToState, failurePath, err) {
 					return nil
 				}
 				continue
@@ -677,24 +634,8 @@ func (e *Explorer) explore(
 						"Lineage", newState.ReconcileLineage(),
 					).Info("aborting path due to max depth")
 				}
-				e.stats.AbortedPaths++
-				stateKey := newState.Hash()
-				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], newState.ExecutionHistory)
-
-				// NOTE: We intentionally do NOT mark max-depth aborts as completed.
-				// Max depth is path-dependent (a state reached at depth 99 hits the limit,
-				// but the same state reached at depth 50 can continue). Marking completion
-				// here would incorrectly skip paths that could have converged.
-
-				select {
-				case abortedStatesCh <- ResultState{
-					ID:       fmt.Sprintf("aborted-%s", stateKey),
-					State:    newState,
-					Paths:    []ExecutionHistory{newState.ExecutionHistory},
-					Reason:   fmt.Sprintf("max depth %d", e.Config.MaxDepth),
-					Resolver: e.versionManager,
-				}:
-				case <-ctx.Done():
+				if ctxCancelled := e.emitAbortedState(ctx, abortedStatesCh, newState, executionPathsToState, newState.ExecutionHistory, errors.New("max depth reached")); ctxCancelled {
+					return nil
 				}
 				continue
 			}
@@ -765,6 +706,36 @@ func (e *Explorer) explore(
 	}
 
 	return nil
+}
+
+// emitAbortedState records an aborted exploration branch and attempts to send it on the channel.
+// Returns true if the context was cancelled before the send completed.
+func (e *Explorer) emitAbortedState(
+	ctx context.Context,
+	abortedStatesCh chan<- ResultState,
+	state StateNode,
+	executionPathsToState map[StateHash][]ExecutionHistory,
+	path ExecutionHistory,
+	err error,
+) bool {
+	e.stats.AbortedPaths++
+	stateKey := state.Hash()
+	executionPathsToState[stateKey] = append(executionPathsToState[stateKey], path)
+
+	aborted := ResultState{
+		ID:       fmt.Sprintf("aborted-%s", stateKey),
+		State:    state,
+		Paths:    []ExecutionHistory{path},
+		Error:    err,
+		Resolver: e.versionManager,
+	}
+
+	select {
+	case abortedStatesCh <- aborted:
+		return false
+	case <-ctx.Done():
+		return true
+	}
 }
 
 func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, stepResult *ReconcileResult) (ObjectVersions, KindSequences, []StateEvent) {
@@ -1096,7 +1067,11 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return sn
 	})
 
-	return asStateNodes, nil
+	filtered := lo.Filter(asStateNodes, func(sn StateNode, _ int) bool {
+		return sn.Contents.Priority != Skip
+	})
+
+	return filtered, nil
 }
 
 func dumpQueue(queue []StateNode) []string {
