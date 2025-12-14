@@ -30,8 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const defaultMaxDepth = 100
-
 func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Configure simclock to use 2s steps instead of 1s to speed up scale-to-zero simulation
 	// (60s stable window + 30s grace period = 90s total, which is 45 steps at 2s/step)
@@ -40,7 +38,6 @@ func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 
 	builder := tracecheck.NewExplorerBuilder(scheme)
 	configureKnativeExplorer(builder)
-	builder.WithMaxDepth(defaultMaxDepth)
 
 	builder.WithoutOptimizations()
 
