@@ -882,7 +882,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 				pendingReconcilesTable.SetCell(idx+1, 4, valueCell(string(pr.Source)))
 			}
 			pendingReconcilesTable.Select(pendingDetailRow, 0)
-			pendingReconcilesTable.SetTitle(fmt.Sprintf("Pending Reconciles • Step %d (%d)", selectedStep, len(stepPendingReconciles)))
+			pendingReconcilesTable.SetTitle(fmt.Sprintf("Resulting Pending Reconciles • Step %d (%d)", selectedStep, len(stepPendingReconciles)))
 			pendingReconcilesTable.SetSelectedFunc(nil)
 		}
 		detailContainer.AddItem(pendingReconcilesTable, 0, 2, false)
@@ -1020,7 +1020,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 			controller = string(step.ControllerID)
 			frame = util.Shorter(step.FrameID)
 		}
-		detailTable.SetTitle(fmt.Sprintf("State • Step %d (%s @ %s)", selectedStep, controller, frame))
+		detailTable.SetTitle(fmt.Sprintf("Resulting State • Step %d (%s @ %s)", selectedStep, controller, frame))
 		detailTable.SetSelectedFunc(func(row, _ int) {
 			if row <= 0 || row-1 >= len(stateObjects) {
 				return
