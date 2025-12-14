@@ -107,6 +107,9 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
 		},
 	}
+	if builder.config.MaxDepth == 0 {
+		builder.config.MaxDepth = DefaultMaxDepth
+	}
 
 	builder.registerCoreControllers()
 
@@ -496,6 +499,12 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 	mode := "standalone"
 	if len(modes) > 0 && modes[0] != "" {
 		mode = modes[0]
+	}
+	if b.config == nil {
+		b.config = &ExploreConfig{}
+	}
+	if b.config.MaxDepth == 0 {
+		b.config.MaxDepth = DefaultMaxDepth
 	}
 	// Validate configuration
 	if len(b.resourceDeps) == 0 {
