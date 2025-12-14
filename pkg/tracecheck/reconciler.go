@@ -38,17 +38,17 @@ type Strategy interface {
 type ControllerRuntimeStrategy struct {
 	reconcile.Reconciler
 	frameInserter
-	reconcilerName string
+	name ReconcilerID
 	effectReader
 	scheme *runtime.Scheme
 }
 
-func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er effectReader, name string) *ControllerRuntimeStrategy {
+func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er effectReader, name ReconcilerID) *ControllerRuntimeStrategy {
 	return &ControllerRuntimeStrategy{
-		Reconciler:     r,
-		frameInserter:  fi,
-		reconcilerName: name,
-		effectReader:   er,
+		Reconciler:    r,
+		frameInserter: fi,
+		name:          name,
+		effectReader:  er,
 	}
 }
 
@@ -68,7 +68,7 @@ func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, name t
 	// our cleanup reconciler implementation needs to know what kind of object it is reconciling
 	// as reconcile.Request is only namespace/name. so we inject it through the context.
 	// TODO factor this cleanup-specific stuff out into a dedicated strategy
-	if s.reconcilerName == string(cleanupReconcilerID) {
+	if s.name == cleanupReconcilerID {
 		frameID := replay.FrameIDFromContext(ctx)
 		frameData, err := s.frameInserter.(*replay.FrameManager).GetCacheFrame(frameID)
 		if err != nil {
@@ -102,9 +102,7 @@ func (s *ControllerRuntimeStrategy) toFrameData(objects []runtime.Object) replay
 
 		u, err := util.ConvertToUnstructured(obj.(client.Object))
 		if err != nil {
-			// This should ideally not happen if the input is valid
-			logger.Error(err, "failed to convert object to unstructured")
-			continue
+			panic(fmt.Sprintf("could not convert object to unstructured: %v", err))
 		}
 
 		kind := u.GetKind()
@@ -132,12 +130,9 @@ func (s *ControllerRuntimeStrategy) toFrameData(objects []runtime.Object) replay
 }
 
 type ReconcilerContainer struct {
-	// The name of the reconciler
-	Name ReconcilerID
-
-	Strategy     Strategy
-	effectReader effectReader
-
+	Name           ReconcilerID
+	Strategy       Strategy
+	effectReader   effectReader
 	versionManager VersionManager
 }
 
@@ -145,7 +140,7 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 	frameID := replay.FrameIDFromContext(ctx)
 
 	// convert ObjectVersions to []runtime.Object
-	var objects []runtime.Object
+	var objects = make([]runtime.Object, 0, len(observableState))
 	var unresolvedKeys []string
 	for key, hash := range observableState {
 		obj := r.versionManager.Resolve(hash)
@@ -224,11 +219,11 @@ func Wrap(name ReconcilerID, r reconcile.Reconciler, vm VersionManager, fi frame
 	}
 
 	strategy := &ControllerRuntimeStrategy{
-		Reconciler:     r,
-		frameInserter:  fi,
-		reconcilerName: string(name),
-		effectReader:   er,
-		scheme:         scheme,
+		Reconciler:    r,
+		frameInserter: fi,
+		name:          name,
+		effectReader:  er,
+		scheme:        scheme,
 	}
 	return &ReconcilerContainer{
 		Name:           name,
