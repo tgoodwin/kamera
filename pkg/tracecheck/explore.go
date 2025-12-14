@@ -306,7 +306,14 @@ func (e *Explorer) explore(
 	// var currentState StateNode
 	var currentState StateNode
 
-	queue = append(queue, initialState)
+	// permute the order of the initial state pending reconciles (assume they were all triggered by the initial state)
+	if len(initialState.PendingReconciles) > 1 {
+		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
+		for _, variant := range initialStateVariants {
+			queue = e.enqueueState(queue, variant)
+		}
+	}
+	queue = e.enqueueState(queue, initialState)
 
 	initialHash := initialState.Hash()
 	initialSignature := initialState.ExecutionHistory.UniqueKey()
