@@ -327,7 +327,7 @@ func (e *Explorer) explore(
 		// DISABLED: Current implementation marks subtrees as "explored" when we START,
 		// not when we FINISH. This causes missed convergence when first exploration
 		// doesn't complete (errors, depth limits, etc.). Need to track completion properly.
-		// TODO: Re-enable with proper completion tracking.
+		// TODO: Re-enable with proper subtree completion tracking.
 		_ = exploredSubtrees // Keep variable to avoid removing related code
 
 		alreadySeen := seenStates[orderKey]
@@ -354,45 +354,6 @@ func (e *Explorer) explore(
 				logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
 					"depth", currentState.depth, "pendingCount", len(currentState.PendingReconciles))
 				continue
-			}
-		}
-
-		if len(currentState.PendingReconciles) > 1 && !allPendingAreNoOps {
-			if !seenBranchingByState[stateKey] {
-				expandedStates := e.expandStateByReconcileOrder(currentState)
-				if logger.V(2).Enabled() {
-					branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
-						return sn.LineageHash()
-					})
-					logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
-				}
-
-				// Optimization: skip orderings that put a known no-op reconciler first.
-				objectsHash := currentState.ContentsHash()
-				for _, candidate := range expandedStates {
-					// Skip the current ordering; it is already being explored.
-					if candidate.OrderSensitiveHash() == orderKey {
-						continue
-					}
-
-					// Check if the first reconciler in this ordering is a known no-op.
-					if !e.Config.DisableNoOpOrderingSkip {
-						firstPending := candidate.PendingReconciles[0]
-						noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, firstPending.ReconcilerID, firstPending.Request.NamespacedName.String())
-						if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
-							e.stats.SkippedNoOpOrderings++
-							continue
-						}
-					}
-
-					logger.V(2).Info("adding new branch to explore", "StateKey", stateKey, "EnqueuedOrder", candidate.OrderSensitiveHash())
-					queue = e.enqueueState(queue, candidate)
-				}
-				// Mark this logical state as expanded to avoid re-branching.
-				seenBranchingByState[stateKey] = true
-			} else {
-				e.stats.SkippedOrderExpansions++
-				logger.WithValues("StateKey", stateKey).V(2).Info("already expanded pending orderings for this state, not branching")
 			}
 		}
 
@@ -545,18 +506,17 @@ func (e *Explorer) explore(
 			}
 
 			stepLogger.Info("Taking reconcile step")
-
 			stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
 
-			beforeSequences := maps.Clone(stateView.Contents.KindSequences)
-
 			stepResult.StateBefore = maps.Clone(stateView.Objects())
-			stepResult.KindSeqBefore = beforeSequences
+			stepResult.KindSeqBefore = maps.Clone(stateView.Contents.KindSequences)
 
 			// update the state with the new object versions.
 			// note that we are updating the "global state" here,
 			// which may be separate from what the controller saw upon reconciling.
 			newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
+
+			triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes)
 
 			newPendingReconciles := e.determineNewPendingReconciles(ctx, stateView, pendingReconcile, stepResult)
 			stepLogger.V(1).WithValues(
@@ -597,7 +557,7 @@ func (e *Explorer) explore(
 					outputObjectsHash:   newState.ContentsHash(),
 					wasNoOp:             wasNoOp,
 					numEffects:          len(stepResult.Changes.Effects),
-					triggeredReconciles: e.getTriggeredReconcilers(stepResult.Changes),
+					triggeredReconciles: triggeredByStep,
 				}
 			}
 
@@ -700,6 +660,28 @@ func (e *Explorer) explore(
 			pendingSignature := strings.Join(pendingStrs, ",")
 			logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.ContentsHash(), pendingSignature, normalizedHistory)
 			exploredLogicalStates[logicalStateKey] = struct{}{}
+
+			newStateKey := newState.Hash()
+			if len(newState.PendingReconciles) > 1 {
+				if !seenBranchingByState[newStateKey] {
+					expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
+					for _, orderVariant := range expandedStates {
+						// skip orderVariants whose first reconcile are known no-ops
+						if !e.Config.DisableNoOpOrderingSkip {
+							fst := orderVariant.PendingReconciles[0]
+							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.ContentsHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
+							if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
+								e.stats.SkippedNoOpOrderings++
+								continue
+							}
+						}
+						queue = e.enqueueState(queue, orderVariant)
+					}
+					seenBranchingByState[newStateKey] = true
+				} else {
+					e.stats.SkippedOrderExpansions++
+				}
+			}
 
 			queue = e.enqueueState(queue, newState)
 		}
