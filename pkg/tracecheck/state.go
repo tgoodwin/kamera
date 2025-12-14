@@ -607,7 +607,7 @@ func (sn StateNode) ReconcileLineage() string {
 // where each new StateNode is a clone of the input but with a different pending reconcile
 // as the first element in its PendingReconciles list.
 // Only reconcilers with permuteOrder=true will have alternative orderings generated.
-func (e *Explorer) expandStateByReconcileOrder(state StateNode) []StateNode {
+func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []PendingReconcile) []StateNode {
 	// If there are no pending reconciles or just one, just return the original state
 	if len(state.PendingReconciles) <= 1 {
 		return []StateNode{state}
@@ -620,40 +620,29 @@ func (e *Explorer) expandStateByReconcileOrder(state StateNode) []StateNode {
 	originalPending := state.PendingReconciles
 	var result []StateNode
 
-	// For each pending reconcile, create a new StateNode with that reconcile first,
-	// but only for reconcilers that have permuteOrder=true
-	for i := 0; i < len(originalPending); i++ {
-		reconcilerID := originalPending[i].ReconcilerID
-		_, ok := e.reconcilers[reconcilerID]
+	toPermute := util.NewSet[ReconcilerID]()
+	for _, pr := range triggered {
+		if permute, ok := e.Config.PermuteOrder[pr.ReconcilerID]; ok && permute {
+			toPermute.Add(pr.ReconcilerID)
+		}
+	}
 
-		// Skip creating alternative orderings for reconcilers that don't have permuteOrder set
-		if !ok || !e.Config.PermuteOrder[reconcilerID] {
+	// For each pending reconcile in toPermute, create a new StateNode with that reconcile first,
+	for i := range originalPending {
+		reconcilerID := originalPending[i].ReconcilerID
+		if _, ok := toPermute[reconcilerID]; !ok {
 			continue
 		}
 
-		// Create a new ordering with this reconcile first
-		alternativeOrder := make([]PendingReconcile, len(originalPending))
-		alternativeOrder[0] = originalPending[i] // Put the ith reconcile first
-
-		// Add the rest in their original order, skipping the one we put first
-		j := 1
-		for k := 0; k < len(originalPending); k++ {
-			if k != i {
-				alternativeOrder[j] = originalPending[k]
-				j++
-			}
-		}
+		alternativeOrder := make([]PendingReconcile, 0, len(originalPending))
+		alternativeOrder = append(alternativeOrder, originalPending[i])
+		alternativeOrder = append(alternativeOrder, originalPending[:i]...)
+		alternativeOrder = append(alternativeOrder, originalPending[i+1:]...)
 
 		cloned := state.Clone()
 		cloned.PendingReconciles = alternativeOrder
 		cloned.ID = string(cloned.OrderSensitiveHash()) // Generate a new deterministic ID based on the new ordering
 		result = append(result, cloned)
-	}
-
-	// If no alternative orderings were created (no reconcilers with permuteOrder=true),
-	// return the original state
-	if len(result) == 0 {
-		return []StateNode{state}
 	}
 
 	return result
