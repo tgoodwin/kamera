@@ -74,6 +74,10 @@ func (cfg ExploreConfig) Clone() ExploreConfig {
 	return out
 }
 
+func (cfg ExploreConfig) OptimizationsEnabled() bool {
+	return !cfg.DisableEarlyConvergence || !cfg.DisableCachePrediction || !cfg.DisableNoOpOrderingSkip
+}
+
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
 type TriggerHandler interface {
 	GetTriggered(changes Changes) ([]PendingReconcile, error)
@@ -353,14 +357,16 @@ func (e *Explorer) explore(
 		// and we've already found a converged path to this logical state, skip entirely.
 		// The first path runs through the no-ops to reach actual convergence; subsequent
 		// paths can skip since they'd produce the same result.
-		allPendingAreNoOps := e.checkEarlyConvergence(currentState, knownNoOps)
-		if allPendingAreNoOps && !e.Config.DisableEarlyConvergence {
-			objectsHash := currentState.ContentsHash()
-			if _, alreadyConverged := seenConvergedStates[StateHash(objectsHash)]; alreadyConverged {
-				e.stats.EarlyConvergence++
-				logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
-					"depth", currentState.depth, "pendingCount", len(currentState.PendingReconciles))
-				continue
+		if e.Config.OptimizationsEnabled() {
+			allPendingAreNoOps := e.checkEarlyConvergence(currentState, knownNoOps)
+			if allPendingAreNoOps {
+				objectsHash := currentState.ContentsHash()
+				if _, alreadyConverged := seenConvergedStates[StateHash(objectsHash)]; alreadyConverged {
+					e.stats.EarlyConvergence++
+					logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
+						"depth", currentState.depth, "pendingCount", len(currentState.PendingReconciles))
+					continue
+				}
 			}
 		}
 
@@ -436,16 +442,18 @@ func (e *Explorer) explore(
 
 		// Divergence Circuit-Breaker: limit exploration when paths from a divergence point
 		// keep converging to the same state.
-		if threshold := e.Config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
-			convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
-			repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
-			if repeatedCount > threshold {
-				logger.V(1).Info("skipping state; subtree circuit breaker triggered",
-					"StateKey", stateKey,
-					"DivergenceKey", currentState.divergenceKey,
-					"Threshold", threshold,
-					"RepeatedConvergences", repeatedCount)
-				continue
+		if e.Config.OptimizationsEnabled() {
+			if threshold := e.Config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
+				convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
+				repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
+				if repeatedCount > threshold {
+					logger.V(1).Info("skipping state; subtree circuit breaker triggered",
+						"StateKey", stateKey,
+						"DivergenceKey", currentState.divergenceKey,
+						"Threshold", threshold,
+						"RepeatedConvergences", repeatedCount)
+					continue
+				}
 			}
 		}
 
@@ -504,7 +512,7 @@ func (e *Explorer) explore(
 			reconcileResKey := fmt.Sprintf("%s:%s:%s", stateView.ContentsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
 			// Check cache: can we predict the output state without running the reconcile?
-			if !e.Config.DisableCachePrediction {
+			if e.Config.OptimizationsEnabled() {
 				if e.skipViaCachePrediction(reconcileResCache, exploredLogicalStates, reconcileResKey, stateView, pendingReconcile) {
 					stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
 					e.stats.CachePredictedSkips++
@@ -647,13 +655,15 @@ func (e *Explorer) explore(
 			normalizedHistory := newState.ExecutionHistory.UniqueKey()
 			completionKey := fmt.Sprintf("%s|%s", stateHash, normalizedHistory)
 
-			if completed := completedPaths[completionKey]; completed {
-				logger.V(1).WithValues(
-					"StateHash", stateHash,
-					"PathSignature", normalizedHistory,
-				).Info("skipping - path already completed exploration")
-				e.stats.SkippedPaths++
-				continue
+			if e.Config.OptimizationsEnabled() {
+				if completed := completedPaths[completionKey]; completed {
+					logger.V(1).WithValues(
+						"StateHash", stateHash,
+						"PathSignature", normalizedHistory,
+					).Info("skipping - path already completed exploration")
+					e.stats.SkippedPaths++
+					continue
+				}
 			}
 
 			// Track that we've enqueued this path (for stats/debugging)
@@ -668,13 +678,14 @@ func (e *Explorer) explore(
 			logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.ContentsHash(), pendingSignature, normalizedHistory)
 			exploredLogicalStates[logicalStateKey] = struct{}{}
 
+			// branch on order of subsequent reconciles that were triggered by this state change step
 			newStateKey := newState.Hash()
 			if len(newState.PendingReconciles) > 1 {
 				if !seenBranchingByState[newStateKey] {
 					expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
 					for _, orderVariant := range expandedStates {
 						// skip orderVariants whose first reconcile are known no-ops
-						if !e.Config.DisableNoOpOrderingSkip {
+						if e.Config.OptimizationsEnabled() {
 							fst := orderVariant.PendingReconciles[0]
 							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.ContentsHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
 							if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
