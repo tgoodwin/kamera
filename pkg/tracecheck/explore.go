@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -505,8 +506,6 @@ func (e *Explorer) explore(
 			).Info("processing reconcile step")
 		}
 
-		// Each controller in the pending reconciles list is a potential branch point
-		// from the current state.
 		possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID, currentState.depth)
 		if err != nil {
 			return errors.Wrap(err, "getting possible views")
@@ -576,8 +575,43 @@ func (e *Explorer) explore(
 
 			stepLogger.Info("Taking reconcile step")
 
-			// for each view, create a new branch in exploration
-			newState, stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+			stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+
+			beforeSequences := maps.Clone(stateView.Contents.KindSequences)
+
+			stepResult.StateBefore = maps.Clone(stateView.Objects())
+			stepResult.KindSeqBefore = beforeSequences
+
+			// update the state with the new object versions.
+			// note that we are updating the "global state" here,
+			// which may be separate from what the controller saw upon reconciling.
+			newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
+
+			newPendingReconciles := e.determineNewPendingReconciles(ctx, stateView, pendingReconcile, stepResult)
+			stepLogger.V(1).WithValues(
+				"Depth", stateView.depth,
+				"Count", len(newPendingReconciles),
+				"Items", newPendingReconciles,
+			).Info("final pending reconciles after step")
+
+			// make a copy of the current execution history
+			currHistory := slices.Clone(stateView.ExecutionHistory)
+
+			stepResult.StateAfter = newContents
+			stepResult.KindSeqAfter = newSequences
+			stepResult.PendingReconciles = newPendingReconciles
+
+			newState := StateNode{
+				Contents:          NewStateSnapshot(newContents, newSequences, newStateEvents),
+				PendingReconciles: newPendingReconciles,
+				parent:            &stateView,
+				action:            stepResult,
+				// inherit divergence point from the parent
+				divergenceKey:            stateView.divergenceKey,
+				stuckReconcilerPositions: maps.Clone(stateView.stuckReconcilerPositions),
+				ExecutionHistory:         append(currHistory, stepResult),
+			}
+			newState.ID = string(newState.Hash())
 
 			// Track whether this was a no-op (used by ordering optimization)
 			wasNoOp := err == nil && stepResult.wasNoOp()
@@ -733,8 +767,130 @@ func (e *Explorer) explore(
 	return nil
 }
 
+func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, stepResult *ReconcileResult) (ObjectVersions, KindSequences, []StateEvent) {
+	changes := stepResult.Changes.ObjectVersions
+
+	// initialize outputs which the effects will be applied to
+	nextState := maps.Clone(stateView.Objects())
+	nextSequences := maps.Clone(stateView.Contents.KindSequences)
+	newStateEvents := slices.Clone(stateView.Contents.stateEvents)
+
+	var highestSequence int64
+	if len(newStateEvents) > 0 {
+		// stateEvents are ordered, so the last entry carries the current max sequence.
+		highestSequence = newStateEvents[len(newStateEvents)-1].Sequence
+	}
+
+	for _, effect := range stepResult.Changes.Effects {
+		existingKey, exists := nextState.HasNamespacedNameForKind(effect.Key.ResourceKey)
+
+		switch effect.OpType {
+		case event.CREATE:
+			if exists {
+				// the effect validation mechanism should prevent a create effect from going through
+				// with an 'AlreadyExists' error, so panic if it does happen
+				panic("create effect object already exists in prev state: " + effect.Key.String())
+			}
+			// Mimic APIServer behavior: set Generation to 1 on CREATE if not already set
+			newObj := e.versionManager.Resolve(changes[effect.Key])
+			if newObj != nil {
+				gen := newObj.GetGeneration()
+				if gen == 0 {
+					newObj.SetGeneration(1)
+					// Update the version hash after modifying Generation
+					changes[effect.Key] = e.versionManager.Publish(newObj)
+				}
+			}
+			nextState[effect.Key] = changes[effect.Key]
+		case event.UPDATE, event.PATCH:
+			if !exists {
+				// it is possible that a stale read will cause a controller to update an object
+				// that no longer exists in the global state. The effect validation mechanism
+				// should cause the client operation to 404 and prevent the update effect from
+				// going through. If it does go through, we should panic cause something broke.
+				panic("update effect object not found in prev state: " + effect.Key.String())
+			}
+			if exists && existingKey != effect.Key {
+				delete(nextState, existingKey)
+			}
+			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
+			oldObj := e.versionManager.Resolve(nextState[existingKey])
+			newObj := e.versionManager.Resolve(changes[effect.Key])
+			if oldObj != nil && newObj != nil {
+				// Compare specs to determine if Generation should be incremented
+				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
+				// Use a safe check to avoid panics if spec comparison fails
+				specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
+				if err != nil {
+					// If we can't determine if spec changed, conservatively increment Generation
+					// This is safer than not incrementing it
+					stepLogger.V(2).WithValues("key", effect.Key, "error", err).Info("error checking spec change, incrementing Generation conservatively")
+					specChanged = true
+				}
+				if specChanged {
+					oldGen := oldObj.GetGeneration()
+					if oldGen == 0 {
+						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
+						// This can happen if the state snapshot has objects with Generation=0
+						newObj.SetGeneration(1)
+						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", 1).Info("set Generation to 1 on spec update (was 0)")
+					} else {
+						newObj.SetGeneration(oldGen + 1)
+						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", newObj.GetGeneration()).Info("incremented Generation on spec update")
+					}
+					// Update the version hash after modifying Generation
+					changes[effect.Key] = e.versionManager.Publish(newObj)
+				}
+			}
+			nextState[effect.Key] = changes[effect.Key]
+
+		// need to determine how to update state based on preconditions
+		case event.MARK_FOR_DELETION:
+			if !exists {
+				// We should never get here (effect validation should fail if there is no object matching the namespace/name in the state)
+				// but if we do, we should panic because something is wrong.
+				stepLogger.Info("warning: deleted key absent in state", "effectKey", effect.Key)
+				panic("deleted key is not present in prev state. effect validation should have prevented this")
+			}
+			stepLogger.WithValues("Key", effect.Key).V(2).Info("marked object for deletion")
+			if existingKey != effect.Key {
+				delete(nextState, existingKey)
+			}
+			// the delete effect is valid, so we should add it to the state
+			nextState[effect.Key] = changes[effect.Key]
+
+		case event.REMOVE:
+			if !exists {
+				stepLogger.Error(nil, "warning: removed key absent in state", "effectKey", effect.Key)
+				panic("removed key is not present in prev state. effect validation should have prevented this")
+			}
+			stepLogger.V(2).Info("removing object from state", "key", effect.Key)
+			delete(nextState, existingKey)
+		default:
+			// at this part of the code we are only working with write effects
+			panic(fmt.Errorf("unknown effect type: %s", effect.OpType))
+		}
+
+		highestSequence++
+		newRV := highestSequence
+
+		// increment resourceversion for the kind
+		nextSequences[effect.Key.IdentityKey.CanonicalGroupKind()] = newRV
+		stateEvent := StateEvent{
+			ReconcileID: stepResult.FrameID,
+			Sequence:    newRV,
+			Effect:      effect,
+			// TODO handle time info
+			Timestamp: "",
+		}
+		newStateEvents = append(newStateEvents, stateEvent)
+	}
+
+	return nextState, nextSequences, newStateEvents
+}
+
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
-func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (StateNode, *ReconcileResult, error) {
+func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (*ReconcileResult, error) {
 	stepLog := log.FromContext(ctx)
 	startWall := time.Now()
 	defer func() {
@@ -771,14 +927,14 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		// AlreadyExists errors happen when a stale read causes a controller to try creating
 		// an object that already exists. Treat this as a no-op and continue exploring.
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).Info("tolerating AlreadyExists error; treating reconcile as no-op")
-		reconcileResult = &ReconcileResult{
+		tolerableErrResult := &ReconcileResult{
 			ControllerID: pr.ReconcilerID,
 			FrameID:      frameID,
 			FrameType:    FrameTypeExplore,
 			Changes:      Changes{ObjectVersions: make(ObjectVersions)},
 			Error:        err.Error(),
 		}
-		err = nil
+		return tolerableErrResult, nil
 	}
 	if err != nil {
 		// Other errors cause the branch to be abandoned. Return a minimal result for history tracking.
@@ -789,191 +945,10 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			FrameType:    FrameTypeExplore,
 			Error:        err.Error(),
 		}
-		return state, failure, err
-	}
-	stepLog.V(1).WithValues(
-		"Result", reconcileResult.ctrlRes,
-	).Info("finished reconcile")
-
-	beforeState := make(ObjectVersions)
-	maps.Copy(beforeState, state.Objects())
-	beforeSequences := make(KindSequences)
-	maps.Copy(beforeSequences, state.Contents.KindSequences)
-
-	reconcileResult.StateBefore = beforeState
-	reconcileResult.KindSeqBefore = beforeSequences
-
-	newSequences := make(KindSequences)
-	maps.Copy(newSequences, state.Contents.KindSequences)
-	for key, seq := range newSequences {
-		if !strings.Contains(key, "/") {
-			stepLog.Error(nil, "kind sequence key lacks group info", "key", key, "sequence", seq)
-		}
-	}
-	effects := reconcileResult.Changes.Effects
-	stepLog.V(1).Info("completed step", "frameID", frameID, "controller", pr.ReconcilerID, "numEffects", len(effects))
-
-	// update the state with the new object versions.
-	// note that we are updating the "global state" here,
-	// which may be separate from what the controller saw upon reconciling.
-	prevState := make(ObjectVersions)
-	maps.Copy(prevState, state.Objects())
-
-	changeOV := reconcileResult.Changes.ObjectVersions
-	newStateEvents := slices.Clone(state.Contents.stateEvents)
-
-	// determine highest sequence once and increment as effects are applied
-	var highestSequence int64
-	if len(newStateEvents) > 0 {
-		for _, event := range newStateEvents {
-			if event.Sequence > highestSequence {
-				highestSequence = event.Sequence
-			}
-		}
+		return failure, err
 	}
 
-	for _, effect := range effects {
-		existingKey, exists := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey)
-
-		switch effect.OpType {
-		case event.CREATE:
-			if exists {
-				// the effect validation mechanism should prevent a create effect from going through
-				// with an 'AlreadyExists' error, so panic if it does happen
-				panic("create effect object already exists in prev state: " + effect.Key.String())
-			} else {
-				// Mimic APIServer behavior: set Generation to 1 on CREATE if not already set
-				newObj := e.versionManager.Resolve(changeOV[effect.Key])
-				if newObj != nil {
-					gen := newObj.GetGeneration()
-					if gen == 0 {
-						newObj.SetGeneration(1)
-						// Update the version hash after modifying Generation
-						changeOV[effect.Key] = e.versionManager.Publish(newObj)
-					}
-				}
-				prevState[effect.Key] = changeOV[effect.Key]
-			}
-		case event.UPDATE, event.PATCH:
-			if !exists {
-				// it is possible that a stale read will cause a controller to update an object
-				// that no longer exists in the global state. The effect validation mechanism
-				// should cause the client operation to 404 and prevent the update effect from
-				// going through. If it does go through, we should panic cause something broke.
-				panic("update effect object not found in prev state: " + effect.Key.String())
-			}
-			if exists && existingKey != effect.Key {
-				delete(prevState, existingKey)
-			}
-			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
-			oldObj := e.versionManager.Resolve(prevState[existingKey])
-			newObj := e.versionManager.Resolve(changeOV[effect.Key])
-			if oldObj != nil && newObj != nil {
-				// Compare specs to determine if Generation should be incremented
-				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
-				// Use a safe check to avoid panics if spec comparison fails
-				specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
-				if err != nil {
-					// If we can't determine if spec changed, conservatively increment Generation
-					// This is safer than not incrementing it
-					stepLog.V(2).WithValues("key", effect.Key, "error", err).Info("error checking spec change, incrementing Generation conservatively")
-					specChanged = true
-				}
-				if specChanged {
-					oldGen := oldObj.GetGeneration()
-					if oldGen == 0 {
-						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
-						// This can happen if the state snapshot has objects with Generation=0
-						newObj.SetGeneration(1)
-						stepLog.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", 1).Info("set Generation to 1 on spec update (was 0)")
-					} else {
-						newObj.SetGeneration(oldGen + 1)
-						stepLog.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", newObj.GetGeneration()).Info("incremented Generation on spec update")
-					}
-					// Update the version hash after modifying Generation
-					changeOV[effect.Key] = e.versionManager.Publish(newObj)
-				}
-			}
-			prevState[effect.Key] = changeOV[effect.Key]
-
-		// need to determine how to update state based on preconditions
-		case event.MARK_FOR_DELETION:
-			if !exists {
-				// We should never get here (effect validation should fail if there is no object matching the namespace/name in the state)
-				// but if we do, we should panic because something is wrong.
-				logger.Info("warning: deleted key absent in state", "effectKey", effect.Key, "frameID", frameID)
-				panic("deleted key is not present in prev state. effect validation should have prevented this")
-			}
-			stepLog.WithValues("Key", effect.Key).V(2).Info("marked object for deletion")
-			if existingKey != effect.Key {
-				delete(prevState, existingKey)
-			}
-			// the delete effect is valid, so we should add it to the state
-			prevState[effect.Key] = changeOV[effect.Key]
-
-		case event.REMOVE:
-			if !exists {
-				stepLog.Error(nil, "warning: removed key absent in state", "effectKey", effect.Key, "frameID", frameID)
-				panic("removed key is not present in prev state. effect validation should have prevented this")
-			}
-			stepLog.V(2).Info("removing object from state", "key", effect.Key)
-			delete(prevState, existingKey)
-		default:
-			// at this part of the code we are only working with write effects
-			err := fmt.Errorf("unknown effect type: %s", effect.OpType)
-			logger.Error(err, "effect", effect)
-			return StateNode{}, nil, err
-		}
-
-		highestSequence++
-		newRV := highestSequence
-
-		// increment resourceversion for the kind
-		newSequences[effect.Key.IdentityKey.CanonicalGroupKind()] = newRV
-		stateEvent := StateEvent{
-			ReconcileID: reconcileResult.FrameID,
-			Sequence:    newRV,
-			Effect:      effect,
-			// TODO handle time info
-			Timestamp: "",
-		}
-		newStateEvents = append(newStateEvents, stateEvent)
-	}
-
-	newPendingReconciles := e.determineNewPendingReconciles(ctx, state, pr, reconcileResult)
-	stepLog.V(1).WithValues(
-		"Depth", state.depth,
-		"Count", len(newPendingReconciles),
-		"Items", newPendingReconciles,
-	).Info("final pending reconciles after step")
-
-	// make a copy of the current execution history
-	currHistory := slices.Clone(state.ExecutionHistory)
-
-	afterState := make(ObjectVersions)
-	maps.Copy(afterState, prevState)
-	afterSequences := make(KindSequences)
-	maps.Copy(afterSequences, newSequences)
-
-	reconcileResult.StateAfter = afterState
-	reconcileResult.KindSeqAfter = afterSequences
-	reconcileResult.PendingReconciles = newPendingReconciles
-
-	child := StateNode{
-		Contents:          NewStateSnapshot(prevState, newSequences, newStateEvents),
-		PendingReconciles: newPendingReconciles,
-		parent:            &state,
-		action:            reconcileResult,
-
-		// inherit divergence point from the parent
-		divergenceKey: state.divergenceKey,
-
-		stuckReconcilerPositions: maps.Clone(state.stuckReconcilerPositions),
-
-		ExecutionHistory: append(currHistory, reconcileResult),
-	}
-	child.ID = string(child.Hash())
-	return child, child.action, nil
+	return reconcileResult, nil
 }
 
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {

@@ -2,6 +2,8 @@ package tracecheck
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -181,10 +183,36 @@ func runReconcileStep(t *testing.T, explorer *Explorer, state StateNode, step in
 
 	ctx := log.IntoContext(context.Background(), log.Log)
 
-	newState, _, err := explorer.takeReconcileStep(ctx, state, state.PendingReconciles[0])
+	pr := state.PendingReconciles[0]
+	reconcileResult, err := explorer.takeReconcileStep(ctx, state, pr)
 	require.NoErrorf(t, err, "error taking reconcile step at depth %d", state.depth)
 
-	newState.depth = nextDepth
+	stepLogger := log.FromContext(ctx)
+
+	beforeState := maps.Clone(state.Objects())
+	beforeSequences := maps.Clone(state.Contents.KindSequences)
+
+	reconcileResult.StateBefore = beforeState
+	reconcileResult.KindSeqBefore = beforeSequences
+
+	nextState, nextSequences, nextEvents := explorer.applyEffects(stepLogger, state, reconcileResult)
+
+	newPending := explorer.determineNewPendingReconciles(ctx, state, pr, reconcileResult)
+
+	reconcileResult.StateAfter = maps.Clone(nextState)
+	reconcileResult.KindSeqAfter = maps.Clone(nextSequences)
+	reconcileResult.PendingReconciles = newPending
+
+	newState := StateNode{
+		Contents:                 NewStateSnapshot(nextState, nextSequences, nextEvents),
+		PendingReconciles:        newPending,
+		parent:                   &state,
+		action:                   reconcileResult,
+		divergenceKey:            state.divergenceKey,
+		stuckReconcilerPositions: maps.Clone(state.stuckReconcilerPositions),
+		ExecutionHistory:         append(slices.Clone(state.ExecutionHistory), reconcileResult),
+		depth:                    nextDepth,
+	}
 
 	var tickerBasedPending []PendingReconcile
 	for _, pr := range newState.PendingReconciles {
