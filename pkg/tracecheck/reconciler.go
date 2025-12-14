@@ -52,10 +52,6 @@ func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er e
 	}
 }
 
-func (s *ControllerRuntimeStrategy) RetrieveEffects(ctx context.Context) (Changes, error) {
-	return s.effectReader.GetEffects(ctx)
-}
-
 func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
 	frameID := replay.FrameIDFromContext(ctx)
 	frameData := s.toFrameData(state)
