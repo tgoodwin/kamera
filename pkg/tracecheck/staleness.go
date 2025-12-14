@@ -24,10 +24,6 @@ type StateSnapshot struct {
 	// but represents the contents of ObjectVersions
 	KindSequences KindSequences
 
-	// TODO populate -- used to quickly tell whether a snapshot is stale or not
-	// but this could be computed from stateEvents at any time.
-	TrueSequences KindSequences
-
 	stateEvents []StateEvent // the changes that led to the current objectVersions
 }
 
