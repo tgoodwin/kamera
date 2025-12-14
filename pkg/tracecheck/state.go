@@ -603,10 +603,10 @@ func (sn StateNode) ReconcileLineage() string {
 	return fmt.Sprintf("%s=>%s:%s[%d]", sn.parent.ReconcileLineage(), id, frameID, numChanges)
 }
 
-// expandStateByReconcileOrder takes a StateNode and returns a slice of new StateNodes,
-// where each new StateNode is a clone of the input but with a different pending reconcile
-// as the first element in its PendingReconciles list.
-// Only reconcilers with permuteOrder=true will have alternative orderings generated.
+// expandStateByReconcileOrder handles permuting the order of the reconcilers triggered by the creation of
+// a new StateNode. It produces a new StateNodes for each triggered reconciler where that reconciler is placed
+// as the first element in its PendingReconciles list. This allows the explorer to explore any potential
+// order sensitivity among the reconcilers triggered by the same state change.
 func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []PendingReconcile) []StateNode {
 	// If there are no pending reconciles or just one, just return the original state
 	if len(state.PendingReconciles) <= 1 {
