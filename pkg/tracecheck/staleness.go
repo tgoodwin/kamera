@@ -33,16 +33,33 @@ func NewStateSnapshot(contents ObjectVersions, kindSequences KindSequences, stat
 		panic("kind sequences must be non-empty if contents are non-empty")
 	}
 	// do some validation
-	stateKinds := lo.Map(stateEvents, func(e StateEvent, _ int) string {
-		return e.Effect.Key.IdentityKey.CanonicalGroupKind()
-	})
-	stateKindSet := util.NewSet(stateKinds...)
+	stateKindSet := util.NewSet[string]()
+	if len(stateEvents) > 0 {
+		stateKinds := lo.Map(stateEvents, func(e StateEvent, _ int) string {
+			return e.Effect.Key.IdentityKey.CanonicalGroupKind()
+		})
+		stateKindSet = util.NewSet(stateKinds...)
+	} else {
+		contentKinds := lo.Map(lo.Keys(contents), func(k snapshot.CompositeKey, _ int) string {
+			return k.CanonicalGroupKind()
+		})
+		stateKindSet = util.NewSet(contentKinds...)
+	}
 	seqKinds := lo.Keys(kindSequences)
-	if len(stateKindSet) != len(seqKinds) {
-		logger.WithValues(
+	seqKindSet := util.NewSet(seqKinds...)
+	missing := lo.Filter(stateKindSet.List(), func(kind string, _ int) bool {
+		return !seqKindSet.Contains(kind)
+	})
+	extra := lo.Filter(seqKindSet.List(), func(kind string, _ int) bool {
+		return !stateKindSet.Contains(kind)
+	})
+	if len(missing) > 0 || len(extra) > 0 {
+		logger.V(1).WithValues(
 			"contentKeys", stateKindSet.List(),
 			"sequenceKeys", seqKinds,
-		).Error(nil, "expected a sequence # for every kind in contents")
+			"missingSequences", missing,
+			"extraSequences", extra,
+		).Info("kind sequences/content mismatch")
 	}
 
 	// assert that the sequence numbers on each state event are increasing monotonically

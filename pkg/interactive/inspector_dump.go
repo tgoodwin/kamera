@@ -13,6 +13,8 @@ import (
 	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // SaveInspectorDump serializes the supplied inspector states to the provided path using the resolver to materialize objects.
@@ -71,8 +73,9 @@ type dumpStateNode struct {
 }
 
 type dumpStateSnapshot struct {
-	Objects       []dumpObjectVersion      `json:"objects"`
-	KindSequences tracecheck.KindSequences `json:"kindSequences"`
+	Objects           []dumpObjectVersion      `json:"objects"`
+	KindSequences     tracecheck.KindSequences `json:"kindSequences"`
+	PendingReconciles []dumpPendingReconcile   `json:"pendingReconciles,omitempty"`
 }
 
 type dumpObjectVersion struct {
@@ -91,6 +94,7 @@ type dumpReconcileResult struct {
 	StateAfter    []dumpObjectVersion      `json:"stateAfter,omitempty"`
 	KindSeqBefore tracecheck.KindSequences `json:"kindSeqBefore,omitempty"`
 	KindSeqAfter  tracecheck.KindSequences `json:"kindSeqAfter,omitempty"`
+	Pending       []dumpPendingReconcile   `json:"pendingReconciles,omitempty"`
 }
 
 type dumpChanges struct {
@@ -101,6 +105,13 @@ type dumpChanges struct {
 type dumpDelta struct {
 	Key snapshot.CompositeKey `json:"key"`
 	Val string                `json:"value"`
+}
+
+type dumpPendingReconcile struct {
+	ReconcilerID string                            `json:"reconcilerId"`
+	Namespace    string                            `json:"namespace"`
+	Name         string                            `json:"name"`
+	Source       tracecheck.PendingReconcileSource `json:"source"`
 }
 
 func buildInspectorDump(states []tracecheck.ResultState, resolver tracecheck.VersionManager) (*inspectorDump, error) {
@@ -150,8 +161,9 @@ func buildInspectorDump(states []tracecheck.ResultState, resolver tracecheck.Ver
 			DivergencePoint: state.State.DivergencePoint,
 			State: dumpStateNode{
 				Contents: dumpStateSnapshot{
-					Objects:       toDumpObjectVersions(state.State.Objects(), objectIndex),
-					KindSequences: state.State.Contents.KindSequences,
+					Objects:           toDumpObjectVersions(state.State.Objects(), objectIndex),
+					KindSequences:     state.State.Contents.KindSequences,
+					PendingReconciles: toDumpPendingReconciles(state.State.PendingReconciles),
 				},
 			},
 		}
@@ -226,7 +238,8 @@ func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, tracecheck.Ve
 				dumped.State.Contents.KindSequences,
 				nil,
 			),
-			DivergencePoint: dumped.DivergencePoint,
+			PendingReconciles: fromDumpPendingReconciles(dumped.State.Contents.PendingReconciles),
+			DivergencePoint:   dumped.DivergencePoint,
 		}
 
 		paths := make([]tracecheck.ExecutionHistory, len(dumped.Paths))
@@ -276,6 +289,7 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 		StateAfter:    toDumpObjectVersions(step.StateAfter, objIndex),
 		KindSeqBefore: step.KindSeqBefore,
 		KindSeqAfter:  step.KindSeqAfter,
+		Pending:       toDumpPendingReconciles(step.PendingReconciles),
 	}
 }
 
@@ -288,12 +302,13 @@ func fromDumpReconcileResult(dump dumpReconcileResult, resolver *dumpKeyResolver
 			ObjectVersions: fromDumpObjectVersions(dump.Changes.ObjectVersions, resolver),
 			Effects:        fromDumpEffects(dump.Changes.Effects, resolver),
 		},
-		Error:         dump.Error,
-		Deltas:        fromDumpDeltas(dump.Deltas, resolver),
-		StateBefore:   fromDumpObjectVersions(dump.StateBefore, resolver),
-		StateAfter:    fromDumpObjectVersions(dump.StateAfter, resolver),
-		KindSeqBefore: dump.KindSeqBefore,
-		KindSeqAfter:  dump.KindSeqAfter,
+		Error:             dump.Error,
+		Deltas:            fromDumpDeltas(dump.Deltas, resolver),
+		StateBefore:       fromDumpObjectVersions(dump.StateBefore, resolver),
+		StateAfter:        fromDumpObjectVersions(dump.StateAfter, resolver),
+		KindSeqBefore:     dump.KindSeqBefore,
+		KindSeqAfter:      dump.KindSeqAfter,
+		PendingReconciles: fromDumpPendingReconciles(dump.Pending),
 	}
 }
 
@@ -382,6 +397,42 @@ func fromDumpEffects(entries []tracecheck.Effect, resolver *dumpKeyResolver) []t
 		}
 		eff.Key = normalizeCompositeKey(eff.Key)
 		out[i] = eff
+	}
+	return out
+}
+
+func toDumpPendingReconciles(pending []tracecheck.PendingReconcile) []dumpPendingReconcile {
+	if len(pending) == 0 {
+		return nil
+	}
+	out := make([]dumpPendingReconcile, len(pending))
+	for i, pr := range pending {
+		out[i] = dumpPendingReconcile{
+			ReconcilerID: string(pr.ReconcilerID),
+			Namespace:    pr.Request.Namespace,
+			Name:         pr.Request.Name,
+			Source:       pr.Source,
+		}
+	}
+	return out
+}
+
+func fromDumpPendingReconciles(entries []dumpPendingReconcile) []tracecheck.PendingReconcile {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]tracecheck.PendingReconcile, len(entries))
+	for i, pr := range entries {
+		out[i] = tracecheck.PendingReconcile{
+			ReconcilerID: tracecheck.ReconcilerID(pr.ReconcilerID),
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: pr.Namespace,
+					Name:      pr.Name,
+				},
+			},
+			Source: pr.Source,
+		}
 	}
 	return out
 }
