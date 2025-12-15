@@ -26,10 +26,12 @@ go run .
 
     ```go
     import (
+        "github.com/tgoodwin/kamera/pkg/explore"
         "github.com/tgoodwin/kamera/pkg/tracecheck"
+        myapiv1 "github.com/yourorg/yourproject/api/v1" // replace with your module path
         "sigs.k8s.io/controller-runtime/pkg/client"
         "k8s.io/apimachinery/pkg/runtime"
-        corev1 "k8s.io/api/core/v1"
+        metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
     )
     // ...
     ```
@@ -64,7 +66,7 @@ go run .
 5. **Describe controller dependencies and ownership.** Use `.For()` on the reconciler builder to declare primaries (controller-runtime `For()` semantics). Add explicit watches with `.Watches(kind, mapper)` on the reconciler builder when you need custom trigger mappings (controller-runtime `Watches()` semantics). `WithResourceDep` is deprecated; prefer explicit `.For()`/`.Watches()` declarations.
 
     ```go
-    const fooKind = "mygroup.example.com/Foo"
+    const fooKind = "mygroup.example.com/FooResource"
     const barKind = "mygroup.example.com/Bar"
     eb.WithReconciler("FooController", func(c client.Client) tracecheck.Reconciler {
         return &fooctrl.FooReconciler{Client: c, Scheme: scheme}
@@ -78,26 +80,44 @@ go run .
     // .Watches("othergroup/Other", func(u *unstructured.Unstructured) []reconcile.Request { ... })
     ```
 
-6. **Seed the initial cluster state.** Use the state builder helpers to create a `StateNode` that includes your top-level objects and the initial pending reconciles for that state.
+6. **Seed the initial cluster state.** Construct the objects you want in your starting cluster, then use the state builder helpers to create a `StateNode` that includes your top-level objects and the initial pending reconciles.
 
     ```go
+    fooObj := &myapiv1.FooResource{
+        ObjectMeta: metav1.ObjectMeta{
+            Namespace: "default",
+            Name:      "example-foo",
+        },
+        Spec: myapiv1.FooResourceSpec{
+            Mode:     "alpha",
+            Replicas: 2,
+        },
+    }
+    fooObj.SetGroupVersionKind(myapiv1.GroupVersion.WithKind("FooResource"))
+
     sb := eb.NewStateEventBuilder()
     // add an object along with the initial pending reconciles
     initialState := sb.AddTopLevelObject(fooObj, "FooController", "BarController")
     ```
 
-7. **Build and run the explorer.**
+7. **Build and run with the Runner (recommended).** Runner wires the explorer to the inspector UI and handles restart requests using the shared version manager.
 
     ```go
     explorer, err := eb.Build()
     if err != nil {
         log.Fatal(err)
     }
-    result := explorer.Explore(context.Background(), initialState)
-    for _, converged := range result.ConvergedStates {
-        fmt.Printf("paths to converged state: %d\n", len(converged.Paths))
+    runner, err := explore.NewRunner(eb)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    if err := runner.Run(context.Background(), initialState); err != nil {
+        log.Fatal(err)
     }
     ```
+
+    `Runner` honors the standard `-interactive` and `-dump-output` flags (see `pkg/explore/flags.go`) so you can disable the inspector or persist results when scripting.
 
 That’s enough to start evaluating how your controllers interact across different interleavings.
 
