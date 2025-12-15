@@ -105,12 +105,16 @@ type Explorer struct {
 	stats *ExploreStats
 }
 
+// VersionManager returns the shared version manager used during exploration.
+func (e *Explorer) VersionManager() VersionManager {
+	return e.versionManager
+}
+
 type ResultState struct {
-	ID       string
-	State    StateNode
-	Paths    []ExecutionHistory
-	Error    error
-	Resolver VersionManager
+	ID    string
+	State StateNode
+	Paths []ExecutionHistory
+	Error error
 }
 
 type cachedReconcileResult struct {
@@ -213,10 +217,9 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 		paths := normalizeAndDedupePaths(executionPathsToState[stateKey])
 		state.DivergencePoint = initialState.DivergencePoint
 		convergedState := ResultState{
-			ID:       fmt.Sprintf("state-%d", i),
-			State:    state,
-			Paths:    paths,
-			Resolver: e.versionManager,
+			ID:    fmt.Sprintf("state-%d", i),
+			State: state,
+			Paths: paths,
 		}
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
 	}
@@ -723,11 +726,10 @@ func (e *Explorer) emitAbortedState(
 	executionPathsToState[stateKey] = append(executionPathsToState[stateKey], path)
 
 	aborted := ResultState{
-		ID:       fmt.Sprintf("aborted-%s", stateKey),
-		State:    state,
-		Paths:    []ExecutionHistory{path},
-		Error:    err,
-		Resolver: e.versionManager,
+		ID:    fmt.Sprintf("aborted-%s", stateKey),
+		State: state,
+		Paths: []ExecutionHistory{path},
+		Error: err,
 	}
 
 	select {

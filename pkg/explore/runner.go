@@ -56,12 +56,12 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 		return out
 	}
 
-	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, error) {
+	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, tracecheck.VersionManager, error) {
 		r.builder.SetConfig(currentConfig)
 		// get a fresh explorer for each run
 		explorer, err := r.builder.Build("standalone")
 		if err != nil {
-			return nil, fmt.Errorf("build explorer: %w", err)
+			return nil, nil, fmt.Errorf("build explorer: %w", err)
 		}
 
 		runCtx := ctx
@@ -71,10 +71,11 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 			defer cancel()
 		}
 
-		return explorer.Explore(runCtx, state), nil
+		return explorer.Explore(runCtx, state), explorer.VersionManager(), nil
 	}
 
-	res, err := runOnce(ctx, baseline.Clone())
+	resolver := tracecheck.VersionManager(nil)
+	res, resolver, err := runOnce(ctx, baseline.Clone())
 	if err != nil {
 		return err
 	}
@@ -87,7 +88,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 	}
 
 	if DumpPath() != "" {
-		if err := interactive.SaveInspectorDump(states, DumpPath()); err != nil {
+		if err := interactive.SaveInspectorDump(states, resolver, DumpPath()); err != nil {
 			return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)
 		}
 		fmt.Printf("wrote results to %s\n", DumpPath())
@@ -102,7 +103,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 	for {
 		// seed is an intermediate state node that can be used to restart the exploration
 		// from that point. If the user decides not to restart, seed will be nil.
-		restart, err := interactive.RunStateInspectorTUIView(states, true, currentConfig)
+		restart, err := interactive.RunStateInspectorTUIView(states, resolver, true, currentConfig)
 		if err != nil {
 			return fmt.Errorf("inspector error: %w", err)
 		}
@@ -124,9 +125,12 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 			nextState.ExecutionHistory = slices.Clone(restart.Prefix)
 		}
 
-		nextRes, err := runOnce(ctx, nextState)
+		nextRes, nextResolver, err := runOnce(ctx, nextState)
 		if err != nil {
 			return fmt.Errorf("restart explore error: %w", err)
+		}
+		if nextResolver != nil {
+			resolver = nextResolver
 		}
 		newStates := append([]tracecheck.ResultState{}, nextRes.ConvergedStates...)
 		newStates = append(newStates, nextRes.AbortedStates...)
@@ -136,7 +140,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 			states = newStates
 		}
 		if DumpPath() != "" {
-			if err := interactive.SaveInspectorDump(states, DumpPath()); err != nil {
+			if err := interactive.SaveInspectorDump(states, resolver, DumpPath()); err != nil {
 				return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)
 			}
 			fmt.Printf("wrote results to %s\n", DumpPath())

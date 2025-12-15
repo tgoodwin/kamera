@@ -71,7 +71,7 @@ func main() {
 		return
 	}
 
-	if _, err := interactive.RunStateInspectorTUIView(states, true, tracecheck.ExploreConfig{}); err != nil {
+	if _, err := interactive.RunStateInspectorTUIView(states, explorer.VersionManager(), true, tracecheck.ExploreConfig{}); err != nil {
 		fmt.Fprintf(os.Stderr, "inspector error: %v\n", err)
 	}
 }

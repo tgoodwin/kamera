@@ -15,9 +15,9 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
-// SaveInspectorDump serializes the supplied inspector states to the provided path.
-func SaveInspectorDump(states []tracecheck.ResultState, path string) error {
-	dump, err := buildInspectorDump(states)
+// SaveInspectorDump serializes the supplied inspector states to the provided path using the resolver to materialize objects.
+func SaveInspectorDump(states []tracecheck.ResultState, resolver tracecheck.VersionManager, path string) error {
+	dump, err := buildInspectorDump(states, resolver)
 	if err != nil {
 		return err
 	}
@@ -33,16 +33,16 @@ func SaveInspectorDump(states []tracecheck.ResultState, path string) error {
 	return nil
 }
 
-// LoadInspectorDump loads inspector state from the specified path.
-func LoadInspectorDump(path string) ([]tracecheck.ResultState, error) {
+// LoadInspectorDump loads inspector state from the specified path and reconstructs a resolver for inspection.
+func LoadInspectorDump(path string) ([]tracecheck.ResultState, tracecheck.VersionManager, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read inspector dump: %w", err)
+		return nil, nil, fmt.Errorf("read inspector dump: %w", err)
 	}
 
 	var dump inspectorDump
 	if err := json.Unmarshal(data, &dump); err != nil {
-		return nil, fmt.Errorf("unmarshal inspector dump: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal inspector dump: %w", err)
 	}
 
 	return dump.toResultStates()
@@ -103,32 +103,24 @@ type dumpDelta struct {
 	Val string                `json:"value"`
 }
 
-func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error) {
+func buildInspectorDump(states []tracecheck.ResultState, resolver tracecheck.VersionManager) (*inspectorDump, error) {
 	if len(states) == 0 {
 		return &inspectorDump{}, nil
 	}
 
-	objectIndex := make(map[string]dumpObject)
-	var defaultResolver tracecheck.VersionManager
-	for _, state := range states {
-		if defaultResolver == nil && state.Resolver != nil {
-			defaultResolver = state.Resolver
-		}
+	if resolver == nil {
+		return nil, fmt.Errorf("version resolver is required to build an inspector dump")
 	}
 
-	addHash := func(hash snapshot.VersionHash, resolver tracecheck.VersionManager) error {
+	objectIndex := make(map[string]dumpObject)
+
+	addHash := func(hash snapshot.VersionHash) error {
 		if hash.Value == "" {
 			return nil
 		}
 		key := hashKey(hash)
 		if _, exists := objectIndex[key]; exists {
 			return nil
-		}
-		if resolver == nil {
-			resolver = defaultResolver
-		}
-		if resolver == nil {
-			return fmt.Errorf("no resolver available for hash %s (%s)", util.ShortenHash(hash.Value), hash.Strategy)
 		}
 		obj := resolver.Resolve(hash)
 		if obj == nil {
@@ -144,11 +136,7 @@ func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error)
 	resultStates := make([]dumpResultState, 0, len(states))
 
 	for _, state := range states {
-		resolver := state.Resolver
-		if resolver == nil {
-			resolver = defaultResolver
-		}
-		if err := collectHashesFromObjectVersions(state.State.Objects(), resolver, addHash); err != nil {
+		if err := collectHashesFromObjectVersions(state.State.Objects(), addHash); err != nil {
 			return nil, err
 		}
 
@@ -178,7 +166,7 @@ func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error)
 				if step == nil {
 					continue
 				}
-				if err := collectReconcileHashes(step, resolver, addHash); err != nil {
+				if err := collectReconcileHashes(step, addHash); err != nil {
 					return nil, err
 				}
 				pathDump = append(pathDump, toDumpReconcileResult(step, objectIndex))
@@ -210,15 +198,15 @@ func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error)
 	}, nil
 }
 
-func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
+func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, tracecheck.VersionManager, error) {
 	store := snapshot.NewStore()
 	for _, obj := range d.Objects {
 		u := &unstructured.Unstructured{Object: obj.Object}
 		if err := store.StoreObject(u); err != nil {
-			return nil, fmt.Errorf("store object for hash %s: %w", obj.Hash.Value, err)
+			return nil, nil, fmt.Errorf("store object for hash %s: %w", obj.Hash.Value, err)
 		}
 		if _, ok := store.ResolveWithStrategy(obj.Hash, obj.Hash.Strategy); !ok {
-			return nil, fmt.Errorf("stored object hash mismatch for %s (%s)", util.ShortenHash(obj.Hash.Value), obj.Hash.Strategy)
+			return nil, nil, fmt.Errorf("stored object hash mismatch for %s (%s)", util.ShortenHash(obj.Hash.Value), obj.Hash.Strategy)
 		}
 	}
 	versionManager := tracecheck.NewVersionStore(store, nil)
@@ -259,12 +247,10 @@ func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
 			Error: errVal,
 			State: stateNode,
 			Paths: paths,
-			// TODO refactor to remove this from ResultState
-			Resolver: versionManager,
 		}
 	}
 
-	return states, nil
+	return states, versionManager, nil
 }
 
 func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string]dumpObject) dumpReconcileResult {
@@ -438,28 +424,28 @@ func ensureKeyKindWithObject(key snapshot.CompositeKey, hash snapshot.VersionHas
 	return key
 }
 
-func collectHashesFromObjectVersions(ov tracecheck.ObjectVersions, resolver tracecheck.VersionManager, add func(snapshot.VersionHash, tracecheck.VersionManager) error) error {
+func collectHashesFromObjectVersions(ov tracecheck.ObjectVersions, add func(snapshot.VersionHash) error) error {
 	for _, hash := range ov {
-		if err := add(hash, resolver); err != nil {
+		if err := add(hash); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func collectReconcileHashes(step *tracecheck.ReconcileResult, resolver tracecheck.VersionManager, add func(snapshot.VersionHash, tracecheck.VersionManager) error) error {
-	if err := collectHashesFromObjectVersions(step.Changes.ObjectVersions, resolver, add); err != nil {
+func collectReconcileHashes(step *tracecheck.ReconcileResult, add func(snapshot.VersionHash) error) error {
+	if err := collectHashesFromObjectVersions(step.Changes.ObjectVersions, add); err != nil {
 		return err
 	}
 	for _, eff := range step.Changes.Effects {
-		if err := add(eff.Version, resolver); err != nil {
+		if err := add(eff.Version); err != nil {
 			return err
 		}
 	}
-	if err := collectHashesFromObjectVersions(step.StateBefore, resolver, add); err != nil {
+	if err := collectHashesFromObjectVersions(step.StateBefore, add); err != nil {
 		return err
 	}
-	if err := collectHashesFromObjectVersions(step.StateAfter, resolver, add); err != nil {
+	if err := collectHashesFromObjectVersions(step.StateAfter, add); err != nil {
 		return err
 	}
 	return nil

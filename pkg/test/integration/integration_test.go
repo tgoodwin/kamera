@@ -61,12 +61,12 @@ func groupForTestKind(kind string) string {
 	}
 }
 
-func summarizeState(state tracecheck.ResultState) (status string, hasAnnotation bool, ok bool) {
+func summarizeState(state tracecheck.ResultState, resolver tracecheck.VersionManager) (status string, hasAnnotation bool, ok bool) {
+	if resolver == nil {
+		return "", false, false
+	}
 	for _, vHash := range state.State.Objects() {
-		if state.Resolver == nil {
-			return "", false, false
-		}
-		obj := state.Resolver.Resolve(vHash)
+		obj := resolver.Resolve(vHash)
 		if obj == nil {
 			return "", false, false
 		}
@@ -277,7 +277,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	for _, expectedState := range expected {
 		var matchedState *tracecheck.ResultState
 		for _, convergedState := range result.ConvergedStates {
-			status, hasAnnotation, ok := summarizeState(convergedState)
+			status, hasAnnotation, ok := summarizeState(convergedState, explorer.VersionManager())
 			if !ok {
 				continue
 			}

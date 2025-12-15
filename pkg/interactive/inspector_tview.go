@@ -110,7 +110,7 @@ type stepCache struct {
 // RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
 // When allowDump is false, the dump shortcut is disabled (used for trace-hydrated sessions).
 // If the user requests a restart, the inspector exits and returns a RestartRequest to the caller.
-func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, cfg tracecheck.ExploreConfig) (*tracecheck.RestartRequest, error) {
+func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver tracecheck.VersionManager, allowDump bool, cfg tracecheck.ExploreConfig) (*tracecheck.RestartRequest, error) {
 	states = validateResultStates(states)
 	states = tracecheck.TrimStatesForInspection(states)
 	states = dedupeResultStates(states)
@@ -119,18 +119,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 		return nil, fmt.Errorf("no converged states supplied")
 	}
 
-	resolverCaches := make(map[tracecheck.VersionManager]*objectCache)
-	getCache := func(resolver tracecheck.VersionManager) *objectCache {
-		if resolver == nil {
-			return nil
-		}
-		if cache, ok := resolverCaches[resolver]; ok {
-			return cache
-		}
-		cache := newObjectCache(resolver)
-		resolverCaches[resolver] = cache
-		return cache
+	var resolverCache *objectCache
+	if resolver != nil {
+		resolverCache = newObjectCache(resolver)
 	}
+	getCache := func() *objectCache { return resolverCache }
 
 	app := tview.NewApplication()
 	pages := tview.NewPages()
@@ -292,7 +285,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 				updateStatus(`[yellow]dump cancelled[-]`)
 				return
 			}
-			if err := SaveInspectorDump(states, path); err != nil {
+			if err := SaveInspectorDump(states, resolver, path); err != nil {
 				updateStatus(fmt.Sprintf("[red]dump failed: %v[-]", err))
 				return
 			}
@@ -426,7 +419,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 				compareEntries = append(compareEntries, compareEntry{
 					stateIdx: idx,
 					hash:     hv,
-					cache:    getCache(st.Resolver),
+					cache:    getCache(),
 				})
 			}
 		}
@@ -555,12 +548,12 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 			updateStatus("[red]selected step has no state snapshot[-]")
 			return
 		}
-		if states[selectedState].Resolver == nil {
+		if resolver == nil {
 			updateStatus("[red]resolver unavailable for restart[-]")
 			return
 		}
 
-		seed, err := tracecheck.BuildRestartSeedFromState(step.StateAfter, states[selectedState].Resolver, step.PendingReconciles)
+		seed, err := tracecheck.BuildRestartSeedFromState(step.StateAfter, resolver, step.PendingReconciles)
 		if err != nil {
 			updateStatus(fmt.Sprintf("[red]restart seed failed: %v[-]", err))
 			return
@@ -764,7 +757,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 
 		state := states[selectedState]
 		objects := state.State.Objects()
-		cache := getCache(state.Resolver)
+		cache := getCache()
 		keys := make([]snapshot.CompositeKey, 0, len(objects))
 		for key := range objects {
 			keys = append(keys, key)
@@ -974,7 +967,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 			}
 		}
 		if len(stateKeys) > 0 {
-			resolverCache := getCache(state.Resolver)
+			resolverCache := getCache()
 			for _, key := range stateKeys {
 				hash := stateMap[key]
 				stateObjects = append(stateObjects, stateObjectEntry{
@@ -1037,7 +1030,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 
 		// Populate effects bottom panel
 		stepEffects = stepEffects[:0]
-		resolverCache := getCache(state.Resolver)
+		resolverCache := getCache()
 		if step != nil {
 			for idx, eff := range step.Changes.Effects {
 				gvk := resolveGVK(resolverCache, eff.Version, eff.Key)
@@ -1135,7 +1128,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 
 		// Populate effects
 		stepEffects = stepEffects[:0]
-		resolverCache := getCache(state.Resolver)
+		resolverCache := getCache()
 		if step != nil {
 			for idx, eff := range step.Changes.Effects {
 				gvk := resolveGVK(resolverCache, eff.Version, eff.Key)

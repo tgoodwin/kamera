@@ -123,7 +123,8 @@ Kamera ships with a terminal inspector that lets you interactively browse conver
 ```go
 result := explorer.Explore(context.Background(), initialState)
 states := result.ConvergedStates
-if err := interactive.RunStateInspectorTUIView(states, true); err != nil {
+resolver := explorer.VersionManager()
+if _, err := interactive.RunStateInspectorTUIView(states, resolver, true, tracecheck.ExploreConfig{}); err != nil {
     log.Fatal(err)
 }
 ```
@@ -131,7 +132,7 @@ if err := interactive.RunStateInspectorTUIView(states, true); err != nil {
 You can also save a snapshot for later review:
 
 ```go
-if err := interactive.SaveInspectorDump(states, "inspector_dump.json"); err != nil {
+if err := interactive.SaveInspectorDump(states, resolver, "inspector_dump.json"); err != nil {
     log.Fatal(err)
 }
 ```
