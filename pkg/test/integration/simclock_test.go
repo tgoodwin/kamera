@@ -61,7 +61,7 @@ func TestSimClockAdvancesWithExploreDepth(t *testing.T) {
 
 	var resolvedFoo foov1.Foo
 	for _, vHash := range converged.State.Objects() {
-		obj := converged.Resolver.Resolve(vHash)
+		obj := explorer.VersionManager().Resolve(vHash)
 		require.NoError(t, runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &resolvedFoo))
 		break
 	}

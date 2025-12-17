@@ -135,7 +135,8 @@ func getObjectKey(obj *unstructured.Unstructured) string {
 }
 
 func (s *Store) indexObject(obj *unstructured.Unstructured) error {
-	objKey := getObjectKey(obj)
+	objCopy := obj.DeepCopy()
+	objKey := getObjectKey(objCopy)
 
 	if _, exists := s.objectHashes[objKey]; !exists {
 		s.objectHashes[objKey] = make(map[HashStrategy]VersionHash)
@@ -147,7 +148,7 @@ func (s *Store) indexObject(obj *unstructured.Unstructured) error {
 	// allow for reverse lookups
 
 	for strategy, hasher := range s.hashGenerators {
-		hash, err := hasher.Hash(obj)
+		hash, err := hasher.Hash(objCopy)
 		if err != nil {
 			return fmt.Errorf("failed to generate %s hash: %w", strategy, err)
 		}
@@ -158,7 +159,7 @@ func (s *Store) indexObject(obj *unstructured.Unstructured) error {
 		s.crossRefIndex[hash.Value] = hashCollection
 
 		// Store in indices
-		s.indices[strategy][hash] = obj
+		s.indices[strategy][hash] = objCopy
 
 		// this is used to look up the hash in PublishWithStrategy
 		// TODO refactor
@@ -186,7 +187,7 @@ func (s *Store) ResolveWithStrategy(hash VersionHash, strategy HashStrategy) (*u
 	if idx, exists := s.indices[strategy]; exists {
 		obj, found := idx[hash]
 		if found {
-			return obj, true
+			return obj.DeepCopy(), true
 		} else {
 			shortHash := util.ShortenHash(hash.Value)
 			fmt.Printf("lookup miss: hash %s strategy %s\n", shortHash, strategy)
@@ -210,7 +211,7 @@ func (s *Store) GetByHash(hash VersionHash, strategy HashStrategy) (*unstructure
 				fmt.Printf("hash: %s\n", h.Value)
 			}
 		}
-		return obj, found
+		return obj.DeepCopy(), found
 	}
 	return nil, false
 }

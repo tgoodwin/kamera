@@ -71,6 +71,15 @@ func (rb *ReconcilerBuilder) WatchesGK(gk schema.GroupKind, mapper WatchMapper) 
 	return rb
 }
 
+// PermuteOrder marks this reconciler as eligible for order permutation during exploration.
+// When enabled, the explorer will consider alternative orderings where this reconciler
+// is processed first among pending reconciles.
+func (rb *ReconcilerBuilder) PermuteOrder() *ReconcilerBuilder {
+	rb.parent.ensurePermuteOrderEntry(rb.id)
+	rb.parent.config.PermuteOrder[rb.id] = true
+	return rb
+}
+
 // Done returns the parent ExplorerBuilder to continue builder-style chaining.
 func (rb *ReconcilerBuilder) Done() *ExplorerBuilder {
 	return rb.parent
@@ -94,8 +103,12 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			MaxDepth:        *searchDepth,
 			RecordPerfStats: *emitStats,
 			Timeout:         *timeout,
+			PermuteOrder:    make(map[ReconcilerID]bool),
 			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
 		},
+	}
+	if builder.config.MaxDepth == 0 {
+		builder.config.MaxDepth = DefaultMaxDepth
 	}
 
 	builder.registerCoreControllers()
@@ -105,12 +118,14 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 
 func (b *ExplorerBuilder) WithReconciler(id ReconcilerID, constructor ReconcilerConstructor) *ReconcilerBuilder {
 	b.reconcilers[id] = constructor
+	b.ensurePermuteOrderEntry(id)
 	return &ReconcilerBuilder{parent: b, id: id}
 }
 
 func (b *ExplorerBuilder) WithCustomStrategy(id ReconcilerID, strategyFunc func(recorder replay.EffectRecorder) Strategy) *ReconcilerBuilder {
 	{
 		b.recorderInjectedStrategies[id] = strategyFunc
+		b.ensurePermuteOrderEntry(id)
 		return &ReconcilerBuilder{parent: b, id: id}
 	}
 }
@@ -158,6 +173,21 @@ func parseKindString(kind string) schema.GroupKind {
 	return util.ParseGroupKind(kind)
 }
 
+func (b *ExplorerBuilder) ensurePermuteOrderEntry(id ReconcilerID) {
+	if b.config == nil {
+		b.config = &ExploreConfig{
+			PermuteOrder:    make(map[ReconcilerID]bool),
+			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
+		}
+	}
+	if b.config.PermuteOrder == nil {
+		b.config.PermuteOrder = make(map[ReconcilerID]bool)
+	}
+	if _, ok := b.config.PermuteOrder[id]; !ok {
+		b.config.PermuteOrder[id] = false
+	}
+}
+
 func (b *ExplorerBuilder) WithPriorityStrategy(p *PriorityStrategyBuilder) *ExplorerBuilder {
 	b.priorityBuilder = p
 	return b
@@ -183,6 +213,54 @@ func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc Pertur
 	return b
 }
 
+// WithPermuteOrders sets the per-reconciler permute-order configuration.
+// Entries missing for known reconcilers are defaulted to false so the UI can display them.
+func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *ExplorerBuilder {
+	if b.config == nil {
+		b.config = &ExploreConfig{}
+	}
+	target := perms
+	if target == nil && b.config.PermuteOrder != nil {
+		target = b.config.PermuteOrder
+	}
+	b.config.PermuteOrder = make(map[ReconcilerID]bool, len(target))
+	for id, enabled := range target {
+		b.config.PermuteOrder[id] = enabled
+	}
+	// ensure all reconcilers are represented even if not provided in perms
+	for id := range b.reconcilers {
+		if _, ok := b.config.PermuteOrder[id]; !ok {
+			b.config.PermuteOrder[id] = false
+		}
+	}
+	for id := range b.recorderInjectedStrategies {
+		if _, ok := b.config.PermuteOrder[id]; !ok {
+			b.config.PermuteOrder[id] = false
+		}
+	}
+	return b
+}
+
+// SetConfig replaces the builder's config wholesale.
+// Maps are cloned and missing permute entries are defaulted for known reconcilers.
+func (b *ExplorerBuilder) SetConfig(cfg ExploreConfig) *ExplorerBuilder {
+	cloned := cfg.Clone()
+	if cloned.PermuteOrder == nil {
+		cloned.PermuteOrder = make(map[ReconcilerID]bool)
+	}
+	if cloned.perturbationCfg == nil {
+		cloned.perturbationCfg = make(map[ReconcilerID]PerturbationConfig)
+	}
+	b.config = &cloned
+	for id := range b.reconcilers {
+		b.ensurePermuteOrderEntry(id)
+	}
+	for id := range b.recorderInjectedStrategies {
+		b.ensurePermuteOrderEntry(id)
+	}
+	return b
+}
+
 // WithDivergenceCircuitBreaker enables the divergence circuit breaker.
 // If paths from a divergence point converge to the same state more than `threshold` times,
 // further exploration from that subtree is skipped. This is a performance optimization
@@ -190,6 +268,15 @@ func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc Pertur
 // stale-read perturbations.
 func (b *ExplorerBuilder) WithDivergenceCircuitBreaker(threshold int) *ExplorerBuilder {
 	b.config.divergenceCircuitBreakerThreshold = threshold
+	return b
+}
+
+// WithoutOptimizations disables all exploration optimizations.
+// Useful for tests that need deterministic, exhaustive exploration.
+func (b *ExplorerBuilder) WithoutOptimizations() *ExplorerBuilder {
+	b.config.DisableEarlyConvergence = true
+	b.config.DisableCachePrediction = true
+	b.config.DisableNoOpOrderingSkip = true
 	return b
 }
 
@@ -208,7 +295,7 @@ func (b *ExplorerBuilder) Config() ExploreConfig {
 	if b.config == nil {
 		return ExploreConfig{}
 	}
-	return *b.config
+	return b.config.Clone()
 }
 
 // AssignReconcilerToKind configures which resource a reconciler "owns"
@@ -365,7 +452,7 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 	}
 	container := &ReconcilerContainer{
 		Name:           cleanupReconcilerID,
-		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, reconcilerName: string(cleanupReconcilerID), effectReader: mgr},
+		Strategy:       &ControllerRuntimeStrategy{Reconciler: r, frameInserter: fm, name: cleanupReconcilerID, effectReader: mgr},
 		effectReader:   mgr,
 		versionManager: mgr,
 	}
@@ -412,6 +499,12 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 	mode := "standalone"
 	if len(modes) > 0 && modes[0] != "" {
 		mode = modes[0]
+	}
+	if b.config == nil {
+		b.config = &ExploreConfig{}
+	}
+	if b.config.MaxDepth == 0 {
+		b.config.MaxDepth = DefaultMaxDepth
 	}
 	// Validate configuration
 	if len(b.resourceDeps) == 0 {

@@ -39,7 +39,7 @@ func Test_getNewPendingReconciles(t *testing.T) {
 				newPr("controllerA", "namespace1", "name1"),
 				newPr("controllerB", "namespace1", "name2"),
 			},
-			// DFS: new items first, then curr; duplicates removed (first wins)
+			// existing pending first, then new; duplicates removed (first wins)
 			expected: []PendingReconcile{
 				newPr("controllerA", "namespace1", "name1"),
 				newPr("controllerB", "namespace1", "name2"),
@@ -55,11 +55,11 @@ func Test_getNewPendingReconciles(t *testing.T) {
 				newPr("controllerA", "namespace1", "name1"),
 				newPr("controllerA", "namespace1", "name2"),
 			},
-			// DFS: new items first [A/name1, A/name2], then curr [A/name1 (dup), B/name2]
+			// existing pending first [A/name1, B/name2], then new [A/name1 (dup), A/name2]
 			expected: []PendingReconcile{
 				newPr("controllerA", "namespace1", "name1"),
-				newPr("controllerA", "namespace1", "name2"),
 				newPr("controllerB", "namespace1", "name2"),
+				newPr("controllerA", "namespace1", "name2"),
 			},
 		},
 		{
@@ -116,8 +116,8 @@ func Test_getNewPendingReconciles(t *testing.T) {
 					Source:       SourceRequeue,
 				},
 			},
-			// new comes first in all[], so order is [Requeue, StateChange]
-			// But StateChange replaces Requeue because StateChange has priority
+			// curr comes first in all[], so order is [StateChange, Requeue]
+			// StateChange replaces Requeue because StateChange has priority
 			expected: []PendingReconcile{
 				{
 					ReconcilerID: "controllerA",
@@ -170,7 +170,7 @@ func Test_getNewPendingReconciles(t *testing.T) {
 				{
 					ReconcilerID: "controllerA",
 					Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "ns", Name: "obj"}},
-					Source:       SourceRequeue, // new comes before curr, so Requeue wins
+					Source:       SourceAsyncEnqueue, // curr comes before new, so AsyncEnqueue wins
 				},
 			},
 		},

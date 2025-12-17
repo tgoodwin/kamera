@@ -96,6 +96,10 @@ type ReconcileResult struct {
 	ctrlRes reconcile.Result
 }
 
+func (r *ReconcileResult) wasNoOp() bool {
+	return r != nil && len(r.Changes.ObjectVersions) == 0 && r.Error == ""
+}
+
 type ExecutionHistory []*ReconcileResult
 
 func (eh ExecutionHistory) UniqueKey() string {
@@ -286,13 +290,6 @@ type ObservableState interface {
 	Objects() ObjectVersions
 }
 
-type NodeMode string
-
-const (
-	NodeModeNatural      NodeMode = "natural"
-	NodeModeHypothetical NodeMode = "hypothetical"
-)
-
 type StateNode struct {
 	ID       string
 	Contents StateSnapshot
@@ -305,8 +302,6 @@ type StateNode struct {
 
 	// ExecutionHistory tracks the sequence of reconciles that led to this state
 	ExecutionHistory ExecutionHistory
-
-	mode NodeMode // used to track if we are in a natural or hypothetical state
 
 	// used to track children of a divergence point of interest
 	divergenceKey StateHash
@@ -383,9 +378,7 @@ func (sn StateNode) Clone() StateNode {
 		ExecutionHistory:  slices.Clone(sn.ExecutionHistory),
 		depth:             sn.depth,
 		DivergencePoint:   sn.DivergencePoint, // TODO deprecate
-
-		mode:          sn.mode,
-		divergenceKey: sn.divergenceKey,
+		divergenceKey:     sn.divergenceKey,
 
 		stuckReconcilerPositions: maps.Clone(sn.stuckReconcilerPositions),
 	}
@@ -486,10 +479,47 @@ func serializeCompositeKey(ck snapshot.CompositeKey) string {
 // StateHash represents the contents of the state node and the pending reconciles, unaffected by the order of pending reconciles.
 type StateHash string
 
+// ContentsHash represents the contents of the state node only, excluding metadata such as pending reconciles.
+type ContentsHash string
+
 // Hash returns a hash of the state node, unaffected by the order of pending reconciles.
 func (sn StateNode) Hash() StateHash {
 	s := sn.Serialize()
 	return StateHash(util.ShortenHash(s))
+}
+
+// ContentsHash returns a hash of just the object contents, excluding pending reconciles.
+// This is useful for caching reconcile results since reconciler behavior only depends on objects.
+func (sn StateNode) ContentsHash() ContentsHash {
+	objectKeys := make([]snapshot.CompositeKey, 0, len(sn.Objects()))
+	for objKey := range sn.Objects() {
+		objectKeys = append(objectKeys, objKey)
+	}
+	sort.Slice(objectKeys, func(i, j int) bool {
+		ai, aj := objectKeys[i], objectKeys[j]
+		if ai.ResourceKey.Group != aj.ResourceKey.Group {
+			return ai.ResourceKey.Group < aj.ResourceKey.Group
+		}
+		if ai.ResourceKey.Kind != aj.ResourceKey.Kind {
+			return ai.ResourceKey.Kind < aj.ResourceKey.Kind
+		}
+		if ai.ResourceKey.Namespace != aj.ResourceKey.Namespace {
+			return ai.ResourceKey.Namespace < aj.ResourceKey.Namespace
+		}
+		if ai.ResourceKey.Name != aj.ResourceKey.Name {
+			return ai.ResourceKey.Name < aj.ResourceKey.Name
+		}
+		return ai.ObjectID < aj.ObjectID
+	})
+
+	var buf strings.Builder
+	for _, ck := range objectKeys {
+		buf.WriteString(serializeCompositeKey(ck))
+		buf.WriteString("=")
+		buf.WriteString(sn.Objects()[ck].Value)
+		buf.WriteString(";")
+	}
+	return ContentsHash(util.ShortenHash(buf.String()))
 }
 
 // ConvergenceHash returns a hash normalized for convergence by dropping pending reconciles
@@ -573,37 +603,46 @@ func (sn StateNode) ReconcileLineage() string {
 	return fmt.Sprintf("%s=>%s:%s[%d]", sn.parent.ReconcileLineage(), id, frameID, numChanges)
 }
 
-// expandStateByReconcileOrder takes a StateNode and returns a slice of new StateNodes,
-// where each new StateNode is a clone of the input but with a different pending reconcile
-// as the first element in its PendingReconciles list.
-func expandStateByReconcileOrder(state StateNode) []StateNode {
+// expandStateByReconcileOrder handles permuting the order of the reconcilers triggered by the creation of
+// a new StateNode. It produces a new StateNodes for each triggered reconciler where that reconciler is placed
+// as the first element in its PendingReconciles list. This allows the explorer to explore any potential
+// order sensitivity among the reconcilers triggered by the same state change.
+func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []PendingReconcile) []StateNode {
 	// If there are no pending reconciles or just one, just return the original state
 	if len(state.PendingReconciles) <= 1 {
 		return []StateNode{state}
 	}
 
+	if e.Config == nil || e.Config.PermuteOrder == nil {
+		return []StateNode{state}
+	}
+
 	originalPending := state.PendingReconciles
-	result := make([]StateNode, len(originalPending))
+	var result []StateNode
 
-	// For each pending reconcile, create a new StateNode with that reconcile first
-	for i := 0; i < len(originalPending); i++ {
-		// Create a new ordering with this reconcile first
-		alternativeOrder := make([]PendingReconcile, len(originalPending))
-		alternativeOrder[0] = originalPending[i] // Put the ith reconcile first
-
-		// Add the rest in their original order, skipping the one we put first
-		j := 1
-		for k := 0; k < len(originalPending); k++ {
-			if k != i {
-				alternativeOrder[j] = originalPending[k]
-				j++
-			}
+	toPermute := util.NewSet[ReconcilerID]()
+	for _, pr := range triggered {
+		if permute, ok := e.Config.PermuteOrder[pr.ReconcilerID]; ok && permute {
+			toPermute.Add(pr.ReconcilerID)
 		}
+	}
+
+	// For each pending reconcile in toPermute, create a new StateNode with that reconcile first,
+	for i := range originalPending {
+		reconcilerID := originalPending[i].ReconcilerID
+		if _, ok := toPermute[reconcilerID]; !ok {
+			continue
+		}
+
+		alternativeOrder := make([]PendingReconcile, 0, len(originalPending))
+		alternativeOrder = append(alternativeOrder, originalPending[i])
+		alternativeOrder = append(alternativeOrder, originalPending[:i]...)
+		alternativeOrder = append(alternativeOrder, originalPending[i+1:]...)
 
 		cloned := state.Clone()
 		cloned.PendingReconciles = alternativeOrder
 		cloned.ID = string(cloned.OrderSensitiveHash()) // Generate a new deterministic ID based on the new ordering
-		result[i] = cloned
+		result = append(result, cloned)
 	}
 
 	return result
