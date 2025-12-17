@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -43,12 +44,38 @@ type ExploreConfig struct {
 	MaxDepth        int
 	RecordPerfStats bool
 	Timeout         time.Duration
+	// PermuteOrder enables order permutation for specific reconcilers during exploration.
+	// When true, alternative pending reconcile orderings are generated with that reconciler first.
+	PermuteOrder map[ReconcilerID]bool
 	// per-reconciler perturbation config
 	perturbationCfg map[ReconcilerID]PerturbationConfig
 
 	// divergenceCircuitBreakerThreshold limits exploration below certain subtrees
 	// if enough paths below that subtree converge to the same state.
 	divergenceCircuitBreakerThreshold int
+
+	// Optimization flags (opt-out: false = enabled, true = disabled)
+	// DisableEarlyConvergence disables skipping states where all pending are known
+	// no-ops and we've already found a converged path to this logical state.
+	DisableEarlyConvergence bool
+	// DisableCachePrediction disables using cached reconcile results to predict
+	// and skip reconciles that would produce duplicate states.
+	DisableCachePrediction bool
+	// DisableNoOpOrderingSkip disables skipping ordering branches that put a
+	// known no-op reconciler first.
+	DisableNoOpOrderingSkip bool
+}
+
+// Clone returns a deep copy of the ExploreConfig, including map fields.
+func (cfg ExploreConfig) Clone() ExploreConfig {
+	out := cfg
+	out.perturbationCfg = maps.Clone(cfg.perturbationCfg)
+	out.PermuteOrder = maps.Clone(cfg.PermuteOrder)
+	return out
+}
+
+func (cfg ExploreConfig) OptimizationsEnabled() bool {
+	return !cfg.DisableEarlyConvergence || !cfg.DisableCachePrediction || !cfg.DisableNoOpOrderingSkip
 }
 
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
@@ -78,14 +105,23 @@ type Explorer struct {
 	stats *ExploreStats
 }
 
+// VersionManager returns the shared version manager used during exploration.
+func (e *Explorer) VersionManager() VersionManager {
+	return e.versionManager
+}
+
 type ResultState struct {
-	ID              string
-	State           StateNode
-	Paths           []ExecutionHistory
-	Reason          string
-	Error           string
-	FailedReconcile *PendingReconcile
-	Resolver        VersionManager
+	ID    string
+	State StateNode
+	Paths []ExecutionHistory
+	Error error
+}
+
+type cachedReconcileResult struct {
+	outputObjectsHash   ContentsHash       // hash of output objects (from newState.ObjectsHash())
+	wasNoOp             bool               // did it produce changes?
+	numEffects          int                // number of effects (for history signature)
+	triggeredReconciles []PendingReconcile // reconciles triggered by the changes
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
@@ -181,11 +217,9 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 		paths := normalizeAndDedupePaths(executionPathsToState[stateKey])
 		state.DivergencePoint = initialState.DivergencePoint
 		convergedState := ResultState{
-			ID:       fmt.Sprintf("state-%d", i),
-			State:    state,
-			Paths:    paths,
-			Reason:   "converged",
-			Resolver: e.versionManager,
+			ID:    fmt.Sprintf("state-%d", i),
+			State: state,
+			Paths: paths,
 		}
 		result.ConvergedStates = append(result.ConvergedStates, convergedState)
 	}
@@ -216,10 +250,6 @@ func (e *Explorer) explore(
 		close(abortedStatesCh)
 	}()
 
-	if e.Config.MaxDepth == 0 {
-		e.Config.MaxDepth = DefaultMaxDepth
-	}
-
 	if logger.V(2).Enabled() {
 		logger.V(2).Info("initial state")
 		initialState.Contents.contents.DumpContents()
@@ -235,6 +265,29 @@ func (e *Explorer) explore(
 	// This lets us prune branches that only differ by no-op reads.
 	visitedStatePaths := make(map[StateHash]map[string]struct{})
 
+	// Track completion status for (stateHash, history) pairs.
+	// We only skip duplicate paths if we've COMPLETED exploration (converged or aborted),
+	// not just started it. This prevents skipping a path before we know its outcome.
+	// Key: stateHash + "|" + normalizedHistory
+	// Value: true = completed (safe to skip future duplicates)
+	completedPaths := make(map[string]bool)
+
+	// Track which (objectsHash, reconcilerID, request) combinations produced no changes.
+	// Used to skip orderings that put known no-ops first.
+	knownNoOps := make(map[string]bool)
+
+	reconcileResCache := make(map[string]*cachedReconcileResult)
+
+	// Track which (objectsHash, pendingSignature, historyKey) combinations we've committed to explore.
+	// This allows prediction-based deduplication using only predictable components.
+	exploredLogicalStates := make(map[string]struct{})
+
+	// Subtree Circuit Breaker: track which logical states (objectsHash + pendingSignature) we've
+	// already explored. Future exploration depends only on (objects, pending), NOT on history.
+	// If we reach the same logical state via different paths, the subtrees would be identical,
+	// so we skip re-exploration entirely.
+	exploredSubtrees := make(map[string]struct{})
+
 	var queue []StateNode
 
 	// executionPathsToState is a map of stateKey -> ExecutionHistory
@@ -246,7 +299,11 @@ func (e *Explorer) explore(
 	// but we do track the states we've seen
 	seenStates := make(map[OrderHash]bool)
 
-	seenStatesPendingOrderSensitive := make(map[string]bool)
+	// Track which logical states (order-insensitive) have already been expanded
+	// for reconcile-order permutations. Branching once per StateHash is enough,
+	// because expandStateByReconcileOrder enqueues every first-position choice
+	// and recursion covers the full permutation space.
+	seenBranchingByState := make(map[StateHash]bool)
 
 	// we do track the seen converged states so we can attribute multiple execution paths to them
 	seenConvergedStates := make(map[StateHash]StateNode)
@@ -256,7 +313,14 @@ func (e *Explorer) explore(
 	// var currentState StateNode
 	var currentState StateNode
 
-	queue = append(queue, initialState)
+	// permute the order of the initial state pending reconciles (assume they were all triggered by the initial state)
+	if len(initialState.PendingReconciles) > 1 {
+		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
+		for _, variant := range initialStateVariants {
+			queue = e.enqueueState(queue, variant)
+		}
+	}
+	queue = e.enqueueState(queue, initialState)
 
 	initialHash := initialState.Hash()
 	initialSignature := initialState.ExecutionHistory.UniqueKey()
@@ -272,48 +336,40 @@ func (e *Explorer) explore(
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderSensitiveHash()
-		alreadySeen := seenStates[orderKey]
-		lineageKey := currentState.LineageHash()
 
+		// Subtree Circuit Breaker: check if we've already explored from this logical state.
+		// DISABLED: Current implementation marks subtrees as "explored" when we START,
+		// not when we FINISH. This causes missed convergence when first exploration
+		// doesn't complete (errors, depth limits, etc.). Need to track completion properly.
+		// TODO: Re-enable with proper subtree completion tracking.
+		_ = exploredSubtrees // Keep variable to avoid removing related code
+
+		alreadySeen := seenStates[orderKey]
 		if logger.V(1).Enabled() {
 			logger.V(1).Info("visiting node", "depth", currentState.depth, "Lineage", currentState.DetailedLineage())
 		}
 
-		// we reconcile on the first pending reconcile for this state,
-		// but if there are multiple pending reconciles, we want to explore what would happen
-		// if each pending reconcile had gone first. So, we enqueue copies of this state
-		// with each pending reconcile as the first one before proceeding. We do this FIRST
-		// before taking the reconcile step so that we can explore a branch entirely in a DFS manner.
-		// if we wanted to explore in a BFS manner, we would do this after taking the reconcile step.
-		if len(currentState.PendingReconciles) > 1 {
-			// Branch on the order of pending reconciles. We branch if we haven't seen this
-			// specific ordering (lineageHash) before. This allows the same logical state
-			// to be branched from multiple times if reached via different execution paths,
-			// which is necessary to explore all possible interleavings.
-			if _, seenOrdering := seenStatesPendingOrderSensitive[lineageKey]; !seenOrdering {
-				expandedStates := expandStateByReconcileOrder(currentState)
-				if logger.V(2).Enabled() {
-					branchHashes := lo.Map(expandedStates, func(sn StateNode, _ int) string {
-						return sn.LineageHash()
-					})
-					logger.V(2).Info("branching for pending reconcile ordering", "branchCount", len(expandedStates), "Branches", branchHashes)
+		// We reconcile the first pending reconcile for this state, but if there are
+		// multiple pending reconciles, we need to explore every ordering. Expanding
+		// once per logical state (StateHash) is sufficient: the expansion enqueues
+		// every first-position choice, and recursive exploration will enumerate the
+		// full permutation space. Re-reaching the same StateHash with a different
+		// ordering does not add new permutations, so we skip re-branching.
+		//
+		// Early Convergence Optimization: if ALL pending reconciles are known no-ops,
+		// and we've already found a converged path to this logical state, skip entirely.
+		// The first path runs through the no-ops to reach actual convergence; subsequent
+		// paths can skip since they'd produce the same result.
+		if e.Config.OptimizationsEnabled() {
+			allPendingAreNoOps := e.checkEarlyConvergence(currentState, knownNoOps)
+			if allPendingAreNoOps {
+				objectsHash := currentState.ContentsHash()
+				if _, alreadyConverged := seenConvergedStates[StateHash(objectsHash)]; alreadyConverged {
+					e.stats.EarlyConvergence++
+					logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
+						"depth", currentState.depth, "pendingCount", len(currentState.PendingReconciles))
+					continue
 				}
-				for _, candidate := range expandedStates {
-					candidateLineageHash := candidate.LineageHash()
-					if _, seenCandidateOrder := seenStatesPendingOrderSensitive[candidateLineageHash]; !seenCandidateOrder {
-						if candidateLineageHash != lineageKey {
-							logger.V(2).Info("adding new branch to explore", "TakenKey", lineageKey, "EnqueuedKey", candidateLineageHash)
-							queue = e.enqueueState(queue, candidate)
-						}
-						seenStatesPendingOrderSensitive[candidateLineageHash] = true
-					} else {
-						logger.V(2).Info("already seen branch, not queueing", "OrderKey", candidateLineageHash)
-					}
-				}
-				// Mark this specific ordering as seen to avoid re-branching from the same ordering
-				seenStatesPendingOrderSensitive[lineageKey] = true
-			} else {
-				logger.WithValues("StateKey", stateKey, "OrderKey", lineageKey).V(2).Info("already seen this ordering, not expanding")
 			}
 		}
 
@@ -324,6 +380,9 @@ func (e *Explorer) explore(
 			seenStates[orderKey] = true
 		}
 		e.stats.TotalNodeVisits++
+
+		// Record depth distribution stats
+		e.stats.RecordVisit(currentState.depth, len(currentState.PendingReconciles), len(queue))
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
@@ -355,7 +414,14 @@ func (e *Explorer) explore(
 			if logger.V(2).Enabled() {
 				logger.V(2).Info("lineage", "ReconcileLineage", currentState.ReconcileLineage())
 			}
+
+			// Mark this (state, history) as completed - safe to skip future duplicates
+			completionKey := fmt.Sprintf("%s|%s", stateKey, currentState.ExecutionHistory.UniqueKey())
+			completedPaths[completionKey] = true
+
 			seenConvergedStates[convergenceKey] = currentState
+			// Also record by ObjectsHash (drops pending reconciles) so early convergence detection can find it
+			seenConvergedStates[StateHash(currentState.ContentsHash())] = currentState
 			if convergenceKey != stateKey {
 				if _, ok := executionPathsToState[convergenceKey]; !ok {
 					executionPathsToState[convergenceKey] = make([]ExecutionHistory, 0)
@@ -379,16 +445,18 @@ func (e *Explorer) explore(
 
 		// Divergence Circuit-Breaker: limit exploration when paths from a divergence point
 		// keep converging to the same state.
-		if threshold := e.Config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
-			convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
-			repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
-			if repeatedCount > threshold {
-				logger.V(1).Info("skipping state; subtree circuit breaker triggered",
-					"StateKey", stateKey,
-					"DivergenceKey", currentState.divergenceKey,
-					"Threshold", threshold,
-					"RepeatedConvergences", repeatedCount)
-				continue
+		if e.Config.OptimizationsEnabled() {
+			if threshold := e.Config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
+				convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
+				repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
+				if repeatedCount > threshold {
+					logger.V(1).Info("skipping state; subtree circuit breaker triggered",
+						"StateKey", stateKey,
+						"DivergenceKey", currentState.divergenceKey,
+						"Threshold", threshold,
+						"RepeatedConvergences", repeatedCount)
+					continue
+				}
 			}
 		}
 
@@ -410,21 +478,10 @@ func (e *Explorer) explore(
 			).Info("processing reconcile step")
 		}
 
-		// Each controller in the pending reconciles list is a potential branch point
-		// from the current state.
 		possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID, currentState.depth)
 		if err != nil {
 			return errors.Wrap(err, "getting possible views")
 		}
-
-		prioritizedViews := lo.Filter(possibleViews, func(s StateNode, _ int) bool {
-			return s.Contents.Priority != Skip
-		})
-		logger.V(2).WithValues(
-			"PreFilteredCount", len(possibleViews),
-			"FilteredCount", len(prioritizedViews),
-		).Info("filtered possible views based on priority")
-		possibleViews = prioritizedViews
 
 		if len(possibleViews) == 0 {
 			logger.WithValues(
@@ -433,21 +490,8 @@ func (e *Explorer) explore(
 				"PendingCount", len(currentState.PendingReconciles),
 			).Info("no eligible views for pending reconcile; marking state as aborted")
 
-			e.stats.AbortedPaths++
-			executionPathsToState[stateKey] = append(executionPathsToState[stateKey], currentState.ExecutionHistory)
-			abortReason := fmt.Sprintf("no eligible views for %s", pendingReconcile.ReconcilerID)
-
-			reconcileCopy := pendingReconcile
-			select {
-			case abortedStatesCh <- ResultState{
-				ID:              fmt.Sprintf("aborted-%s", stateKey),
-				State:           currentState,
-				Paths:           []ExecutionHistory{currentState.ExecutionHistory},
-				Reason:          abortReason,
-				FailedReconcile: &reconcileCopy,
-				Resolver:        e.versionManager,
-			}:
-			case <-ctx.Done():
+			abortErr := errors.New(fmt.Sprintf("no eligible views for %s", pendingReconcile.ReconcilerID))
+			if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
 				return nil
 			}
 
@@ -464,35 +508,85 @@ func (e *Explorer) explore(
 				stateView.DumpPending()
 			}
 
-			stepLogger := logger.WithValues("Depth", stateView.depth, "ReconcilerID", reconcilerID)
+			stepLogger := logger.WithValues("Depth", stateView.depth, "# Distinct States", e.stats.UniqueNodeVisits, "Total States", e.stats.TotalNodeVisits)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
-			stepLogger.Info("Taking reconcile step")
+			// key uses OBJECTS hash only - pending list doesn't affect reconciler behavior
+			reconcileResKey := fmt.Sprintf("%s:%s:%s", stateView.ContentsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
-			// for each view, create a new branch in exploration
-			newState, stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+			// Check cache: can we predict the output state without running the reconcile?
+			if e.Config.OptimizationsEnabled() {
+				if e.skipViaCachePrediction(reconcileResCache, exploredLogicalStates, reconcileResKey, stateView, pendingReconcile) {
+					stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
+					e.stats.CachePredictedSkips++
+					continue
+				}
+			}
+
+			stepLogger.Info("Taking reconcile step")
+			stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+
+			stepResult.StateBefore = maps.Clone(stateView.Objects())
+			stepResult.KindSeqBefore = maps.Clone(stateView.Contents.KindSequences)
+
+			// update the state with the new object versions.
+			// note that we are updating the "global state" here,
+			// which may be separate from what the controller saw upon reconciling.
+			newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
+
+			triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes)
+
+			newPendingReconciles := e.determineNewPendingReconciles(ctx, stateView, pendingReconcile, stepResult)
+			stepLogger.V(1).WithValues(
+				"Depth", stateView.depth,
+				"Count", len(newPendingReconciles),
+				"Items", newPendingReconciles,
+			).Info("final pending reconciles after step")
+
+			// make a copy of the current execution history
+			currHistory := slices.Clone(stateView.ExecutionHistory)
+
+			stepResult.StateAfter = newContents
+			stepResult.KindSeqAfter = newSequences
+			stepResult.PendingReconciles = newPendingReconciles
+
+			newState := StateNode{
+				Contents:          NewStateSnapshot(newContents, newSequences, newStateEvents),
+				PendingReconciles: newPendingReconciles,
+				parent:            &stateView,
+				action:            stepResult,
+				// inherit divergence point from the parent
+				divergenceKey:            stateView.divergenceKey,
+				stuckReconcilerPositions: maps.Clone(stateView.stuckReconcilerPositions),
+				ExecutionHistory:         append(currHistory, stepResult),
+			}
+			newState.ID = string(newState.Hash())
+
+			// Track whether this was a no-op (used by ordering optimization)
+			wasNoOp := err == nil && stepResult.wasNoOp()
+			knownNoOps[reconcileResKey] = wasNoOp // cacheKey already uses objectsHash
+			if wasNoOp {
+				e.stats.NoOpReconciles++
+			}
+
+			// Update cache with this reconcile's result
+			if err == nil && stepResult != nil {
+				reconcileResCache[reconcileResKey] = &cachedReconcileResult{
+					outputObjectsHash:   newState.ContentsHash(),
+					wasNoOp:             wasNoOp,
+					numEffects:          len(stepResult.Changes.Effects),
+					triggeredReconciles: triggeredByStep,
+				}
+			}
+
 			if err != nil {
 				// if we encounter an error during reconciliation, just abandon this branch
 				stepLogger.Error(err, "error taking reconcile step; abandoning branch")
-				e.stats.AbortedPaths++
 				failurePath := stateView.ExecutionHistory
 				if stepResult != nil {
 					failurePath = append(slices.Clone(stateView.ExecutionHistory), stepResult)
 				}
-				stateKey := stateView.Hash()
-				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], failurePath)
-				reconcileCopy := pendingReconcile
-				select {
-				case abortedStatesCh <- ResultState{
-					ID:              fmt.Sprintf("aborted-%s", stateKey),
-					State:           stateView,
-					Paths:           []ExecutionHistory{failurePath},
-					Reason:          "error",
-					Error:           err.Error(),
-					FailedReconcile: &reconcileCopy,
-					Resolver:        e.versionManager,
-				}:
-				case <-ctx.Done():
+				if e.emitAbortedState(ctx, abortedStatesCh, stateView, executionPathsToState, failurePath, err) {
 					return nil
 				}
 				continue
@@ -518,24 +612,14 @@ func (e *Explorer) explore(
 						"Lineage", newState.ReconcileLineage(),
 					).Info("aborting path due to max depth")
 				}
-				e.stats.AbortedPaths++
-				stateKey := newState.Hash()
-				executionPathsToState[stateKey] = append(executionPathsToState[stateKey], newState.ExecutionHistory)
-				select {
-				case abortedStatesCh <- ResultState{
-					ID:       fmt.Sprintf("aborted-%s", stateKey),
-					State:    newState,
-					Paths:    []ExecutionHistory{newState.ExecutionHistory},
-					Reason:   fmt.Sprintf("max depth %d", e.Config.MaxDepth),
-					Resolver: e.versionManager,
-				}:
-				case <-ctx.Done():
+				if ctxCancelled := e.emitAbortedState(ctx, abortedStatesCh, newState, executionPathsToState, newState.ExecutionHistory, errors.New("max depth reached")); ctxCancelled {
+					return nil
 				}
 				continue
 			}
 
 			// Deduplication: Skip exploring paths that reach the same state via equivalent mutations.
-			//
+			///Skipped
 			// Key invariant: Same pending list = Same future possibilities = Safe to skip.
 			//
 			// stateHash includes both object state AND pending reconciles. Two paths only
@@ -559,33 +643,227 @@ func (e *Explorer) explore(
 			// Pruning typically only occurs at convergence (Pending=[]) where all paths
 			// collapse to empty pending lists. The paths that get pruned differ only in
 			// no-op orderings, which by definition cannot produce different outcomes.
+
 			stateHash := newState.Hash()
 			historySet, alreadyTracked := visitedStatePaths[stateHash]
 			if !alreadyTracked {
 				historySet = make(map[string]struct{})
 				visitedStatePaths[stateHash] = historySet
 			}
+
+			// Deduplication based on completion status:
+			// Only skip if we've COMPLETED exploration of this (state, history) pair.
+			// This prevents skipping paths that are still in-flight and might fail,
+			// which would cause us to miss valid convergence paths.
 			normalizedHistory := newState.ExecutionHistory.UniqueKey()
-			if _, seenPath := historySet[normalizedHistory]; seenPath {
-				logger.V(1).WithValues(
-					"StateHash", stateHash,
-					"PathSignature", normalizedHistory,
-				).Info("skipping duplicate state reached via equivalent mutation history")
-				e.stats.SkippedPaths++
-				continue
-			} else {
-				// enqueue the new state to explore
-				historySet[normalizedHistory] = struct{}{}
-				queue = e.enqueueState(queue, newState)
+			completionKey := fmt.Sprintf("%s|%s", stateHash, normalizedHistory)
+
+			if e.Config.OptimizationsEnabled() {
+				if completed := completedPaths[completionKey]; completed {
+					logger.V(1).WithValues(
+						"StateHash", stateHash,
+						"PathSignature", normalizedHistory,
+					).Info("skipping - path already completed exploration")
+					e.stats.SkippedPaths++
+					continue
+				}
 			}
+
+			// Track that we've enqueued this path (for stats/debugging)
+			historySet[normalizedHistory] = struct{}{}
+
+			// Also track in exploredLogicalStates for cache prediction
+			pendingStrs := lo.Map(newState.PendingReconciles, func(pr PendingReconcile, _ int) string {
+				return pr.String()
+			})
+			slices.Sort(pendingStrs)
+			pendingSignature := strings.Join(pendingStrs, ",")
+			logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.ContentsHash(), pendingSignature, normalizedHistory)
+			exploredLogicalStates[logicalStateKey] = struct{}{}
+
+			// branch on order of subsequent reconciles that were triggered by this state change step
+			newStateKey := newState.Hash()
+			if len(newState.PendingReconciles) > 1 {
+				if !seenBranchingByState[newStateKey] {
+					expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
+					for _, orderVariant := range expandedStates {
+						// skip orderVariants whose first reconcile are known no-ops
+						if e.Config.OptimizationsEnabled() {
+							fst := orderVariant.PendingReconciles[0]
+							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.ContentsHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
+							if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
+								e.stats.SkippedNoOpOrderings++
+								continue
+							}
+						}
+						queue = e.enqueueState(queue, orderVariant)
+					}
+					seenBranchingByState[newStateKey] = true
+				} else {
+					e.stats.SkippedOrderExpansions++
+				}
+			}
+
+			queue = e.enqueueState(queue, newState)
 		}
 	}
 
 	return nil
 }
 
+// emitAbortedState records an aborted exploration branch and attempts to send it on the channel.
+// Returns true if the context was cancelled before the send completed.
+func (e *Explorer) emitAbortedState(
+	ctx context.Context,
+	abortedStatesCh chan<- ResultState,
+	state StateNode,
+	executionPathsToState map[StateHash][]ExecutionHistory,
+	path ExecutionHistory,
+	err error,
+) bool {
+	e.stats.AbortedPaths++
+	stateKey := state.Hash()
+	executionPathsToState[stateKey] = append(executionPathsToState[stateKey], path)
+
+	aborted := ResultState{
+		ID:    fmt.Sprintf("aborted-%s", stateKey),
+		State: state,
+		Paths: []ExecutionHistory{path},
+		Error: err,
+	}
+
+	select {
+	case abortedStatesCh <- aborted:
+		return false
+	case <-ctx.Done():
+		return true
+	}
+}
+
+func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, stepResult *ReconcileResult) (ObjectVersions, KindSequences, []StateEvent) {
+	changes := stepResult.Changes.ObjectVersions
+
+	// initialize outputs which the effects will be applied to
+	nextState := maps.Clone(stateView.Objects())
+	nextSequences := maps.Clone(stateView.Contents.KindSequences)
+	newStateEvents := slices.Clone(stateView.Contents.stateEvents)
+
+	var highestSequence int64
+	if len(newStateEvents) > 0 {
+		// stateEvents are ordered, so the last entry carries the current max sequence.
+		highestSequence = newStateEvents[len(newStateEvents)-1].Sequence
+	}
+
+	for _, effect := range stepResult.Changes.Effects {
+		existingKey, exists := nextState.HasNamespacedNameForKind(effect.Key.ResourceKey)
+
+		switch effect.OpType {
+		case event.CREATE:
+			if exists {
+				// the effect validation mechanism should prevent a create effect from going through
+				// with an 'AlreadyExists' error, so panic if it does happen
+				panic("create effect object already exists in prev state: " + effect.Key.String())
+			}
+			// Mimic APIServer behavior: set Generation to 1 on CREATE if not already set
+			newObj := e.versionManager.Resolve(changes[effect.Key])
+			if newObj != nil {
+				gen := newObj.GetGeneration()
+				if gen == 0 {
+					newObj.SetGeneration(1)
+					// Update the version hash after modifying Generation
+					changes[effect.Key] = e.versionManager.Publish(newObj)
+				}
+			}
+			nextState[effect.Key] = changes[effect.Key]
+		case event.UPDATE, event.PATCH:
+			if !exists {
+				// it is possible that a stale read will cause a controller to update an object
+				// that no longer exists in the global state. The effect validation mechanism
+				// should cause the client operation to 404 and prevent the update effect from
+				// going through. If it does go through, we should panic cause something broke.
+				panic("update effect object not found in prev state: " + effect.Key.String())
+			}
+			if exists && existingKey != effect.Key {
+				delete(nextState, existingKey)
+			}
+			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
+			oldObj := e.versionManager.Resolve(nextState[existingKey])
+			newObj := e.versionManager.Resolve(changes[effect.Key])
+			if oldObj != nil && newObj != nil {
+				// Compare specs to determine if Generation should be incremented
+				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
+				// Use a safe check to avoid panics if spec comparison fails
+				specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
+				if err != nil {
+					// If we can't determine if spec changed, conservatively increment Generation
+					// This is safer than not incrementing it
+					stepLogger.V(2).WithValues("key", effect.Key, "error", err).Info("error checking spec change, incrementing Generation conservatively")
+					specChanged = true
+				}
+				if specChanged {
+					oldGen := oldObj.GetGeneration()
+					if oldGen == 0 {
+						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
+						// This can happen if the state snapshot has objects with Generation=0
+						newObj.SetGeneration(1)
+						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", 1).Info("set Generation to 1 on spec update (was 0)")
+					} else {
+						newObj.SetGeneration(oldGen + 1)
+						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", newObj.GetGeneration()).Info("incremented Generation on spec update")
+					}
+					// Update the version hash after modifying Generation
+					changes[effect.Key] = e.versionManager.Publish(newObj)
+				}
+			}
+			nextState[effect.Key] = changes[effect.Key]
+
+		// need to determine how to update state based on preconditions
+		case event.MARK_FOR_DELETION:
+			if !exists {
+				// We should never get here (effect validation should fail if there is no object matching the namespace/name in the state)
+				// but if we do, we should panic because something is wrong.
+				stepLogger.Info("warning: deleted key absent in state", "effectKey", effect.Key)
+				panic("deleted key is not present in prev state. effect validation should have prevented this")
+			}
+			stepLogger.WithValues("Key", effect.Key).V(2).Info("marked object for deletion")
+			if existingKey != effect.Key {
+				delete(nextState, existingKey)
+			}
+			// the delete effect is valid, so we should add it to the state
+			nextState[effect.Key] = changes[effect.Key]
+
+		case event.REMOVE:
+			if !exists {
+				stepLogger.Error(nil, "warning: removed key absent in state", "effectKey", effect.Key)
+				panic("removed key is not present in prev state. effect validation should have prevented this")
+			}
+			stepLogger.V(2).Info("removing object from state", "key", effect.Key)
+			delete(nextState, existingKey)
+		default:
+			// at this part of the code we are only working with write effects
+			panic(fmt.Errorf("unknown effect type: %s", effect.OpType))
+		}
+
+		highestSequence++
+		newRV := highestSequence
+
+		// increment resourceversion for the kind
+		nextSequences[effect.Key.IdentityKey.CanonicalGroupKind()] = newRV
+		stateEvent := StateEvent{
+			ReconcileID: stepResult.FrameID,
+			Sequence:    newRV,
+			Effect:      effect,
+			// TODO handle time info
+			Timestamp: "",
+		}
+		newStateEvents = append(newStateEvents, stateEvent)
+	}
+
+	return nextState, nextSequences, newStateEvents
+}
+
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
-func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (StateNode, *ReconcileResult, error) {
+func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr PendingReconcile) (*ReconcileResult, error) {
 	stepLog := log.FromContext(ctx)
 	startWall := time.Now()
 	defer func() {
@@ -622,14 +900,14 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		// AlreadyExists errors happen when a stale read causes a controller to try creating
 		// an object that already exists. Treat this as a no-op and continue exploring.
 		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).Info("tolerating AlreadyExists error; treating reconcile as no-op")
-		reconcileResult = &ReconcileResult{
+		tolerableErrResult := &ReconcileResult{
 			ControllerID: pr.ReconcilerID,
 			FrameID:      frameID,
 			FrameType:    FrameTypeExplore,
 			Changes:      Changes{ObjectVersions: make(ObjectVersions)},
 			Error:        err.Error(),
 		}
-		err = nil
+		return tolerableErrResult, nil
 	}
 	if err != nil {
 		// Other errors cause the branch to be abandoned. Return a minimal result for history tracking.
@@ -640,201 +918,19 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 			FrameType:    FrameTypeExplore,
 			Error:        err.Error(),
 		}
-		return state, failure, err
-	}
-	stepLog.V(1).WithValues(
-		"Result", reconcileResult.ctrlRes,
-	).Info("finished reconcile")
-
-	beforeState := make(ObjectVersions)
-	maps.Copy(beforeState, state.Objects())
-	beforeSequences := make(KindSequences)
-	maps.Copy(beforeSequences, state.Contents.KindSequences)
-
-	reconcileResult.StateBefore = beforeState
-	reconcileResult.KindSeqBefore = beforeSequences
-
-	newSequences := make(KindSequences)
-	maps.Copy(newSequences, state.Contents.KindSequences)
-	for key, seq := range newSequences {
-		if !strings.Contains(key, "/") {
-			stepLog.Error(nil, "kind sequence key lacks group info", "key", key, "sequence", seq)
-		}
-	}
-	effects := reconcileResult.Changes.Effects
-	stepLog.V(1).Info("completed step", "frameID", frameID, "controller", pr.ReconcilerID, "numEffects", len(effects))
-
-	// update the state with the new object versions.
-	// note that we are updating the "global state" here,
-	// which may be separate from what the controller saw upon reconciling.
-	prevState := make(ObjectVersions)
-	maps.Copy(prevState, state.Objects())
-
-	changeOV := reconcileResult.Changes.ObjectVersions
-	newStateEvents := slices.Clone(state.Contents.stateEvents)
-
-	// determine highest sequence once and increment as effects are applied
-	var highestSequence int64
-	if len(newStateEvents) > 0 {
-		for _, event := range newStateEvents {
-			if event.Sequence > highestSequence {
-				highestSequence = event.Sequence
-			}
-		}
+		return failure, err
 	}
 
-	for _, effect := range effects {
-		existingKey, exists := prevState.HasNamespacedNameForKind(effect.Key.ResourceKey)
-
-		switch effect.OpType {
-		case event.CREATE:
-			if exists {
-				// the effect validation mechanism should prevent a create effect from going through
-				// with an 'AlreadyExists' error, so panic if it does happen
-				panic("create effect object already exists in prev state: " + effect.Key.String())
-			} else {
-				// Mimic APIServer behavior: set Generation to 1 on CREATE if not already set
-				newObj := e.versionManager.Resolve(changeOV[effect.Key])
-				if newObj != nil {
-					gen := newObj.GetGeneration()
-					if gen == 0 {
-						newObj.SetGeneration(1)
-						// Update the version hash after modifying Generation
-						changeOV[effect.Key] = e.versionManager.Publish(newObj)
-					}
-				}
-				prevState[effect.Key] = changeOV[effect.Key]
-			}
-		case event.UPDATE, event.PATCH:
-			if !exists {
-				// it is possible that a stale read will cause a controller to update an object
-				// that no longer exists in the global state. The effect validation mechanism
-				// should cause the client operation to 404 and prevent the update effect from
-				// going through. If it does go through, we should panic cause something broke.
-				panic("update effect object not found in prev state: " + effect.Key.String())
-			}
-			if exists && existingKey != effect.Key {
-				delete(prevState, existingKey)
-			}
-			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
-			oldObj := e.versionManager.Resolve(prevState[existingKey])
-			newObj := e.versionManager.Resolve(changeOV[effect.Key])
-			if oldObj != nil && newObj != nil {
-				// Compare specs to determine if Generation should be incremented
-				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
-				// Use a safe check to avoid panics if spec comparison fails
-				specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
-				if err != nil {
-					// If we can't determine if spec changed, conservatively increment Generation
-					// This is safer than not incrementing it
-					stepLog.V(2).WithValues("key", effect.Key, "error", err).Info("error checking spec change, incrementing Generation conservatively")
-					specChanged = true
-				}
-				if specChanged {
-					oldGen := oldObj.GetGeneration()
-					if oldGen == 0 {
-						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
-						// This can happen if the state snapshot has objects with Generation=0
-						newObj.SetGeneration(1)
-						stepLog.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", 1).Info("set Generation to 1 on spec update (was 0)")
-					} else {
-						newObj.SetGeneration(oldGen + 1)
-						stepLog.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", newObj.GetGeneration()).Info("incremented Generation on spec update")
-					}
-					// Update the version hash after modifying Generation
-					changeOV[effect.Key] = e.versionManager.Publish(newObj)
-				}
-			}
-			prevState[effect.Key] = changeOV[effect.Key]
-
-		// need to determine how to update state based on preconditions
-		case event.MARK_FOR_DELETION:
-			if !exists {
-				// We should never get here (effect validation should fail if there is no object matching the namespace/name in the state)
-				// but if we do, we should panic because something is wrong.
-				logger.Info("warning: deleted key absent in state", "effectKey", effect.Key, "frameID", frameID)
-				panic("deleted key is not present in prev state. effect validation should have prevented this")
-			}
-			stepLog.WithValues("Key", effect.Key).V(2).Info("marked object for deletion")
-			if existingKey != effect.Key {
-				delete(prevState, existingKey)
-			}
-			// the delete effect is valid, so we should add it to the state
-			prevState[effect.Key] = changeOV[effect.Key]
-
-		case event.REMOVE:
-			if !exists {
-				stepLog.Error(nil, "warning: removed key absent in state", "effectKey", effect.Key, "frameID", frameID)
-				panic("removed key is not present in prev state. effect validation should have prevented this")
-			}
-			stepLog.V(2).Info("removing object from state", "key", effect.Key)
-			delete(prevState, existingKey)
-		default:
-			// at this part of the code we are only working with write effects
-			err := fmt.Errorf("unknown effect type: %s", effect.OpType)
-			logger.Error(err, "effect", effect)
-			return StateNode{}, nil, err
-		}
-
-		highestSequence++
-		newRV := highestSequence
-
-		// increment resourceversion for the kind
-		newSequences[effect.Key.IdentityKey.CanonicalGroupKind()] = newRV
-		stateEvent := StateEvent{
-			ReconcileID: reconcileResult.FrameID,
-			Sequence:    newRV,
-			Effect:      effect,
-			// TODO handle time info
-			Timestamp: "",
-		}
-		newStateEvents = append(newStateEvents, stateEvent)
-	}
-
-	newPendingReconciles := e.determineNewPendingReconciles(ctx, state, pr, reconcileResult)
-	stepLog.V(1).WithValues(
-		"Depth", state.depth,
-		"Count", len(newPendingReconciles),
-		"Items", newPendingReconciles,
-	).Info("final pending reconciles after step")
-
-	// make a copy of the current execution history
-	currHistory := slices.Clone(state.ExecutionHistory)
-
-	afterState := make(ObjectVersions)
-	maps.Copy(afterState, prevState)
-	afterSequences := make(KindSequences)
-	maps.Copy(afterSequences, newSequences)
-
-	reconcileResult.StateAfter = afterState
-	reconcileResult.KindSeqAfter = afterSequences
-	reconcileResult.PendingReconciles = newPendingReconciles
-
-	child := StateNode{
-		Contents:          NewStateSnapshot(prevState, newSequences, newStateEvents),
-		PendingReconciles: newPendingReconciles,
-		parent:            &state,
-		action:            reconcileResult,
-
-		// inherit the mode from the parent
-		mode: state.mode,
-
-		// inherit divergence point from the parent
-		divergenceKey: state.divergenceKey,
-
-		stuckReconcilerPositions: maps.Clone(state.stuckReconcilerPositions),
-
-		ExecutionHistory: append(currHistory, reconcileResult),
-	}
-	child.ID = string(child.Hash())
-	return child, child.action, nil
+	return reconcileResult, nil
 }
 
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
-	// In DFS, explore newly triggered reconciles first, then existing pending.
-	// When duplicates exist for the same (ReconcilerID + NamespacedName), if any have Source == StateChange,
-	// that one takes precedence over Requeue or AsyncEnqueue. Otherwise, first occurrence wins.
-	all := append(triggered, currPending...)
+	// Ordering: existing pending first, then newly triggered.
+	// This prevents reconcilers that frequently requeue/trigger from starving others.
+	// Among duplicates for the same (ReconcilerID + NamespacedName):
+	//   - Any StateChange source overrides others.
+	//   - Otherwise, the first occurrence in this merged list wins.
+	all := append(currPending, triggered...)
 
 	type dedupKey struct {
 		ReconcilerID   ReconcilerID
@@ -849,11 +945,11 @@ func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingRecon
 			resultMap[key] = pr
 			continue
 		}
-		// If new is StateChange and existing is not, replace
+		// StateChange overrides any previously seen entry.
 		if pr.Source == SourceStateChange && existing.Source != SourceStateChange {
 			resultMap[key] = pr
 		}
-		// Otherwise, keep the existing one (first occurrence or StateChange takes precedence)
+		// Otherwise, keep the existing one (first occurrence wins).
 	}
 
 	// preserve original order from "all", but use the winner from resultMap
@@ -960,8 +1056,6 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 			action:            currState.action,
 			ExecutionHistory:  slices.Clone(currState.ExecutionHistory),
 
-			// identify the produced node as a "hypothetical" state
-			mode:          NodeModeHypothetical,
 			divergenceKey: divergenceHash,
 
 			stuckReconcilerPositions: stuckPositions,
@@ -975,7 +1069,11 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return sn
 	})
 
-	return asStateNodes, nil
+	filtered := lo.Filter(asStateNodes, func(sn StateNode, _ int) bool {
+		return sn.Contents.Priority != Skip
+	})
+
+	return filtered, nil
 }
 
 func dumpQueue(queue []StateNode) []string {
@@ -1057,6 +1155,95 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 
 	allTriggered := append(triggeredByChanges, capturedPending...)
 	return e.getNewPendingReconciles(stillPending, allTriggered)
+}
+
+func (e *Explorer) skipViaCachePrediction(
+	reconcileCache map[string]*cachedReconcileResult,
+	exploredLogicalStates map[string]struct{},
+	cacheKey string,
+	stateView StateNode,
+	pendingReconcile PendingReconcile,
+) bool {
+	// Check cache: can we predict the output state without running the reconcile?
+	if cached, ok := reconcileCache[cacheKey]; ok {
+		// We've run this (objects, reconciler, request) before.
+		// We can predict what the output will be.
+
+		//                     reconcileCache                exploredLogicalStates
+		//                     (input → output)              (output → seen?)
+		//                           │                              │
+		// State A ──────────────────┼──────► Output X ────────────┼──────► Already queued? YES → skip
+		// (objects=O, pending=[1,2])│        (objs=O', pend=[2])  │
+		//                           │                              │
+		// State B ──────────────────┼──────► Output X ────────────┼──────► Already queued? YES → skip
+		// (objects=O, pending=[1,3])│        (objs=O', pend=[3])  │
+		//                           ▲                              │
+		//                      SAME cache key!              DIFFERENT outputs
+		//                      (same objects, same R1)      (different pending)
+
+		// Predict output pending: current pending - this reconcile + triggered
+		predictedPending := lo.Filter(stateView.PendingReconciles, func(pr PendingReconcile, _ int) bool {
+			return pr != pendingReconcile
+		})
+		predictedPending = e.getNewPendingReconciles(predictedPending, cached.triggeredReconciles)
+
+		// Build pending signature (sorted for determinism)
+		pendingStrs := lo.Map(predictedPending, func(pr PendingReconcile, _ int) string {
+			return pr.String()
+		})
+		slices.Sort(pendingStrs)
+		pendingSignature := strings.Join(pendingStrs, ",")
+
+		// Predict the history signature after this step
+		currentHistory := stateView.ExecutionHistory.UniqueKey()
+		var predictedHistory string
+		if cached.wasNoOp {
+			predictedHistory = currentHistory
+		} else {
+			stepSig := fmt.Sprintf("%s@%d", pendingReconcile.ReconcilerID, cached.numEffects)
+			if currentHistory == "" {
+				predictedHistory = stepSig
+			} else {
+				predictedHistory = fmt.Sprintf("%s,%s", currentHistory, stepSig)
+			}
+		}
+
+		// Check if we've already committed to exploring this logical state
+		logicalStateKey := fmt.Sprintf("%s|%s|%s", cached.outputObjectsHash, pendingSignature, predictedHistory)
+		if _, explored := exploredLogicalStates[logicalStateKey]; explored {
+			return true
+		}
+	}
+	return false
+}
+
+// checkEarlyConvergence detects if all pending reconciles are known no-ops.
+// When true, we can skip exploring different orderings since they're all equivalent.
+func (e *Explorer) checkEarlyConvergence(state StateNode, knownNoOps map[string]bool) bool {
+	if len(state.PendingReconciles) == 0 {
+		return false
+	}
+
+	objectsHash := state.ContentsHash()
+	for _, pr := range state.PendingReconciles {
+		noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, pr.ReconcilerID, pr.Request.NamespacedName.String())
+		if isNoOp, known := knownNoOps[noOpKey]; !known || !isNoOp {
+			return false
+		}
+	}
+	return true
+}
+
+// computeSubtreeKey returns a key representing the logical state for subtree deduplication.
+// Uses order-sensitive pending to distinguish different exploration orderings.
+// Two states with the same objects and same pending ORDER will explore identical subtrees.
+func (e *Explorer) computeSubtreeKey(state StateNode) string {
+	// Use order-sensitive pending: different orderings can produce different outcomes
+	pendingStrs := lo.Map(state.PendingReconciles, func(pr PendingReconcile, _ int) string {
+		return pr.String()
+	})
+	// NOT sorted - order matters for subtree identity
+	return fmt.Sprintf("%s|%s", state.ContentsHash(), strings.Join(pendingStrs, ","))
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {

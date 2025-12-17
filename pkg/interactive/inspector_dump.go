@@ -2,6 +2,7 @@ package interactive
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -12,11 +13,13 @@ import (
 	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// SaveInspectorDump serializes the supplied inspector states to the provided path.
-func SaveInspectorDump(states []tracecheck.ResultState, path string) error {
-	dump, err := buildInspectorDump(states)
+// SaveInspectorDump serializes the supplied inspector states to the provided path using the resolver to materialize objects.
+func SaveInspectorDump(states []tracecheck.ResultState, resolver tracecheck.VersionManager, path string) error {
+	dump, err := buildInspectorDump(states, resolver)
 	if err != nil {
 		return err
 	}
@@ -32,16 +35,16 @@ func SaveInspectorDump(states []tracecheck.ResultState, path string) error {
 	return nil
 }
 
-// LoadInspectorDump loads inspector state from the specified path.
-func LoadInspectorDump(path string) ([]tracecheck.ResultState, error) {
+// LoadInspectorDump loads inspector state from the specified path and reconstructs a resolver for inspection.
+func LoadInspectorDump(path string) ([]tracecheck.ResultState, tracecheck.VersionManager, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read inspector dump: %w", err)
+		return nil, nil, fmt.Errorf("read inspector dump: %w", err)
 	}
 
 	var dump inspectorDump
 	if err := json.Unmarshal(data, &dump); err != nil {
-		return nil, fmt.Errorf("unmarshal inspector dump: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal inspector dump: %w", err)
 	}
 
 	return dump.toResultStates()
@@ -58,13 +61,11 @@ type dumpObject struct {
 }
 
 type dumpResultState struct {
-	ID              string                       `json:"id"`
-	Reason          string                       `json:"reason"`
-	Error           string                       `json:"error,omitempty"`
-	DivergencePoint string                       `json:"divergencePoint"`
-	State           dumpStateNode                `json:"state"`
-	Paths           [][]dumpReconcileResult      `json:"paths"`
-	FailedReconcile *tracecheck.PendingReconcile `json:"failedReconcile,omitempty"`
+	ID              string                  `json:"id"`
+	Error           string                  `json:"error,omitempty"`
+	DivergencePoint string                  `json:"divergencePoint"`
+	State           dumpStateNode           `json:"state"`
+	Paths           [][]dumpReconcileResult `json:"paths"`
 }
 
 type dumpStateNode struct {
@@ -72,8 +73,9 @@ type dumpStateNode struct {
 }
 
 type dumpStateSnapshot struct {
-	Objects       []dumpObjectVersion      `json:"objects"`
-	KindSequences tracecheck.KindSequences `json:"kindSequences"`
+	Objects           []dumpObjectVersion      `json:"objects"`
+	KindSequences     tracecheck.KindSequences `json:"kindSequences"`
+	PendingReconciles []dumpPendingReconcile   `json:"pendingReconciles,omitempty"`
 }
 
 type dumpObjectVersion struct {
@@ -92,6 +94,7 @@ type dumpReconcileResult struct {
 	StateAfter    []dumpObjectVersion      `json:"stateAfter,omitempty"`
 	KindSeqBefore tracecheck.KindSequences `json:"kindSeqBefore,omitempty"`
 	KindSeqAfter  tracecheck.KindSequences `json:"kindSeqAfter,omitempty"`
+	Pending       []dumpPendingReconcile   `json:"pendingReconciles,omitempty"`
 }
 
 type dumpChanges struct {
@@ -104,32 +107,31 @@ type dumpDelta struct {
 	Val string                `json:"value"`
 }
 
-func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error) {
+type dumpPendingReconcile struct {
+	ReconcilerID string                            `json:"reconcilerId"`
+	Namespace    string                            `json:"namespace"`
+	Name         string                            `json:"name"`
+	Source       tracecheck.PendingReconcileSource `json:"source"`
+}
+
+func buildInspectorDump(states []tracecheck.ResultState, resolver tracecheck.VersionManager) (*inspectorDump, error) {
 	if len(states) == 0 {
 		return &inspectorDump{}, nil
 	}
 
-	objectIndex := make(map[string]dumpObject)
-	var defaultResolver tracecheck.VersionManager
-	for _, state := range states {
-		if defaultResolver == nil && state.Resolver != nil {
-			defaultResolver = state.Resolver
-		}
+	if resolver == nil {
+		return nil, fmt.Errorf("version resolver is required to build an inspector dump")
 	}
 
-	addHash := func(hash snapshot.VersionHash, resolver tracecheck.VersionManager) error {
+	objectIndex := make(map[string]dumpObject)
+
+	addHash := func(hash snapshot.VersionHash) error {
 		if hash.Value == "" {
 			return nil
 		}
 		key := hashKey(hash)
 		if _, exists := objectIndex[key]; exists {
 			return nil
-		}
-		if resolver == nil {
-			resolver = defaultResolver
-		}
-		if resolver == nil {
-			return fmt.Errorf("no resolver available for hash %s (%s)", util.ShortenHash(hash.Value), hash.Strategy)
 		}
 		obj := resolver.Resolve(hash)
 		if obj == nil {
@@ -145,29 +147,25 @@ func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error)
 	resultStates := make([]dumpResultState, 0, len(states))
 
 	for _, state := range states {
-		resolver := state.Resolver
-		if resolver == nil {
-			resolver = defaultResolver
-		}
-		if err := collectHashesFromObjectVersions(state.State.Objects(), resolver, addHash); err != nil {
+		if err := collectHashesFromObjectVersions(state.State.Objects(), addHash); err != nil {
 			return nil, err
 		}
 
+		errMsg := ""
+		if state.Error != nil {
+			errMsg = state.Error.Error()
+		}
 		dumpState := dumpResultState{
 			ID:              state.ID,
-			Reason:          state.Reason,
-			Error:           state.Error,
+			Error:           errMsg,
 			DivergencePoint: state.State.DivergencePoint,
 			State: dumpStateNode{
 				Contents: dumpStateSnapshot{
-					Objects:       toDumpObjectVersions(state.State.Objects(), objectIndex),
-					KindSequences: state.State.Contents.KindSequences,
+					Objects:           toDumpObjectVersions(state.State.Objects(), objectIndex),
+					KindSequences:     state.State.Contents.KindSequences,
+					PendingReconciles: toDumpPendingReconciles(state.State.PendingReconciles),
 				},
 			},
-		}
-		if state.FailedReconcile != nil {
-			copy := *state.FailedReconcile
-			dumpState.FailedReconcile = &copy
 		}
 
 		paths := make([][]dumpReconcileResult, len(state.Paths))
@@ -180,7 +178,7 @@ func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error)
 				if step == nil {
 					continue
 				}
-				if err := collectReconcileHashes(step, resolver, addHash); err != nil {
+				if err := collectReconcileHashes(step, addHash); err != nil {
 					return nil, err
 				}
 				pathDump = append(pathDump, toDumpReconcileResult(step, objectIndex))
@@ -212,15 +210,15 @@ func buildInspectorDump(states []tracecheck.ResultState) (*inspectorDump, error)
 	}, nil
 }
 
-func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
+func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, tracecheck.VersionManager, error) {
 	store := snapshot.NewStore()
 	for _, obj := range d.Objects {
 		u := &unstructured.Unstructured{Object: obj.Object}
 		if err := store.StoreObject(u); err != nil {
-			return nil, fmt.Errorf("store object for hash %s: %w", obj.Hash.Value, err)
+			return nil, nil, fmt.Errorf("store object for hash %s: %w", obj.Hash.Value, err)
 		}
 		if _, ok := store.ResolveWithStrategy(obj.Hash, obj.Hash.Strategy); !ok {
-			return nil, fmt.Errorf("stored object hash mismatch for %s (%s)", util.ShortenHash(obj.Hash.Value), obj.Hash.Strategy)
+			return nil, nil, fmt.Errorf("stored object hash mismatch for %s (%s)", util.ShortenHash(obj.Hash.Value), obj.Hash.Strategy)
 		}
 	}
 	versionManager := tracecheck.NewVersionStore(store, nil)
@@ -229,6 +227,10 @@ func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
 
 	states := make([]tracecheck.ResultState, len(d.States))
 	for i, dumped := range d.States {
+		var errVal error
+		if dumped.Error != "" {
+			errVal = errors.New(dumped.Error)
+		}
 		stateNode := tracecheck.StateNode{
 			ID: dumped.ID,
 			Contents: tracecheck.NewStateSnapshot(
@@ -236,7 +238,8 @@ func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
 				dumped.State.Contents.KindSequences,
 				nil,
 			),
-			DivergencePoint: dumped.DivergencePoint,
+			PendingReconciles: fromDumpPendingReconciles(dumped.State.Contents.PendingReconciles),
+			DivergencePoint:   dumped.DivergencePoint,
 		}
 
 		paths := make([]tracecheck.ExecutionHistory, len(dumped.Paths))
@@ -252,25 +255,15 @@ func (d inspectorDump) toResultStates() ([]tracecheck.ResultState, error) {
 			paths[j] = results
 		}
 
-		var failedCopy *tracecheck.PendingReconcile
-		if dumped.FailedReconcile != nil {
-			copy := *dumped.FailedReconcile
-			failedCopy = &copy
-		}
-
 		states[i] = tracecheck.ResultState{
-			ID:              dumped.ID,
-			Reason:          dumped.Reason,
-			Error:           dumped.Error,
-			State:           stateNode,
-			Paths:           paths,
-			FailedReconcile: failedCopy,
-			// TODO refactor to remove this from ResultState
-			Resolver: versionManager,
+			ID:    dumped.ID,
+			Error: errVal,
+			State: stateNode,
+			Paths: paths,
 		}
 	}
 
-	return states, nil
+	return states, versionManager, nil
 }
 
 func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string]dumpObject) dumpReconcileResult {
@@ -296,6 +289,7 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 		StateAfter:    toDumpObjectVersions(step.StateAfter, objIndex),
 		KindSeqBefore: step.KindSeqBefore,
 		KindSeqAfter:  step.KindSeqAfter,
+		Pending:       toDumpPendingReconciles(step.PendingReconciles),
 	}
 }
 
@@ -308,12 +302,13 @@ func fromDumpReconcileResult(dump dumpReconcileResult, resolver *dumpKeyResolver
 			ObjectVersions: fromDumpObjectVersions(dump.Changes.ObjectVersions, resolver),
 			Effects:        fromDumpEffects(dump.Changes.Effects, resolver),
 		},
-		Error:         dump.Error,
-		Deltas:        fromDumpDeltas(dump.Deltas, resolver),
-		StateBefore:   fromDumpObjectVersions(dump.StateBefore, resolver),
-		StateAfter:    fromDumpObjectVersions(dump.StateAfter, resolver),
-		KindSeqBefore: dump.KindSeqBefore,
-		KindSeqAfter:  dump.KindSeqAfter,
+		Error:             dump.Error,
+		Deltas:            fromDumpDeltas(dump.Deltas, resolver),
+		StateBefore:       fromDumpObjectVersions(dump.StateBefore, resolver),
+		StateAfter:        fromDumpObjectVersions(dump.StateAfter, resolver),
+		KindSeqBefore:     dump.KindSeqBefore,
+		KindSeqAfter:      dump.KindSeqAfter,
+		PendingReconciles: fromDumpPendingReconciles(dump.Pending),
 	}
 }
 
@@ -406,6 +401,42 @@ func fromDumpEffects(entries []tracecheck.Effect, resolver *dumpKeyResolver) []t
 	return out
 }
 
+func toDumpPendingReconciles(pending []tracecheck.PendingReconcile) []dumpPendingReconcile {
+	if len(pending) == 0 {
+		return nil
+	}
+	out := make([]dumpPendingReconcile, len(pending))
+	for i, pr := range pending {
+		out[i] = dumpPendingReconcile{
+			ReconcilerID: string(pr.ReconcilerID),
+			Namespace:    pr.Request.Namespace,
+			Name:         pr.Request.Name,
+			Source:       pr.Source,
+		}
+	}
+	return out
+}
+
+func fromDumpPendingReconciles(entries []dumpPendingReconcile) []tracecheck.PendingReconcile {
+	if len(entries) == 0 {
+		return nil
+	}
+	out := make([]tracecheck.PendingReconcile, len(entries))
+	for i, pr := range entries {
+		out[i] = tracecheck.PendingReconcile{
+			ReconcilerID: tracecheck.ReconcilerID(pr.ReconcilerID),
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: pr.Namespace,
+					Name:      pr.Name,
+				},
+			},
+			Source: pr.Source,
+		}
+	}
+	return out
+}
+
 func hashKey(hash snapshot.VersionHash) string {
 	return fmt.Sprintf("%s|%s", hash.Strategy, hash.Value)
 }
@@ -444,28 +475,28 @@ func ensureKeyKindWithObject(key snapshot.CompositeKey, hash snapshot.VersionHas
 	return key
 }
 
-func collectHashesFromObjectVersions(ov tracecheck.ObjectVersions, resolver tracecheck.VersionManager, add func(snapshot.VersionHash, tracecheck.VersionManager) error) error {
+func collectHashesFromObjectVersions(ov tracecheck.ObjectVersions, add func(snapshot.VersionHash) error) error {
 	for _, hash := range ov {
-		if err := add(hash, resolver); err != nil {
+		if err := add(hash); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func collectReconcileHashes(step *tracecheck.ReconcileResult, resolver tracecheck.VersionManager, add func(snapshot.VersionHash, tracecheck.VersionManager) error) error {
-	if err := collectHashesFromObjectVersions(step.Changes.ObjectVersions, resolver, add); err != nil {
+func collectReconcileHashes(step *tracecheck.ReconcileResult, add func(snapshot.VersionHash) error) error {
+	if err := collectHashesFromObjectVersions(step.Changes.ObjectVersions, add); err != nil {
 		return err
 	}
 	for _, eff := range step.Changes.Effects {
-		if err := add(eff.Version, resolver); err != nil {
+		if err := add(eff.Version); err != nil {
 			return err
 		}
 	}
-	if err := collectHashesFromObjectVersions(step.StateBefore, resolver, add); err != nil {
+	if err := collectHashesFromObjectVersions(step.StateBefore, add); err != nil {
 		return err
 	}
-	if err := collectHashesFromObjectVersions(step.StateAfter, resolver, add); err != nil {
+	if err := collectHashesFromObjectVersions(step.StateAfter, add); err != nil {
 		return err
 	}
 	return nil

@@ -9,8 +9,11 @@ import (
 	"strings"
 	"time"
 
+	"maps"
+
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
+	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/pkg/util"
@@ -107,7 +110,7 @@ type stepCache struct {
 // RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
 // When allowDump is false, the dump shortcut is disabled (used for trace-hydrated sessions).
 // If the user requests a restart, the inspector exits and returns a RestartRequest to the caller.
-func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, cfg tracecheck.ExploreConfig) (*tracecheck.RestartRequest, error) {
+func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver tracecheck.VersionManager, allowDump bool, cfg tracecheck.ExploreConfig) (*tracecheck.RestartRequest, error) {
 	states = validateResultStates(states)
 	states = tracecheck.TrimStatesForInspection(states)
 	states = dedupeResultStates(states)
@@ -116,18 +119,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 		return nil, fmt.Errorf("no converged states supplied")
 	}
 
-	resolverCaches := make(map[tracecheck.VersionManager]*objectCache)
-	getCache := func(resolver tracecheck.VersionManager) *objectCache {
-		if resolver == nil {
-			return nil
-		}
-		if cache, ok := resolverCaches[resolver]; ok {
-			return cache
-		}
-		cache := newObjectCache(resolver)
-		resolverCaches[resolver] = cache
-		return cache
+	var resolverCache *objectCache
+	if resolver != nil {
+		resolverCache = newObjectCache(resolver)
 	}
+	getCache := func() *objectCache { return resolverCache }
 
 	app := tview.NewApplication()
 	pages := tview.NewPages()
@@ -186,7 +182,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 	pathDetailDirty := true
 	stepDetailDirty := true
 	reconcileDirty := true
-	currentConfig := cfg
+	currentConfig := cfg.Clone()
 	lastStepState := -1
 	lastStepPath := -1
 	lastStepIdx := -1
@@ -289,7 +285,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 				updateStatus(`[yellow]dump cancelled[-]`)
 				return
 			}
-			if err := SaveInspectorDump(states, path); err != nil {
+			if err := SaveInspectorDump(states, resolver, path); err != nil {
 				updateStatus(fmt.Sprintf("[red]dump failed: %v[-]", err))
 				return
 			}
@@ -332,15 +328,48 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 	}
 
 	showConfirm := func(seed tracecheck.RestartSeed, prefix tracecheck.ExecutionHistory) {
+		nextCfg := currentConfig.Clone()
+		permuteSelections := maps.Clone(nextCfg.PermuteOrder)
+		if permuteSelections == nil {
+			permuteSelections = make(map[tracecheck.ReconcilerID]bool)
+		}
+
+		reconcilerIDs := lo.Keys(permuteSelections)
+		if len(reconcilerIDs) == 0 {
+			observed := make(map[tracecheck.ReconcilerID]struct{})
+			for _, st := range states {
+				for _, pr := range st.State.PendingReconciles {
+					observed[pr.ReconcilerID] = struct{}{}
+				}
+				for _, path := range st.Paths {
+					for _, step := range path {
+						if step != nil {
+							observed[step.ControllerID] = struct{}{}
+						}
+					}
+				}
+			}
+			for id := range observed {
+				if _, ok := permuteSelections[id]; !ok {
+					permuteSelections[id] = false
+				}
+			}
+			reconcilerIDs = lo.Keys(permuteSelections)
+		}
+		sort.Slice(reconcilerIDs, func(i, j int) bool { return string(reconcilerIDs[i]) < string(reconcilerIDs[j]) })
+
 		form := tview.NewForm().
-			AddInputField("Max Depth", fmt.Sprintf("%d", currentConfig.MaxDepth), 0, nil, nil).
-			AddInputField("Timeout", currentConfig.Timeout.String(), 0, nil, nil).
-			AddCheckbox("Preserve history", true, nil)
+			AddInputField("Max Depth", fmt.Sprintf("%d", nextCfg.MaxDepth), 0, nil, nil).
+			AddInputField("Timeout", nextCfg.Timeout.String(), 0, nil, nil)
+		for _, id := range reconcilerIDs {
+			id := id
+			form.AddCheckbox(fmt.Sprintf("Permute order: %s", id), permuteSelections[id], func(checked bool) {
+				permuteSelections[id] = checked
+			})
+		}
 		form.AddButton("OK", func() {
 			maxDepthStr := form.GetFormItemByLabel("Max Depth").(*tview.InputField).GetText()
 			timeoutStr := form.GetFormItemByLabel("Timeout").(*tview.InputField).GetText()
-			preserveHistory := form.GetFormItemByLabel("Preserve history").(*tview.Checkbox).IsChecked()
-			nextCfg := currentConfig
 			if strings.TrimSpace(maxDepthStr) != "" {
 				if val, err := strconv.Atoi(strings.TrimSpace(maxDepthStr)); err == nil && val > 0 {
 					nextCfg.MaxDepth = val
@@ -357,10 +386,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 					return
 				}
 			}
+			nextCfg.PermuteOrder = permuteSelections
 			restartRequest = &tracecheck.RestartRequest{
 				Seed:            seed,
 				Config:          nextCfg,
-				PreserveHistory: preserveHistory,
+				PreserveHistory: true,
 				Prefix:          prefix,
 			}
 			app.Stop()
@@ -389,7 +419,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 				compareEntries = append(compareEntries, compareEntry{
 					stateIdx: idx,
 					hash:     hv,
-					cache:    getCache(st.Resolver),
+					cache:    getCache(),
 				})
 			}
 		}
@@ -518,12 +548,12 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 			updateStatus("[red]selected step has no state snapshot[-]")
 			return
 		}
-		if states[selectedState].Resolver == nil {
+		if resolver == nil {
 			updateStatus("[red]resolver unavailable for restart[-]")
 			return
 		}
 
-		seed, err := tracecheck.BuildRestartSeedFromState(step.StateAfter, states[selectedState].Resolver, step.PendingReconciles)
+		seed, err := tracecheck.BuildRestartSeedFromState(step.StateAfter, resolver, step.PendingReconciles)
 		if err != nil {
 			updateStatus(fmt.Sprintf("[red]restart seed failed: %v[-]", err))
 			return
@@ -727,7 +757,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 
 		state := states[selectedState]
 		objects := state.State.Objects()
-		cache := getCache(state.Resolver)
+		cache := getCache()
 		keys := make([]snapshot.CompositeKey, 0, len(objects))
 		for key := range objects {
 			keys = append(keys, key)
@@ -777,11 +807,8 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 		}
 
 		title := fmt.Sprintf("Objects • State %d", selectedState)
-		if state.Reason != "" {
-			title = fmt.Sprintf("%s (%s)", title, state.Reason)
-		}
-		if state.Error != "" {
-			title = fmt.Sprintf("%s – %s", title, truncateString(state.Error, 64))
+		if state.Error != nil {
+			title = fmt.Sprintf("%s – %s", title, truncateString(state.Error.Error(), 64))
 		}
 		detailTable.SetTitle(title)
 		showDetailTable()
@@ -848,7 +875,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 				pendingReconcilesTable.SetCell(idx+1, 4, valueCell(string(pr.Source)))
 			}
 			pendingReconcilesTable.Select(pendingDetailRow, 0)
-			pendingReconcilesTable.SetTitle(fmt.Sprintf("Pending Reconciles • Step %d (%d)", selectedStep, len(stepPendingReconciles)))
+			pendingReconcilesTable.SetTitle(fmt.Sprintf("Resulting Pending Reconciles • Step %d (%d)", selectedStep, len(stepPendingReconciles)))
 			pendingReconcilesTable.SetSelectedFunc(nil)
 		}
 		detailContainer.AddItem(pendingReconcilesTable, 0, 2, false)
@@ -940,7 +967,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 			}
 		}
 		if len(stateKeys) > 0 {
-			resolverCache := getCache(state.Resolver)
+			resolverCache := getCache()
 			for _, key := range stateKeys {
 				hash := stateMap[key]
 				stateObjects = append(stateObjects, stateObjectEntry{
@@ -986,7 +1013,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 			controller = string(step.ControllerID)
 			frame = util.Shorter(step.FrameID)
 		}
-		detailTable.SetTitle(fmt.Sprintf("State • Step %d (%s @ %s)", selectedStep, controller, frame))
+		detailTable.SetTitle(fmt.Sprintf("Resulting State • Step %d (%s @ %s)", selectedStep, controller, frame))
 		detailTable.SetSelectedFunc(func(row, _ int) {
 			if row <= 0 || row-1 >= len(stateObjects) {
 				return
@@ -1003,7 +1030,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 
 		// Populate effects bottom panel
 		stepEffects = stepEffects[:0]
-		resolverCache := getCache(state.Resolver)
+		resolverCache := getCache()
 		if step != nil {
 			for idx, eff := range step.Changes.Effects {
 				gvk := resolveGVK(resolverCache, eff.Version, eff.Key)
@@ -1101,7 +1128,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, allowDump bool, c
 
 		// Populate effects
 		stepEffects = stepEffects[:0]
-		resolverCache := getCache(state.Resolver)
+		resolverCache := getCache()
 		if step != nil {
 			for idx, eff := range step.Changes.Effects {
 				gvk := resolveGVK(resolverCache, eff.Version, eff.Key)
@@ -1504,9 +1531,23 @@ func configureTable(title string, selectable bool) *tview.Table {
 	return table
 }
 
+func pathHistoryHash(path tracecheck.ExecutionHistory) string {
+	return util.ShortenHash(path.UniqueKey())
+}
+
+func countDistinctPathHashes(paths []tracecheck.ExecutionHistory) int {
+	if len(paths) == 0 {
+		return 0
+	}
+	uniq := lo.UniqBy(paths, func(path tracecheck.ExecutionHistory) string {
+		return path.UniqueKey()
+	})
+	return len(uniq)
+}
+
 func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 	table.Clear()
-	headers := []string{"Idx", "Hash", "Objects", "Paths", "Pending", "Reason"}
+	headers := []string{"Idx", "Hash", "Objects", "Paths", "Hashes", "Pending", "Status"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -1518,23 +1559,19 @@ func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 		table.SetCell(row+1, 1, tview.NewTableCell(util.ShortenHash(hash)))
 		table.SetCell(row+1, 2, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
 		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
-		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
-		reason := state.Reason
-		if state.Error != "" {
-			snippet := truncateString(state.Error, 48)
-			if reason == "" {
-				reason = snippet
-			} else {
-				reason = fmt.Sprintf("%s (%s)", reason, snippet)
-			}
+		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", countDistinctPathHashes(state.Paths))))
+		table.SetCell(row+1, 5, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
+		status := "converged"
+		if state.Error != nil {
+			status = truncateString(state.Error.Error(), 48)
 		}
-		table.SetCell(row+1, 5, tview.NewTableCell(reason))
+		table.SetCell(row+1, 6, tview.NewTableCell(status))
 	}
 }
 
 func populatePaths(table *tview.Table, states []tracecheck.ResultState, stateIdx int) {
 	table.Clear()
-	headers := []string{"Idx", "Steps", "Summary"}
+	headers := []string{"Idx", "Steps", "Hash", "Summary"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -1549,7 +1586,8 @@ func populatePaths(table *tview.Table, states []tracecheck.ResultState, stateIdx
 	for row, path := range state.Paths {
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
 		table.SetCell(row+1, 1, tview.NewTableCell(fmt.Sprintf("%d", len(path))))
-		table.SetCell(row+1, 2, tview.NewTableCell(summarizePath(path)))
+		table.SetCell(row+1, 2, tview.NewTableCell(pathHistoryHash(path)))
+		table.SetCell(row+1, 3, tview.NewTableCell(summarizePath(path)))
 	}
 }
 
@@ -1642,23 +1680,12 @@ func formatPathSummary(state tracecheck.ResultState, pathIdx int) string {
 	}
 
 	b.WriteString("\nOutcome:\n")
-	if len(state.State.PendingReconciles) == 0 && state.Error == "" && state.FailedReconcile == nil {
+	if len(state.State.PendingReconciles) == 0 && state.Error == nil {
 		b.WriteString("  Converged\n")
-	} else if state.Reason != "" {
-		fmt.Fprintf(&b, "  %s\n", state.Reason)
 	} else {
 		b.WriteString("  Aborted\n")
-	}
-	if state.Reason != "" || state.Error != "" || state.FailedReconcile != nil {
-		if state.Reason != "" {
-			fmt.Fprintf(&b, "  Reason: %s\n", state.Reason)
-		}
-		if state.Error != "" {
-			fmt.Fprintf(&b, "  Error: %s\n", state.Error)
-		}
-		if state.FailedReconcile != nil {
-			req := state.FailedReconcile.Request.NamespacedName
-			fmt.Fprintf(&b, "  Failed Reconcile: %s %s/%s\n", state.FailedReconcile.ReconcilerID, req.Namespace, req.Name)
+		if state.Error != nil {
+			fmt.Fprintf(&b, "  Error: %s\n", state.Error.Error())
 		}
 	}
 	return b.String()
