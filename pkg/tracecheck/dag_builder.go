@@ -9,18 +9,18 @@ import (
 // Nodes are keyed by resource contents only (ContentsHash), so identical object sets
 // reached with different pending reconcile lists collapse into a single node.
 type StateDAG struct {
-	Nodes map[ContentsHash]*DAGNode
+	Nodes map[StateHash]*DAGNode
 }
 
 // DAGNode represents a unique contents hash along with incoming/outgoing edges.
 type DAGNode struct {
-	Hash ContentsHash
+	Hash StateHash
 
 	// Sample is a best-effort snapshot of the objects/kind sequences for this hash.
 	Sample NodeSample
 
-	Outgoing map[ContentsHash][]*DAGEdge
-	Incoming map[ContentsHash][]*DAGEdge
+	Outgoing map[StateHash][]*DAGEdge
+	Incoming map[StateHash][]*DAGEdge
 
 	ConvergedIDs []string
 	AbortedIDs   []string
@@ -34,8 +34,8 @@ type NodeSample struct {
 
 // DAGEdge records a reconcile transition between two contents hashes.
 type DAGEdge struct {
-	From         ContentsHash
-	To           ContentsHash
+	From         StateHash
+	To           StateHash
 	Controller   ReconcilerID
 	Effects      int
 	Error        string
@@ -79,7 +79,7 @@ func BuildStateDAG(result Result) *StateDAG {
 
 func newStateDAG() *StateDAG {
 	return &StateDAG{
-		Nodes: make(map[ContentsHash]*DAGNode),
+		Nodes: make(map[StateHash]*DAGNode),
 	}
 }
 
@@ -107,9 +107,9 @@ func (dag *StateDAG) addPath(path ExecutionHistory) {
 	}
 }
 
-func (dag *StateDAG) ensureNode(hash ContentsHash, sample NodeSample) *DAGNode {
+func (dag *StateDAG) ensureNode(hash StateHash, sample NodeSample) *DAGNode {
 	if dag.Nodes == nil {
-		dag.Nodes = make(map[ContentsHash]*DAGNode)
+		dag.Nodes = make(map[StateHash]*DAGNode)
 	}
 	if node, ok := dag.Nodes[hash]; ok {
 		if node.Sample.Objects == nil && sample.Objects != nil {
@@ -121,14 +121,14 @@ func (dag *StateDAG) ensureNode(hash ContentsHash, sample NodeSample) *DAGNode {
 	node := &DAGNode{
 		Hash:     hash,
 		Sample:   sample.clone(),
-		Outgoing: make(map[ContentsHash][]*DAGEdge),
-		Incoming: make(map[ContentsHash][]*DAGEdge),
+		Outgoing: make(map[StateHash][]*DAGEdge),
+		Incoming: make(map[StateHash][]*DAGEdge),
 	}
 	dag.Nodes[hash] = node
 	return node
 }
 
-func (dag *StateDAG) addEdge(from, to ContentsHash, step *ReconcileResult) {
+func (dag *StateDAG) addEdge(from, to StateHash, step *ReconcileResult) {
 	fromNode := dag.ensureNode(from, NodeSample{})
 	toNode := dag.ensureNode(to, NodeSample{})
 
@@ -165,11 +165,11 @@ func (s NodeSample) clone() NodeSample {
 	}
 }
 
-func contentsHashForObjects(objs ObjectVersions) ContentsHash {
+func contentsHashForObjects(objs ObjectVersions) StateHash {
 	n := StateNode{
 		Contents: StateSnapshot{contents: objs},
 	}
-	return n.ContentsHash()
+	return n.StateHash()
 }
 
 func (e *DAGEdge) String() string {

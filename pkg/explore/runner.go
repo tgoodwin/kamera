@@ -37,7 +37,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 
 	mergeStates := func(existing, additions []tracecheck.ResultState) []tracecheck.ResultState {
 		out := make([]tracecheck.ResultState, 0, len(existing)+len(additions))
-		index := make(map[tracecheck.StateHash]int)
+		index := make(map[tracecheck.NodeHash]int)
 		for _, st := range existing {
 			key := st.State.Hash()
 			index[key] = len(out)

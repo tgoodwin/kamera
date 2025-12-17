@@ -304,7 +304,7 @@ type StateNode struct {
 	ExecutionHistory ExecutionHistory
 
 	// used to track children of a divergence point of interest
-	divergenceKey StateHash
+	divergenceKey NodeHash
 
 	depth int
 
@@ -476,21 +476,21 @@ func serializeCompositeKey(ck snapshot.CompositeKey) string {
 	return fmt.Sprintf("%s/%s/%s/%s:%s", group, ck.ResourceKey.Kind, ck.ResourceKey.Namespace, ck.ResourceKey.Name, ck.ObjectID)
 }
 
-// StateHash represents the contents of the state node and the pending reconciles, unaffected by the order of pending reconciles.
+// NodeHash represents the contents of the state node and the pending reconciles, unaffected by the order of pending reconciles.
+type NodeHash string
+
+// StateHash represents the contents of the state node only, excluding metadata such as pending reconciles.
 type StateHash string
 
-// ContentsHash represents the contents of the state node only, excluding metadata such as pending reconciles.
-type ContentsHash string
-
 // Hash returns a hash of the state node, unaffected by the order of pending reconciles.
-func (sn StateNode) Hash() StateHash {
+func (sn StateNode) Hash() NodeHash {
 	s := sn.Serialize()
-	return StateHash(util.ShortenHash(s))
+	return NodeHash(util.ShortenHash(s))
 }
 
-// ContentsHash returns a hash of just the object contents, excluding pending reconciles.
+// StateHash returns a hash of just the object contents, excluding pending reconciles.
 // This is useful for caching reconcile results since reconciler behavior only depends on objects.
-func (sn StateNode) ContentsHash() ContentsHash {
+func (sn StateNode) StateHash() StateHash {
 	objectKeys := make([]snapshot.CompositeKey, 0, len(sn.Objects()))
 	for objKey := range sn.Objects() {
 		objectKeys = append(objectKeys, objKey)
@@ -519,18 +519,18 @@ func (sn StateNode) ContentsHash() ContentsHash {
 		buf.WriteString(sn.Objects()[ck].Value)
 		buf.WriteString(";")
 	}
-	return ContentsHash(util.ShortenHash(buf.String()))
+	return StateHash(util.ShortenHash(buf.String()))
 }
 
 // ConvergenceHash returns a hash normalized for convergence by dropping pending reconciles
 // that are ignorable for convergence (async enqueues / requeues).
-func (sn StateNode) ConvergenceHash() StateHash {
+func (sn StateNode) ConvergenceHash() NodeHash {
 	filtered := lo.Filter(sn.PendingReconciles, func(pr PendingReconcile, _ int) bool {
 		return pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue
 	})
 	clone := sn
 	clone.PendingReconciles = filtered
-	return StateHash(util.ShortenHash(clone.Serialize()))
+	return NodeHash(util.ShortenHash(clone.Serialize()))
 }
 
 func (sn *StateSnapshot) trimForInspection() {
@@ -554,17 +554,19 @@ func (sn *StateNode) TrimForInspection() {
 // OrderHash represents the contents of the state node and the order of pending reconciles.
 type OrderHash string
 
-// OrderSensitiveHash returns a hash of the state node and the order of pending reconciles.
-func (sn StateNode) OrderSensitiveHash() OrderHash {
+// OrderHash returns a hash of the state node and the order of pending reconciles.
+func (sn StateNode) OrderHash() OrderHash {
 	s := sn.serialize(true)
 	return OrderHash(util.ShortenHash(s))
 }
 
-func (sn StateNode) LineageHash() string {
+type LineageHash string
+
+func (sn StateNode) LineageHash() LineageHash {
 	if sn.parent == nil {
-		return string(sn.OrderSensitiveHash())
+		return LineageHash(sn.OrderHash())
 	}
-	return fmt.Sprintf("%s->%s", sn.parent.LineageHash(), sn.OrderSensitiveHash())
+	return LineageHash(fmt.Sprintf("%s->%s", sn.parent.LineageHash(), sn.OrderHash()))
 }
 
 func (sn StateNode) DetailedLineage() string {
@@ -577,9 +579,9 @@ func (sn StateNode) DetailedLineage() string {
 		id = "root"
 	}
 	if sn.parent == nil {
-		return fmt.Sprintf("%s:%s", id, sn.OrderSensitiveHash())
+		return fmt.Sprintf("%s:%s", id, sn.OrderHash())
 	}
-	return fmt.Sprintf("%s->%s:%s@%d", sn.parent.DetailedLineage(), id, sn.OrderSensitiveHash(), numChanges)
+	return fmt.Sprintf("%s->%s:%s@%d", sn.parent.DetailedLineage(), id, sn.OrderHash(), numChanges)
 }
 
 func (sn StateNode) ReconcileLineage() string {
@@ -641,7 +643,7 @@ func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []Pend
 
 		cloned := state.Clone()
 		cloned.PendingReconciles = alternativeOrder
-		cloned.ID = string(cloned.OrderSensitiveHash()) // Generate a new deterministic ID based on the new ordering
+		cloned.ID = string(cloned.OrderHash()) // Generate a new deterministic ID based on the new ordering
 		result = append(result, cloned)
 	}
 

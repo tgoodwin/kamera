@@ -118,7 +118,7 @@ type ResultState struct {
 }
 
 type cachedReconcileResult struct {
-	outputObjectsHash   ContentsHash       // hash of output objects (from newState.ObjectsHash())
+	outputObjectsHash   StateHash          // hash of output objects (from newState.ObjectsHash())
 	wasNoOp             bool               // did it produce changes?
 	numEffects          int                // number of effects (for history signature)
 	triggeredReconciles []PendingReconcile // reconciles triggered by the changes
@@ -147,8 +147,8 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	abortedStateChan := make(chan ResultState, 100)
 	errChan := make(chan error, 1)
 
-	seenConvergedStates := make(map[StateHash]StateNode)
-	executionPathsToState := make(map[StateHash][]ExecutionHistory)
+	seenConvergedStates := make(map[NodeHash]StateNode)
+	executionPathsToState := make(map[NodeHash][]ExecutionHistory)
 
 	e.stats = NewExploreStats()
 	e.stats.Start()
@@ -263,7 +263,7 @@ func (e *Explorer) explore(
 
 	// Track explored state hashes keyed by the sequence of state-changing reconciles.
 	// This lets us prune branches that only differ by no-op reads.
-	visitedStatePaths := make(map[StateHash]map[string]struct{})
+	visitedStatePaths := make(map[NodeHash]map[string]struct{})
 
 	// Track completion status for (stateHash, history) pairs.
 	// We only skip duplicate paths if we've COMPLETED exploration (converged or aborted),
@@ -293,7 +293,7 @@ func (e *Explorer) explore(
 	// executionPathsToState is a map of stateKey -> ExecutionHistory
 	// because we want to track which states we've visited but
 	// also want to track all the ways a given state can be reached
-	executionPathsToState := make(map[StateHash][]ExecutionHistory)
+	executionPathsToState := make(map[NodeHash][]ExecutionHistory)
 
 	// we dont skip over seen states because we want to track all the ways a state can be reached
 	// but we do track the states we've seen
@@ -303,12 +303,12 @@ func (e *Explorer) explore(
 	// for reconcile-order permutations. Branching once per StateHash is enough,
 	// because expandStateByReconcileOrder enqueues every first-position choice
 	// and recursion covers the full permutation space.
-	seenBranchingByState := make(map[StateHash]bool)
+	seenBranchingByState := make(map[NodeHash]bool)
 
 	// we do track the seen converged states so we can attribute multiple execution paths to them
-	seenConvergedStates := make(map[StateHash]StateNode)
+	seenConvergedStates := make(map[NodeHash]StateNode)
 
-	convergencesByDivergenceKey := make(map[StateHash][]StateHash)
+	convergencesByDivergenceKey := make(map[NodeHash][]NodeHash)
 
 	// var currentState StateNode
 	var currentState StateNode
@@ -335,7 +335,7 @@ func (e *Explorer) explore(
 
 		currentState, queue = e.getNext(queue)
 		stateKey := currentState.Hash()
-		orderKey := currentState.OrderSensitiveHash()
+		orderKey := currentState.OrderHash()
 
 		// Subtree Circuit Breaker: check if we've already explored from this logical state.
 		// DISABLED: Current implementation marks subtrees as "explored" when we START,
@@ -363,8 +363,8 @@ func (e *Explorer) explore(
 		if e.Config.OptimizationsEnabled() {
 			allPendingAreNoOps := e.checkEarlyConvergence(currentState, knownNoOps)
 			if allPendingAreNoOps {
-				objectsHash := currentState.ContentsHash()
-				if _, alreadyConverged := seenConvergedStates[StateHash(objectsHash)]; alreadyConverged {
+				objectsHash := currentState.StateHash()
+				if _, alreadyConverged := seenConvergedStates[NodeHash(objectsHash)]; alreadyConverged {
 					e.stats.EarlyConvergence++
 					logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
 						"depth", currentState.depth, "pendingCount", len(currentState.PendingReconciles))
@@ -421,7 +421,7 @@ func (e *Explorer) explore(
 
 			seenConvergedStates[convergenceKey] = currentState
 			// Also record by ObjectsHash (drops pending reconciles) so early convergence detection can find it
-			seenConvergedStates[StateHash(currentState.ContentsHash())] = currentState
+			seenConvergedStates[NodeHash(currentState.StateHash())] = currentState
 			if convergenceKey != stateKey {
 				if _, ok := executionPathsToState[convergenceKey]; !ok {
 					executionPathsToState[convergenceKey] = make([]ExecutionHistory, 0)
@@ -432,7 +432,7 @@ func (e *Explorer) explore(
 			// track how many times we've arrived at this state from some common ancestor
 			if currentState.divergenceKey != "" {
 				if _, seen := convergencesByDivergenceKey[currentState.divergenceKey]; !seen {
-					convergencesByDivergenceKey[currentState.divergenceKey] = make([]StateHash, 0)
+					convergencesByDivergenceKey[currentState.divergenceKey] = make([]NodeHash, 0)
 				}
 				convergencesByDivergenceKey[currentState.divergenceKey] = append(convergencesByDivergenceKey[currentState.divergenceKey], convergenceKey)
 			}
@@ -502,7 +502,7 @@ func (e *Explorer) explore(
 		reconcilerID := pendingReconcile.ReconcilerID
 		for _, stateView := range possibleViews {
 			if logger.V(2).Enabled() {
-				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderSensitiveHash(), "Request", pendingReconcile.Request).Info("BEFORE")
+				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderHash(), "Request", pendingReconcile.Request).Info("BEFORE")
 				logger.V(2).WithValues("Queue", dumpQueue(queue)).Info("Queue")
 				stateView.Contents.DumpContents()
 				stateView.DumpPending()
@@ -512,7 +512,7 @@ func (e *Explorer) explore(
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
 			// key uses OBJECTS hash only - pending list doesn't affect reconciler behavior
-			reconcileResKey := fmt.Sprintf("%s:%s:%s", stateView.ContentsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
+			reconcileResKey := fmt.Sprintf("%s:%s:%s", stateView.StateHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
 			// Check cache: can we predict the output state without running the reconcile?
 			if e.Config.OptimizationsEnabled() {
@@ -572,7 +572,7 @@ func (e *Explorer) explore(
 			// Update cache with this reconcile's result
 			if err == nil && stepResult != nil {
 				reconcileResCache[reconcileResKey] = &cachedReconcileResult{
-					outputObjectsHash:   newState.ContentsHash(),
+					outputObjectsHash:   newState.StateHash(),
 					wasNoOp:             wasNoOp,
 					numEffects:          len(stepResult.Changes.Effects),
 					triggeredReconciles: triggeredByStep,
@@ -678,7 +678,7 @@ func (e *Explorer) explore(
 			})
 			slices.Sort(pendingStrs)
 			pendingSignature := strings.Join(pendingStrs, ",")
-			logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.ContentsHash(), pendingSignature, normalizedHistory)
+			logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.StateHash(), pendingSignature, normalizedHistory)
 			exploredLogicalStates[logicalStateKey] = struct{}{}
 
 			// branch on order of subsequent reconciles that were triggered by this state change step
@@ -690,7 +690,7 @@ func (e *Explorer) explore(
 						// skip orderVariants whose first reconcile are known no-ops
 						if e.Config.OptimizationsEnabled() {
 							fst := orderVariant.PendingReconciles[0]
-							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.ContentsHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
+							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.StateHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
 							if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
 								e.stats.SkippedNoOpOrderings++
 								continue
@@ -717,7 +717,7 @@ func (e *Explorer) emitAbortedState(
 	ctx context.Context,
 	abortedStatesCh chan<- ResultState,
 	state StateNode,
-	executionPathsToState map[StateHash][]ExecutionHistory,
+	executionPathsToState map[NodeHash][]ExecutionHistory,
 	path ExecutionHistory,
 	err error,
 ) bool {
@@ -1078,7 +1078,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 
 func dumpQueue(queue []StateNode) []string {
 	queueStr := lo.Map(queue, func(sn StateNode, _ int) string {
-		return string(sn.OrderSensitiveHash())
+		return string(sn.OrderHash())
 	})
 	return queueStr
 }
@@ -1224,7 +1224,7 @@ func (e *Explorer) checkEarlyConvergence(state StateNode, knownNoOps map[string]
 		return false
 	}
 
-	objectsHash := state.ContentsHash()
+	objectsHash := state.StateHash()
 	for _, pr := range state.PendingReconciles {
 		noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, pr.ReconcilerID, pr.Request.NamespacedName.String())
 		if isNoOp, known := knownNoOps[noOpKey]; !known || !isNoOp {
@@ -1243,7 +1243,7 @@ func (e *Explorer) computeSubtreeKey(state StateNode) string {
 		return pr.String()
 	})
 	// NOT sorted - order matters for subtree identity
-	return fmt.Sprintf("%s|%s", state.ContentsHash(), strings.Join(pendingStrs, ","))
+	return fmt.Sprintf("%s|%s", state.StateHash(), strings.Join(pendingStrs, ","))
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {

@@ -1555,7 +1555,7 @@ func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 	}
 	for row, state := range states {
 		stateHash := util.ShortenHash(string(state.State.Hash()))
-		contentsHash := util.ShortenHash(string(state.State.ContentsHash()))
+		contentsHash := util.ShortenHash(string(state.State.StateHash()))
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
 		table.SetCell(row+1, 1, tview.NewTableCell(stateHash))
 		table.SetCell(row+1, 2, tview.NewTableCell(contentsHash))
@@ -1621,7 +1621,7 @@ func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx
 			if step.StateAfter != nil {
 				stateHash = util.ShortenHash(string(tracecheck.StateNode{
 					Contents: tracecheck.NewStateSnapshot(step.StateAfter, step.KindSeqAfter, nil),
-				}.ContentsHash()))
+				}.StateHash()))
 			}
 		}
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
