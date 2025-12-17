@@ -11,11 +11,13 @@ import (
 
 func main() {
 	var dumpPath string
+	var dotPath string
 	flag.StringVar(&dumpPath, "dump", "", "Path to an inspector dump file to load")
+	flag.StringVar(&dotPath, "dot", "", "Optional path to write the state DAG in Graphviz DOT format")
 	flag.Parse()
 
 	if dumpPath == "" {
-		fmt.Fprintln(os.Stderr, "usage: inspect --dump <path>")
+		fmt.Fprintln(os.Stderr, "usage: inspect --dump <path> [--dot <path>]")
 		os.Exit(1)
 	}
 
@@ -23,6 +25,16 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load dump: %v\n", err)
 		os.Exit(1)
+	}
+
+	if dotPath != "" {
+		dag := tracecheck.BuildStateDAG(tracecheck.Result{ConvergedStates: states})
+		dot := tracecheck.RenderStateDAGDOT(dag, tracecheck.GraphvizOpts{LabelEdges: true, DropSelfLoops: true})
+		if err := os.WriteFile(dotPath, []byte(dot), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "write dot: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "wrote DAG to %s\n", dotPath)
 	}
 
 	if _, err := interactive.RunStateInspectorTUIView(states, resolver, false, tracecheck.ExploreConfig{}); err != nil {

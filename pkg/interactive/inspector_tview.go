@@ -1547,25 +1547,27 @@ func countDistinctPathHashes(paths []tracecheck.ExecutionHistory) int {
 
 func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 	table.Clear()
-	headers := []string{"Idx", "Hash", "Objects", "Paths", "Hashes", "Pending", "Status"}
+	headers := []string{"Idx", "StateHash", "ContentsHash", "Objects", "Paths", "Hashes", "Pending", "Status"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
 				SetSelectable(false))
 	}
 	for row, state := range states {
-		hash := string(state.State.Hash())
+		stateHash := util.ShortenHash(string(state.State.Hash()))
+		contentsHash := util.ShortenHash(string(state.State.ContentsHash()))
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
-		table.SetCell(row+1, 1, tview.NewTableCell(util.ShortenHash(hash)))
-		table.SetCell(row+1, 2, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
-		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
-		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", countDistinctPathHashes(state.Paths))))
-		table.SetCell(row+1, 5, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
+		table.SetCell(row+1, 1, tview.NewTableCell(stateHash))
+		table.SetCell(row+1, 2, tview.NewTableCell(contentsHash))
+		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
+		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
+		table.SetCell(row+1, 5, tview.NewTableCell(fmt.Sprintf("%d", countDistinctPathHashes(state.Paths))))
+		table.SetCell(row+1, 6, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
 		status := "converged"
 		if state.Error != nil {
 			status = truncateString(state.Error.Error(), 48)
 		}
-		table.SetCell(row+1, 6, tview.NewTableCell(status))
+		table.SetCell(row+1, 7, tview.NewTableCell(status))
 	}
 }
 
@@ -1593,7 +1595,7 @@ func populatePaths(table *tview.Table, states []tracecheck.ResultState, stateIdx
 
 func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx, pathIdx int) {
 	table.Clear()
-	headers := []string{"Idx", "Controller", "Frame", "Writes"}
+	headers := []string{"Idx", "Controller", "StateHash", "Writes"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -1611,16 +1613,20 @@ func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx
 	path := state.Paths[pathIdx]
 	for row, step := range path {
 		controller := "(nil)"
-		frame := "-"
+		stateHash := "-"
 		writes := "0"
 		if step != nil {
 			controller = string(step.ControllerID)
-			frame = util.Shorter(step.FrameID)
 			writes = fmt.Sprintf("%d", len(step.Changes.Effects))
+			if step.StateAfter != nil {
+				stateHash = util.ShortenHash(string(tracecheck.StateNode{
+					Contents: tracecheck.NewStateSnapshot(step.StateAfter, step.KindSeqAfter, nil),
+				}.ContentsHash()))
+			}
 		}
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
 		table.SetCell(row+1, 1, tview.NewTableCell(controller))
-		table.SetCell(row+1, 2, tview.NewTableCell(frame))
+		table.SetCell(row+1, 2, tview.NewTableCell(stateHash))
 		table.SetCell(row+1, 3, tview.NewTableCell(writes))
 	}
 }
@@ -1686,57 +1692,6 @@ func formatPathSummary(state tracecheck.ResultState, pathIdx int) string {
 		b.WriteString("  Aborted\n")
 		if state.Error != nil {
 			fmt.Fprintf(&b, "  Error: %s\n", state.Error.Error())
-		}
-	}
-	return b.String()
-}
-
-func formatStepSummary(step *tracecheck.ReconcileResult, stepIdx int) string {
-	if step == nil {
-		return fmt.Sprintf("Step %d has no data", stepIdx)
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "Controller: %s\nFrame: %s\nType: %s\n", step.ControllerID, util.Shorter(step.FrameID), step.FrameType)
-	fmt.Fprintf(&b, "Writes: %d\n", len(step.Changes.Effects))
-	if step.Error != "" {
-		fmt.Fprintf(&b, "Error: %s\n", step.Error)
-	}
-
-	if len(step.Changes.ObjectVersions) > 0 {
-		b.WriteString("\nObjects:\n")
-		b.WriteString(formatObjectVersions(step.Changes.ObjectVersions, "  "))
-	}
-
-	if len(step.Changes.Effects) > 0 {
-		b.WriteString("\nEffects:\n")
-		for idx, eff := range step.Changes.Effects {
-			precondition := ""
-			if eff.Precondition != nil {
-				precondition = " (precondition)"
-			}
-			fmt.Fprintf(&b, "  [%d] %s %s => %s%s\n", idx, string(eff.OpType), eff.Key.String(), eff.Version.Value, precondition)
-		}
-	}
-
-	if len(step.Deltas) > 0 {
-		b.WriteString("\nDeltas:\n")
-		keys := make([]snapshot.CompositeKey, 0, len(step.Deltas))
-		for key := range step.Deltas {
-			keys = append(keys, key)
-		}
-		sort.Slice(keys, func(i, j int) bool {
-			return keys[i].String() < keys[j].String()
-		})
-		for _, key := range keys {
-			fmt.Fprintf(&b, "  %s\n", key.String())
-			diffText := strings.TrimSpace(normalizeDeltaPresentation(string(step.Deltas[key])))
-			if diffText == "" {
-				b.WriteString("    (no diff)\n")
-				continue
-			}
-			for _, line := range strings.Split(diffText, "\n") {
-				fmt.Fprintf(&b, "    %s\n", line)
-			}
 		}
 	}
 	return b.String()
