@@ -19,13 +19,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	states, err := interactive.LoadInspectorDump(dumpPath)
+	states, resolver, err := interactive.LoadInspectorDump(dumpPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load dump: %v\n", err)
 		os.Exit(1)
 	}
 
-	if _, err := interactive.RunStateInspectorTUIView(states, false, tracecheck.ExploreConfig{}); err != nil {
+	if _, err := interactive.RunStateInspectorTUIView(states, resolver, false, tracecheck.ExploreConfig{}); err != nil {
 		fmt.Fprintf(os.Stderr, "run inspector: %v\n", err)
 		os.Exit(1)
 	}

@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"github.com/tgoodwin/kamera/pkg/snapshot"
-	"github.com/tgoodwin/kamera/pkg/tag"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -96,15 +95,6 @@ func SeedToStateNode(seed RestartSeed, builder *ExplorerBuilder) (StateNode, err
 		// Ensure metadata matches the composite key.
 		u.SetNamespace(entry.Key.ResourceKey.Namespace)
 		u.SetName(entry.Key.ResourceKey.Name)
-
-		labels := u.GetLabels()
-		if labels == nil {
-			labels = make(map[string]string)
-		}
-		if _, ok := labels[tag.TraceyObjectID]; !ok {
-			labels[tag.TraceyObjectID] = entry.Key.IdentityKey.ObjectID
-		}
-		u.SetLabels(labels)
 
 		objs = append(objs, &u)
 	}

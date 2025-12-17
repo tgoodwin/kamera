@@ -61,12 +61,12 @@ func groupForTestKind(kind string) string {
 	}
 }
 
-func summarizeState(state tracecheck.ResultState) (status string, hasAnnotation bool, ok bool) {
+func summarizeState(state tracecheck.ResultState, resolver tracecheck.VersionManager) (status string, hasAnnotation bool, ok bool) {
+	if resolver == nil {
+		return "", false, false
+	}
 	for _, vHash := range state.State.Objects() {
-		if state.Resolver == nil {
-			return "", false, false
-		}
-		obj := state.Resolver.Resolve(vHash)
+		obj := resolver.Resolve(vHash)
 		if obj == nil {
 			return "", false, false
 		}
@@ -101,20 +101,21 @@ func TestExhaustiveInterleavings(t *testing.T) {
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
+	eb.WithoutOptimizations() // Disable optimizations to test exhaustive exploration
 	fooKind := "webapp.discrete.events/Foo"
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
 
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
@@ -158,24 +159,49 @@ func TestExhaustiveInterleavings(t *testing.T) {
 		t.Fatalf("expected 1 result, got %d", len(result.ConvergedStates))
 	}
 	convergedState := result.ConvergedStates[0]
-	if len(convergedState.Paths) != 4 {
-		t.Errorf("expected 4 paths, got %d", len(convergedState.Paths))
-	}
 
-	expected := [][]string{
+	// State0: A/{Foo, Bar}  (Initial pending list respects argument order: [Foo, Bar])
+	//
+	// Path 1 (current head Foo):
+	//   ├─ Foo@1 →
+	//   │   State1: A-1/{Foo, Bar} (Triggered set sorted: [Bar, Foo])
+	//   │     BRANCH #2 (StateHash A-1) expands pending [Bar, Foo]
+	//   │     ├─ (current) Bar@1 →
+	//   │     │   State2: A-Final/{Foo, Bar} (Pending [Bar, Foo])
+	//   │     │     BRANCH #3 (StateHash A-Final)
+	//   │     │     ├─ (current) Bar@0 → Foo@0 (no-op tail)
+	//   │     │     └─ (enqueued) Foo@0 → Bar@0 (no-op tail)
+	//   │     └─ (from BRANCH #2 enqueued) Foo@1 →
+	//   │         State2': A-Final/{Foo, Bar} (matches State2 hash; branching skipped)
+	//   │         Proceeds with current head (Bar) as triggered (Foo) are added to the back.
+	//   │         └─ Bar@0 → Foo@0 (no-op tail)
+	//
+	// Path 2 (enqueued head Bar):
+	//   └─ Bar@1 →
+	//       State1': A-1/{Foo, Bar} (matches State1 hash; branching skipped)
+	//       Only runs current head of pending [Foo, Bar] which is Foo. (trigged Bar added to back of pending)
+	//       Alternative branch (Bar) not taken because State1 expansion covers it.
+	//       └─ Foo@1 → Bar@0 → Foo@0
+	//
+	// Resulting Paths:
+	//   1. Foo@1 → Bar@1 → Bar@0 → Foo@0
+	//   2. Foo@1 → Foo@1 → Bar@0 → Foo@0
+	//   3. Bar@1 → Foo@1 → Bar@0 → Foo@0
+
+	actual := formatResults(convergedState.Paths)
+	expectedAll := [][]string{
 		{"FooController@1", "BarController@1", "BarController@0", "FooController@0"},
 		{"FooController@1", "FooController@1", "BarController@0", "FooController@0"},
-		{"BarController@1", "BarController@1", "BarController@0", "FooController@0"},
 		{"BarController@1", "FooController@1", "BarController@0", "FooController@0"},
 	}
-	actual := formatResults(convergedState.Paths)
-
-	assert.ElementsMatch(t, expected, actual)
+	assert.Len(t, actual, 3)
+	assert.ElementsMatch(t, expectedAll, actual)
 }
 
 func TestConvergedStateIdentification(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
+	eb.WithoutOptimizations() // Disable optimizations to test exhaustive exploration
 
 	// Testing two controllers whose behavior is identical
 	// and who both depend on the same object.
@@ -184,14 +210,14 @@ func TestConvergedStateIdentification(t *testing.T) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For("webapp.discrete.events/Foo")
+	}).For("webapp.discrete.events/Foo").PermuteOrder()
 
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.BarReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For("webapp.discrete.events/Foo")
+	}).For("webapp.discrete.events/Foo").PermuteOrder()
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
@@ -242,8 +268,8 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: true,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "BarController@1", "BarController@0", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
-				{"FooController@1", "BarController@1", "BarController@0", "FooController@1", "BarController@0", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},
 	}
@@ -251,7 +277,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 	for _, expectedState := range expected {
 		var matchedState *tracecheck.ResultState
 		for _, convergedState := range result.ConvergedStates {
-			status, hasAnnotation, ok := summarizeState(convergedState)
+			status, hasAnnotation, ok := summarizeState(convergedState, explorer.VersionManager())
 			if !ok {
 				continue
 			}
@@ -291,13 +317,13 @@ func BenchmarkExhaustiveInterleavingsExplore(b *testing.B) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{

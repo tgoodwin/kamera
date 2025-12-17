@@ -31,9 +31,6 @@ func buildStartStateFromObjects(store *snapshot.Store, scheme *runtime.Scheme, o
 		}
 
 		gvk := ensureObjectGVK(obj, scheme)
-		// Ensure the object carries a stable sleeve ID before publishing.
-		tag.AddSleeveObjectID(obj)
-
 		u, err := util.ConvertToUnstructured(obj)
 		if err != nil {
 			return StateNode{}, fmt.Errorf("converting object %d to unstructured: %w", idx, err)

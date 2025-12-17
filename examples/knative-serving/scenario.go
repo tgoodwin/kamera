@@ -30,8 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const defaultMaxDepth = 100
-
 func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Configure simclock to use 2s steps instead of 1s to speed up scale-to-zero simulation
 	// (60s stable window + 30s grace period = 90s total, which is 45 steps at 2s/step)
@@ -40,7 +38,9 @@ func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 
 	builder := tracecheck.NewExplorerBuilder(scheme)
 	configureKnativeExplorer(builder)
-	builder.WithMaxDepth(defaultMaxDepth)
+
+	builder.WithoutOptimizations()
+
 	return builder
 }
 
@@ -98,7 +98,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("RevisionReconciler"))
 		return strategy
-	}).For("serving.knative.dev/Revision")
+	}).For("serving.knative.dev/Revision").PermuteOrder()
 
 	builder.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
@@ -134,17 +134,19 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("RouteReconciler"))
 		return strategy
-	}).For("serving.knative.dev/Route").Watches("serving.knative.dev/Configuration", func(u *unstructured.Unstructured) []reconcile.Request {
-		labels := u.GetLabels()
-		svcName := labels[serving.ServiceLabelKey]
-		if svcName == "" {
-			return nil
-		}
+	}).For("serving.knative.dev/Route").Watches(
+		"serving.knative.dev/Configuration",
+		func(u *unstructured.Unstructured) []reconcile.Request {
+			labels := u.GetLabels()
+			svcName := labels[serving.ServiceLabelKey]
+			if svcName == "" {
+				return nil
+			}
 
-		return []reconcile.Request{
-			{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: svcName}},
-		}
-	})
+			return []reconcile.Request{
+				{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: svcName}},
+			}
+		})
 
 	builder.WithCustomStrategy("ServerlessServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(serverlessservicecontroller.NewController, r)
