@@ -189,8 +189,10 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	//   3. Bar@1 → Foo@1 → Bar@0 → Foo@0
 
 	actual := formatResults(convergedState.Paths)
+	// Trailing no-ops may appear in any order; we preserve the natural execution order
+	// rather than sorting. The deduplication considers different no-op orderings as equivalent.
 	expectedAll := [][]string{
-		{"FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+		{"FooController@1", "BarController@1", "FooController@0", "BarController@0"},
 		{"FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 		{"BarController@1", "FooController@1", "BarController@0", "FooController@0"},
 	}
@@ -248,6 +250,8 @@ func TestConvergedStateIdentification(t *testing.T) {
 	result := explorer.Explore(context.Background(), initialState)
 	assert.Equal(t, 2, len(result.ConvergedStates))
 
+	// Trailing no-ops may appear in any order; we preserve the natural execution order
+	// rather than sorting. The deduplication considers different no-op orderings as equivalent.
 	expected := []struct {
 		status        string
 		hasAnnotation bool
@@ -259,7 +263,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: false,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "FooController@1", "BarController@1", "FooController@0", "BarController@0"},
 				{"FooController@1", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},
@@ -268,7 +272,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: true,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "FooController@0", "BarController@0"},
 				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},

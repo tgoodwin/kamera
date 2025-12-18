@@ -193,97 +193,25 @@ func DebugPaths(paths []ExecutionHistory) {
 	}
 }
 
-// normalizeNoOpSuffix sorts the trailing no-op reconciles (no changes, no errors)
-// so that exploration order does not create spurious path permutations when the
-// remaining work is idempotent.
-func normalizeNoOpSuffix(path ExecutionHistory) ExecutionHistory {
-	cut := len(path)
-	for cut > 0 {
-		r := path[cut-1]
-		if len(r.Changes.ObjectVersions) == 0 && r.Error == "" {
-			cut--
-			continue
-		}
-		break
-	}
-
-	// No no-op suffix or only a single no-op reconcile to reorder.
-	if cut >= len(path)-1 {
-		return path
-	}
-
-	normalized := make(ExecutionHistory, 0, len(path))
-	normalized = append(normalized, path[:cut]...)
-
-	suffix := slices.Clone(path[cut:])
-	sort.SliceStable(suffix, func(i, j int) bool {
-		if suffix[i].ControllerID != suffix[j].ControllerID {
-			return suffix[i].ControllerID < suffix[j].ControllerID
-		}
-		return len(suffix[i].PendingReconciles) < len(suffix[j].PendingReconciles)
-	})
-
-	normalized = append(normalized, suffix...)
-	return normalized
-}
-
-// normalizeAndDedupePaths keeps full execution histories (including no-ops) but
-// normalizes trailing no-op reconciles to a deterministic order and removes
-// duplicate paths that would otherwise differ only by those no-op permutations.
-func normalizeAndDedupePaths(paths []ExecutionHistory) []ExecutionHistory {
-	seen := make(map[string]struct{})
-	deduped := make([]ExecutionHistory, 0, len(paths))
-
-	for _, path := range paths {
-		normalized := normalizeNoOpSuffix(path)
-		sigParts := make([]string, len(normalized))
-		for i, r := range normalized {
-			sigParts[i] = fmt.Sprintf("%s@%d", r.ControllerID, len(r.Deltas))
-		}
-		sig := strings.Join(sigParts, ",")
-		if _, ok := seen[sig]; ok {
-			continue
-		}
-		seen[sig] = struct{}{}
-		deduped = append(deduped, normalized)
-	}
-
-	return deduped
-}
-
-func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
+// dedupePathsByUniqueKey deduplicates paths using UniqueKey(), which considers paths
+// equivalent if they have the same sequence of non-no-op steps. The actual paths
+// (including no-ops) are preserved to maintain step-to-step pending reconcile invariants.
+func dedupePathsByUniqueKey(paths []ExecutionHistory) []ExecutionHistory {
 	return lo.UniqBy(paths, func(path ExecutionHistory) string {
 		return path.UniqueKey()
 	})
 }
 
+// GetUniquePaths deduplicates paths using UniqueKey() and filters out paths
+// that are entirely no-ops (have no meaningful steps).
 func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
-	normalized := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
-		return normalizeNoOpSuffix(path)
+	// First deduplicate using UniqueKey
+	deduped := dedupePathsByUniqueKey(paths)
+
+	// Then filter out paths that are entirely no-ops
+	return lo.Filter(deduped, func(path ExecutionHistory, _ int) bool {
+		return len(path) > 0 && len(path.FilterNoOps()) > 0
 	})
-
-	// Deduplicate based on the filtered key (ignoring no-ops), but return the
-	// full normalized paths so the inspector can still display no-op steps.
-	unique := make([]ExecutionHistory, 0, len(normalized))
-	seen := make(map[string]struct{}, len(normalized))
-
-	for _, path := range normalized {
-		if len(path) == 0 {
-			continue
-		}
-		// If the path is entirely no-ops, skip it as before.
-		if len(path.FilterNoOps()) == 0 {
-			continue
-		}
-		key := path.UniqueKey()
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		unique = append(unique, path)
-	}
-
-	return unique
 }
 
 type ObservableState interface {
