@@ -31,7 +31,7 @@ func TestPodLifecycleSequentialTransitions(t *testing.T) {
 		WithRuntimeObjects(pod).
 		Build()
 
-	factory := &SequentialPodStateMachineFactory{
+	factory := &DeterministicPodStateMachineFactory{
 		Steps: []PodStatusStep{
 			{
 				Phase: corev1.PodPending,

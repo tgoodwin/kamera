@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/tgoodwin/kamera/pkg/simclock"
@@ -12,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -38,8 +36,10 @@ type PodStateMachineFactory interface {
 	NewStateMachine(pod *corev1.Pod) PodStateMachine
 }
 
-// SequentialPodStateMachineFactory produces sequential machines with a fixed set of steps.
-type SequentialPodStateMachineFactory struct {
+// DeterministicPodStateMachineFactory produces state machines that determine the next
+// step based on the current Pod state, not an internal counter. This ensures deterministic
+// behavior when the same Pod state is encountered across different exploration branches.
+type DeterministicPodStateMachineFactory struct {
 	Steps []PodStatusStep
 }
 
@@ -74,60 +74,148 @@ func DefaultPodLifecycle() []PodStatusStep {
 }
 
 // NewDefaultPodLifecycleFactory returns a factory that emits the default lifecycle.
+// The state machine is deterministic: given the same Pod state, it always returns
+// the same next step, regardless of internal state or exploration branch.
 func NewDefaultPodLifecycleFactory() PodStateMachineFactory {
-	return &SequentialPodStateMachineFactory{
+	return &DeterministicPodStateMachineFactory{
 		Steps: DefaultPodLifecycle(),
 	}
 }
 
-// NewStateMachine constructs a fresh sequential state machine for the provided Pod.
-func (f *SequentialPodStateMachineFactory) NewStateMachine(_ *corev1.Pod) PodStateMachine {
+// NewStateMachine constructs a deterministic state machine for the provided Pod.
+func (f *DeterministicPodStateMachineFactory) NewStateMachine(_ *corev1.Pod) PodStateMachine {
 	steps := make([]PodStatusStep, len(f.Steps))
 	copy(steps, f.Steps)
-	return &sequentialPodStateMachine{
+	return &deterministicPodStateMachine{
 		steps: steps,
 	}
 }
 
-type sequentialPodStateMachine struct {
-	mu    sync.Mutex
-	index int
+// deterministicPodStateMachine determines the next step by examining the current Pod state,
+// not by maintaining an internal index. This ensures the same Pod state always produces
+// the same result, making the reconciler safe for exploration across branches.
+type deterministicPodStateMachine struct {
 	steps []PodStatusStep
 }
 
-func (s *sequentialPodStateMachine) Advance(_ context.Context, _ *corev1.Pod) (PodStatusStep, bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.index >= len(s.steps) {
+func (s *deterministicPodStateMachine) Advance(_ context.Context, pod *corev1.Pod) (PodStatusStep, bool, error) {
+	if len(s.steps) == 0 {
 		return PodStatusStep{}, true, nil
 	}
-	step := s.steps[s.index]
-	s.index++
-	done := s.index >= len(s.steps)
+
+	// Determine current lifecycle stage based on Pod state
+	currentStage := s.determineCurrentStage(pod)
+
+	// If we're at or past the final stage, we're done
+	if currentStage >= len(s.steps) {
+		return PodStatusStep{}, true, nil
+	}
+
+	// Return the step for the current stage (the Pod will be advanced to this state)
+	step := s.steps[currentStage]
+	done := currentStage >= len(s.steps)-1
 	return step, done, nil
 }
 
+// determineCurrentStage examines the Pod's current status and returns which lifecycle
+// stage it should transition to next. This is deterministic based on Pod state.
+//
+// The logic finds the LAST step whose requirements are satisfied by the current Pod state,
+// then returns the NEXT step (or len(steps) if we're at/past the final step).
+func (s *deterministicPodStateMachine) determineCurrentStage(pod *corev1.Pod) int {
+	// Build a map of current conditions for easy lookup
+	condMap := make(map[corev1.PodConditionType]corev1.ConditionStatus)
+	for _, c := range pod.Status.Conditions {
+		condMap[c.Type] = c.Status
+	}
+
+	// Find the highest step index whose requirements are satisfied.
+	// This handles the case where a Pod has advanced past intermediate steps.
+	highestSatisfied := -1
+	for i, step := range s.steps {
+		if s.stepSatisfied(pod, step, condMap) {
+			highestSatisfied = i
+		}
+	}
+
+	// Return the next step after the highest satisfied one
+	return highestSatisfied + 1
+}
+
+// stepSatisfied checks if the Pod's current state satisfies (matches or exceeds) the step's requirements.
+func (s *deterministicPodStateMachine) stepSatisfied(pod *corev1.Pod, step PodStatusStep, condMap map[corev1.PodConditionType]corev1.ConditionStatus) bool {
+	// Check phase progression
+	if step.Phase != "" {
+		if !phaseAtOrBeyond(pod.Status.Phase, step.Phase) {
+			return false
+		}
+	}
+
+	// Check all conditions in this step
+	for _, stepCond := range step.Conditions {
+		currentStatus, exists := condMap[stepCond.Type]
+		if !exists {
+			return false
+		}
+		// For condition checks, we need exact match or "better" state
+		if !conditionAtOrBeyond(currentStatus, stepCond.Status) {
+			return false
+		}
+	}
+
+	// Check IPs if specified (IPs are additive, once set they should remain)
+	if step.PodIP != "" && pod.Status.PodIP != step.PodIP {
+		return false
+	}
+	if step.HostIP != "" && pod.Status.HostIP != step.HostIP {
+		return false
+	}
+
+	return true
+}
+
+// phaseAtOrBeyond returns true if currentPhase is at or beyond targetPhase in the lifecycle.
+func phaseAtOrBeyond(current, target corev1.PodPhase) bool {
+	// Define phase ordering: Pending < Running < Succeeded/Failed
+	phaseOrder := map[corev1.PodPhase]int{
+		"":                  0,
+		corev1.PodPending:   1,
+		corev1.PodRunning:   2,
+		corev1.PodSucceeded: 3,
+		corev1.PodFailed:    3,
+	}
+	return phaseOrder[current] >= phaseOrder[target]
+}
+
+// conditionAtOrBeyond returns true if the current condition status is "at or beyond" the target.
+// For pod lifecycle: Unknown < False < True (for positive conditions like Ready)
+func conditionAtOrBeyond(current, target corev1.ConditionStatus) bool {
+	// For most lifecycle conditions, True is the "goal" state
+	// If target is True, current must be True
+	// If target is False, current can be False or True (we've moved past it)
+	// If target is Unknown, any status is fine
+	if target == corev1.ConditionTrue {
+		return current == corev1.ConditionTrue
+	}
+	if target == corev1.ConditionFalse {
+		return current == corev1.ConditionFalse || current == corev1.ConditionTrue
+	}
+	// target is Unknown, any status satisfies it
+	return true
+}
+
 // PodLifecycleReconciler simulates kubelet behaviour, updating Pod status over several reconciles.
+// The reconciler uses a deterministic state machine factory that determines the next step based
+// on the current Pod state, not internal mutable state. This makes the reconciler safe for use
+// in exploration scenarios where the same Pod may be reconciled across different branches.
 type PodLifecycleReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 
-	Factory PodStateMachineFactory
-
-	mu        sync.Mutex
-	machines  map[types.NamespacedName]PodStateMachine
+	Factory   PodStateMachineFactory
 	requeue   time.Duration
 	OnFailure func(context.Context, *corev1.Pod, error)
 }
-
-type finishedStateMachine struct{}
-
-func (finishedStateMachine) Advance(context.Context, *corev1.Pod) (PodStatusStep, bool, error) {
-	return PodStatusStep{}, true, nil
-}
-
-var finishedMachine PodStateMachine = finishedStateMachine{}
 
 // NewPodLifecycleReconciler returns a reconciler with an optional requeue delay.
 func NewPodLifecycleReconciler(c client.Client, scheme *runtime.Scheme, factory PodStateMachineFactory, requeue time.Duration) *PodLifecycleReconciler {
@@ -135,15 +223,16 @@ func NewPodLifecycleReconciler(c client.Client, scheme *runtime.Scheme, factory 
 		panic("pod lifecycle reconciler requires a state machine factory")
 	}
 	return &PodLifecycleReconciler{
-		Client:   c,
-		Scheme:   scheme,
-		Factory:  factory,
-		machines: make(map[types.NamespacedName]PodStateMachine),
-		requeue:  requeue,
+		Client:  c,
+		Scheme:  scheme,
+		Factory: factory,
+		requeue: requeue,
 	}
 }
 
 // Reconcile drives the Pod through its configured lifecycle.
+// The state machine is deterministic: given the same Pod state, it always returns
+// the same next step, regardless of which exploration branch is running.
 func (r *PodLifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -154,11 +243,12 @@ func (r *PodLifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	pod.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Pod"))
 
 	if !pod.DeletionTimestamp.IsZero() {
-		r.deleteMachine(req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 
-	machine := r.machineForPod(req.NamespacedName, pod)
+	// Create a fresh state machine for this reconcile - the machine is stateless
+	// and determines the next step based on the current Pod state.
+	machine := r.Factory.NewStateMachine(pod)
 	step, done, err := machine.Advance(ctx, pod.DeepCopy())
 	if err != nil {
 		logger.Error(err, "state machine failed", "pod", req.NamespacedName)
@@ -178,7 +268,6 @@ func (r *PodLifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if done || isTerminalPhase(updated.Status.Phase) {
-		r.markFinished(req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 
@@ -189,31 +278,6 @@ func (r *PodLifecycleReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		result.Requeue = true
 	}
 	return result, nil
-}
-
-func (r *PodLifecycleReconciler) machineForPod(key types.NamespacedName, pod *corev1.Pod) PodStateMachine {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	if machine, ok := r.machines[key]; ok {
-		return machine
-	}
-
-	machine := r.Factory.NewStateMachine(pod.DeepCopy())
-	r.machines[key] = machine
-	return machine
-}
-
-func (r *PodLifecycleReconciler) markFinished(key types.NamespacedName) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.machines[key] = finishedMachine
-}
-
-func (r *PodLifecycleReconciler) deleteMachine(key types.NamespacedName) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.machines, key)
 }
 
 func applyStatusStep(pod *corev1.Pod, step PodStatusStep) bool {
