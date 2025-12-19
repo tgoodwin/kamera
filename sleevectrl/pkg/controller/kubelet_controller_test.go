@@ -56,6 +56,7 @@ func TestPodLifecycleSequentialTransitions(t *testing.T) {
 				},
 			},
 		},
+		// CrashProbabilities defaults to nil (no crashes)
 	}
 
 	reconciler := NewPodLifecycleReconciler(client, scheme, factory, 0)

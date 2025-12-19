@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sort"
 	"time"
 
@@ -14,6 +15,19 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+// PodLifecycleStage represents a named stage in the Pod lifecycle.
+// Used to configure crash probabilities without magic numbers.
+type PodLifecycleStage int
+
+const (
+	// StageScheduled is after the Pod is scheduled (Pending + PodScheduled=True)
+	StageScheduled PodLifecycleStage = 0
+	// StageRunning is after the Pod starts running but before containers are ready
+	StageRunning PodLifecycleStage = 1
+	// StageReady is after the Pod is fully ready (Running + Ready=True + IPs assigned)
+	StageReady PodLifecycleStage = 2
 )
 
 // PodStateMachine describes a stateful mechanism to advance a Pod through a lifecycle.
@@ -41,9 +55,19 @@ type PodStateMachineFactory interface {
 // behavior when the same Pod state is encountered across different exploration branches.
 type DeterministicPodStateMachineFactory struct {
 	Steps []PodStatusStep
+
+	// CrashProbabilities maps lifecycle stage to crash probability (0.0 to 1.0).
+	// After completing a stage, if a probability is set for that stage, there's
+	// a random chance the Pod will crash instead of advancing to the next stage.
+	// This is used for intentional nondeterminism in exploration testing.
+	CrashProbabilities map[PodLifecycleStage]float64
 }
 
 // DefaultPodLifecycle returns the standard Pending -> Running -> Ready sequence.
+// Stage indices:
+//   - 0: Pending + PodScheduled
+//   - 1: Running + ContainersReady=False + PodReady=False
+//   - 2: Running + ContainersReady=True + PodReady=True + IPs assigned
 func DefaultPodLifecycle() []PodStatusStep {
 	return []PodStatusStep{
 		{
@@ -87,7 +111,21 @@ func (f *DeterministicPodStateMachineFactory) NewStateMachine(_ *corev1.Pod) Pod
 	steps := make([]PodStatusStep, len(f.Steps))
 	copy(steps, f.Steps)
 	return &deterministicPodStateMachine{
-		steps: steps,
+		steps:              steps,
+		crashProbabilities: f.CrashProbabilities,
+	}
+}
+
+func (s PodLifecycleStage) String() string {
+	switch s {
+	case StageScheduled:
+		return "Scheduled"
+	case StageRunning:
+		return "Running"
+	case StageReady:
+		return "Ready"
+	default:
+		return fmt.Sprintf("Stage(%d)", int(s))
 	}
 }
 
@@ -95,7 +133,8 @@ func (f *DeterministicPodStateMachineFactory) NewStateMachine(_ *corev1.Pod) Pod
 // not by maintaining an internal index. This ensures the same Pod state always produces
 // the same result, making the reconciler safe for exploration across branches.
 type deterministicPodStateMachine struct {
-	steps []PodStatusStep
+	steps              []PodStatusStep
+	crashProbabilities map[PodLifecycleStage]float64
 }
 
 func (s *deterministicPodStateMachine) Advance(_ context.Context, pod *corev1.Pod) (PodStatusStep, bool, error) {
@@ -109,6 +148,19 @@ func (s *deterministicPodStateMachine) Advance(_ context.Context, pod *corev1.Po
 	// If we're at or past the final stage, we're done
 	if currentStage >= len(s.steps) {
 		return PodStatusStep{}, true, nil
+	}
+
+	// Check if we should randomly crash the Pod at this stage
+	if prob, ok := s.crashProbabilities[PodLifecycleStage(currentStage)]; ok && prob > 0 {
+		if rand.Float64() < prob {
+			return PodStatusStep{
+				Phase: corev1.PodFailed,
+				Conditions: []corev1.PodCondition{
+					{Type: corev1.PodReady, Status: corev1.ConditionFalse, Reason: "SimulatedCrash"},
+					{Type: corev1.ContainersReady, Status: corev1.ConditionFalse, Reason: "SimulatedCrash"},
+				},
+			}, true, nil
+		}
 	}
 
 	// Return the step for the current stage (the Pod will be advanced to this state)
