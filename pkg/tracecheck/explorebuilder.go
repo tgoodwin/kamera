@@ -42,6 +42,10 @@ type ExplorerBuilder struct {
 
 	// for replay mode
 	builder *replay.Builder
+
+	// podCrashProbabilities configures random crash probabilities for the
+	// PodLifecycleController. Maps lifecycle stage to crash probability (0.0 to 1.0).
+	podCrashProbabilities map[controller.PodLifecycleStage]float64
 }
 
 // ReconcilerBuilder enables chaining reconciler-specific configuration
@@ -208,6 +212,26 @@ func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
 	return b
 }
 
+// WithPodCrashProbability sets the probability that a Pod will crash after
+// reaching the specified lifecycle stage. This introduces intentional
+// nondeterminism for testing multiple converged states.
+//
+// Available stages:
+//   - controller.StageScheduled: After scheduled (Pod is Pending + PodScheduled=True)
+//   - controller.StageRunning: After running but not ready (Pod is Running + Ready=False)
+//   - controller.StageReady: After fully ready (Pod is Running + Ready=True + IPs assigned)
+//
+// Example:
+//
+//	builder.WithPodCrashProbability(controller.StageReady, 0.5) // 50% chance to crash after becoming ready
+func (b *ExplorerBuilder) WithPodCrashProbability(stage controller.PodLifecycleStage, probability float64) *ExplorerBuilder {
+	if b.podCrashProbabilities == nil {
+		b.podCrashProbabilities = make(map[controller.PodLifecycleStage]float64)
+	}
+	b.podCrashProbabilities[stage] = probability
+	return b
+}
+
 func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc PerturbationConfig) *ExplorerBuilder {
 	b.config.perturbationCfg[reconcilerID] = rc
 	return b
@@ -331,11 +355,13 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, "ReplicaSetController")
 
 	// Pod Lifecycle Controller, e.g. "fake kubelet"
+	// Note: The factory is retrieved at reconciler instantiation time (during Build()),
+	// so crash probabilities configured via WithPodCrashProbability() will be used.
 	b.WithReconciler("PodLifecycleController", func(c client.Client) Reconciler {
 		return controller.NewPodLifecycleReconciler(
 			c,
 			b.scheme,
-			controller.NewDefaultPodLifecycleFactory(),
+			b.getPodLifecycleFactory(),
 			0,
 		)
 	}).For("Pod")
@@ -370,6 +396,18 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")
+}
+
+// getPodLifecycleFactory returns the PodStateMachineFactory to use for the
+// PodLifecycleController, configured with any crash probabilities.
+func (b *ExplorerBuilder) getPodLifecycleFactory() controller.PodStateMachineFactory {
+	if len(b.podCrashProbabilities) == 0 {
+		return controller.NewDefaultPodLifecycleFactory()
+	}
+	return &controller.DeterministicPodStateMachineFactory{
+		Steps:              controller.DefaultPodLifecycle(),
+		CrashProbabilities: b.podCrashProbabilities,
+	}
 }
 
 func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[ReconcilerID]*ReconcilerContainer {

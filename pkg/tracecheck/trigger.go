@@ -98,6 +98,9 @@ func (pr PendingReconcile) String() string {
 // from controllers that always re-enqueue). This is used to determine convergence:
 // if the only remaining work is time-based re-enqueues or poll-based requeues,
 // the controller logic has effectively converged since no state is changing.
+//
+// IMPORTANT: Returns false if ANY pending has SourceStateChange, which means
+// the state should NOT be considered converged.
 func allPendingIgnorableForConvergence(pending []PendingReconcile) bool {
 	if len(pending) == 0 {
 		return false // empty list should not be considered "all ignorable"
@@ -119,6 +122,15 @@ func countIgnorableForConvergence(pending []PendingReconcile) int {
 		}
 	}
 	return count
+}
+
+// pendingSourcesSummary returns a summary of pending reconcile sources for debugging
+func pendingSourcesSummary(pending []PendingReconcile) map[PendingReconcileSource]int {
+	counts := make(map[PendingReconcileSource]int)
+	for _, pr := range pending {
+		counts[pr.Source]++
+	}
+	return counts
 }
 
 type Resolver interface {

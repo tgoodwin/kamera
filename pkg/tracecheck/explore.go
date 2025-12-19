@@ -214,7 +214,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	result := &Result{ConvergedStates: make([]ResultState, 0), AbortedStates: abortedCollected}
 	for i, stateKey := range lo.Keys(seenConvergedStates) {
 		state := seenConvergedStates[stateKey]
-		paths := normalizeAndDedupePaths(executionPathsToState[stateKey])
+		paths := dedupePathsByUniqueKey(executionPathsToState[stateKey])
 		state.DivergencePoint = initialState.DivergencePoint
 		convergedState := ResultState{
 			ID:    fmt.Sprintf("state-%d", i),
@@ -397,18 +397,38 @@ func (e *Explorer) explore(
 		// 2. All remaining pending reconciles are ignorable for convergence (async enqueues
 		//    from tickers, or requeues from poll-based controllers). These don't indicate
 		//    state changes, just time-based or polling behavior.
+		//
+		// NOTE: If a state has ANY SourceStateChange pending reconciles, it should NOT be
+		// considered converged. The allPendingIgnorableForConvergence function returns false
+		// if any pending has SourceStateChange.
 		if len(currentState.PendingReconciles) == 0 || allPendingIgnorableForConvergence(currentState.PendingReconciles) {
 			convergenceKey := currentState.ConvergenceHash()
 			reason := "no pending reconciles"
 			if len(currentState.PendingReconciles) > 0 {
 				reason = "only async enqueues/requeues remaining"
 			}
+
+			// INVARIANT CHECK: No SourceStateChange pending reconciles should be present
+			// when marking a state as converged. If this fires, there's a bug.
+			for _, pr := range currentState.PendingReconciles {
+				if pr.Source == SourceStateChange {
+					logger.Error(nil, "BUG: state marked as converged has SourceStateChange pending reconcile",
+						"ReconcilerID", pr.ReconcilerID,
+						"Request", pr.Request.NamespacedName,
+						"Depth", currentState.depth,
+						"TotalPending", len(currentState.PendingReconciles),
+						"PendingSources", pendingSourcesSummary(currentState.PendingReconciles),
+					)
+				}
+			}
+
 			if logger.V(1).Enabled() {
 				logger.V(1).WithValues(
 					"Depth", currentState.depth,
 					"StateKey", convergenceKey,
 					"Reason", reason,
 					"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
+					"PendingSources", pendingSourcesSummary(currentState.PendingReconciles),
 				).Info("arrived at converged state")
 			}
 			if logger.V(2).Enabled() {
@@ -1084,6 +1104,25 @@ func dumpQueue(queue []StateNode) []string {
 }
 
 func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state StateNode, reconcileInput PendingReconcile, result *ReconcileResult) []PendingReconcile {
+	stepLog := log.FromContext(ctx)
+
+	// INVARIANT 3: The reconciler taking the step should be present in the previous state's pending reconciles
+	reconcilerWasPending := false
+	for _, pr := range state.PendingReconciles {
+		if pr.ReconcilerID == reconcileInput.ReconcilerID &&
+			pr.Request.NamespacedName == reconcileInput.Request.NamespacedName {
+			reconcilerWasPending = true
+			break
+		}
+	}
+	if !reconcilerWasPending {
+		stepLog.Error(nil, "INVARIANT VIOLATION: reconciler took step but was not in pending queue",
+			"reconcilerID", reconcileInput.ReconcilerID,
+			"request", reconcileInput.Request.NamespacedName,
+			"pendingCount", len(state.PendingReconciles),
+			"depth", state.depth)
+	}
+
 	//  remove the current reconcile from the pending reconciles list because it has just been processed
 	stillPending := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
 		return pending != reconcileInput
@@ -1092,7 +1131,6 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// Read captured enqueues from the global collector (from Watch callbacks during reconcile).
 	// Get() automatically clears the collector after returning, so it's ready for the next step.
 	// These are already PendingReconcile entries with the correct reconciler ID.
-	stepLog := log.FromContext(ctx)
 	capturedPending := GetGlobalAsyncEnqueueCollector().Get()
 	if len(capturedPending) > 0 {
 		stepLog.V(1).Info("captured async enqueues from tickers",
@@ -1154,7 +1192,49 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	}
 
 	allTriggered := append(triggeredByChanges, capturedPending...)
-	return e.getNewPendingReconciles(stillPending, allTriggered)
+	newPending := e.getNewPendingReconciles(stillPending, allTriggered)
+
+	// INVARIANT 1: If the step had no writes, no new pending reconciles should have "State Change" source
+	wasNoOp := result.wasNoOp()
+	if wasNoOp {
+		for _, triggered := range triggeredByChanges {
+			if triggered.Source == SourceStateChange {
+				stepLog.Error(nil, "INVARIANT VIOLATION: no-op step triggered State Change reconcile",
+					"reconcilerID", reconcileInput.ReconcilerID,
+					"triggeredReconciler", triggered.ReconcilerID,
+					"triggeredRequest", triggered.Request.NamespacedName,
+					"depth", state.depth,
+					"effectCount", len(result.Changes.Effects))
+			}
+		}
+	}
+
+	// INVARIANT 2: Only the reconciler that just took the step should be removed.
+	// Check that all items in stillPending that were in the original pending are still present,
+	// and the only thing removed is the reconcileInput.
+	for _, originalPending := range state.PendingReconciles {
+		if originalPending == reconcileInput {
+			continue // This one should be removed
+		}
+		// Check if it's still pending (either in stillPending or re-added through triggeredByChanges)
+		foundInStillPending := false
+		for _, sp := range stillPending {
+			if sp.ReconcilerID == originalPending.ReconcilerID &&
+				sp.Request.NamespacedName == originalPending.Request.NamespacedName {
+				foundInStillPending = true
+				break
+			}
+		}
+		if !foundInStillPending {
+			stepLog.Error(nil, "INVARIANT VIOLATION: pending reconcile mysteriously removed (not the one that took the step)",
+				"removedReconciler", originalPending.ReconcilerID,
+				"removedRequest", originalPending.Request.NamespacedName,
+				"stepTakenBy", reconcileInput.ReconcilerID,
+				"depth", state.depth)
+		}
+	}
+
+	return newPending
 }
 
 func (e *Explorer) skipViaCachePrediction(

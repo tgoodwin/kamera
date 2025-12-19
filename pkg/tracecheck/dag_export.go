@@ -45,13 +45,18 @@ func RenderStateDAGDOT(dag *StateDAG, opts GraphvizOpts) string {
 		}
 
 		label := fmt.Sprintf("%s", util.ShortenHash(string(h)))
-		fill := "#e0e0e0"
+		fill := "#e0e0e0" // gray: intermediate/unknown
 		shape := "box"
 		if len(node.ConvergedIDs) > 0 {
+			// Green: converged states
 			fill = "#c7f3c7"
 			shape = "doublecircle"
 		} else if len(node.AbortedIDs) > 0 {
+			// Red: error-aborted states
 			fill = "#f8d7da"
+		} else if len(node.MaxDepthIDs) > 0 {
+			// Yellow: max-depth aborted states
+			fill = "#fff3cd"
 		}
 		b.WriteString(fmt.Sprintf(`  "%s" [label="%s", shape=%s, fillcolor="%s"];`+"\n",
 			escapeDOT(string(h)), escapeDOT(label), shape, fill))

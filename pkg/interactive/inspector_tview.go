@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,6 +20,51 @@ import (
 	"github.com/tgoodwin/kamera/pkg/util"
 	"golang.org/x/exp/slices"
 )
+
+// openStateDAGGraph builds a DAG from the given states, renders it to DOT format,
+// and opens it as a PDF using the system's default PDF viewer (Preview on macOS).
+// Returns an error message if any step fails, or empty string on success.
+func openStateDAGGraph(states []tracecheck.ResultState) string {
+	if len(states) == 0 {
+		return "no states to render"
+	}
+
+	// Build the DAG using existing tracecheck infrastructure
+	dag := tracecheck.BuildStateDAG(tracecheck.Result{ConvergedStates: states})
+	dot := tracecheck.RenderStateDAGDOT(dag, tracecheck.GraphvizOpts{
+		LabelEdges:    true,
+		DropSelfLoops: true,
+	})
+
+	// Write DOT to a temp file
+	tmpFile, err := os.CreateTemp("", "inspector-dag-*.dot")
+	if err != nil {
+		return fmt.Sprintf("create temp file: %v", err)
+	}
+	dotPath := tmpFile.Name()
+	if _, err := tmpFile.WriteString(dot); err != nil {
+		tmpFile.Close()
+		os.Remove(dotPath)
+		return fmt.Sprintf("write dot: %v", err)
+	}
+	tmpFile.Close()
+
+	// Execute: dot -Tpdf <file> | open -fa Preview
+	// Use a shell to handle the pipe
+	cmd := exec.Command("sh", "-c", fmt.Sprintf("dot -Tpdf %q | open -fa Preview", dotPath))
+	if err := cmd.Run(); err != nil {
+		os.Remove(dotPath)
+		return fmt.Sprintf("render graph: %v", err)
+	}
+
+	// Clean up temp file after a short delay to ensure Preview has read it
+	go func() {
+		time.Sleep(2 * time.Second)
+		os.Remove(dotPath)
+	}()
+
+	return ""
+}
 
 type inspectorMode int
 
@@ -151,10 +197,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		dumpShortcut = dumpHint
 	}
 	restartHint := " • [yellow]r[-] restart"
+	graphHint := " • [yellow]g[-] graph"
 
 	statusBar := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText(`[yellow]<Tab>[-] move • [yellow]Enter[-] select` + dumpHint + ` • [yellow]q[-] quit`).
+		SetText(`[yellow]<Tab>[-] move • [yellow]Enter[-] select` + graphHint + dumpHint + ` • [yellow]q[-] quit`).
 		SetTextAlign(tview.AlignCenter)
 
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -215,11 +262,11 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 	}
 
 	baseQuit := " • [yellow]q[-] quit"
-	stateStatusMessage := `[yellow]Enter/d[-] describe object • [yellow]c[-] compare across states • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
-	stateDescribeStatus := `[yellow]Esc[-] back` + dumpShortcut + baseQuit
-	pathStatusMessage := `[yellow]Enter[-] open steps • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + dumpShortcut + baseQuit
-	stepStatusMessage := `[yellow]Enter/d[-] inspect reconcile • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + dumpShortcut + baseQuit
-	reconcileStatusMessage := `[yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + dumpShortcut + baseQuit
+	stateStatusMessage := `[yellow]Enter/d[-] describe object • [yellow]c[-] compare across states • [yellow]Tab[-] swap focus` + graphHint + dumpShortcut + baseQuit
+	stateDescribeStatus := `[yellow]Esc[-] back` + graphHint + dumpShortcut + baseQuit
+	pathStatusMessage := `[yellow]Enter[-] open steps • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + graphHint + dumpShortcut + baseQuit
+	stepStatusMessage := `[yellow]Enter/d[-] inspect reconcile • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + graphHint + dumpShortcut + baseQuit
+	reconcileStatusMessage := `[yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + graphHint + dumpShortcut + baseQuit
 
 	var (
 		stateSelectionChanged func(int, int)
@@ -264,8 +311,24 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		}
 		return fallbackGVK(key)
 	}
+	// Graph rendering function - generates DOT and opens in Preview
+	openGraph := func() {
+		updateStatus("[yellow]generating graph...[-]")
+		go func() {
+			errMsg := openStateDAGGraph(states)
+			app.QueueUpdateDraw(func() {
+				if errMsg != "" {
+					updateStatus(fmt.Sprintf("[red]graph failed: %s[-]", errMsg))
+				} else {
+					updateStatus("[green]graph opened in Preview[-]")
+				}
+			})
+		}()
+	}
+
+	var promptDump func()
 	if allowDump {
-		promptDump := func() {
+		promptDump = func() {
 			var path string
 			ok := app.Suspend(func() {
 				reader := bufio.NewReader(os.Stdin)
@@ -291,19 +354,22 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			}
 			updateStatus(fmt.Sprintf("[green]dumped to %s[-]", path))
 		}
-
-		app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-			switch {
-			case event.Key() == tcell.KeyCtrlS:
-				promptDump()
-				return nil
-			case event.Rune() == 's' || event.Rune() == 'S':
-				promptDump()
-				return nil
-			}
-			return event
-		})
 	}
+
+	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch {
+		case event.Rune() == 'g' || event.Rune() == 'G':
+			openGraph()
+			return nil
+		case allowDump && event.Key() == tcell.KeyCtrlS:
+			promptDump()
+			return nil
+		case allowDump && (event.Rune() == 's' || event.Rune() == 'S'):
+			promptDump()
+			return nil
+		}
+		return event
+	})
 
 	focusDetail := func() {
 		app.SetFocus(currentDetailPrim)
@@ -1547,27 +1613,25 @@ func countDistinctPathHashes(paths []tracecheck.ExecutionHistory) int {
 
 func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 	table.Clear()
-	headers := []string{"Idx", "StateHash", "ContentsHash", "Objects", "Paths", "Hashes", "Pending", "Status"}
+	headers := []string{"Idx", "StateHash", "Objects", "Paths", "Hashes", "Pending", "Status"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
 				SetSelectable(false))
 	}
 	for row, state := range states {
-		stateHash := util.ShortenHash(string(state.State.Hash()))
-		contentsHash := util.ShortenHash(string(state.State.StateHash()))
+		stateHash := util.ShortenHash(string(state.State.StateHash()))
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
 		table.SetCell(row+1, 1, tview.NewTableCell(stateHash))
-		table.SetCell(row+1, 2, tview.NewTableCell(contentsHash))
-		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
-		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
-		table.SetCell(row+1, 5, tview.NewTableCell(fmt.Sprintf("%d", countDistinctPathHashes(state.Paths))))
-		table.SetCell(row+1, 6, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
+		table.SetCell(row+1, 2, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
+		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
+		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", countDistinctPathHashes(state.Paths))))
+		table.SetCell(row+1, 5, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.PendingReconciles))))
 		status := "converged"
 		if state.Error != nil {
 			status = truncateString(state.Error.Error(), 48)
 		}
-		table.SetCell(row+1, 7, tview.NewTableCell(status))
+		table.SetCell(row+1, 6, tview.NewTableCell(status))
 	}
 }
 
@@ -1595,7 +1659,7 @@ func populatePaths(table *tview.Table, states []tracecheck.ResultState, stateIdx
 
 func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx, pathIdx int) {
 	table.Clear()
-	headers := []string{"Idx", "Controller", "StateHash", "Writes"}
+	headers := []string{"Idx", "Controller", "Effects", "StateHash"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -1614,10 +1678,10 @@ func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx
 	for row, step := range path {
 		controller := "(nil)"
 		stateHash := "-"
-		writes := "0"
+		effects := "0"
 		if step != nil {
 			controller = string(step.ControllerID)
-			writes = fmt.Sprintf("%d", len(step.Changes.Effects))
+			effects = fmt.Sprintf("%d", len(step.Changes.Effects))
 			if step.StateAfter != nil {
 				stateHash = util.ShortenHash(string(tracecheck.StateNode{
 					Contents: tracecheck.NewStateSnapshot(step.StateAfter, step.KindSeqAfter, nil),
@@ -1626,8 +1690,8 @@ func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx
 		}
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
 		table.SetCell(row+1, 1, tview.NewTableCell(controller))
-		table.SetCell(row+1, 2, tview.NewTableCell(stateHash))
-		table.SetCell(row+1, 3, tview.NewTableCell(writes))
+		table.SetCell(row+1, 2, tview.NewTableCell(effects))
+		table.SetCell(row+1, 3, tview.NewTableCell(stateHash))
 	}
 }
 

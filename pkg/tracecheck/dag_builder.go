@@ -22,8 +22,9 @@ type DAGNode struct {
 	Outgoing map[StateHash][]*DAGEdge
 	Incoming map[StateHash][]*DAGEdge
 
-	ConvergedIDs []string
-	AbortedIDs   []string
+	ConvergedIDs  []string
+	MaxDepthIDs   []string // states aborted due to max depth
+	AbortedIDs    []string // states aborted due to other errors
 }
 
 // NodeSample carries a representative view of a node's objects.
@@ -70,7 +71,12 @@ func BuildStateDAG(result Result) *StateDAG {
 	}
 	for _, rs := range result.AbortedStates {
 		appendPaths(rs, func(node *DAGNode, id string) {
-			node.AbortedIDs = append(node.AbortedIDs, id)
+			// Categorize by error type
+			if rs.Error != nil && rs.Error.Error() == "max depth reached" {
+				node.MaxDepthIDs = append(node.MaxDepthIDs, id)
+			} else {
+				node.AbortedIDs = append(node.AbortedIDs, id)
+			}
 		})
 	}
 
