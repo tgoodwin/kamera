@@ -40,6 +40,17 @@ type PerturbationConfig struct {
 	MaxRestarts     int
 }
 
+type OptimizationConfig struct {
+	EarlyConvergence   bool
+	CompletedPathDedup bool
+	OrderingPruning    bool
+	CachePrediction    bool
+}
+
+func (opt OptimizationConfig) AnyEnabled() bool {
+	return opt.EarlyConvergence || opt.CompletedPathDedup || opt.OrderingPruning || opt.CachePrediction
+}
+
 type ExploreConfig struct {
 	MaxDepth        int
 	RecordPerfStats bool
@@ -54,16 +65,8 @@ type ExploreConfig struct {
 	// if enough paths below that subtree converge to the same state.
 	divergenceCircuitBreakerThreshold int
 
-	// Optimization flags (opt-out: false = enabled, true = disabled)
-	// DisableEarlyConvergence disables skipping states where all pending are known
-	// no-ops and we've already found a converged path to this logical state.
-	DisableEarlyConvergence bool
-	// DisableCachePrediction disables using cached reconcile results to predict
-	// and skip reconciles that would produce duplicate states.
-	DisableCachePrediction bool
-	// DisableNoOpOrderingSkip disables skipping ordering branches that put a
-	// known no-op reconciler first.
-	DisableNoOpOrderingSkip bool
+	// Optimizations configures optional pruning heuristics (opt-in).
+	Optimizations OptimizationConfig
 }
 
 // Clone returns a deep copy of the ExploreConfig, including map fields.
@@ -75,7 +78,7 @@ func (cfg ExploreConfig) Clone() ExploreConfig {
 }
 
 func (cfg ExploreConfig) OptimizationsEnabled() bool {
-	return !cfg.DisableEarlyConvergence || !cfg.DisableCachePrediction || !cfg.DisableNoOpOrderingSkip
+	return cfg.Optimizations.AnyEnabled()
 }
 
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
@@ -102,7 +105,8 @@ type Explorer struct {
 
 	Config *ExploreConfig
 
-	stats *ExploreStats
+	stats         *ExploreStats
+	optimizations *optimizations
 }
 
 // VersionManager returns the shared version manager used during exploration.
@@ -259,29 +263,12 @@ func (e *Explorer) explore(
 		}
 	}
 
+	e.optimizations = newOptimizations(e.Config.Optimizations)
+
 	seenDepths := make(map[int]bool)
 
 	// Track explored state hashes keyed by the sequence of state-changing reconciles.
 	// This lets us prune branches that only differ by no-op reads.
-	visitedStatePaths := make(map[NodeHash]map[string]struct{})
-
-	// Track completion status for (stateHash, history) pairs.
-	// We only skip duplicate paths if we've COMPLETED exploration (converged or aborted),
-	// not just started it. This prevents skipping a path before we know its outcome.
-	// Key: stateHash + "|" + normalizedHistory
-	// Value: true = completed (safe to skip future duplicates)
-	completedPaths := make(map[string]bool)
-
-	// Track which (objectsHash, reconcilerID, request) combinations produced no changes.
-	// Used to skip orderings that put known no-ops first.
-	knownNoOps := make(map[string]bool)
-
-	reconcileResCache := make(map[string]*cachedReconcileResult)
-
-	// Track which (objectsHash, pendingSignature, historyKey) combinations we've committed to explore.
-	// This allows prediction-based deduplication using only predictable components.
-	exploredLogicalStates := make(map[string]struct{})
-
 	// Subtree Circuit Breaker: track which logical states (objectsHash + pendingSignature) we've
 	// already explored. Future exploration depends only on (objects, pending), NOT on history.
 	// If we reach the same logical state via different paths, the subtrees would be identical,
@@ -298,12 +285,6 @@ func (e *Explorer) explore(
 	// we dont skip over seen states because we want to track all the ways a state can be reached
 	// but we do track the states we've seen
 	seenStates := make(map[OrderHash]bool)
-
-	// Track which logical states (order-insensitive) have already been expanded
-	// for reconcile-order permutations. Branching once per StateHash is enough,
-	// because expandStateByReconcileOrder enqueues every first-position choice
-	// and recursion covers the full permutation space.
-	seenBranchingByState := make(map[NodeHash]bool)
 
 	// we do track the seen converged states so we can attribute multiple execution paths to them
 	seenConvergedStates := make(map[NodeHash]StateNode)
@@ -324,7 +305,9 @@ func (e *Explorer) explore(
 
 	initialHash := initialState.Hash()
 	initialSignature := initialState.ExecutionHistory.UniqueKey()
-	visitedStatePaths[initialHash] = map[string]struct{}{initialSignature: {}}
+	if e.optimizations != nil {
+		e.optimizations.recordInitialPath(initialHash, initialSignature)
+	}
 
 	for len(queue) > 0 {
 		select {
@@ -360,16 +343,13 @@ func (e *Explorer) explore(
 		// and we've already found a converged path to this logical state, skip entirely.
 		// The first path runs through the no-ops to reach actual convergence; subsequent
 		// paths can skip since they'd produce the same result.
-		if e.Config.OptimizationsEnabled() {
-			allPendingAreNoOps := e.checkEarlyConvergence(currentState, knownNoOps)
-			if allPendingAreNoOps {
-				objectsHash := currentState.StateHash()
-				if _, alreadyConverged := seenConvergedStates[NodeHash(objectsHash)]; alreadyConverged {
-					e.stats.EarlyConvergence++
-					logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
-						"depth", currentState.depth, "pendingCount", len(currentState.PendingReconciles))
-					continue
-				}
+		if e.optimizations.checkEarlyConvergence(currentState) {
+			objectsHash := currentState.StateHash()
+			if _, alreadyConverged := seenConvergedStates[NodeHash(objectsHash)]; alreadyConverged {
+				e.stats.EarlyConvergence++
+				logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
+					"depth", currentState.depth, "pendingCount", len(currentState.PendingReconciles))
+				continue
 			}
 		}
 
@@ -436,8 +416,9 @@ func (e *Explorer) explore(
 			}
 
 			// Mark this (state, history) as completed - safe to skip future duplicates
-			completionKey := fmt.Sprintf("%s|%s", stateKey, currentState.ExecutionHistory.UniqueKey())
-			completedPaths[completionKey] = true
+			if e.optimizations != nil {
+				e.optimizations.markCompleted(stateKey, currentState.ExecutionHistory.UniqueKey())
+			}
 
 			seenConvergedStates[convergenceKey] = currentState
 			// Also record by ObjectsHash (drops pending reconciles) so early convergence detection can find it
@@ -465,18 +446,16 @@ func (e *Explorer) explore(
 
 		// Divergence Circuit-Breaker: limit exploration when paths from a divergence point
 		// keep converging to the same state.
-		if e.Config.OptimizationsEnabled() {
-			if threshold := e.Config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
-				convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
-				repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
-				if repeatedCount > threshold {
-					logger.V(1).Info("skipping state; subtree circuit breaker triggered",
-						"StateKey", stateKey,
-						"DivergenceKey", currentState.divergenceKey,
-						"Threshold", threshold,
-						"RepeatedConvergences", repeatedCount)
-					continue
-				}
+		if threshold := e.Config.divergenceCircuitBreakerThreshold; threshold > 0 && currentState.divergenceKey != "" {
+			convergencesUnderKey := convergencesByDivergenceKey[currentState.divergenceKey]
+			repeatedCount := util.MostCommonElementCount(convergencesUnderKey)
+			if repeatedCount > threshold {
+				logger.V(1).Info("skipping state; subtree circuit breaker triggered",
+					"StateKey", stateKey,
+					"DivergenceKey", currentState.divergenceKey,
+					"Threshold", threshold,
+					"RepeatedConvergences", repeatedCount)
+				continue
 			}
 		}
 
@@ -535,12 +514,10 @@ func (e *Explorer) explore(
 			reconcileResKey := fmt.Sprintf("%s:%s:%s", stateView.StateHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
 			// Check cache: can we predict the output state without running the reconcile?
-			if e.Config.OptimizationsEnabled() {
-				if e.skipViaCachePrediction(reconcileResCache, exploredLogicalStates, reconcileResKey, stateView, pendingReconcile) {
-					stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
-					e.stats.CachePredictedSkips++
-					continue
-				}
+			if e.skipViaCachePrediction(reconcileResKey, stateView, pendingReconcile) {
+				stepLogger.V(1).Info("skipping reconcile via cache prediction; would produce duplicate state")
+				e.stats.CachePredictedSkips++
+				continue
 			}
 
 			stepLogger.Info("Taking reconcile step")
@@ -584,19 +561,19 @@ func (e *Explorer) explore(
 
 			// Track whether this was a no-op (used by ordering optimization)
 			wasNoOp := err == nil && stepResult.wasNoOp()
-			knownNoOps[reconcileResKey] = wasNoOp // cacheKey already uses objectsHash
+			e.optimizations.recordNoOp(reconcileResKey, wasNoOp) // cacheKey already uses objectsHash
 			if wasNoOp {
 				e.stats.NoOpReconciles++
 			}
 
 			// Update cache with this reconcile's result
 			if err == nil && stepResult != nil {
-				reconcileResCache[reconcileResKey] = &cachedReconcileResult{
+				e.optimizations.setReconcileResult(reconcileResKey, &cachedReconcileResult{
 					outputObjectsHash:   newState.StateHash(),
 					wasNoOp:             wasNoOp,
 					numEffects:          len(stepResult.Changes.Effects),
 					triggeredReconciles: triggeredByStep,
-				}
+				})
 			}
 
 			if err != nil {
@@ -665,61 +642,50 @@ func (e *Explorer) explore(
 			// no-op orderings, which by definition cannot produce different outcomes.
 
 			stateHash := newState.Hash()
-			historySet, alreadyTracked := visitedStatePaths[stateHash]
-			if !alreadyTracked {
-				historySet = make(map[string]struct{})
-				visitedStatePaths[stateHash] = historySet
-			}
-
 			// Deduplication based on completion status:
 			// Only skip if we've COMPLETED exploration of this (state, history) pair.
 			// This prevents skipping paths that are still in-flight and might fail,
 			// which would cause us to miss valid convergence paths.
 			normalizedHistory := newState.ExecutionHistory.UniqueKey()
-			completionKey := fmt.Sprintf("%s|%s", stateHash, normalizedHistory)
-
-			if e.Config.OptimizationsEnabled() {
-				if completed := completedPaths[completionKey]; completed {
-					logger.V(1).WithValues(
-						"StateHash", stateHash,
-						"PathSignature", normalizedHistory,
-					).Info("skipping - path already completed exploration")
-					e.stats.SkippedPaths++
-					continue
-				}
+			if e.optimizations != nil && e.optimizations.pathCompleted(stateHash, normalizedHistory) {
+				logger.V(1).WithValues(
+					"StateHash", stateHash,
+					"PathSignature", normalizedHistory,
+				).Info("skipping - path already completed exploration")
+				e.stats.SkippedPaths++
+				continue
 			}
 
-			// Track that we've enqueued this path (for stats/debugging)
-			historySet[normalizedHistory] = struct{}{}
+			if e.optimizations != nil {
+				e.optimizations.markVisited(stateHash, normalizedHistory)
+				e.optimizations.markLogicalState(newState.StateHash(), newState.PendingReconciles, normalizedHistory)
+			}
 
 			// Also track in exploredLogicalStates for cache prediction
-			pendingStrs := lo.Map(newState.PendingReconciles, func(pr PendingReconcile, _ int) string {
-				return pr.String()
-			})
-			slices.Sort(pendingStrs)
-			pendingSignature := strings.Join(pendingStrs, ",")
-			logicalStateKey := fmt.Sprintf("%s|%s|%s", newState.StateHash(), pendingSignature, normalizedHistory)
-			exploredLogicalStates[logicalStateKey] = struct{}{}
 
 			// branch on order of subsequent reconciles that were triggered by this state change step
 			newStateKey := newState.Hash()
 			if len(newState.PendingReconciles) > 1 {
-				if !seenBranchingByState[newStateKey] {
+				// When ordering pruning is enabled, we only expand once per logical state.
+				alreadyExpanded := e.optimizations != nil && e.optimizations.branchAlreadyExpanded(newStateKey)
+				if !alreadyExpanded {
 					expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
 					for _, orderVariant := range expandedStates {
 						// skip orderVariants whose first reconcile are known no-ops
-						if e.Config.OptimizationsEnabled() {
+						if e.optimizations != nil && e.optimizations.orderingPruningEnabled() {
 							fst := orderVariant.PendingReconciles[0]
 							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.StateHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
-							if isNoOp, known := knownNoOps[noOpKey]; known && isNoOp {
+							if isNoOp, known := e.optimizations.isKnownNoOp(noOpKey); known && isNoOp {
 								e.stats.SkippedNoOpOrderings++
 								continue
 							}
 						}
 						queue = e.enqueueState(queue, orderVariant)
 					}
-					seenBranchingByState[newStateKey] = true
-				} else {
+					if e.optimizations != nil {
+						e.optimizations.markBranchExpanded(newStateKey)
+					}
+				} else if e.optimizations != nil {
 					e.stats.SkippedOrderExpansions++
 				}
 			}
@@ -1238,80 +1204,60 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 }
 
 func (e *Explorer) skipViaCachePrediction(
-	reconcileCache map[string]*cachedReconcileResult,
-	exploredLogicalStates map[string]struct{},
 	cacheKey string,
 	stateView StateNode,
 	pendingReconcile PendingReconcile,
 ) bool {
-	// Check cache: can we predict the output state without running the reconcile?
-	if cached, ok := reconcileCache[cacheKey]; ok {
-		// We've run this (objects, reconciler, request) before.
-		// We can predict what the output will be.
-
-		//                     reconcileCache                exploredLogicalStates
-		//                     (input → output)              (output → seen?)
-		//                           │                              │
-		// State A ──────────────────┼──────► Output X ────────────┼──────► Already queued? YES → skip
-		// (objects=O, pending=[1,2])│        (objs=O', pend=[2])  │
-		//                           │                              │
-		// State B ──────────────────┼──────► Output X ────────────┼──────► Already queued? YES → skip
-		// (objects=O, pending=[1,3])│        (objs=O', pend=[3])  │
-		//                           ▲                              │
-		//                      SAME cache key!              DIFFERENT outputs
-		//                      (same objects, same R1)      (different pending)
-
-		// Predict output pending: current pending - this reconcile + triggered
-		predictedPending := lo.Filter(stateView.PendingReconciles, func(pr PendingReconcile, _ int) bool {
-			return pr != pendingReconcile
-		})
-		predictedPending = e.getNewPendingReconciles(predictedPending, cached.triggeredReconciles)
-
-		// Build pending signature (sorted for determinism)
-		pendingStrs := lo.Map(predictedPending, func(pr PendingReconcile, _ int) string {
-			return pr.String()
-		})
-		slices.Sort(pendingStrs)
-		pendingSignature := strings.Join(pendingStrs, ",")
-
-		// Predict the history signature after this step
-		currentHistory := stateView.ExecutionHistory.UniqueKey()
-		var predictedHistory string
-		if cached.wasNoOp {
-			predictedHistory = currentHistory
-		} else {
-			stepSig := fmt.Sprintf("%s@%d", pendingReconcile.ReconcilerID, cached.numEffects)
-			if currentHistory == "" {
-				predictedHistory = stepSig
-			} else {
-				predictedHistory = fmt.Sprintf("%s,%s", currentHistory, stepSig)
-			}
-		}
-
-		// Check if we've already committed to exploring this logical state
-		logicalStateKey := fmt.Sprintf("%s|%s|%s", cached.outputObjectsHash, pendingSignature, predictedHistory)
-		if _, explored := exploredLogicalStates[logicalStateKey]; explored {
-			return true
-		}
-	}
-	return false
-}
-
-// checkEarlyConvergence detects if all pending reconciles are known no-ops.
-// When true, we can skip exploring different orderings since they're all equivalent.
-func (e *Explorer) checkEarlyConvergence(state StateNode, knownNoOps map[string]bool) bool {
-	if len(state.PendingReconciles) == 0 {
+	if e.optimizations == nil || !e.optimizations.cachePredictionEnabled() {
 		return false
 	}
 
-	objectsHash := state.StateHash()
-	for _, pr := range state.PendingReconciles {
-		noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, pr.ReconcilerID, pr.Request.NamespacedName.String())
-		if isNoOp, known := knownNoOps[noOpKey]; !known || !isNoOp {
-			return false
+	cached, ok := e.optimizations.getReconcileResult(cacheKey)
+	if !ok {
+		return false
+	}
+
+	// Check cache: can we predict the output state without running the reconcile?
+	// We've run this (objects, reconciler, request) before.
+	// We can predict what the output will be.
+
+	//                     reconcileCache                exploredLogicalStates
+	//                     (input → output)              (output → seen?)
+	//                           │                              │
+	// State A ──────────────────┼──────► Output X ────────────┼──────► Already queued? YES → skip
+	// (objects=O, pending=[1,2])│        (objs=O', pend=[2])  │
+	//                           │                              │
+	// State B ──────────────────┼──────► Output X ────────────┼──────► Already queued? YES → skip
+	// (objects=O, pending=[1,3])│        (objs=O', pend=[3])  │
+	//                           ▲                              │
+	//                      SAME cache key!              DIFFERENT outputs
+	//                      (same objects, same R1)      (different pending)
+
+	// Predict output pending: current pending - this reconcile + triggered
+	predictedPending := lo.Filter(stateView.PendingReconciles, func(pr PendingReconcile, _ int) bool {
+		return pr != pendingReconcile
+	})
+	predictedPending = e.getNewPendingReconciles(predictedPending, cached.triggeredReconciles)
+
+	// Predict the history signature after this step
+	currentHistory := stateView.ExecutionHistory.UniqueKey()
+	var predictedHistory string
+	if cached.wasNoOp {
+		predictedHistory = currentHistory
+	} else {
+		stepSig := fmt.Sprintf("%s@%d", pendingReconcile.ReconcilerID, cached.numEffects)
+		if currentHistory == "" {
+			predictedHistory = stepSig
+		} else {
+			predictedHistory = fmt.Sprintf("%s,%s", currentHistory, stepSig)
 		}
 	}
-	return true
+
+	// Check if we've already committed to exploring this logical state
+	if e.optimizations.hasLogicalState(cached.outputObjectsHash, predictedPending, predictedHistory) {
+		return true
+	}
+	return false
 }
 
 // computeSubtreeKey returns a key representing the logical state for subtree deduplication.

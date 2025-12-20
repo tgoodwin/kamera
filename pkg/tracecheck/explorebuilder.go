@@ -295,12 +295,23 @@ func (b *ExplorerBuilder) WithDivergenceCircuitBreaker(threshold int) *ExplorerB
 	return b
 }
 
+// WithOptimizations configures which exploration optimizations to enable.
+// By default, all optimizations are disabled; opt in per-heuristic for ablation studies.
+func (b *ExplorerBuilder) WithOptimizations(opt OptimizationConfig) *ExplorerBuilder {
+	if b.config == nil {
+		b.config = &ExploreConfig{}
+	}
+	b.config.Optimizations = opt
+	return b
+}
+
 // WithoutOptimizations disables all exploration optimizations.
 // Useful for tests that need deterministic, exhaustive exploration.
 func (b *ExplorerBuilder) WithoutOptimizations() *ExplorerBuilder {
-	b.config.DisableEarlyConvergence = true
-	b.config.DisableCachePrediction = true
-	b.config.DisableNoOpOrderingSkip = true
+	if b.config == nil {
+		b.config = &ExploreConfig{}
+	}
+	b.config.Optimizations = OptimizationConfig{}
 	return b
 }
 
