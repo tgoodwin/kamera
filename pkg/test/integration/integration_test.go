@@ -101,7 +101,9 @@ func TestExhaustiveInterleavings(t *testing.T) {
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
-	eb.WithoutOptimizations() // Disable optimizations to test exhaustive exploration
+	eb.WithOptimizations(tracecheck.OptimizationConfig{
+		OrderingPruning: true,
+	})
 	fooKind := "webapp.discrete.events/Foo"
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
