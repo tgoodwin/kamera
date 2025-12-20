@@ -21,7 +21,6 @@ func NewRunner(builder *tracecheck.ExplorerBuilder) (*Runner, error) {
 	if builder == nil {
 		return nil, fmt.Errorf("builder is nil")
 	}
-	builder.WithMaxDepth(*depth)
 	return &Runner{
 		builder: builder,
 	}, nil
