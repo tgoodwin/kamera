@@ -159,15 +159,14 @@ if err := interactive.SaveInspectorDump(states, resolver, "inspector_dump.json")
 
 Dump files can be reopened at any time via `go run ./cmd/inspect --dump inspector_dump.json`, which restores the same UI. The inspector provides keyboard shortcuts (shown in the status bar) to switch between states, examine individual reconcile steps, and export dumps from within the UI.
 
-### Integrating Kamera with unit tests
+### Using Kamera in test suites
 
-Kamera can be run with `go test` so you can assert that your controllers converge and that domain-specific invariants hold across all execution interleavings.
+Kamera can be run with `go test` so you can easily test multi-controller reconciliation flows without heavy integration test infrastructure. You can use Kamera to assert that these flows converge deterministically and that your domain-specific invariants hold across all execution interleavings.
 
 ```go
 func TestWidgetControllerConverges(t *testing.T) {
     scheme := runtime.NewScheme()
     _ = myapiv1.AddToScheme(scheme)
-    _ = corev1.AddToScheme(scheme)
 
     eb := tracecheck.NewExplorerBuilder(scheme)
     const widgetKind = "apps.example.com/Widget"
@@ -199,24 +198,24 @@ func TestWidgetControllerConverges(t *testing.T) {
     if len(result.ConvergedStates) != 1 {
         t.Fatalf("expected 1 converged state, got %d", len(result.ConvergedStates))
     }
+    endState := result.ConvergedStates[0]
 
     // assert any desired invariants specific to your use case
-    // e.g. all pods have a unique name
+    // e.g. all pods must have a unique name
     seenPods := map[string]struct{}{}
-    for _, obj := range explorer.Objects(result.ConvergedStates[0]) {
+    for _, obj := range explorer.Objects(endState) {
         if obj.GetKind() != "Pod" {
             continue
         }
         name := obj.GetName()
         if _, exists := seenPods[name]; exists {
-            t.Fatalf("pod name %q appears more than once in the converged state", name)
+            t.Fatalf("encountered non-unique pod name %q", name)
         }
         seenPods[name] = struct{}{}
     }
 }
 ```
 
-`explorer.Objects` resolves the state's object versions for you, so you don't need to touch the underlying `VersionManager`. Run this alongside your other unit tests (e.g., `go test ./...`) to automatically verify both convergence (`len(ConvergedStates) == 1`) and any domain invariants you care about.
 
 ## License
 
