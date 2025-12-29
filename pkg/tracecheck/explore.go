@@ -114,6 +114,11 @@ func (e *Explorer) VersionManager() VersionManager {
 	return e.versionManager
 }
 
+// Stats returns the stats gathered during exploration.
+func (e *Explorer) Stats() *ExploreStats {
+	return e.stats
+}
+
 type ResultState struct {
 	ID    string
 	State StateNode

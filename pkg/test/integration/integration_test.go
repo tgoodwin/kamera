@@ -202,6 +202,63 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	assert.ElementsMatch(t, expectedAll, actual)
 }
 
+// runFooBarExplore executes the Foo/Bar controller scenario with the given optimizations.
+// It returns the explorer (to inspect stats) and the exploration result.
+func runFooBarExplore(t *testing.T, opt tracecheck.OptimizationConfig) (*tracecheck.Explorer, *tracecheck.Result) {
+	t.Helper()
+
+	eb := tracecheck.NewExplorerBuilder(scheme)
+	eb.WithMaxDepth(10)
+	if opt.AnyEnabled() {
+		eb.WithOptimizations(opt)
+	} else {
+		eb.WithoutOptimizations()
+	}
+
+	fooKind := "webapp.discrete.events/Foo"
+	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
+		return &controller.TestReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+
+	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
+		return &controller.TestReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+
+	topLevelObj := &foov1.Foo{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foo",
+			Namespace: "default",
+			Labels: map[string]string{
+				"tracey-uid":                       "foo",
+				"discrete.events/sleeve-object-id": "foo-123",
+			},
+		},
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "webapp.discrete.events/v1",
+			Kind:       "Foo",
+		},
+		Spec: foov1.FooSpec{
+			Mode: "A",
+		},
+	}
+
+	initialState := eb.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
+	initialState.Contents.KindSequences = canonicalizeKindSequences(initialState.Contents.KindSequences)
+	explorer, err := eb.Build("standalone")
+	if err != nil {
+		t.Fatalf("build explorer: %v", err)
+	}
+
+	result := explorer.Explore(context.Background(), initialState)
+	return explorer, result
+}
+
 func TestConvergedStateIdentification(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
@@ -305,6 +362,9 @@ func TestConvergedStateIdentification(t *testing.T) {
 		assert.ElementsMatch(t, expectedState.pathSummaries, actualPathSummaries)
 	}
 }
+
+// Ensures that enabling optimizations on the Foo/Bar scenario reduces exploration work
+// while preserving convergence.
 
 func BenchmarkExhaustiveInterleavingsExplore(b *testing.B) {
 	ctrl.SetLogger(zap.New(
