@@ -161,7 +161,7 @@ Dump files can be reopened at any time via `go run ./cmd/inspect --dump inspecto
 
 ### Using Kamera in test suites
 
-Kamera can be run with `go test` so you can easily test multi-controller reconciliation flows without heavy integration test infrastructure. You can use Kamera to assert that these flows converge deterministically and that your domain-specific invariants hold across all execution interleavings.
+Kamera can be run with `go test`, so you can easily cover multi-controller reconciliation flows in your test suites without relying on heavy integration test infrastructure. You can use Kamera to assert that these flows converge deterministically and that your domain-specific invariants hold across all executions.
 
 ```go
 func TestWidgetControllerConverges(t *testing.T) {
