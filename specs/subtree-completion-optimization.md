@@ -237,6 +237,51 @@ if entry.isMarker {
 **Pros**: Clean, leverages DFS structure naturally
 **Cons**: Markers consume stack space; need to handle nested markers correctly
 
+#### Nested Expansion Works Correctly
+
+The marker approach correctly handles nested expansions where children themselves have children. Here's a step-by-step trace:
+
+```
+Tree structure:
+    State S
+    ├── C1 (expands to G1, G2)
+    └── C2 (leaf)
+
+Step-by-step stack evolution:
+
+1. Process S, expand to C1, C2:
+   Push: Marker(S), C1, C2
+   Stack: [Marker(S), C1, C2]          (top: C2)
+
+2. Pop C2, process (leaf, no children):
+   Stack: [Marker(S), C1]
+
+3. Pop C1, expand to G1, G2:
+   Push: Marker(C1), G1, G2
+   Stack: [Marker(S), Marker(C1), G1, G2]    (top: G2)
+
+4. Pop G2, process (leaf):
+   Stack: [Marker(S), Marker(C1), G1]
+
+5. Pop G1, process (leaf):
+   Stack: [Marker(S), Marker(C1)]
+
+6. Pop Marker(C1):
+   → Mark C1's subtree as COMPLETE
+   Stack: [Marker(S)]
+
+7. Pop Marker(S):
+   → Mark S's subtree as COMPLETE
+   Stack: []
+```
+
+This mirrors exactly what happens with recursive DFS call stack unwinding:
+- `explore(S)` calls `explore(C1)` and `explore(C2)`
+- `explore(C1)` calls `explore(G1)` and `explore(G2)`
+- Returns propagate: G1 → G2 → C1 complete → C2 → S complete
+
+The key insight: **markers are pushed before children, so they pop after all descendants**.
+
 ### Option 3: Deferred Completion via Channels
 
 Use goroutines and channels to propagate completion.
@@ -293,6 +338,56 @@ The implementation would:
 2. Push a marker before pushing children
 3. When popping a marker, record completion for that logical state
 4. Check `completed` before processing any state
+
+## Implementation Details
+
+### Logical State Key Design
+
+The key must capture everything that affects future exploration:
+
+1. **Objects hash**: The resource contents determine what reconcilers will observe
+2. **Pending set (order-insensitive)**: The set of reconcilers that need to run — but NOT their order, since we expand all orderings under a single marker
+3. **Stuck positions**: The `stuckReconcilerPositions` field affects which reconcilers get triggered, so states with different stuck positions have different futures
+
+The pending set must be **order-insensitive** because ordering variants (e.g., `[A,B]` vs `[B,A]`) represent the same logical state. We expand all orderings and cover them with a single marker.
+
+### Tracker State: `completed` vs `inProgress`
+
+The tracker maintains two maps:
+
+- **`completed`**: Logical states whose subtrees have been fully explored. This is the core of the optimization — when we encounter a completed state, we skip it entirely.
+
+- **`inProgress`**: Logical states currently being explored (marker pushed but not yet popped). This handles "diamond" convergence.
+
+#### Why `inProgress` is Needed: Diamond Convergence
+
+Consider a scenario where two different paths in the DFS reach the same logical state L:
+
+```
+        A
+       / \
+      B   C
+       \ /
+        L (same logical state reached via both paths)
+```
+
+Without `inProgress` tracking:
+1. Process B → L not completed, push Marker(L), enqueue L
+2. Process C → L not completed, push another Marker(L), enqueue L again
+3. Result: duplicate markers, duplicate exploration work
+
+With `inProgress` tracking:
+1. Process B → L not completed, not in progress → mark in progress, push Marker(L), enqueue L
+2. Process C → L already in progress → skip (existing exploration will cover it)
+3. Result: single marker, no redundant work
+
+Technically, `inProgress` is an optimization rather than a correctness requirement — without it, duplicate work would occur but results would still be correct. However, diamond convergence may be common enough (e.g., two reconcilers making idempotent changes that converge to the same state) that avoiding redundant exploration is worthwhile.
+
+### Scope: Ordering Expansion Only (For Now)
+
+This design focuses on **ordering expansion** as the branching mechanism tracked by markers. All ordering variants of a logical state share one marker.
+
+**TODO (Staleness Expansion)**: Staleness expansion (`getPossibleViewsForReconcile`) creates states with different object contents, hence different logical keys. Currently these are processed inline rather than enqueued as siblings. A future iteration should consider unifying the branching model so all expansion types (ordering, staleness) use consistent marker-based completion tracking.
 
 ## Soundness Considerations
 
