@@ -159,6 +159,64 @@ if err := interactive.SaveInspectorDump(states, resolver, "inspector_dump.json")
 
 Dump files can be reopened at any time via `go run ./cmd/inspect --dump inspector_dump.json`, which restores the same UI. The inspector provides keyboard shortcuts (shown in the status bar) to switch between states, examine individual reconcile steps, and export dumps from within the UI.
 
+### Using Kamera in test suites
+
+Kamera can be run with `go test`, so you can easily cover multi-controller reconciliation flows in your test suites without relying on heavy integration test infrastructure. You can use Kamera to assert that these flows converge deterministically and that your domain-specific invariants hold across all executions.
+
+```go
+func TestWidgetControllerConverges(t *testing.T) {
+    scheme := runtime.NewScheme()
+    _ = myapiv1.AddToScheme(scheme)
+
+    eb := tracecheck.NewExplorerBuilder(scheme)
+    const widgetKind = "apps.example.com/Widget"
+    eb.WithReconciler("WidgetController", func(c client.Client) tracecheck.Reconciler {
+        return &widgetctrl.WidgetReconciler{Client: c, Scheme: scheme}
+    }).For(widgetKind)
+
+    // configure a max depth based on the complexity of your use case (# of reconciler invocations involved in the flow under test)
+    eb.WithMaxDepth(100)
+
+    widget := &myapiv1.Widget{
+        ObjectMeta: metav1.ObjectMeta{
+            Namespace: "default",
+            Name:      "demo",
+        },
+        Spec: myapiv1.WidgetSpec{}, // seed your CR spec
+    }
+    widget.SetGroupVersionKind(myapiv1.GroupVersion.WithKind("Widget"))
+
+    // construct an initial state as input and configure a controller to reconcile it
+    initial := eb.NewStateEventBuilder().AddTopLevelObject(widget, "WidgetController")
+    explorer, err := eb.Build()
+    if err != nil {
+        t.Fatalf("build explorer: %v", err)
+    }
+
+    result := explorer.Explore(context.Background(), initial)
+    // assert that the state converges and does so deterministically
+    if len(result.ConvergedStates) != 1 {
+        t.Fatalf("expected 1 converged state, got %d", len(result.ConvergedStates))
+    }
+    endState := result.ConvergedStates[0]
+
+    // assert any desired invariants specific to your use case
+    // e.g. all pods must have a unique name
+    seenPods := map[string]struct{}{}
+    for _, obj := range explorer.Objects(endState) {
+        if obj.GetKind() != "Pod" {
+            continue
+        }
+        name := obj.GetName()
+        if _, exists := seenPods[name]; exists {
+            t.Fatalf("encountered non-unique pod name %q", name)
+        }
+        seenPods[name] = struct{}{}
+    }
+}
+```
+
+
 ## License
 
 This project is licensed under the terms of the [MIT License](LICENSE).

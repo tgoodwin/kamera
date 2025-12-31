@@ -20,6 +20,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -117,6 +118,22 @@ func (e *Explorer) VersionManager() VersionManager {
 // Stats returns the stats gathered during exploration.
 func (e *Explorer) Stats() *ExploreStats {
 	return e.stats
+}
+
+// Objects resolves and returns all objects for the provided ResultState, skipping any that cannot be resolved.
+func (e *Explorer) Objects(rs ResultState) []*unstructured.Unstructured {
+	if e == nil || e.versionManager == nil {
+		return nil
+	}
+	objects := make([]*unstructured.Unstructured, 0, len(rs.State.Objects()))
+	for _, version := range rs.State.Objects() {
+		obj := e.versionManager.Resolve(version)
+		if obj == nil {
+			continue
+		}
+		objects = append(objects, obj.DeepCopy())
+	}
+	return objects
 }
 
 type ResultState struct {
