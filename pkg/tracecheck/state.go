@@ -461,6 +461,38 @@ func (sn StateNode) ConvergenceHash() NodeHash {
 	return NodeHash(util.ShortenHash(clone.Serialize()))
 }
 
+// LogicalStateKey uniquely identifies a logical state for subtree completion tracking.
+// Two states with the same LogicalStateKey will have identical future exploration subtrees,
+// regardless of how they were reached (execution history).
+//
+// TODO: Consider adding StuckPositions to the key when staleness expansion is unified
+// with the marker-based completion tracking model.
+type LogicalStateKey struct {
+	ObjectsHash ContentsHash
+	PendingSet  string
+}
+
+// LogicalKey returns the LogicalStateKey for this state node.
+func (sn StateNode) LogicalKey() LogicalStateKey {
+	return LogicalStateKey{
+		ObjectsHash: sn.ContentsHash(),
+		PendingSet:  sn.sortedPendingSignature(),
+	}
+}
+
+// sortedPendingSignature returns an order-insensitive signature of pending reconciles.
+func (sn StateNode) sortedPendingSignature() string {
+	if len(sn.PendingReconciles) == 0 {
+		return ""
+	}
+	keys := make([]string, len(sn.PendingReconciles))
+	for i, pr := range sn.PendingReconciles {
+		keys[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, "|")
+}
+
 func (sn *StateSnapshot) trimForInspection() {
 	if sn == nil {
 		return

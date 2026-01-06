@@ -46,6 +46,7 @@ type OptimizationConfig struct {
 	CompletedPathDedup bool
 	OrderingPruning    bool
 	CachePrediction    bool
+	SubtreeCompletion  bool
 }
 
 func (opt OptimizationConfig) AnyEnabled() bool {
@@ -148,6 +149,122 @@ type cachedReconcileResult struct {
 	wasNoOp             bool               // did it produce changes?
 	numEffects          int                // number of effects (for history signature)
 	triggeredReconciles []PendingReconcile // reconciles triggered by the changes
+}
+
+// stackEntry represents an entry in the DFS exploration stack.
+// It is either a state to process or a completion marker.
+type stackEntry struct {
+	state  *StateNode       // non-nil if this is a state to process
+	marker *LogicalStateKey // non-nil if this is a completion marker
+}
+
+// isMarker returns true if this entry is a completion marker.
+func (e stackEntry) isMarker() bool {
+	return e.marker != nil
+}
+
+// subtreeTracker tracks completion status of logical state subtrees.
+// Used to skip re-exploration of subtrees that have already been fully processed.
+type subtreeTracker struct {
+	// completed contains logical states whose subtrees have been fully explored.
+	// When we encounter a completed state, we skip it entirely.
+	completed map[LogicalStateKey]struct{}
+
+	// inProgress contains logical states currently being explored (marker pushed but not yet popped).
+	// This handles "diamond" convergence where two paths reach the same logical state
+	// before either finishes. Without this, we'd push duplicate markers and do redundant work.
+	inProgress map[LogicalStateKey]struct{}
+}
+
+func newSubtreeTracker() *subtreeTracker {
+	return &subtreeTracker{
+		completed:  make(map[LogicalStateKey]struct{}),
+		inProgress: make(map[LogicalStateKey]struct{}),
+	}
+}
+
+// isCompleted returns true if the subtree for this logical state has been fully explored.
+func (t *subtreeTracker) isCompleted(key LogicalStateKey) bool {
+	_, ok := t.completed[key]
+	return ok
+}
+
+// isInProgress returns true if this logical state is currently being explored.
+func (t *subtreeTracker) isInProgress(key LogicalStateKey) bool {
+	_, ok := t.inProgress[key]
+	return ok
+}
+
+// markInProgress marks a logical state as currently being explored.
+func (t *subtreeTracker) markInProgress(key LogicalStateKey) {
+	t.inProgress[key] = struct{}{}
+}
+
+// markCompleted marks a logical state's subtree as fully explored.
+func (t *subtreeTracker) markCompleted(key LogicalStateKey) {
+	delete(t.inProgress, key)
+	t.completed[key] = struct{}{}
+}
+
+// enqueueWithMarker enqueues states with proper marker handling for subtree completion tracking.
+// All provided states should be ordering variants of the same logical state.
+// Returns the updated stack and true if states were enqueued (not skipped).
+func (e *Explorer) enqueueWithMarker(
+	stack []stackEntry,
+	tracker *subtreeTracker,
+	states []StateNode,
+) ([]stackEntry, bool) {
+	if len(states) == 0 {
+		return stack, false
+	}
+
+	// All ordering variants share the same logical key
+	logicalKey := states[0].LogicalKey()
+
+	// Already fully explored?
+	if tracker.isCompleted(logicalKey) {
+		e.stats.SubtreeCompletionSkips++
+		return stack, false
+	}
+
+	// Already being explored? (diamond convergence)
+	if tracker.isInProgress(logicalKey) {
+		e.stats.SubtreeDiamondSkips++
+		return stack, false
+	}
+
+	// First encounter: mark in progress and push marker
+	tracker.markInProgress(logicalKey)
+	stack = append(stack, stackEntry{marker: &logicalKey})
+
+	// Push all ordering variants (they'll pop before the marker)
+	for i := range states {
+		stack = append(stack, stackEntry{state: &states[i]})
+	}
+
+	return stack, true
+}
+
+func (e *Explorer) subtreeCompletionEnabled() bool {
+	if e.Config == nil {
+		return true
+	}
+	return e.Config.Optimizations.SubtreeCompletion
+}
+
+func (e *Explorer) enqueueStates(
+	stack []stackEntry,
+	tracker *subtreeTracker,
+	states []StateNode,
+	useSubtreeCompletion bool,
+) ([]stackEntry, bool) {
+	if !useSubtreeCompletion {
+		for i := range states {
+			stack = append(stack, stackEntry{state: &states[i]})
+		}
+		return stack, len(states) > 0
+	}
+	return e.enqueueWithMarker(stack, tracker, states)
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
@@ -289,15 +406,16 @@ func (e *Explorer) explore(
 
 	seenDepths := make(map[int]bool)
 
-	// Track explored state hashes keyed by the sequence of state-changing reconciles.
-	// This lets us prune branches that only differ by no-op reads.
-	// Subtree Circuit Breaker: track which logical states (objectsHash + pendingSignature) we've
-	// already explored. Future exploration depends only on (objects, pending), NOT on history.
-	// If we reach the same logical state via different paths, the subtrees would be identical,
-	// so we skip re-exploration entirely.
-	exploredSubtrees := make(map[string]struct{})
+	// Subtree completion tracker: tracks which logical states have been fully explored.
+	// When we encounter a completed logical state, we skip it entirely.
+	// This replaces the old exploredSubtrees map with proper completion tracking via stack markers.
+	useSubtreeCompletion := e.subtreeCompletionEnabled()
+	var subtreeTracker *subtreeTracker
+	if useSubtreeCompletion {
+		subtreeTracker = newSubtreeTracker()
+	}
 
-	var queue []StateNode
+	var stack []stackEntry
 
 	// executionPathsToState is a map of stateKey -> ExecutionHistory
 	// because we want to track which states we've visited but
@@ -317,13 +435,14 @@ func (e *Explorer) explore(
 	var currentState StateNode
 
 	// permute the order of the initial state pending reconciles (assume they were all triggered by the initial state)
+	// Use enqueueWithMarker to set up proper subtree completion tracking from the start.
 	if len(initialState.PendingReconciles) > 1 {
 		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
-		for _, variant := range initialStateVariants {
-			queue = e.enqueueState(queue, variant)
-		}
+		allVariants := append(initialStateVariants, initialState)
+		stack, _ = e.enqueueStates(stack, subtreeTracker, allVariants, useSubtreeCompletion)
+	} else {
+		stack, _ = e.enqueueStates(stack, subtreeTracker, []StateNode{initialState}, useSubtreeCompletion)
 	}
-	queue = e.enqueueState(queue, initialState)
 
 	initialHash := initialState.Hash()
 	initialSignature := initialState.ExecutionHistory.UniqueKey()
@@ -331,23 +450,41 @@ func (e *Explorer) explore(
 		e.optimizations.recordInitialPath(initialHash, initialSignature)
 	}
 
-	for len(queue) > 0 {
+	for len(stack) > 0 {
 		select {
 		case <-ctx.Done():
 			return nil
 		default:
 		}
 
-		currentState, queue = e.getNext(queue)
+		// Pop from stack (DFS order)
+		entry := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		// Handle completion markers
+		if entry.isMarker() {
+			if useSubtreeCompletion {
+				subtreeTracker.markCompleted(*entry.marker)
+				logger.V(2).Info("subtree completed", "logicalKey", entry.marker)
+			}
+			continue
+		}
+
+		currentState = *entry.state
 		stateKey := currentState.Hash()
 		orderKey := currentState.OrderHash()
 
-		// Subtree Circuit Breaker: check if we've already explored from this logical state.
-		// DISABLED: Current implementation marks subtrees as "explored" when we START,
-		// not when we FINISH. This causes missed convergence when first exploration
-		// doesn't complete (errors, depth limits, etc.). Need to track completion properly.
-		// TODO: Re-enable with proper subtree completion tracking.
-		_ = exploredSubtrees // Keep variable to avoid removing related code
+		// Check if this logical state was completed while we were queued
+		// (another ordering variant may have finished the entire subtree)
+		if useSubtreeCompletion {
+			logicalKey := currentState.LogicalKey()
+			if subtreeTracker.isCompleted(logicalKey) {
+				e.stats.SubtreeCompletionSkips++
+				logger.V(1).Info("skipping state - logical subtree already completed",
+					"depth", currentState.depth, "logicalKey", logicalKey)
+				continue
+			}
+		}
 
 		alreadySeen := seenStates[orderKey]
 		if logger.V(1).Enabled() {
@@ -384,7 +521,7 @@ func (e *Explorer) explore(
 		e.stats.TotalNodeVisits++
 
 		// Record depth distribution stats
-		e.stats.RecordVisit(currentState.depth, len(currentState.PendingReconciles), len(queue))
+		e.stats.RecordVisit(currentState.depth, len(currentState.PendingReconciles), len(stack))
 
 		if _, seen := executionPathsToState[stateKey]; !seen {
 			executionPathsToState[stateKey] = make([]ExecutionHistory, 0)
@@ -492,7 +629,7 @@ func (e *Explorer) explore(
 			}
 			logger.V(1).WithValues(
 				"Depth", currentState.depth,
-				"QueueDepth", len(queue),
+				"StackDepth", len(stack),
 				"PendingCount", len(currentState.PendingReconciles),
 				"Pending", pendingIDs,
 				"Processing", pendingReconcile.ReconcilerID,
@@ -524,7 +661,7 @@ func (e *Explorer) explore(
 		for _, stateView := range possibleViews {
 			if logger.V(2).Enabled() {
 				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderHash(), "Request", pendingReconcile.Request).Info("BEFORE")
-				logger.V(2).WithValues("Queue", dumpQueue(queue)).Info("Queue")
+				logger.V(2).WithValues("Stack", dumpStack(stack)).Info("Stack")
 				stateView.Contents.DumpContents()
 				stateView.DumpPending()
 			}
@@ -613,7 +750,7 @@ func (e *Explorer) explore(
 			logger.V(1).WithValues("Depth", currentState.depth, "NewPendingReconciles", newState.PendingReconciles).Info("reconcile step completed")
 			if logger.V(2).Enabled() {
 				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
-				logger.V(2).WithValues("Queue", dumpQueue(queue)).Info("Queue")
+				logger.V(2).WithValues("Stack", dumpStack(stack)).Info("Stack")
 				newState.Contents.DumpContents()
 				newState.DumpPending()
 			}
@@ -686,7 +823,10 @@ func (e *Explorer) explore(
 			// Also track in exploredLogicalStates for cache prediction
 
 			// branch on order of subsequent reconciles that were triggered by this state change step
+			// Use enqueueWithMarker to track subtree completion for all ordering variants together.
 			newStateKey := newState.Hash()
+			var statesToEnqueue []StateNode
+
 			if len(newState.PendingReconciles) > 1 {
 				// When ordering pruning is enabled, we only expand once per logical state.
 				alreadyExpanded := e.optimizations != nil && e.optimizations.branchAlreadyExpanded(newStateKey)
@@ -702,7 +842,7 @@ func (e *Explorer) explore(
 								continue
 							}
 						}
-						queue = e.enqueueState(queue, orderVariant)
+						statesToEnqueue = append(statesToEnqueue, orderVariant)
 					}
 					if e.optimizations != nil {
 						e.optimizations.markBranchExpanded(newStateKey)
@@ -712,7 +852,11 @@ func (e *Explorer) explore(
 				}
 			}
 
-			queue = e.enqueueState(queue, newState)
+			// Always include the base state
+			statesToEnqueue = append(statesToEnqueue, newState)
+
+			// Enqueue all variants together with a single marker for the logical state
+			stack, _ = e.enqueueStates(stack, subtreeTracker, statesToEnqueue, useSubtreeCompletion)
 		}
 	}
 
@@ -1089,6 +1233,18 @@ func dumpQueue(queue []StateNode) []string {
 		return string(sn.OrderHash())
 	})
 	return queueStr
+}
+
+func dumpStack(stack []stackEntry) []string {
+	result := make([]string, len(stack))
+	for i, entry := range stack {
+		if entry.isMarker() {
+			result[i] = fmt.Sprintf("M:%s|%s", entry.marker.ObjectsHash, entry.marker.PendingSet[:min(20, len(entry.marker.PendingSet))])
+		} else {
+			result[i] = string(entry.state.OrderHash())
+		}
+	}
+	return result
 }
 
 func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state StateNode, reconcileInput PendingReconcile, result *ReconcileResult) []PendingReconcile {

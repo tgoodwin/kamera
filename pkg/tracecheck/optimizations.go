@@ -18,6 +18,7 @@ type optimizations struct {
 	reconcileResCache     map[string]*cachedReconcileResult
 	exploredLogicalStates map[string]struct{}
 	seenBranchingByState  map[NodeHash]bool
+	subtreeTracker        *subtreeTracker
 }
 
 func newOptimizations(cfg OptimizationConfig) *optimizations {
@@ -32,6 +33,7 @@ func newOptimizations(cfg OptimizationConfig) *optimizations {
 		reconcileResCache:     make(map[string]*cachedReconcileResult),
 		exploredLogicalStates: make(map[string]struct{}),
 		seenBranchingByState:  make(map[NodeHash]bool),
+		subtreeTracker:        newSubtreeTracker(),
 	}
 }
 
