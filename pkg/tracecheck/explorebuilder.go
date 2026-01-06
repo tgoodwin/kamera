@@ -277,6 +277,7 @@ func (b *ExplorerBuilder) WithoutOptimizations() *ExplorerBuilder {
 	b.config.DisableEarlyConvergence = true
 	b.config.DisableCachePrediction = true
 	b.config.DisableNoOpOrderingSkip = true
+	b.config.DisableSubtreeCompletion = true
 	return b
 }
 

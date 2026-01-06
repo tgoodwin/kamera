@@ -65,6 +65,9 @@ type ExploreConfig struct {
 	// DisableNoOpOrderingSkip disables skipping ordering branches that put a
 	// known no-op reconciler first.
 	DisableNoOpOrderingSkip bool
+	// DisableSubtreeCompletion disables skipping logical subtrees once they've
+	// been fully explored.
+	DisableSubtreeCompletion bool
 }
 
 // Clone returns a deep copy of the ExploreConfig, including map fields.
@@ -76,7 +79,10 @@ func (cfg ExploreConfig) Clone() ExploreConfig {
 }
 
 func (cfg ExploreConfig) OptimizationsEnabled() bool {
-	return !cfg.DisableEarlyConvergence || !cfg.DisableCachePrediction || !cfg.DisableNoOpOrderingSkip
+	return !cfg.DisableEarlyConvergence ||
+		!cfg.DisableCachePrediction ||
+		!cfg.DisableNoOpOrderingSkip ||
+		!cfg.DisableSubtreeCompletion
 }
 
 //go:mockgen:generate -destination=./mocks/mock_trigger.go -package=tracecheck -source=./trigger.go TriggerHandler
@@ -233,6 +239,28 @@ func (e *Explorer) enqueueWithMarker(
 	}
 
 	return stack, true
+}
+
+func (e *Explorer) subtreeCompletionEnabled() bool {
+	if e.Config == nil {
+		return true
+	}
+	return !e.Config.DisableSubtreeCompletion
+}
+
+func (e *Explorer) enqueueStates(
+	stack []stackEntry,
+	tracker *subtreeTracker,
+	states []StateNode,
+	useSubtreeCompletion bool,
+) ([]stackEntry, bool) {
+	if !useSubtreeCompletion {
+		for i := range states {
+			stack = append(stack, stackEntry{state: &states[i]})
+		}
+		return stack, len(states) > 0
+	}
+	return e.enqueueWithMarker(stack, tracker, states)
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
@@ -396,7 +424,11 @@ func (e *Explorer) explore(
 	// Subtree completion tracker: tracks which logical states have been fully explored.
 	// When we encounter a completed logical state, we skip it entirely.
 	// This replaces the old exploredSubtrees map with proper completion tracking via stack markers.
-	subtreeTracker := newSubtreeTracker()
+	useSubtreeCompletion := e.subtreeCompletionEnabled()
+	var subtreeTracker *subtreeTracker
+	if useSubtreeCompletion {
+		subtreeTracker = newSubtreeTracker()
+	}
 
 	var stack []stackEntry
 
@@ -428,9 +460,9 @@ func (e *Explorer) explore(
 	if len(initialState.PendingReconciles) > 1 {
 		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
 		allVariants := append(initialStateVariants, initialState)
-		stack, _ = e.enqueueWithMarker(stack, subtreeTracker, allVariants)
+		stack, _ = e.enqueueStates(stack, subtreeTracker, allVariants, useSubtreeCompletion)
 	} else {
-		stack, _ = e.enqueueWithMarker(stack, subtreeTracker, []StateNode{initialState})
+		stack, _ = e.enqueueStates(stack, subtreeTracker, []StateNode{initialState}, useSubtreeCompletion)
 	}
 
 	initialHash := initialState.Hash()
@@ -450,8 +482,10 @@ func (e *Explorer) explore(
 
 		// Handle completion markers
 		if entry.isMarker() {
-			subtreeTracker.markCompleted(*entry.marker)
-			logger.V(2).Info("subtree completed", "logicalKey", entry.marker)
+			if useSubtreeCompletion {
+				subtreeTracker.markCompleted(*entry.marker)
+				logger.V(2).Info("subtree completed", "logicalKey", entry.marker)
+			}
 			continue
 		}
 
@@ -461,12 +495,14 @@ func (e *Explorer) explore(
 
 		// Check if this logical state was completed while we were queued
 		// (another ordering variant may have finished the entire subtree)
-		logicalKey := currentState.LogicalKey()
-		if subtreeTracker.isCompleted(logicalKey) {
-			e.stats.SubtreeCompletionSkips++
-			logger.V(1).Info("skipping state - logical subtree already completed",
-				"depth", currentState.depth, "logicalKey", logicalKey)
-			continue
+		if useSubtreeCompletion {
+			logicalKey := currentState.LogicalKey()
+			if subtreeTracker.isCompleted(logicalKey) {
+				e.stats.SubtreeCompletionSkips++
+				logger.V(1).Info("skipping state - logical subtree already completed",
+					"depth", currentState.depth, "logicalKey", logicalKey)
+				continue
+			}
 		}
 
 		alreadySeen := seenStates[orderKey]
@@ -836,7 +872,7 @@ func (e *Explorer) explore(
 			statesToEnqueue = append(statesToEnqueue, newState)
 
 			// Enqueue all variants together with a single marker for the logical state
-			stack, _ = e.enqueueWithMarker(stack, subtreeTracker, statesToEnqueue)
+			stack, _ = e.enqueueStates(stack, subtreeTracker, statesToEnqueue, useSubtreeCompletion)
 		}
 	}
 
