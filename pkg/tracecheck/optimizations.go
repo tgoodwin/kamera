@@ -116,7 +116,7 @@ func (o *optimizations) checkEarlyConvergence(state StateNode) bool {
 		return false
 	}
 
-	objectsHash := state.StateHash()
+	objectsHash := state.ContentsHash()
 	for _, pr := range state.PendingReconciles {
 		noOpKey := fmt.Sprintf("%s:%s:%s", objectsHash, pr.ReconcilerID, pr.Request.NamespacedName.String())
 		if isNoOp, known := o.knownNoOps[noOpKey]; !known || !isNoOp {
@@ -137,14 +137,14 @@ func (o *optimizations) pendingSignature(pending []PendingReconcile) string {
 	return strings.Join(pendingStrs, ",")
 }
 
-func (o *optimizations) logicalStateKey(objectsHash StateHash, pending []PendingReconcile, historyKey string) string {
+func (o *optimizations) logicalStateKey(objectsHash ContentsHash, pending []PendingReconcile, historyKey string) string {
 	if !o.cachePredictionEnabled() {
 		return ""
 	}
 	return fmt.Sprintf("%s|%s|%s", objectsHash, o.pendingSignature(pending), historyKey)
 }
 
-func (o *optimizations) markLogicalState(objectsHash StateHash, pending []PendingReconcile, historyKey string) {
+func (o *optimizations) markLogicalState(objectsHash ContentsHash, pending []PendingReconcile, historyKey string) {
 	if !o.cachePredictionEnabled() {
 		return
 	}
@@ -152,7 +152,7 @@ func (o *optimizations) markLogicalState(objectsHash StateHash, pending []Pendin
 	o.exploredLogicalStates[key] = struct{}{}
 }
 
-func (o *optimizations) hasLogicalState(objectsHash StateHash, pending []PendingReconcile, historyKey string) bool {
+func (o *optimizations) hasLogicalState(objectsHash ContentsHash, pending []PendingReconcile, historyKey string) bool {
 	if !o.cachePredictionEnabled() {
 		return false
 	}

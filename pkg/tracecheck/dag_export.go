@@ -64,8 +64,8 @@ func RenderStateDAGDOT(dag *StateDAG, opts GraphvizOpts) string {
 
 	// Render edges deterministically and collapse duplicates per (from,to,controller).
 	type edgeEntry struct {
-		from       StateHash
-		to         StateHash
+		from       ContentsHash
+		to         ContentsHash
 		controller ReconcilerID
 		effects    int
 		errorStr   string

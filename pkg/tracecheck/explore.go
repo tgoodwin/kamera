@@ -145,7 +145,7 @@ type ResultState struct {
 }
 
 type cachedReconcileResult struct {
-	outputObjectsHash   StateHash          // hash of output objects (from newState.ObjectsHash())
+	outputObjectsHash   ContentsHash       // hash of output objects (from newState.ObjectsHash())
 	wasNoOp             bool               // did it produce changes?
 	numEffects          int                // number of effects (for history signature)
 	triggeredReconciles []PendingReconcile // reconciles triggered by the changes
@@ -493,9 +493,9 @@ func (e *Explorer) explore(
 
 		// We reconcile the first pending reconcile for this state, but if there are
 		// multiple pending reconciles, we need to explore every ordering. Expanding
-		// once per logical state (StateHash) is sufficient: the expansion enqueues
+		// once per logical state (ContentsHash) is sufficient: the expansion enqueues
 		// every first-position choice, and recursive exploration will enumerate the
-		// full permutation space. Re-reaching the same StateHash with a different
+		// full permutation space. Re-reaching the same ContentsHash with a different
 		// ordering does not add new permutations, so we skip re-branching.
 		//
 		// Early Convergence Optimization: if ALL pending reconciles are known no-ops,
@@ -503,7 +503,7 @@ func (e *Explorer) explore(
 		// The first path runs through the no-ops to reach actual convergence; subsequent
 		// paths can skip since they'd produce the same result.
 		if e.optimizations.checkEarlyConvergence(currentState) {
-			objectsHash := currentState.StateHash()
+			objectsHash := currentState.ContentsHash()
 			if _, alreadyConverged := seenConvergedStates[NodeHash(objectsHash)]; alreadyConverged {
 				e.stats.EarlyConvergence++
 				logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
@@ -581,7 +581,7 @@ func (e *Explorer) explore(
 
 			seenConvergedStates[convergenceKey] = currentState
 			// Also record by ObjectsHash (drops pending reconciles) so early convergence detection can find it
-			seenConvergedStates[NodeHash(currentState.StateHash())] = currentState
+			seenConvergedStates[NodeHash(currentState.ContentsHash())] = currentState
 			if convergenceKey != stateKey {
 				if _, ok := executionPathsToState[convergenceKey]; !ok {
 					executionPathsToState[convergenceKey] = make([]ExecutionHistory, 0)
@@ -670,7 +670,7 @@ func (e *Explorer) explore(
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
 			// key uses OBJECTS hash only - pending list doesn't affect reconciler behavior
-			reconcileResKey := fmt.Sprintf("%s:%s:%s", stateView.StateHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
+			reconcileResKey := fmt.Sprintf("%s:%s:%s", stateView.ContentsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
 			// Check cache: can we predict the output state without running the reconcile?
 			if e.skipViaCachePrediction(reconcileResKey, stateView, pendingReconcile) {
@@ -728,7 +728,7 @@ func (e *Explorer) explore(
 			// Update cache with this reconcile's result
 			if err == nil && stepResult != nil {
 				e.optimizations.setReconcileResult(reconcileResKey, &cachedReconcileResult{
-					outputObjectsHash:   newState.StateHash(),
+					outputObjectsHash:   newState.ContentsHash(),
 					wasNoOp:             wasNoOp,
 					numEffects:          len(stepResult.Changes.Effects),
 					triggeredReconciles: triggeredByStep,
@@ -778,7 +778,7 @@ func (e *Explorer) explore(
 			///Skipped
 			// Key invariant: Same pending list = Same future possibilities = Safe to skip.
 			//
-			// stateHash includes both object state AND pending reconciles. Two paths only
+			// ContentsHash includes both object state AND pending reconciles. Two paths only
 			// match when they have identical pending lists. If the pending lists are identical,
 			// then the future exploration from both paths would be identical - same controllers
 			// to run, same state to observe - so exploring both would be redundant.
@@ -794,21 +794,21 @@ func (e *Explorer) explore(
 			//   Path A: ...→ Foo@1 → State X, Pending=[Bar]  (Foo removed)
 			//   Path B: ...→ Bar@1 → State X, Pending=[Foo]  (Bar removed)
 			//
-			// Different pending lists → different stateHashes → both fully explored.
+			// Different pending lists → different ContentsHashes → both fully explored.
 			//
 			// Pruning typically only occurs at convergence (Pending=[]) where all paths
 			// collapse to empty pending lists. The paths that get pruned differ only in
 			// no-op orderings, which by definition cannot produce different outcomes.
 
-			stateHash := newState.Hash()
+			ContentsHash := newState.Hash()
 			// Deduplication based on completion status:
 			// Only skip if we've COMPLETED exploration of this (state, history) pair.
 			// This prevents skipping paths that are still in-flight and might fail,
 			// which would cause us to miss valid convergence paths.
 			normalizedHistory := newState.ExecutionHistory.UniqueKey()
-			if e.optimizations != nil && e.optimizations.pathCompleted(stateHash, normalizedHistory) {
+			if e.optimizations != nil && e.optimizations.pathCompleted(ContentsHash, normalizedHistory) {
 				logger.V(1).WithValues(
-					"StateHash", stateHash,
+					"ContentsHash", ContentsHash,
 					"PathSignature", normalizedHistory,
 				).Info("skipping - path already completed exploration")
 				e.stats.SkippedPaths++
@@ -816,8 +816,8 @@ func (e *Explorer) explore(
 			}
 
 			if e.optimizations != nil {
-				e.optimizations.markVisited(stateHash, normalizedHistory)
-				e.optimizations.markLogicalState(newState.StateHash(), newState.PendingReconciles, normalizedHistory)
+				e.optimizations.markVisited(ContentsHash, normalizedHistory)
+				e.optimizations.markLogicalState(newState.ContentsHash(), newState.PendingReconciles, normalizedHistory)
 			}
 
 			// Also track in exploredLogicalStates for cache prediction
@@ -836,7 +836,7 @@ func (e *Explorer) explore(
 						// skip orderVariants whose first reconcile are known no-ops
 						if e.optimizations != nil && e.optimizations.orderingPruningEnabled() {
 							fst := orderVariant.PendingReconciles[0]
-							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.StateHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
+							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.ContentsHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
 							if isNoOp, known := e.optimizations.isKnownNoOp(noOpKey); known && isNoOp {
 								e.stats.SkippedNoOpOrderings++
 								continue
@@ -1447,7 +1447,7 @@ func (e *Explorer) computeSubtreeKey(state StateNode) string {
 		return pr.String()
 	})
 	// NOT sorted - order matters for subtree identity
-	return fmt.Sprintf("%s|%s", state.StateHash(), strings.Join(pendingStrs, ","))
+	return fmt.Sprintf("%s|%s", state.ContentsHash(), strings.Join(pendingStrs, ","))
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {
