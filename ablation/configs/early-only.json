@@ -1,0 +1,11 @@
+{
+  "recordPerfStats": true,
+  "timeout": "5m",
+  "optimizations": {
+    "earlyConvergence": true,
+    "completedPathDedup": false,
+    "orderingPruning": false,
+    "cachePrediction": false,
+    "subtreeCompletion": false
+  }
+}
