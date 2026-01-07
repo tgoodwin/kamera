@@ -177,11 +177,14 @@ func (o *optimizations) getReconcileResult(cacheKey string) (*cachedReconcileRes
 }
 
 func (o *optimizations) branchAlreadyExpanded(stateHash NodeHash) bool {
-	return o.orderingPruningEnabled() && o.seenBranchingByState[stateHash]
+	if o == nil || !o.orderingPruningEnabled() {
+		return false
+	}
+	return o.seenBranchingByState[stateHash]
 }
 
 func (o *optimizations) markBranchExpanded(stateHash NodeHash) {
-	if !o.orderingPruningEnabled() {
+	if o == nil || !o.orderingPruningEnabled() {
 		return
 	}
 	o.seenBranchingByState[stateHash] = true
