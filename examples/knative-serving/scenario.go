@@ -10,7 +10,6 @@ import (
 	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
-	sleevectrl "github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -178,10 +177,6 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 	builder.WithReconciler("IngressStatusStub", func(c client.Client) tracecheck.Reconciler {
 		return &knativeharness.IngressStatusStub{Client: c}
 	}).For("networking.internal.knative.dev/Ingress")
-
-	builder.WithPodCrashProbability(sleevectrl.StageScheduled, 0.9)
-	builder.WithPodCrashProbability(sleevectrl.StageRunning, 0.5)
-	builder.WithPodCrashProbability(sleevectrl.StageReady, 0.5)
 
 	// builder.WithResourceDep("serving.knative.dev/Revision", "RevisionDigestStub", "RevisionReconciler", "KPA", "ServiceReconciler")
 	// builder.WithResourceDep("autoscaling.internal.knative.dev/PodAutoscaler", "KPA", "ServerlessServiceReconciler")
