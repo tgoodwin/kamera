@@ -15,6 +15,7 @@ type fileOptimizationConfig struct {
 	CompletedPathDedup *bool `json:"completedPathDedup,omitempty"`
 	OrderingPruning    *bool `json:"orderingPruning,omitempty"`
 	CachePrediction    *bool `json:"cachePrediction,omitempty"`
+	SubtreeCompletion  *bool `json:"subtreeCompletion,omitempty"`
 }
 
 // fileExploreConfig is the JSON-friendly representation for ExploreConfig.
@@ -61,6 +62,9 @@ func (f fileExploreConfig) applyOptimizations(base tracecheck.OptimizationConfig
 	}
 	if f.Optimizations.CachePrediction != nil {
 		opt.CachePrediction = *f.Optimizations.CachePrediction
+	}
+	if f.Optimizations.SubtreeCompletion != nil {
+		opt.SubtreeCompletion = *f.Optimizations.SubtreeCompletion
 	}
 	return opt
 }

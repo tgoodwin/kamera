@@ -2,13 +2,44 @@ package explore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/tgoodwin/kamera/pkg/interactive"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"golang.org/x/exp/slices"
 )
+
+func dumpStatsIfRequested(stats *tracecheck.ExploreStats, runIdx int) error {
+	if DumpStatsPath() == "" || stats == nil {
+		return nil
+	}
+	stats.Finish()
+
+	data, err := json.MarshalIndent(stats, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal explore stats: %w", err)
+	}
+
+	target := withRunSuffix(DumpStatsPath(), runIdx)
+	if err := os.WriteFile(target, data, 0o644); err != nil {
+		return fmt.Errorf("write stats to %s: %w", target, err)
+	}
+	fmt.Printf("wrote stats to %s\n", target)
+	return nil
+}
+
+func withRunSuffix(base string, runIdx int) string {
+	if runIdx == 0 {
+		return base
+	}
+	ext := filepath.Ext(base)
+	prefix := strings.TrimSuffix(base, ext)
+	return fmt.Sprintf("%s.run%d%s", prefix, runIdx, ext)
+}
 
 // Runner coordinates exploration runs and the inspector UI, including restart requests.
 // Construct via NewRunner with a fully configured ExplorerBuilder
@@ -56,12 +87,12 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 		return out
 	}
 
-	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, tracecheck.VersionManager, error) {
+	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, tracecheck.VersionManager, *tracecheck.ExploreStats, error) {
 		r.builder.SetConfig(currentConfig)
 		// get a fresh explorer for each run
 		explorer, err := r.builder.Build("standalone")
 		if err != nil {
-			return nil, nil, fmt.Errorf("build explorer: %w", err)
+			return nil, nil, nil, fmt.Errorf("build explorer: %w", err)
 		}
 
 		runCtx := ctx
@@ -71,12 +102,17 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 			defer cancel()
 		}
 
-		return explorer.Explore(runCtx, state), explorer.VersionManager(), nil
+		return explorer.Explore(runCtx, state), explorer.VersionManager(), explorer.Stats(), nil
 	}
 
 	resolver := tracecheck.VersionManager(nil)
-	res, resolver, err := runOnce(ctx, baseline.Clone())
+	res, resolver, stats, err := runOnce(ctx, baseline.Clone())
 	if err != nil {
+		return err
+	}
+	runIdx := 0
+
+	if err := dumpStatsIfRequested(stats, 0); err != nil {
 		return err
 	}
 
@@ -125,12 +161,16 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 			nextState.ExecutionHistory = slices.Clone(restart.Prefix)
 		}
 
-		nextRes, nextResolver, err := runOnce(ctx, nextState)
+		nextRes, nextResolver, nextStats, err := runOnce(ctx, nextState)
 		if err != nil {
 			return fmt.Errorf("restart explore error: %w", err)
 		}
+		runIdx++
 		if nextResolver != nil {
 			resolver = nextResolver
+		}
+		if err := dumpStatsIfRequested(nextStats, runIdx); err != nil {
+			return err
 		}
 		newStates := append([]tracecheck.ResultState{}, nextRes.ConvergedStates...)
 		newStates = append(newStates, nextRes.AbortedStates...)
