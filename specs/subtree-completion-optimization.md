@@ -345,11 +345,11 @@ The implementation would:
 
 The key must capture everything that affects future exploration:
 
-1. **Objects hash**: The resource contents determine what reconcilers will observe
-2. **Pending set (order-insensitive)**: The set of reconcilers that need to run — but NOT their order, since we expand all orderings under a single marker
-3. **Stuck positions**: The `stuckReconcilerPositions` field affects which reconcilers get triggered, so states with different stuck positions have different futures
+1. **Objects hash**: The resource contents determine what reconcilers will observe.
+2. **Pending reconciles (order-sensitive)**: In theory, if order expansion generated *all* permutations of the pending list, subtree skipping could use an order-insensitive key, because every ordering would already be explored under a single marker. In practice, order expansion is partial: it only permutes reconciles triggered by the most recent state change (and only those enabled by `PermuteOrder`). That means two states with the same pending *set* but different order can expose different unexplored subtrees, so the key must preserve order.
+3. **Stuck positions**: The `stuckReconcilerPositions` field affects which reconcilers get triggered, so states with different stuck positions have different futures.
 
-The pending set must be **order-insensitive** because ordering variants (e.g., `[A,B]` vs `[B,A]`) represent the same logical state. We expand all orderings and cover them with a single marker.
+Note: This is intentionally stricter than ordering pruning. `orderingPruning` avoids re-expanding order variants once, but it does not guarantee that all orderings are enqueued. If order expansion were exhaustive, subtree completion could safely key off an order-insensitive pending set; since it isn't, subtree completion must only skip when the *exact ordered pending list* (plus stuck positions) has been fully explored.
 
 ### Tracker State: `completed` vs `inProgress`
 
@@ -398,8 +398,8 @@ For the optimization to be **sound**, we must ensure:
 3. **Handle max-depth correctly**: Max-depth aborts are acceptable completions — we've explored as far as allowed
 4. **Logical state key must be complete**: The key must capture everything that affects future exploration:
    - Object contents (hash)
-   - Pending reconcile set (order-insensitive for the key, since we expand all orderings)
-   - Possibly: stuck reconciler positions (for stale read scenarios)
+   - Pending reconcile order (order-sensitive, because not all orderings are necessarily expanded)
+   - Stuck reconciler positions (for stale read scenarios)
 
 ## Relationship to Other Optimizations
 
