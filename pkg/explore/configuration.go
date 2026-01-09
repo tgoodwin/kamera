@@ -11,11 +11,13 @@ import (
 
 // fileOptimizationConfig models JSON-serializable optimization toggles.
 type fileOptimizationConfig struct {
-	EarlyConvergence   *bool `json:"earlyConvergence,omitempty"`
-	CompletedPathDedup *bool `json:"completedPathDedup,omitempty"`
-	OrderingPruning    *bool `json:"orderingPruning,omitempty"`
-	CachePrediction    *bool `json:"cachePrediction,omitempty"`
-	SubtreeCompletion  *bool `json:"subtreeCompletion,omitempty"`
+	EarlyConvergence        *bool `json:"earlyConvergence,omitempty"`
+	CompletedPathDedup      *bool `json:"completedPathDedup,omitempty"`
+	OrderingPruning         *bool `json:"orderingPruning,omitempty"`
+	DisableNoOpOrderingSkip *bool `json:"disableNoOpOrderingSkip,omitempty"`
+	CachePrediction         *bool `json:"cachePrediction,omitempty"`
+	SubtreeCompletion       *bool `json:"subtreeCompletion,omitempty"`
+	OnlyPermuteTriggered    *bool `json:"onlyPermuteTriggered,omitempty"`
 }
 
 // fileExploreConfig is the JSON-friendly representation for ExploreConfig.
@@ -43,7 +45,6 @@ func (f fileExploreConfig) apply(base tracecheck.ExploreConfig) (tracecheck.Expl
 		}
 		cfg.Timeout = dur
 	}
-
 	cfg.Optimizations = f.applyOptimizations(cfg.Optimizations)
 
 	return cfg, nil
@@ -60,11 +61,17 @@ func (f fileExploreConfig) applyOptimizations(base tracecheck.OptimizationConfig
 	if f.Optimizations.OrderingPruning != nil {
 		opt.OrderingPruning = *f.Optimizations.OrderingPruning
 	}
+	if f.Optimizations.DisableNoOpOrderingSkip != nil {
+		opt.DisableNoOpOrderingSkip = *f.Optimizations.DisableNoOpOrderingSkip
+	}
 	if f.Optimizations.CachePrediction != nil {
 		opt.CachePrediction = *f.Optimizations.CachePrediction
 	}
 	if f.Optimizations.SubtreeCompletion != nil {
 		opt.SubtreeCompletion = *f.Optimizations.SubtreeCompletion
+	}
+	if f.Optimizations.OnlyPermuteTriggered != nil {
+		opt.OnlyPermuteTriggered = *f.Optimizations.OnlyPermuteTriggered
 	}
 	return opt
 }

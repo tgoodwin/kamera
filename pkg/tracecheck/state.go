@@ -608,10 +608,9 @@ func (sn StateNode) ReconcileLineage() string {
 	return fmt.Sprintf("%s=>%s:%s[%d]", sn.parent.ReconcileLineage(), id, frameID, numChanges)
 }
 
-// expandStateByReconcileOrder handles permuting the order of the reconcilers triggered by the creation of
-// a new StateNode. It produces a new StateNodes for each triggered reconciler where that reconciler is placed
-// as the first element in its PendingReconciles list. This allows the explorer to explore any potential
-// order sensitivity among the reconcilers triggered by the same state change.
+// expandStateByReconcileOrder handles permuting the order of pending reconciles for a new StateNode.
+// By default, it only permutes reconcilers triggered by the last step; when OnlyPermuteTriggered is
+// false, any permutable pending reconciler can be moved to the first position.
 func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []PendingReconcile) []StateNode {
 	// If there are no pending reconciles or just one, just return the original state
 	if len(state.PendingReconciles) <= 1 {
@@ -626,7 +625,11 @@ func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []Pend
 	var result []StateNode
 
 	toPermute := util.NewSet[ReconcilerID]()
-	for _, pr := range triggered {
+	permuteCandidates := triggered
+	if e.Config != nil && !e.Config.Optimizations.OnlyPermuteTriggered {
+		permuteCandidates = originalPending
+	}
+	for _, pr := range permuteCandidates {
 		if permute, ok := e.Config.PermuteOrder[pr.ReconcilerID]; ok && permute {
 			toPermute.Add(pr.ReconcilerID)
 		}

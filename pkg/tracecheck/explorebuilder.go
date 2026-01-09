@@ -108,6 +108,9 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			RecordPerfStats: *emitStats,
 			Timeout:         *timeout,
 			PermuteOrder:    make(map[ReconcilerID]bool),
+			Optimizations: OptimizationConfig{
+				OnlyPermuteTriggered: true,
+			},
 			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
 		},
 	}
@@ -180,7 +183,10 @@ func parseKindString(kind string) schema.GroupKind {
 func (b *ExplorerBuilder) ensurePermuteOrderEntry(id ReconcilerID) {
 	if b.config == nil {
 		b.config = &ExploreConfig{
-			PermuteOrder:    make(map[ReconcilerID]bool),
+			PermuteOrder: make(map[ReconcilerID]bool),
+			Optimizations: OptimizationConfig{
+				OnlyPermuteTriggered: true,
+			},
 			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
 		}
 	}
@@ -241,7 +247,7 @@ func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc Pertur
 // Entries missing for known reconcilers are defaulted to false so the UI can display them.
 func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{}
+		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
 	}
 	target := perms
 	if target == nil && b.config.PermuteOrder != nil {
@@ -299,7 +305,7 @@ func (b *ExplorerBuilder) WithDivergenceCircuitBreaker(threshold int) *ExplorerB
 // By default, all optimizations are disabled; opt in per-heuristic for ablation studies.
 func (b *ExplorerBuilder) WithOptimizations(opt OptimizationConfig) *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{}
+		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
 	}
 	b.config.Optimizations = opt
 	return b
@@ -309,7 +315,7 @@ func (b *ExplorerBuilder) WithOptimizations(opt OptimizationConfig) *ExplorerBui
 // Useful for tests that need deterministic, exhaustive exploration.
 func (b *ExplorerBuilder) WithoutOptimizations() *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{}
+		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
 	}
 	b.config.Optimizations = OptimizationConfig{}
 	return b
@@ -328,7 +334,7 @@ func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBu
 // Config returns a copy of the current builder configuration.
 func (b *ExplorerBuilder) Config() ExploreConfig {
 	if b.config == nil {
-		return ExploreConfig{}
+		return ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
 	}
 	return b.config.Clone()
 }
@@ -550,7 +556,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		mode = modes[0]
 	}
 	if b.config == nil {
-		b.config = &ExploreConfig{}
+		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
 	}
 	if b.config.MaxDepth == 0 {
 		b.config.MaxDepth = DefaultMaxDepth

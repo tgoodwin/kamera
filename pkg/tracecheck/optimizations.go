@@ -2,6 +2,7 @@ package tracecheck
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/samber/lo"
@@ -16,7 +17,7 @@ type optimizations struct {
 	knownNoOps            map[string]bool
 	reconcileResCache     map[string]*cachedReconcileResult
 	exploredLogicalStates map[string]struct{}
-	seenBranchingByState  map[NodeHash]bool
+	seenBranchingByState  map[string]bool
 	subtreeTracker        *subtreeTracker
 }
 
@@ -31,7 +32,7 @@ func newOptimizations(cfg OptimizationConfig) *optimizations {
 		knownNoOps:            make(map[string]bool),
 		reconcileResCache:     make(map[string]*cachedReconcileResult),
 		exploredLogicalStates: make(map[string]struct{}),
-		seenBranchingByState:  make(map[NodeHash]bool),
+		seenBranchingByState:  make(map[string]bool),
 		subtreeTracker:        newSubtreeTracker(),
 	}
 }
@@ -48,8 +49,39 @@ func (o *optimizations) orderingPruningEnabled() bool {
 	return o != nil && o.cfg.OrderingPruning
 }
 
+func (o *optimizations) noOpOrderingSkipEnabled() bool {
+	return o != nil && o.cfg.OrderingPruning && !o.cfg.DisableNoOpOrderingSkip
+}
+
 func (o *optimizations) cachePredictionEnabled() bool {
 	return o != nil && o.cfg.CachePrediction
+}
+
+func (o *optimizations) permuteSignature(triggered []PendingReconcile, permuteOrder map[ReconcilerID]bool) string {
+	if o == nil || len(triggered) == 0 || len(permuteOrder) == 0 {
+		return ""
+	}
+	seen := make(map[ReconcilerID]struct{})
+	ids := make([]string, 0, len(triggered))
+	for _, pr := range triggered {
+		if permute, ok := permuteOrder[pr.ReconcilerID]; !ok || !permute {
+			continue
+		}
+		if _, exists := seen[pr.ReconcilerID]; exists {
+			continue
+		}
+		seen[pr.ReconcilerID] = struct{}{}
+		ids = append(ids, string(pr.ReconcilerID))
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ",")
+}
+
+func (o *optimizations) branchKey(stateHash NodeHash, triggered []PendingReconcile, permuteOrder map[ReconcilerID]bool) string {
+	return fmt.Sprintf("%s|%s", stateHash, o.permuteSignature(triggered, permuteOrder))
 }
 
 func (o *optimizations) recordInitialPath(stateHash NodeHash, historyKey string) {
@@ -174,16 +206,18 @@ func (o *optimizations) getReconcileResult(cacheKey string) (*cachedReconcileRes
 	return res, ok
 }
 
-func (o *optimizations) branchAlreadyExpanded(stateHash NodeHash) bool {
+func (o *optimizations) branchAlreadyExpanded(stateHash NodeHash, triggered []PendingReconcile, permuteOrder map[ReconcilerID]bool) bool {
 	if o == nil || !o.orderingPruningEnabled() {
 		return false
 	}
-	return o.seenBranchingByState[stateHash]
+	key := o.branchKey(stateHash, triggered, permuteOrder)
+	return o.seenBranchingByState[key]
 }
 
-func (o *optimizations) markBranchExpanded(stateHash NodeHash) {
+func (o *optimizations) markBranchExpanded(stateHash NodeHash, triggered []PendingReconcile, permuteOrder map[ReconcilerID]bool) {
 	if o == nil || !o.orderingPruningEnabled() {
 		return
 	}
-	o.seenBranchingByState[stateHash] = true
+	key := o.branchKey(stateHash, triggered, permuteOrder)
+	o.seenBranchingByState[key] = true
 }

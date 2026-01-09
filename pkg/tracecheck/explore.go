@@ -45,12 +45,18 @@ type OptimizationConfig struct {
 	EarlyConvergence   bool
 	CompletedPathDedup bool
 	OrderingPruning    bool
-	CachePrediction    bool
-	SubtreeCompletion  bool
+	// OnlyPermuteTriggered limits order permutations to reconcilers triggered by the last step.
+	// When true, permutations are limited to triggered reconcilers.
+	// When false, permutations can place any eligible pending reconciler first.
+	OnlyPermuteTriggered bool
+	// DisableNoOpOrderingSkip disables skipping orderings whose first reconcile is a known no-op.
+	DisableNoOpOrderingSkip bool
+	CachePrediction         bool
+	SubtreeCompletion       bool
 }
 
 func (opt OptimizationConfig) AnyEnabled() bool {
-	return opt.EarlyConvergence || opt.CompletedPathDedup || opt.OrderingPruning || opt.CachePrediction
+	return opt.EarlyConvergence || opt.CompletedPathDedup || opt.OrderingPruning || opt.CachePrediction || opt.SubtreeCompletion || opt.OnlyPermuteTriggered
 }
 
 type ExploreConfig struct {
@@ -60,6 +66,7 @@ type ExploreConfig struct {
 	// PermuteOrder enables order permutation for specific reconcilers during exploration.
 	// When true, alternative pending reconcile orderings are generated with that reconciler first.
 	PermuteOrder map[ReconcilerID]bool
+
 	// per-reconciler perturbation config
 	perturbationCfg map[ReconcilerID]PerturbationConfig
 
@@ -264,7 +271,30 @@ func (e *Explorer) enqueueStates(
 		}
 		return stack, len(states) > 0
 	}
-	return e.enqueueWithMarker(stack, tracker, states)
+	if len(states) == 0 {
+		return stack, false
+	}
+
+	groups := make(map[LogicalStateKey][]StateNode, len(states))
+	order := make([]LogicalStateKey, 0, len(states))
+	for i := range states {
+		key := states[i].LogicalKey()
+		if _, exists := groups[key]; !exists {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], states[i])
+	}
+
+	enqueued := false
+	for _, key := range order {
+		var didEnqueue bool
+		stack, didEnqueue = e.enqueueWithMarker(stack, tracker, groups[key])
+		if didEnqueue {
+			enqueued = true
+		}
+	}
+
+	return stack, enqueued
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
@@ -425,6 +455,40 @@ func (e *Explorer) explore(
 	// we dont skip over seen states because we want to track all the ways a state can be reached
 	// but we do track the states we've seen
 	seenStates := make(map[OrderHash]bool)
+	seenLogicalStates := make(map[ContentsHash]struct{})
+	logicalStatesOut := os.Getenv("KAMERA_LOGICAL_STATES_OUT")
+	var logicalStatesFile *os.File
+	if logicalStatesOut != "" {
+		file, err := os.Create(logicalStatesOut)
+		if err != nil {
+			logger.Error(err, "failed to create logical states output file", "path", logicalStatesOut)
+		} else {
+			logicalStatesFile = file
+			defer func() {
+				if err := logicalStatesFile.Close(); err != nil {
+					logger.Error(err, "failed to close logical states output file", "path", logicalStatesOut)
+				}
+			}()
+		}
+	}
+
+	logicalStatesLog := os.Getenv("KAMERA_LOGICAL_STATE_LOG")
+	var logicalStatesLogFile *os.File
+	if logicalStatesLog != "" {
+		file, err := os.Create(logicalStatesLog)
+		if err != nil {
+			logger.Error(err, "failed to create logical state log file", "path", logicalStatesLog)
+		} else {
+			logicalStatesLogFile = file
+			defer func() {
+				if err := logicalStatesLogFile.Close(); err != nil {
+					logger.Error(err, "failed to close logical state log file", "path", logicalStatesLog)
+				}
+			}()
+		}
+	}
+	logOrderingPrune := os.Getenv("KAMERA_LOG_ORDERING_PRUNE") != ""
+	orderPruneUseOrderHash := os.Getenv("KAMERA_ORDER_PRUNE_ORDER_HASH") != ""
 
 	// we do track the seen converged states so we can attribute multiple execution paths to them
 	seenConvergedStates := make(map[NodeHash]StateNode)
@@ -475,7 +539,7 @@ func (e *Explorer) explore(
 		orderKey := currentState.OrderHash()
 
 		// Check if this logical state was completed while we were queued
-		// (another ordering variant may have finished the entire subtree)
+		// (another path may have finished the entire subtree for the same ordered state)
 		if useSubtreeCompletion {
 			logicalKey := currentState.LogicalKey()
 			if subtreeTracker.isCompleted(logicalKey) {
@@ -498,13 +562,14 @@ func (e *Explorer) explore(
 		// full permutation space. Re-reaching the same ContentsHash with a different
 		// ordering does not add new permutations, so we skip re-branching.
 		//
+		contentsKey := currentState.ContentsHash()
+
 		// Early Convergence Optimization: if ALL pending reconciles are known no-ops,
 		// and we've already found a converged path to this logical state, skip entirely.
 		// The first path runs through the no-ops to reach actual convergence; subsequent
 		// paths can skip since they'd produce the same result.
 		if e.optimizations.checkEarlyConvergence(currentState) {
-			objectsHash := currentState.ContentsHash()
-			if _, alreadyConverged := seenConvergedStates[NodeHash(objectsHash)]; alreadyConverged {
+			if _, alreadyConverged := seenConvergedStates[NodeHash(contentsKey)]; alreadyConverged {
 				e.stats.EarlyConvergence++
 				logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
 					"depth", currentState.depth, "pendingCount", len(currentState.PendingReconciles))
@@ -512,8 +577,31 @@ func (e *Explorer) explore(
 			}
 		}
 
+		if _, seen := seenLogicalStates[contentsKey]; !seen {
+			e.stats.UniqueResourceStates++
+			seenLogicalStates[contentsKey] = struct{}{}
+			if logicalStatesLogFile != nil {
+				pendingIDs := make([]string, len(currentState.PendingReconciles))
+				for i, pr := range currentState.PendingReconciles {
+					pendingIDs[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+				}
+				_, err := fmt.Fprintf(
+					logicalStatesLogFile,
+					"%s\tdepth=%d\tobjects=%d\tpending=%s\tstuck=%s\n",
+					contentsKey,
+					currentState.depth,
+					len(currentState.Objects()),
+					strings.Join(pendingIDs, ","),
+					currentState.stuckPositionsSignature(),
+				)
+				if err != nil {
+					logger.Error(err, "failed to write logical state log")
+				}
+			}
+		}
+
 		if alreadySeen {
-			e.stats.SkippedNodeVisits++
+			e.stats.AlreadySeenNodeVisits++
 		} else {
 			e.stats.UniqueNodeVisits++
 			seenStates[orderKey] = true
@@ -666,7 +754,12 @@ func (e *Explorer) explore(
 				stateView.DumpPending()
 			}
 
-			stepLogger := logger.WithValues("Depth", stateView.depth, "# Distinct States", e.stats.UniqueNodeVisits, "Total States", e.stats.TotalNodeVisits)
+			stepLogger := logger.WithValues(
+				"Depth", stateView.depth,
+				"# Distinct States", e.stats.UniqueNodeVisits,
+				"Total States", e.stats.TotalNodeVisits,
+				"Resource States", e.stats.UniqueResourceStates,
+			)
 			stepCtx := log.IntoContext(ctx, stepLogger)
 
 			// key uses OBJECTS hash only - pending list doesn't affect reconciler behavior
@@ -817,24 +910,27 @@ func (e *Explorer) explore(
 
 			if e.optimizations != nil {
 				e.optimizations.markVisited(ContentsHash, normalizedHistory)
-				e.optimizations.markLogicalState(newState.ContentsHash(), newState.PendingReconciles, normalizedHistory)
+				e.optimizations.markLogicalState(newState.ContentsHash(), newState.PendingReconciles, normalizedHistory, newState.stuckPositionsSignature())
 			}
 
 			// Also track in exploredLogicalStates for cache prediction
 
 			// branch on order of subsequent reconciles that were triggered by this state change step
 			// Use enqueueWithMarker to track subtree completion for all ordering variants together.
-			newStateKey := newState.Hash()
+			branchStateKey := newState.Hash()
+			if orderPruneUseOrderHash {
+				branchStateKey = NodeHash(newState.OrderHash())
+			}
 			var statesToEnqueue []StateNode
 
 			if len(newState.PendingReconciles) > 1 {
 				// When ordering pruning is enabled, we only expand once per logical state.
-				alreadyExpanded := e.optimizations != nil && e.optimizations.branchAlreadyExpanded(newStateKey)
+				alreadyExpanded := e.optimizations != nil && e.optimizations.branchAlreadyExpanded(branchStateKey, triggeredByStep, e.Config.PermuteOrder)
 				if !alreadyExpanded {
 					expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
 					for _, orderVariant := range expandedStates {
 						// skip orderVariants whose first reconcile are known no-ops
-						if e.optimizations != nil && e.optimizations.orderingPruningEnabled() {
+						if e.optimizations != nil && e.optimizations.noOpOrderingSkipEnabled() {
 							fst := orderVariant.PendingReconciles[0]
 							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.ContentsHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
 							if isNoOp, known := e.optimizations.isKnownNoOp(noOpKey); known && isNoOp {
@@ -845,9 +941,30 @@ func (e *Explorer) explore(
 						statesToEnqueue = append(statesToEnqueue, orderVariant)
 					}
 					if e.optimizations != nil {
-						e.optimizations.markBranchExpanded(newStateKey)
+						e.optimizations.markBranchExpanded(branchStateKey, triggeredByStep, e.Config.PermuteOrder)
 					}
 				} else if e.optimizations != nil {
+					if logOrderingPrune {
+						pendingIDs := make([]string, len(newState.PendingReconciles))
+						for i, pr := range newState.PendingReconciles {
+							pendingIDs[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+						}
+						triggeredIDs := make([]string, len(triggeredByStep))
+						for i, pr := range triggeredByStep {
+							triggeredIDs[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+						}
+						logger.Info("ordering pruning: skip expansion for already-expanded state",
+							"depth", newState.depth,
+							"branchKey", branchStateKey,
+							"nodeHash", newState.Hash(),
+							"orderHash", newState.OrderHash(),
+							"orderSensitiveKey", orderPruneUseOrderHash,
+							"contentsHash", newState.ContentsHash(),
+							"permuteSignature", e.optimizations.permuteSignature(triggeredByStep, e.Config.PermuteOrder),
+							"pending", pendingIDs,
+							"triggeredByStep", triggeredIDs,
+						)
+					}
 					e.stats.SkippedOrderExpansions++
 				}
 			}
@@ -857,6 +974,17 @@ func (e *Explorer) explore(
 
 			// Enqueue all variants together with a single marker for the logical state
 			stack, _ = e.enqueueStates(stack, subtreeTracker, statesToEnqueue, useSubtreeCompletion)
+		}
+	}
+
+	if logicalStatesFile != nil {
+		keys := make([]string, 0, len(seenLogicalStates))
+		for key := range seenLogicalStates {
+			keys = append(keys, string(key))
+		}
+		slices.Sort(keys)
+		if _, err := logicalStatesFile.WriteString(strings.Join(keys, "\n") + "\n"); err != nil {
+			logger.Error(err, "failed to write logical states output file", "path", logicalStatesOut)
 		}
 	}
 
@@ -1432,7 +1560,7 @@ func (e *Explorer) skipViaCachePrediction(
 	}
 
 	// Check if we've already committed to exploring this logical state
-	if e.optimizations.hasLogicalState(cached.outputObjectsHash, predictedPending, predictedHistory) {
+	if e.optimizations.hasLogicalState(cached.outputObjectsHash, predictedPending, predictedHistory, stateView.stuckPositionsSignature()) {
 		return true
 	}
 	return false

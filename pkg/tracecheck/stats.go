@@ -10,9 +10,9 @@ type ExploreStats struct {
 	endTime                *time.Time
 	AbortedPaths           int
 	UniqueNodeVisits       int
-	UniqueLogicalStates    int
+	UniqueResourceStates   int
 	TotalNodeVisits        int
-	SkippedNodeVisits      int
+	AlreadySeenNodeVisits  int // this is just total - unique and tracks how effective the pruning is
 	SkippedPaths           int
 	SkippedOrderExpansions int
 	SkippedSubtrees        int // entire subtrees skipped (same logical state already explored)
@@ -121,8 +121,8 @@ func (s *ExploreStats) Print() {
 	fmt.Printf("Total time: %v\n", s.endTime.Sub(*s.startTime))
 	fmt.Printf("Total node visits: %d\n", s.TotalNodeVisits)
 	fmt.Printf("Unique node visits: %d\n", s.UniqueNodeVisits)
-	fmt.Printf("Unique logical states: %d\n", s.UniqueLogicalStates)
-	fmt.Printf("Skipped node visits: %d\n", s.SkippedNodeVisits)
+	fmt.Printf("Unique resource states: %d\n", s.UniqueResourceStates)
+	fmt.Printf("Skipped node visits: %d\n", s.AlreadySeenNodeVisits)
 	fmt.Printf("Skipped paths: %d\n", s.SkippedPaths)
 	fmt.Printf("Skipped order expansions: %d\n", s.SkippedOrderExpansions)
 	fmt.Printf("Skipped subtrees: %d\n", s.SkippedSubtrees)

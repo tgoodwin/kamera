@@ -161,7 +161,7 @@ func TestFooBarOptimizationsExactEffects(t *testing.T) {
 		// redundant no-op tail orderings. Yields four converged execution paths.
 		{
 			name:                 "none",
-			opt:                  OptimizationConfig{},
+			opt:                  OptimizationConfig{OnlyPermuteTriggered: true},
 			total:                93,
 			unique:               9,
 			skippedPaths:         0,
@@ -176,7 +176,7 @@ func TestFooBarOptimizationsExactEffects(t *testing.T) {
 		// disappears, dropping the extra path that differed only by ordering.
 		{
 			name:               "ordering",
-			opt:                OptimizationConfig{OrderingPruning: true},
+			opt:                OptimizationConfig{OrderingPruning: true, OnlyPermuteTriggered: true},
 			total:              29,
 			unique:             9,
 			skippedOrders:      6,
@@ -187,7 +187,7 @@ func TestFooBarOptimizationsExactEffects(t *testing.T) {
 		// tree shape stays the same but several redundant steps vanish.
 		{
 			name:               "cache",
-			opt:                OptimizationConfig{CachePrediction: true},
+			opt:                OptimizationConfig{CachePrediction: true, OnlyPermuteTriggered: true},
 			total:              37,
 			unique:             9,
 			cacheSkips:         7,
@@ -198,7 +198,7 @@ func TestFooBarOptimizationsExactEffects(t *testing.T) {
 		// reorderings are pruned after the first converged hash is found.
 		{
 			name:               "early",
-			opt:                OptimizationConfig{EarlyConvergence: true},
+			opt:                OptimizationConfig{EarlyConvergence: true, OnlyPermuteTriggered: true},
 			total:              15,
 			unique:             7,
 			earlySkips:         26,
@@ -209,7 +209,7 @@ func TestFooBarOptimizationsExactEffects(t *testing.T) {
 		// attempts to re-walk the same completion are skipped.
 		{
 			name:               "dedup",
-			opt:                OptimizationConfig{CompletedPathDedup: true},
+			opt:                OptimizationConfig{CompletedPathDedup: true, OnlyPermuteTriggered: true},
 			total:              70,
 			unique:             9,
 			skippedPaths:       23,
@@ -221,10 +221,11 @@ func TestFooBarOptimizationsExactEffects(t *testing.T) {
 		{
 			name: "all",
 			opt: OptimizationConfig{
-				EarlyConvergence:   true,
-				CompletedPathDedup: true,
-				OrderingPruning:    true,
-				CachePrediction:    true,
+				EarlyConvergence:     true,
+				CompletedPathDedup:   true,
+				OrderingPruning:      true,
+				CachePrediction:      true,
+				OnlyPermuteTriggered: true,
 			},
 			total:              10,
 			unique:             7,

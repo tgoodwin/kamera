@@ -102,7 +102,8 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
 	eb.WithOptimizations(tracecheck.OptimizationConfig{
-		OrderingPruning: true,
+		OrderingPruning:      true,
+		OnlyPermuteTriggered: true,
 	})
 	fooKind := "webapp.discrete.events/Foo"
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
