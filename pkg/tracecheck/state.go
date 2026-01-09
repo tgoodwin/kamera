@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/samber/lo"
@@ -463,25 +464,26 @@ func (sn StateNode) ConvergenceHash() NodeHash {
 
 // LogicalStateKey uniquely identifies a logical state for subtree completion tracking.
 // Two states with the same LogicalStateKey will have identical future exploration subtrees,
-// regardless of how they were reached (execution history).
-//
-// TODO: Consider adding StuckPositions to the key when staleness expansion is unified
-// with the marker-based completion tracking model.
+// regardless of how they were reached (execution history). Pending reconciles are order-sensitive,
+// and stuck reconciler positions are included because they affect observed state.
 type LogicalStateKey struct {
 	ObjectsHash ContentsHash
 	PendingSet  string
+	StuckKey    string
 }
 
 // LogicalKey returns the LogicalStateKey for this state node.
 func (sn StateNode) LogicalKey() LogicalStateKey {
 	return LogicalStateKey{
 		ObjectsHash: sn.ContentsHash(),
-		PendingSet:  sn.sortedPendingSignature(),
+		PendingSet:  sn.orderedPendingSignature(),
+		StuckKey:    sn.stuckPositionsSignature(),
 	}
 }
 
-// sortedPendingSignature returns an order-insensitive signature of pending reconciles.
-func (sn StateNode) sortedPendingSignature() string {
+// orderedPendingSignature returns an order-sensitive signature of pending reconciles.
+func (sn StateNode) orderedPendingSignature() string {
+	// pendingSignature returns an order-insensitive signature of pending reconciles.
 	if len(sn.PendingReconciles) == 0 {
 		return ""
 	}
@@ -489,8 +491,49 @@ func (sn StateNode) sortedPendingSignature() string {
 	for i, pr := range sn.PendingReconciles {
 		keys[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
 	}
-	sort.Strings(keys)
 	return strings.Join(keys, "|")
+}
+
+// stuckPositionsSignature returns a stable signature for the reconciler "stuck" positions.
+func (sn StateNode) stuckPositionsSignature() string {
+	if len(sn.stuckReconcilerPositions) == 0 {
+		return ""
+	}
+
+	reconcilerIDs := make([]ReconcilerID, 0, len(sn.stuckReconcilerPositions))
+	for id := range sn.stuckReconcilerPositions {
+		reconcilerIDs = append(reconcilerIDs, id)
+	}
+	sort.Slice(reconcilerIDs, func(i, j int) bool {
+		return reconcilerIDs[i] < reconcilerIDs[j]
+	})
+
+	var builder strings.Builder
+	for i, reconcilerID := range reconcilerIDs {
+		if i > 0 {
+			builder.WriteByte('|')
+		}
+		builder.WriteString(string(reconcilerID))
+		builder.WriteByte('=')
+
+		sequences := sn.stuckReconcilerPositions[reconcilerID]
+		kindKeys := make([]string, 0, len(sequences))
+		for kind := range sequences {
+			kindKeys = append(kindKeys, kind)
+		}
+		sort.Strings(kindKeys)
+
+		for j, kind := range kindKeys {
+			if j > 0 {
+				builder.WriteByte(',')
+			}
+			builder.WriteString(kind)
+			builder.WriteByte(':')
+			builder.WriteString(strconv.FormatInt(sequences[kind], 10))
+		}
+	}
+
+	return builder.String()
 }
 
 func (sn *StateSnapshot) trimForInspection() {

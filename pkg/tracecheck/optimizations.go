@@ -2,7 +2,6 @@ package tracecheck
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/samber/lo"
@@ -133,30 +132,29 @@ func (o *optimizations) pendingSignature(pending []PendingReconcile) string {
 	pendingStrs := lo.Map(pending, func(pr PendingReconcile, _ int) string {
 		return pr.String()
 	})
-	slices.Sort(pendingStrs)
 	return strings.Join(pendingStrs, ",")
 }
 
-func (o *optimizations) logicalStateKey(objectsHash ContentsHash, pending []PendingReconcile, historyKey string) string {
+func (o *optimizations) logicalStateKey(objectsHash ContentsHash, pending []PendingReconcile, historyKey string, stuckKey string) string {
 	if !o.cachePredictionEnabled() {
 		return ""
 	}
-	return fmt.Sprintf("%s|%s|%s", objectsHash, o.pendingSignature(pending), historyKey)
+	return fmt.Sprintf("%s|%s|%s|%s", objectsHash, o.pendingSignature(pending), stuckKey, historyKey)
 }
 
-func (o *optimizations) markLogicalState(objectsHash ContentsHash, pending []PendingReconcile, historyKey string) {
+func (o *optimizations) markLogicalState(objectsHash ContentsHash, pending []PendingReconcile, historyKey string, stuckKey string) {
 	if !o.cachePredictionEnabled() {
 		return
 	}
-	key := o.logicalStateKey(objectsHash, pending, historyKey)
+	key := o.logicalStateKey(objectsHash, pending, historyKey, stuckKey)
 	o.exploredLogicalStates[key] = struct{}{}
 }
 
-func (o *optimizations) hasLogicalState(objectsHash ContentsHash, pending []PendingReconcile, historyKey string) bool {
+func (o *optimizations) hasLogicalState(objectsHash ContentsHash, pending []PendingReconcile, historyKey string, stuckKey string) bool {
 	if !o.cachePredictionEnabled() {
 		return false
 	}
-	key := o.logicalStateKey(objectsHash, pending, historyKey)
+	key := o.logicalStateKey(objectsHash, pending, historyKey, stuckKey)
 	_, explored := o.exploredLogicalStates[key]
 	return explored
 }
