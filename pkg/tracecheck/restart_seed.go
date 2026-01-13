@@ -33,6 +33,8 @@ type RestartRequest struct {
 	Config ExploreConfig
 	// PreserveHistory indicates whether the reconcile prefix leading to the selected
 	// state should be prepended to restarted execution paths.
+	// this supports a feature where the DFS can be restarted from a subtree
+	// with different model checking params, while retaining the full path history
 	PreserveHistory bool
 	Prefix          ExecutionHistory
 }

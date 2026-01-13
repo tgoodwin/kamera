@@ -136,6 +136,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 		return nil
 	}
 
+	// enter a loop to handle optional search restarts via the interactive inspector
 	for {
 		// seed is an intermediate state node that can be used to restart the exploration
 		// from that point. If the user decides not to restart, seed will be nil.
