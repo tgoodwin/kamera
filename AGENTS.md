@@ -35,6 +35,44 @@ Use 'bd' for issue tracking.
 - PRs should include scope summary, linked issues, tests run (`make test`, targeted `go test`, e2e notes), and artifacts that help reviewers (trace dumps, inspector screenshots).
 - Keep PRs focused; split unrelated refactors. Document behavior changes in README sections or inline godoc comments before requesting review.
 
+## Divergence Analysis with DAG Output
+
+When exploring controller behavior, the inspector can produce a DAG (directed acyclic graph) showing state transitions. This is useful for analyzing non-determinism and divergence points.
+
+### Producing DAG Output
+```bash
+# From a dump file, output DOT to stdout (for LLM analysis)
+go run ./cmd/inspect --dump <dump.jsonl> --interactive=false
+
+# Write DOT to a file
+go run ./cmd/inspect --dump <dump.jsonl> --dot output.dot --interactive=false
+
+# Open in TUI with optional DOT export
+go run ./cmd/inspect --dump <dump.jsonl> --dot output.dot
+```
+
+### Interpreting the DOT Format
+The DOT output represents the exploration state graph:
+- **Nodes** are unique resource states, identified by a `ContentsHash` (8-char alphanumeric)
+- **Edges** are controller reconciliations, labeled with the controller name
+- **Green doublecircle nodes** are converged terminal states (no pending reconciles)
+- **Gray box nodes** are intermediate states
+
+Example DOT snippet:
+```dot
+"2tkg7wfg" [label="abc123", shape=box, fillcolor="#e0e0e0"];
+"2tkg7wfg" -> "def456" [label="KPA"];
+"2tkg7wfg" -> "ghi789" [label="EndpointsController"];
+```
+This shows state `2tkg7wfg` with two outbound edges - a **divergence point** where KPA and EndpointsController can both run, leading to different successor states.
+
+### Cross-Referencing Hashes to the Dump
+To inspect the full resource state for a hash, grep the dump file:
+```bash
+grep "2tkg7wfg" dump.jsonl | head -1 | jq .
+```
+The dump contains full `ObjectVersions` (all K8s resources) and `PendingReconciles` for each state, enabling detailed analysis of controller readsets/writesets at divergence points.
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.

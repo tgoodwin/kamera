@@ -12,8 +12,10 @@ import (
 func main() {
 	var dumpPath string
 	var dotPath string
+	var interactiveMode bool
 	flag.StringVar(&dumpPath, "dump", "", "Path to an inspector dump file to load")
 	flag.StringVar(&dotPath, "dot", "", "Optional path to write the state DAG in Graphviz DOT format")
+	flag.BoolVar(&interactiveMode, "interactive", true, "Launch interactive TUI (set false for headless DAG output)")
 	flag.Parse()
 
 	if dumpPath == "" {
@@ -27,14 +29,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	dag := tracecheck.BuildStateDAG(tracecheck.Result{ConvergedStates: states})
+	dot := tracecheck.RenderStateDAGDOT(dag, tracecheck.GraphvizOpts{LabelEdges: true, DropSelfLoops: true})
+
 	if dotPath != "" {
-		dag := tracecheck.BuildStateDAG(tracecheck.Result{ConvergedStates: states})
-		dot := tracecheck.RenderStateDAGDOT(dag, tracecheck.GraphvizOpts{LabelEdges: true, DropSelfLoops: true})
 		if err := os.WriteFile(dotPath, []byte(dot), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "write dot: %v\n", err)
 			os.Exit(1)
 		}
 		fmt.Fprintf(os.Stderr, "wrote DAG to %s\n", dotPath)
+	}
+
+	if !interactiveMode {
+		if dotPath == "" {
+			fmt.Print(dot)
+		}
+		return
 	}
 
 	if _, err := interactive.RunStateInspectorTUIView(states, resolver, false, tracecheck.ExploreConfig{}); err != nil {
