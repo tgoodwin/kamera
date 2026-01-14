@@ -1,0 +1,10 @@
+{
+  "optimizations": {
+    "earlyConvergence": false,
+    "completedPathDedup": false,
+    "orderingPruning": false,
+    "cachePrediction": false,
+    "subtreeCompletion": false,
+    "onlyPermuteTriggered": false
+  }
+}
