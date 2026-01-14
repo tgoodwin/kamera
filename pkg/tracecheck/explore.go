@@ -710,18 +710,32 @@ func (e *Explorer) explore(
 		pendingReconcile := currentState.PendingReconciles[0]
 
 		// Log all pending reconciles for diagnostic purposes
-		if logger.V(1).Enabled() {
+		if logger.V(2).Enabled() {
 			pendingIDs := make([]string, len(currentState.PendingReconciles))
 			for i, pr := range currentState.PendingReconciles {
 				pendingIDs[i] = fmt.Sprintf("%s(%s)", pr.ReconcilerID, pr.Source)
 			}
-			logger.V(1).WithValues(
+			logger.V(2).WithValues(
 				"Depth", currentState.depth,
 				"StackDepth", len(stack),
 				"PendingCount", len(currentState.PendingReconciles),
 				"Pending", pendingIDs,
 				"Processing", pendingReconcile.ReconcilerID,
 			).Info("processing reconcile step")
+		}
+
+		// Diagnostic logging for non-determinism investigation:
+		// Log full pending reconcile details to detect if pending list order differs across runs.
+		if logger.V(2).Enabled() {
+			pendingFull := lo.Map(currentState.PendingReconciles, func(pr PendingReconcile, _ int) string {
+				return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+			})
+			logger.V(2).Info("PENDING_LIST_DIAGNOSTIC",
+				"depth", currentState.depth,
+				"stateHash", stateKey,
+				"contentsHash", currentState.ContentsHash(),
+				"pendingFull", pendingFull,
+			)
 		}
 
 		possibleViews, err := e.getPossibleViewsForReconcile(currentState, pendingReconcile.ReconcilerID, currentState.depth)
@@ -774,6 +788,22 @@ func (e *Explorer) explore(
 
 			stepLogger.Info("Taking reconcile step")
 			stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+
+			// Diagnostic logging for non-determinism investigation:
+			// Log the effects order to detect if Knative reconcilers produce effects in different orders across runs.
+			if logger.V(2).Enabled() {
+				if len(stepResult.Changes.Effects) > 0 {
+					effectsOrder := lo.Map(stepResult.Changes.Effects, func(e Effect, _ int) string {
+						return fmt.Sprintf("%s:%s", e.OpType, e.Key.String())
+					})
+					stepLogger.V(2).WithValues(
+						"reconciler", pendingReconcile.ReconcilerID,
+						"depth", stateView.depth,
+						"numEffects", len(stepResult.Changes.Effects),
+						"effectsOrder", effectsOrder,
+					).Info("EFFECTS_ORDER_DIAGNOSTIC")
+				}
+			}
 
 			stepResult.StateBefore = maps.Clone(stateView.Objects())
 			stepResult.KindSeqBefore = maps.Clone(stateView.Contents.KindSequences)
@@ -928,6 +958,30 @@ func (e *Explorer) explore(
 				alreadyExpanded := e.optimizations != nil && e.optimizations.branchAlreadyExpanded(branchStateKey, triggeredByStep, e.Config.PermuteOrder)
 				if !alreadyExpanded {
 					expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
+
+					// Diagnostic logging for non-determinism investigation:
+					// Log the ordering variants generated to detect if different runs produce different variant orders.
+					if logger.V(2).Enabled() {
+						if len(expandedStates) > 0 {
+							variantFirstReconcilers := lo.Map(expandedStates, func(s StateNode, _ int) string {
+								if len(s.PendingReconciles) > 0 {
+									pr := s.PendingReconciles[0]
+									return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+								}
+								return "empty"
+							})
+							pendingBefore := lo.Map(newState.PendingReconciles, func(pr PendingReconcile, _ int) string {
+								return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+							})
+							logger.V(2).Info("ORDERING_VARIANTS_DIAGNOSTIC",
+								"depth", newState.depth,
+								"numVariants", len(expandedStates),
+								"pendingBefore", pendingBefore,
+								"variantFirstReconcilers", variantFirstReconcilers,
+							)
+						}
+					}
+
 					for _, orderVariant := range expandedStates {
 						// skip orderVariants whose first reconcile are known no-ops
 						if e.optimizations != nil && e.optimizations.noOpOrderingSkipEnabled() {
