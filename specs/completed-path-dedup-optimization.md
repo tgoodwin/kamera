@@ -112,7 +112,7 @@ func (eh ExecutionHistory) UniqueKey() string {
     var effectiveSteps []string
     for _, step := range eh {
         if !step.wasNoOp() {  // Only include steps that made changes
-            effectiveSteps = append(effectiveSteps, 
+            effectiveSteps = append(effectiveSteps,
                 fmt.Sprintf("%s@%d", step.ControllerID, len(step.Changes.Effects)))
         }
     }
@@ -186,7 +186,7 @@ Combined key: "{NodeHash}|{HistorySignature}"
 type optimizations struct {
     // Track which (state, history) pairs we've started exploring
     visitedStatePaths map[NodeHash]map[string]struct{}
-    
+
     // Track which (state, history) pairs we've fully explored
     completedPaths map[string]bool  // key: "{NodeHash}|{HistorySignature}"
 }

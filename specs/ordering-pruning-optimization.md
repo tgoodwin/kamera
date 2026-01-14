@@ -45,7 +45,7 @@ Without optimization, the same logical state can be reached via different paths 
         [A first]  [B first] [A first] [B first]
             │           │      │          │
            ...         ...    ...        ...
-            
+
     Problem: We expand both S₁ and S₂ to generate [A first] and [B first],
     but S₁ and S₂ have the same logical state, so this is redundant!
 ```
@@ -128,8 +128,8 @@ type optimizations struct {
 ```go
 // Check if we've already expanded this state for these triggered reconcilers
 func (o *optimizations) branchAlreadyExpanded(
-    stateHash NodeHash, 
-    triggered []PendingReconcile, 
+    stateHash NodeHash,
+    triggered []PendingReconcile,
     permuteOrder map[ReconcilerID]bool,
 ) bool {
     key := o.branchKey(stateHash, triggered, permuteOrder)
@@ -138,8 +138,8 @@ func (o *optimizations) branchAlreadyExpanded(
 
 // Mark that we've expanded this state
 func (o *optimizations) markBranchExpanded(
-    stateHash NodeHash, 
-    triggered []PendingReconcile, 
+    stateHash NodeHash,
+    triggered []PendingReconcile,
     permuteOrder map[ReconcilerID]bool,
 ) {
     key := o.branchKey(stateHash, triggered, permuteOrder)
@@ -153,7 +153,7 @@ func (o *optimizations) markBranchExpanded(
 if len(newState.PendingReconciles) > 1 {
     alreadyExpanded := e.optimizations.branchAlreadyExpanded(
         branchStateKey, triggeredByStep, e.Config.PermuteOrder)
-    
+
     if !alreadyExpanded {
         // Generate ordering variants
         expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
@@ -176,15 +176,15 @@ State S: pending=[A, B, C]
 
 If we know A is a no-op on this state:
     Ordering [A, B, C] will produce same result as [B, A, C] or [B, C, A]
-    
+
     A-first ordering:
         Run A → no changes
         State unchanged, pending=[B, C]
-        
+
     B-first ordering:
         Run B → may change state
         Then explore remaining...
-        
+
 Since A-first just delays real work, we can skip A-first orderings.
 ```
 
@@ -194,9 +194,9 @@ Since A-first just delays real work, we can skip A-first orderings.
 // In the ordering expansion loop
 if e.optimizations.noOpOrderingSkipEnabled() {
     fst := orderVariant.PendingReconciles[0]
-    noOpKey := fmt.Sprintf("%s:%s:%s", 
+    noOpKey := fmt.Sprintf("%s:%s:%s",
         orderVariant.ContentsHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
-    
+
     if isNoOp, known := e.optimizations.isKnownNoOp(noOpKey); known && isNoOp {
         e.stats.SkippedNoOpOrderings++
         continue  // Skip this ordering variant
@@ -242,9 +242,9 @@ cfg.Optimizations.DisableNoOpOrderingSkip = true  // Keep pruning, disable no-op
                               │  so no OtherController-first variant)
                               │
     ─────────────────────────────────────────────────────────────
-    
+
     Later, different path reaches State S:
-    
+
                          Different Path
                               │
                          Same State S
@@ -265,8 +265,8 @@ The `OnlyPermuteTriggered` config option controls the scope of permutation:
 ```go
 type OptimizationConfig struct {
     // ...
-    
-    // OnlyPermuteTriggered limits order permutations to reconcilers 
+
+    // OnlyPermuteTriggered limits order permutations to reconcilers
     // triggered by the last step.
     // When true: Only permute among triggered reconcilers
     // When false: Can permute any pending reconciler to first position
@@ -279,7 +279,7 @@ OnlyPermuteTriggered = true:
 ─────────────────────────────
     State after step: pending=[A, B, C]
     Step triggered: [A, B]
-    
+
     Only generate: A-first, B-first variants
     NOT: C-first variant (C wasn't triggered by this step)
 
@@ -287,7 +287,7 @@ OnlyPermuteTriggered = false:
 ─────────────────────────────
     State after step: pending=[A, B, C]
     Step triggered: [A, B]
-    
+
     Generate: A-first, B-first, C-first variants
     (All pending reconcilers eligible for first position)
 ```
@@ -312,12 +312,12 @@ If OnlyPermuteTriggered is true, we only permute triggered reconcilers.
 Arrival 1 at State S:
     Triggered by prior step: [A, B]
     Generates: A-first, B-first
-    
+
 Arrival 2 at State S:
     Triggered by prior step: [C]
     Would generate: C-first
     But ordering pruning sees same stateKey, skips!
-    
+
 Result: C-first ordering never explored.
 
 Mitigation: branchKey includes permuteSignature, which captures
@@ -333,7 +333,7 @@ If A is marked as no-op, we skip A-first orderings.
 But if A's no-op status was determined on a DIFFERENT state:
     State X: A is no-op
     State S: A might NOT be no-op
-    
+
     If we skip A-first on State S based on State X's result,
     we might miss valid orderings.
 

@@ -8,7 +8,7 @@
 
 Three trials with depth=100 produced different results:
 - Trial 1: 3 converged states, 434 reconcile steps
-- Trial 2: 3 converged states, 430 reconcile steps  
+- Trial 2: 3 converged states, 430 reconcile steps
 - Trial 3: **2 converged states**, 418 reconcile steps
 
 ### Pinpointed Divergence Point
@@ -84,7 +84,7 @@ The exploration uses a stack (DFS). The order in which states are pushed affects
 ```
 If pending reconciles are [A, B, C] and we generate orderings:
   - A-first variant
-  - B-first variant  
+  - B-first variant
   - C-first variant
 
 The order these are pushed to the stack determines exploration order.

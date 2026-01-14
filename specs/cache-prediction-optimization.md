@@ -158,13 +158,13 @@ Cache prediction tracks which logical states have been committed for exploration
 
 ```go
 func (o *optimizations) logicalStateKey(
-    objectsHash ContentsHash, 
-    pending []PendingReconcile, 
+    objectsHash ContentsHash,
+    pending []PendingReconcile,
     historyKey string,
     stuckKey string,
 ) string {
-    return fmt.Sprintf("%s|%s|%s|%s", 
-        objectsHash, 
+    return fmt.Sprintf("%s|%s|%s|%s",
+        objectsHash,
         o.pendingSignature(pending),  // order-sensitive
         stuckKey,                      // stuck reconciler positions
         historyKey)                    // effective history
@@ -207,7 +207,7 @@ if cached.wasNoOp {
 type optimizations struct {
     // Cache of reconcile results: key → output prediction
     reconcileResCache map[string]*cachedReconcileResult
-    
+
     // Set of logical states we've committed to exploring
     exploredLogicalStates map[string]struct{}
 }
@@ -235,8 +235,8 @@ func (o *optimizations) getReconcileResult(cacheKey string) (*cachedReconcileRes
 
 // Mark a logical state as committed for exploration
 func (o *optimizations) markLogicalState(
-    objectsHash ContentsHash, 
-    pending []PendingReconcile, 
+    objectsHash ContentsHash,
+    pending []PendingReconcile,
     historyKey string,
     stuckKey string,
 ) {
@@ -246,8 +246,8 @@ func (o *optimizations) markLogicalState(
 
 // Check if a logical state is already being explored
 func (o *optimizations) hasLogicalState(
-    objectsHash ContentsHash, 
-    pending []PendingReconcile, 
+    objectsHash ContentsHash,
+    pending []PendingReconcile,
     historyKey string,
     stuckKey string,
 ) bool {
@@ -261,7 +261,7 @@ func (o *optimizations) hasLogicalState(
 
 ```go
 // Before running a reconcile
-reconcileResKey := fmt.Sprintf("%s:%s:%s", 
+reconcileResKey := fmt.Sprintf("%s:%s:%s",
     stateView.ContentsHash(), reconcilerID, pendingReconcile.Request.NamespacedName.String())
 
 if e.skipViaCachePrediction(reconcileResKey, stateView, pendingReconcile) {
@@ -281,9 +281,9 @@ e.optimizations.setReconcileResult(reconcileResKey, &cachedReconcileResult{
 
 // Mark the output state as committed for exploration
 e.optimizations.markLogicalState(
-    newState.ContentsHash(), 
-    newState.PendingReconciles, 
-    normalizedHistory, 
+    newState.ContentsHash(),
+    newState.PendingReconciles,
+    normalizedHistory,
     newState.stuckPositionsSignature())
 ```
 
@@ -353,7 +353,7 @@ Gap: Non-deterministic reconcilers
 
 If a reconciler's output depends on external factors (time, random, external state):
     Cache might return wrong prediction
-    
+
 Mitigation: Kubernetes reconcilers should be deterministic by design.
            External calls are mocked/stubbed in the explorer.
 ```
@@ -365,7 +365,7 @@ Gap: Stale read effects
 If a reconciler observes a stale view of the world:
     The cache key (objectsHash) reflects the TRUE state
     But the reconciler saw a DIFFERENT (stale) state
-    
+
 Mitigation: Stale views are handled separately (getPossibleViewsForReconcile).
            Each stale view gets its own cache entries.
 ```
@@ -428,14 +428,14 @@ Step 2: Different ordering at State S
         Run DeploymentReconciler
         → No changes (ConfigMap not ready yet)
         New state S with pending=[ConfigMapReconciler]
-        
+
 Step 3: About to run ConfigMapReconciler
         Cache lookup: S:ConfigMapReconciler:cm/config → found!
         Predicted output: S'
         Predicted pending: [PodReconciler] (DeploymentReconciler finished)
         Wait - this is different from Step 1!
         Check hasLogicalState(S', [PodReconciler], history="Deployment@0,ConfigMap@1") → NO
-        
+
         Execute normally (different pending list after)
 
 Step 4: Another path reaches exact same state as Step 1
@@ -444,6 +444,6 @@ Step 4: Another path reaches exact same state as Step 1
         Cache lookup: S:ConfigMapReconciler:cm/config → found!
         Predicted: (S', [DeploymentReconciler, PodReconciler], history="ConfigMap@1")
         Check hasLogicalState(...) → YES! Already exploring
-        
+
         SKIP via Cache Prediction ✓
 ```

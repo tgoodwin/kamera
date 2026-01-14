@@ -24,7 +24,7 @@ Deep DFS exploration can spend disproportionate time in "churny" subtrees where:
          │                 │                 │
          ▼                 ▼                 ▼
     Converged X       Converged X       Converged X    ← Same state!
-         
+
          │                 │                 │
          ▼                 ▼                 ▼
     Ordering 4        Ordering 5        Ordering 6
@@ -65,7 +65,7 @@ When a state converges, we record which divergence point it came from:
 if currentState.divergenceKey != "" {
     convergenceKey := currentState.ConvergenceHash()
     convergencesByDivergenceKey[currentState.divergenceKey] = append(
-        convergencesByDivergenceKey[currentState.divergenceKey], 
+        convergencesByDivergenceKey[currentState.divergenceKey],
         convergenceKey)
 }
 ```
@@ -127,10 +127,10 @@ Converged to S           Converged to S           Converged to S
                          Converged to S
 
     ─────────────────────────────────────────────────────────────
-    
+
                     convergencesByDivergenceKey[A] = [S, S, S, S]
                     mostCommonCount = 4
-    
+
     Next ordering (Ord5):
                     Check: mostCommonCount(A) = 4
                     Threshold = 3
@@ -258,7 +258,7 @@ Gap: Order-dependent outcomes missed
 
 If the first N paths converge to state X, but path N+1 would converge to Y:
     Circuit breaker triggers, Y is never discovered
-    
+
 Mitigation: Set threshold high enough based on expected variance.
            Use with other optimizations that detect order-independence earlier.
 ```
@@ -269,7 +269,7 @@ Gap: Different divergence points mixing
 
 If a state has two different divergence keys from different paths:
     Only one key is tracked (the one set when state was created)
-    
+
 Current behavior: Each StateNode has a single divergenceKey.
                  This is acceptable because we're pruning within subtrees,
                  not across unrelated parts of the state space.
