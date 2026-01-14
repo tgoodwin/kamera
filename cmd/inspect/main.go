@@ -44,6 +44,10 @@ func main() {
 		if dotPath == "" {
 			fmt.Print(dot)
 		}
+		// Always include node details for LLM analysis context
+		fmt.Print(tracecheck.RenderStateDAGNodeDetails(dag))
+		// Include ContentsHash to step mapping for cross-referencing
+		fmt.Print(tracecheck.RenderContentsHashMapping(states))
 		return
 	}
 

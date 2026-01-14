@@ -84,17 +84,18 @@ type dumpObjectVersion struct {
 }
 
 type dumpReconcileResult struct {
-	ControllerID  string                   `json:"controllerId"`
-	FrameID       string                   `json:"frameId"`
-	FrameType     tracecheck.FrameType     `json:"frameType"`
-	Changes       dumpChanges              `json:"changes"`
-	Error         string                   `json:"error,omitempty"`
-	Deltas        []dumpDelta              `json:"deltas,omitempty"`
-	StateBefore   []dumpObjectVersion      `json:"stateBefore,omitempty"`
-	StateAfter    []dumpObjectVersion      `json:"stateAfter,omitempty"`
-	KindSeqBefore tracecheck.KindSequences `json:"kindSeqBefore,omitempty"`
-	KindSeqAfter  tracecheck.KindSequences `json:"kindSeqAfter,omitempty"`
-	Pending       []dumpPendingReconcile   `json:"pendingReconciles,omitempty"`
+	ControllerID      string                   `json:"controllerId"`
+	ContentsHashAfter string                   `json:"contentsHashAfter,omitempty"` // For cross-referencing with DAG nodes
+	FrameID           string                   `json:"frameId"`
+	FrameType         tracecheck.FrameType     `json:"frameType"`
+	Changes           dumpChanges              `json:"changes"`
+	Error             string                   `json:"error,omitempty"`
+	Deltas            []dumpDelta              `json:"deltas,omitempty"`
+	StateBefore       []dumpObjectVersion      `json:"stateBefore,omitempty"`
+	StateAfter        []dumpObjectVersion      `json:"stateAfter,omitempty"`
+	KindSeqBefore     tracecheck.KindSequences `json:"kindSeqBefore,omitempty"`
+	KindSeqAfter      tracecheck.KindSequences `json:"kindSeqAfter,omitempty"`
+	Pending           []dumpPendingReconcile   `json:"pendingReconciles,omitempty"`
 }
 
 type dumpChanges struct {
@@ -275,10 +276,21 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 		eff.Key = ensureKeyKindWithObject(eff.Key, eff.Version, objIndex)
 		effects[i] = eff
 	}
+
+	// Compute ContentsHash for StateAfter to enable DAG cross-referencing
+	var contentsHashAfter string
+	if len(step.StateAfter) > 0 {
+		stateNode := tracecheck.StateNode{
+			Contents: tracecheck.NewStateSnapshot(step.StateAfter, step.KindSeqAfter, nil),
+		}
+		contentsHashAfter = string(stateNode.ContentsHash())
+	}
+
 	return dumpReconcileResult{
-		ControllerID: string(step.ControllerID),
-		FrameID:      step.FrameID,
-		FrameType:    step.FrameType,
+		ControllerID:      string(step.ControllerID),
+		ContentsHashAfter: contentsHashAfter,
+		FrameID:           step.FrameID,
+		FrameType:         step.FrameType,
 		Changes: dumpChanges{
 			ObjectVersions: toDumpObjectVersions(step.Changes.ObjectVersions, objIndex),
 			Effects:        effects,

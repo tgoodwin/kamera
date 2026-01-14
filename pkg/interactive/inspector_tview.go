@@ -1613,16 +1613,16 @@ func countDistinctPathHashes(paths []tracecheck.ExecutionHistory) int {
 
 func populateStates(table *tview.Table, states []tracecheck.ResultState) {
 	table.Clear()
-	headers := []string{"Idx", "StateHash", "Objects", "Paths", "Hashes", "Pending", "Status"}
+	headers := []string{"Idx", "ContentsHash", "Objects", "Paths", "Hashes", "Pending", "Status"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
 				SetSelectable(false))
 	}
 	for row, state := range states {
-		stateHash := util.ShortenHash(string(state.State.ContentsHash()))
+		contentsHash := string(state.State.ContentsHash())
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
-		table.SetCell(row+1, 1, tview.NewTableCell(stateHash))
+		table.SetCell(row+1, 1, tview.NewTableCell(contentsHash))
 		table.SetCell(row+1, 2, tview.NewTableCell(fmt.Sprintf("%d", len(state.State.Objects()))))
 		table.SetCell(row+1, 3, tview.NewTableCell(fmt.Sprintf("%d", len(state.Paths))))
 		table.SetCell(row+1, 4, tview.NewTableCell(fmt.Sprintf("%d", countDistinctPathHashes(state.Paths))))
@@ -1659,7 +1659,7 @@ func populatePaths(table *tview.Table, states []tracecheck.ResultState, stateIdx
 
 func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx, pathIdx int) {
 	table.Clear()
-	headers := []string{"Idx", "Controller", "Effects", "StateHash"}
+	headers := []string{"Idx", "Controller", "Effects", "ContentsHash"}
 	for col, val := range headers {
 		table.SetCell(0, col,
 			tview.NewTableCell("[::b]"+val+"[::-]").
@@ -1677,21 +1677,21 @@ func populateSteps(table *tview.Table, states []tracecheck.ResultState, stateIdx
 	path := state.Paths[pathIdx]
 	for row, step := range path {
 		controller := "(nil)"
-		stateHash := "-"
+		contentsHash := "-"
 		effects := "0"
 		if step != nil {
 			controller = string(step.ControllerID)
 			effects = fmt.Sprintf("%d", len(step.Changes.Effects))
 			if step.StateAfter != nil {
-				stateHash = util.ShortenHash(string(tracecheck.StateNode{
+				contentsHash = string(tracecheck.StateNode{
 					Contents: tracecheck.NewStateSnapshot(step.StateAfter, step.KindSeqAfter, nil),
-				}.ContentsHash()))
+				}.ContentsHash())
 			}
 		}
 		table.SetCell(row+1, 0, tview.NewTableCell(fmt.Sprintf("%d", row)))
 		table.SetCell(row+1, 1, tview.NewTableCell(controller))
 		table.SetCell(row+1, 2, tview.NewTableCell(effects))
-		table.SetCell(row+1, 3, tview.NewTableCell(stateHash))
+		table.SetCell(row+1, 3, tview.NewTableCell(contentsHash))
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/kamera/pkg/util"
 )
 
 // GraphvizOpts controls DOT rendering.
@@ -44,7 +43,7 @@ func RenderStateDAGDOT(dag *StateDAG, opts GraphvizOpts) string {
 			continue
 		}
 
-		label := fmt.Sprintf("%s", util.ShortenHash(string(h)))
+		label := string(h)
 		fill := "#e0e0e0" // gray: intermediate/unknown
 		shape := "box"
 		if len(node.ConvergedIDs) > 0 {
@@ -142,4 +141,148 @@ func RenderStateDAGDOT(dag *StateDAG, opts GraphvizOpts) string {
 func escapeDOT(s string) string {
 	repl := strings.NewReplacer(`"`, `\"`, `\`, `\\`)
 	return repl.Replace(s)
+}
+
+// RenderStateDAGNodeDetails renders a text summary with divergence analysis.
+// Identifies true divergence points (LCA of converged nodes reaching different terminal states).
+func RenderStateDAGNodeDetails(dag *StateDAG) string {
+	if dag == nil {
+		return ""
+	}
+
+	var b strings.Builder
+
+	// Find all converged nodes
+	var convergedHashes []ContentsHash
+	for h, node := range dag.Nodes {
+		if node != nil && len(node.ConvergedIDs) > 0 {
+			convergedHashes = append(convergedHashes, h)
+		}
+	}
+	slices.Sort(convergedHashes)
+
+	b.WriteString("\n# Convergence Analysis\n")
+	b.WriteString(fmt.Sprintf("# Terminal states: %d\n\n", len(convergedHashes)))
+
+	if len(convergedHashes) <= 1 {
+		b.WriteString("No divergence detected (single terminal state)\n")
+		return b.String()
+	}
+
+	// List converged states
+	b.WriteString("## Converged States\n")
+	for _, h := range convergedHashes {
+		b.WriteString(fmt.Sprintf("  - %s\n", h))
+	}
+	b.WriteString("\n")
+
+	// Compute ancestors for each converged node (BFS backwards)
+	ancestors := make(map[ContentsHash]map[ContentsHash]int) // node -> ancestor -> depth
+	for _, target := range convergedHashes {
+		ancestors[target] = computeAncestors(dag, target)
+	}
+
+	// Find divergence points: for each pair of converged nodes, find their LCA
+	divergencePoints := make(map[ContentsHash][]ContentsHash) // divergence point -> which converged nodes diverge here
+	for i := 0; i < len(convergedHashes); i++ {
+		for j := i + 1; j < len(convergedHashes); j++ {
+			a, b := convergedHashes[i], convergedHashes[j]
+			lca := findLCA(ancestors[a], ancestors[b])
+			if lca != "" {
+				divergencePoints[lca] = append(divergencePoints[lca], a, b)
+			}
+		}
+	}
+
+	// Report divergence points
+	b.WriteString("## Divergence Points\n")
+	b.WriteString("# LCA = last common ancestor before paths split to different terminal states\n\n")
+
+	dpHashes := lo.Keys(divergencePoints)
+	slices.Sort(dpHashes)
+	for _, dp := range dpHashes {
+		targets := lo.Uniq(divergencePoints[dp])
+		slices.Sort(targets)
+		b.WriteString(fmt.Sprintf("[%s] diverges to: %v\n", dp, targets))
+	}
+
+	return b.String()
+}
+
+// computeAncestors returns all ancestors of a node with their depth (distance from target).
+func computeAncestors(dag *StateDAG, target ContentsHash) map[ContentsHash]int {
+	ancestors := make(map[ContentsHash]int)
+	ancestors[target] = 0
+
+	queue := []ContentsHash{target}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		currentDepth := ancestors[current]
+
+		node := dag.Nodes[current]
+		if node == nil {
+			continue
+		}
+
+		for parent := range node.Incoming {
+			if _, seen := ancestors[parent]; !seen {
+				ancestors[parent] = currentDepth + 1
+				queue = append(queue, parent)
+			}
+		}
+	}
+
+	return ancestors
+}
+
+// RenderContentsHashMapping outputs a mapping from ContentsHash to path/step coordinates.
+// This enables cross-referencing DAG nodes with dump file steps.
+func RenderContentsHashMapping(states []ResultState) string {
+	var b strings.Builder
+	b.WriteString("\n# ContentsHash to Step Mapping\n")
+	b.WriteString("# Format: [ContentsHash] state=N path=M step=S controller=CtrlName\n\n")
+
+	for stateIdx, state := range states {
+		for pathIdx, path := range state.Paths {
+			for stepIdx, step := range path {
+				if step == nil || len(step.StateAfter) == 0 {
+					continue
+				}
+				stateNode := StateNode{
+					Contents: NewStateSnapshot(step.StateAfter, step.KindSeqAfter, nil),
+				}
+				contentsHash := stateNode.ContentsHash()
+				b.WriteString(fmt.Sprintf("[%s] state=%d path=%d step=%d controller=%s\n",
+					contentsHash, stateIdx, pathIdx, stepIdx, step.ControllerID))
+			}
+		}
+	}
+
+	return b.String()
+}
+
+// findLCA finds the last common ancestor (closest to both terminals).
+// Depth is measured from terminal, so smaller depth = closer to terminal.
+// Returns empty string if no common ancestor exists.
+func findLCA(ancestorsA, ancestorsB map[ContentsHash]int) ContentsHash {
+	var lca ContentsHash
+	minMaxDepth := -1
+
+	for node, depthA := range ancestorsA {
+		if depthB, ok := ancestorsB[node]; ok {
+			// Use max depth as the "distance to furthest terminal"
+			// We want the node closest to both terminals = smallest max depth
+			maxDepth := depthA
+			if depthB > maxDepth {
+				maxDepth = depthB
+			}
+			if minMaxDepth == -1 || maxDepth < minMaxDepth {
+				minMaxDepth = maxDepth
+				lca = node
+			}
+		}
+	}
+
+	return lca
 }
