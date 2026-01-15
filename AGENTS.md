@@ -73,6 +73,30 @@ grep "2tkg7wfg" dump.jsonl | head -1 | jq .
 ```
 The dump contains full `ObjectVersions` (all K8s resources) and `PendingReconciles` for each state, enabling detailed analysis of controller readsets/writesets at divergence points.
 
+### Navigating Dumps with jq (Quick Reference)
+
+The dump structure is: `states[stateIdx].paths[pathIdx][stepIdx]`
+
+| Query | jq path |
+|-------|---------|
+| Get step 47 of state 0, path 0 | `.states[0].paths[0][47]` |
+| Controller that ran step 47 | `.states[0].paths[0][47].controllerId` |
+| Objects changed in step 47 | `.states[0].paths[0][47].changes.objectVersions` |
+| Effects (CREATE/UPDATE/DELETE) | `.states[0].paths[0][47].changes.effects` |
+| State before step ran | `.states[0].paths[0][47].stateBefore` |
+| State after step ran | `.states[0].paths[0][47].stateAfter` |
+| YAML diffs for step | `.states[0].paths[0][47].deltas` |
+| Reconciles triggered by step | `.states[0].paths[0][47].pending` |
+| Total steps in path 0 | `.states[0].paths[0] | length` |
+| All controller IDs in path 0 | `.states[0].paths[0][].controllerId` |
+| Final converged state objects | `.states[0].state.contents.objects` |
+
+**Looking up object content by hash:**
+```bash
+# Find object content for a hash (objects are stored separately)
+jq '.objects[] | select(.hash.Value | startswith("abc123"))' dump.jsonl
+```
+
 ## Backward-Trace Analysis Tools
 
 The `kamera-analyze` CLI provides tools for investigating divergence in exploration results. The approach is "backward-trace": start from known differences in converged states and trace backwards to understand root causes.
