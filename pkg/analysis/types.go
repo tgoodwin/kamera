@@ -71,8 +71,9 @@ type DumpChanges struct {
 
 // DumpDelta represents a delta (diff) for a specific object key.
 type DumpDelta struct {
-	Key snapshot.CompositeKey `json:"key"`
-	Val string                `json:"value"`
+	Key  snapshot.CompositeKey `json:"key"`
+	Hash snapshot.VersionHash  `json:"hash,omitempty"`
+	Val  string                `json:"value"`
 }
 
 // DumpPendingReconcile represents a pending reconcile request.

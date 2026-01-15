@@ -228,7 +228,7 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 			Effects:        effects,
 		},
 		Error:         step.Error,
-		Deltas:        toDumpDeltas(step.Deltas),
+		Deltas:        toDumpDeltas(step.Deltas, step.Changes.ObjectVersions),
 		StateBefore:   toDumpObjectVersions(step.StateBefore, objIndex),
 		StateAfter:    toDumpObjectVersions(step.StateAfter, objIndex),
 		KindSeqBefore: step.KindSeqBefore,
@@ -294,7 +294,7 @@ func fromDumpObjectVersions(entries []analysis.DumpObjectVersion, resolver *dump
 	return out
 }
 
-func toDumpDeltas(deltas map[snapshot.CompositeKey]tracecheck.Delta) []analysis.DumpDelta {
+func toDumpDeltas(deltas map[snapshot.CompositeKey]tracecheck.Delta, objectVersions tracecheck.ObjectVersions) []analysis.DumpDelta {
 	if len(deltas) == 0 {
 		return nil
 	}
@@ -307,9 +307,11 @@ func toDumpDeltas(deltas map[snapshot.CompositeKey]tracecheck.Delta) []analysis.
 	})
 	out := make([]analysis.DumpDelta, 0, len(keys))
 	for _, key := range keys {
+		hash := objectVersions[key]
 		out = append(out, analysis.DumpDelta{
-			Key: key,
-			Val: string(deltas[key]),
+			Key:  key,
+			Hash: hash,
+			Val:  string(deltas[key]),
 		})
 	}
 	return out
@@ -323,7 +325,7 @@ func fromDumpDeltas(entries []analysis.DumpDelta, resolver *dumpKeyResolver) map
 	for _, entry := range entries {
 		key := entry.Key
 		if resolver != nil {
-			key = resolver.fixKey(key, snapshot.VersionHash{})
+			key = resolver.fixKey(key, entry.Hash)
 		}
 		out[normalizeCompositeKey(key)] = tracecheck.Delta(entry.Val)
 	}
