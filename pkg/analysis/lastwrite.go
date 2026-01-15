@@ -87,14 +87,27 @@ func findObjectHash(objects []DumpObjectVersion, key snapshot.CompositeKey) (sna
 
 // findLastWriteInPath walks backwards through a path's steps to find the step
 // that produced the final hash value for the object.
+//
+// A step "writes" an object if the object's hash CHANGED during that step
+// (i.e., hash in StateAfter differs from hash in StateBefore).
 func findLastWriteInPath(path []DumpReconcileResult, key snapshot.CompositeKey, finalHash snapshot.VersionHash) *LastWriteStep {
 	// Walk backwards through the path
 	for i := len(path) - 1; i >= 0; i-- {
 		step := path[i]
 
 		// Check if this step's StateAfter contains the final hash for our key
-		hash, found := findObjectHash(step.StateAfter, key)
-		if found && hash.Value == finalHash.Value {
+		hashAfter, foundAfter := findObjectHash(step.StateAfter, key)
+		if !foundAfter || hashAfter.Value != finalHash.Value {
+			continue
+		}
+
+		// Check if the hash CHANGED in this step (i.e., different from StateBefore)
+		hashBefore, foundBefore := findObjectHash(step.StateBefore, key)
+
+		// Object was written if:
+		// 1. It didn't exist before (created), or
+		// 2. Its hash changed (modified)
+		if !foundBefore || hashBefore.Value != hashAfter.Value {
 			return &LastWriteStep{
 				StepIndex:    i,
 				ControllerId: step.ControllerID,
