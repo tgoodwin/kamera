@@ -116,7 +116,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("KPAReconciler"))
 		return strategy
-	}).For("autoscaling.internal.knative.dev/PodAutoscaler")
+	}).For("autoscaling.internal.knative.dev/PodAutoscaler").PermuteOrder()
 
 	builder.WithCustomStrategy("ServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(servicecontroller.NewController, r)
