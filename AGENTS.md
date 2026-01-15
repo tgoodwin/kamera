@@ -73,6 +73,88 @@ grep "2tkg7wfg" dump.jsonl | head -1 | jq .
 ```
 The dump contains full `ObjectVersions` (all K8s resources) and `PendingReconciles` for each state, enabling detailed analysis of controller readsets/writesets at divergence points.
 
+## Backward-Trace Analysis Tools
+
+The `kamera-analyze` CLI provides tools for investigating divergence in exploration results. The approach is "backward-trace": start from known differences in converged states and trace backwards to understand root causes.
+
+### Building the Analyzer
+```bash
+go build -o bin/kamera-analyze ./cmd/kamera-analyze
+```
+
+### Finding Differing Objects (Module 0)
+The `diff` command compares converged states and identifies objects with different final values:
+```bash
+./bin/kamera-analyze diff <dump.jsonl>
+```
+
+Example output:
+```
+2 converged states with 3 differing object(s), 13 identical
+
+  Endpoints/default/kamera-test-private:
+    State state-0: 8e6fd09
+    State state-1: c950902
+
+  PodAutoscaler/default/kamera-test:
+    State state-0: bc8e586
+    State state-1: eb2c2c3
+```
+
+### Last Write Analysis (Module 1)
+The `report` command shows which controller last wrote each differing object:
+```bash
+./bin/kamera-analyze report <dump.jsonl>
+```
+
+Example output:
+```
+Last write analysis for Endpoints/default/kamera-test-private:
+
+  Path 0 (-> state state-0):
+    Last write: step 25 by EndpointsController
+    Final hash: 8e6fd09
+
+  Path 0 (-> state state-1):
+    Last write: step 40 by EndpointsController
+    Final hash: c950902
+```
+
+This tells you the controller wrote the same object at different steps (25 vs 40), indicating ordering divergence.
+
+### Go API for Deeper Analysis
+For more detailed investigation, use the `pkg/analysis` package directly:
+
+```go
+import "github.com/tgoodwin/kamera/pkg/analysis"
+
+// Load dump
+dump, _ := analysis.LoadDump("dump.jsonl")
+
+// Find differing objects
+diff := analysis.DiffConvergedStates(dump)
+
+// Analyze last write for a specific object
+result := analysis.AnalyzeLastWrite(dump, diff.DifferingObjects[0].Key)
+
+// Access StateBefore to see what the controller saw
+for _, pathResult := range result.ByPath {
+    stateBefore := pathResult.LastWriteStep.StateBefore
+    // Compare stateBefore across paths to understand why writes differed
+}
+
+// Check if a hash appears elsewhere in a path (Module 2)
+lifecycle := analysis.AnalyzeObjectLifecycle(dump, stateIdx, pathIdx, key, targetHash)
+```
+
+### Typical Investigation Workflow
+
+1. **Run diff** to identify what objects differ between converged states
+2. **Run report** to see which controllers last wrote the differing objects
+3. **Compare step numbers** - large differences suggest ordering divergence
+4. **Use Go API** to compare StateBefore across paths - this reveals what each controller saw when it made its write
+5. **Check lifecycle** if needed - does the differing hash appear earlier in one path but not another?
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
