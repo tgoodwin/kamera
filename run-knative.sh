@@ -31,6 +31,6 @@ config_path="$1"
       --log-level info \
       --interactive=true \
       --emit-stats \
-      --timeout 60m \
+      --timeout 300s \
       --explore-config "$root/$config_path"
 )

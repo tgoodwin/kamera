@@ -7,7 +7,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPUT_DIR="${SCRIPT_DIR}/experiments/knative-8539"
+OUTPUT_DIR="${SCRIPT_DIR}"
 OUTPUT_FILE="${OUTPUT_DIR}/kamera-results-$(date +%Y%m%d-%H%M%S).jsonl"
 
 # Create output directory if it doesn't exist
