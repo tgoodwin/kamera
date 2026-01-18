@@ -1,8 +1,0 @@
-2026-01-13T14:22:49-08:00	DEBUG	tracecheck	arrived at converged state	{"Depth": 71, "StateKey": "10u9w826", "Reason": "only async enqueues/requeues remaining", "RemainingIgnorable": 1, "PendingSources": {"Async Enqueue":1}}
-2026-01-13T14:22:55-08:00	DEBUG	tracecheck	arrived at converged state	{"Depth": 86, "StateKey": "6h4wkd4c", "Reason": "only async enqueues/requeues remaining", "RemainingIgnorable": 1, "PendingSources": {"Async Enqueue":1}}
-2026-01-13T14:22:55-08:00	DEBUG	tracecheck	early convergence: all pending are known no-ops and state already converged	{"depth": 80, "pendingCount": 6}
-2026-01-13T14:22:55-08:00	DEBUG	tracecheck	early convergence: all pending are known no-ops and state already converged	{"depth": 81, "pendingCount": 6}
-2026-01-13T14:22:56-08:00	DEBUG	tracecheck	early convergence: all pending are known no-ops and state already converged	{"depth": 82, "pendingCount": 5}
-Converged state 0 - hash: 2r21c27a, total paths: 1, unique paths: 1
-Converged state 1 - hash: pdu8xy8e, total paths: 1, unique paths: 1
-interactive inspector disabled; states available: 2 (converged=2, aborted=0)
