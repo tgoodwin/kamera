@@ -1,6 +1,0 @@
-{
-  "optimizations": {
-    "subtreeCompletion": true,
-    "completedPathDedup": true
-  }
-}
