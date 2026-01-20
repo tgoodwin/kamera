@@ -20,8 +20,9 @@ type ExploreStats struct {
 	NoOpReconciles         int // reconciles that produced no changes
 	SkippedNoOpOrderings   int // orderings skipped because they put a known no-op first
 	CachePredictedSkips    int // reconciles skipped via cache prediction (would be duplicates)
-	SubtreeCompletionSkips int // logical states skipped because subtree was already fully explored
-	SubtreeDiamondSkips    int // logical states skipped because already being explored (diamond convergence)
+	SubtreeCompletionSkips   int // logical states skipped because subtree was already fully explored
+	SubtreeDiamondSkips      int // logical states skipped because already being explored (diamond convergence)
+	StaleViewCompletionSkips int // stale view branches skipped because already fully explored
 
 	RestartsPerReconciler map[ReconcilerID]int
 
@@ -141,6 +142,7 @@ func (s *ExploreStats) Print() {
 	fmt.Printf("  earlyConvergence skips: %d\n", s.EarlyConvergence)
 	fmt.Printf("  subtreeCompletion skips: %d\n", s.SubtreeCompletionSkips)
 	fmt.Printf("  subtreeCompletion diamond skips: %d\n", s.SubtreeDiamondSkips)
+	fmt.Printf("  staleViewCompletion skips: %d\n", s.StaleViewCompletionSkips)
 	fmt.Printf("Reconcile steps: %d\n", s.TotalReconcileSteps)
 	fmt.Printf("Avg step latency: %v\n", avgStep)
 	fmt.Printf("Max step latency: %v\n", s.MaxStepLatency)
