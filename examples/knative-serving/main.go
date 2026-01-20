@@ -147,6 +147,14 @@ func main() {
 
 	ctx := context.Background()
 	builder := newKnativeExplorerBuilder()
+	if cfgPath := explore.ConfigPath(); cfgPath != "" {
+		loadedCfg, err := explore.LoadExploreConfigFromFile(cfgPath, builder.Config())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "load explore config: %v\n", err)
+			os.Exit(1)
+		}
+		builder.SetConfig(loadedCfg)
+	}
 	initialState := buildInitialKnativeState(builder)
 	runner, err := explore.NewRunner(builder)
 	if err != nil {

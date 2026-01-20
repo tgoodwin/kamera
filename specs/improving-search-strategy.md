@@ -81,21 +81,21 @@ if completed := completedPaths[completionKey]; completed {
 
 ### 3. Pending Queue Signature Heuristic
 
-**Observation**: If two states have the same `ObjectsHash` and the same *set* of pending reconciles (order-insensitive), they will explore the same subtree structure—just in different orders.
+**Observation**: If two states have the same `ContentsHash` and the same ordered pending reconciles, they will explore the same subtree structure.
 
-**Heuristic**: Track `(objectsHash, sortedPendingSet)` tuples. After exploring ONE ordering to convergence without finding divergence, mark the subtree as "order-insensitive" and skip other orderings.
+**Heuristic**: Track `(objectsHash, orderedPendingSignature)` tuples. After exploring one ordering to convergence without finding divergence, mark that subtree as complete and skip duplicate entries with the same ordered key.
 
 ```go
 // Key: objectsHash + sorted pending reconcilers (not full PendingReconcile)
 orderInsensitiveSubtrees := make(map[string]StateHash) // maps to converged state
 
-key := fmt.Sprintf("%s|%s", state.ObjectsHash(), sortedReconcilerIDs(state.PendingReconciles))
+key := fmt.Sprintf("%s|%s", state.ObjectsHash(), orderedPendingSignature(state.PendingReconciles))
 if convergedState, found := orderInsensitiveSubtrees[key]; found {
     // All orderings converge to the same state; skip
 }
 ```
 
-**Key insight**: Order determines traversal path, not the set of reachable states. If permuting order doesn't change the converged state, we can skip redundant orderings.
+**Key insight**: Order determines traversal path and can change reachable states, so only identical ordered pending lists are safe to deduplicate without additional proof.
 
 ---
 
@@ -202,14 +202,14 @@ Currently, deduplication happens after visiting. But we could deduplicate *at en
 
 **Key insight**: The subtree below a state depends only on:
 1. `ObjectsHash` (current objects)
-2. The *set* of pending reconciles (not order—order just affects traversal)
+2. The ordered pending reconciles
 3. Which reconcile we execute first
 
 ```go
-// subtreeKey = objectsHash + sortedPendingSet + firstReconciler
+// subtreeKey = objectsHash + orderedPendingSignature + firstReconciler
 subtreeKey := fmt.Sprintf("%s|%s|%s",
     state.ObjectsHash(),
-    sortedPendingSignature(state.PendingReconciles),
+    orderedPendingSignature(state.PendingReconciles),
     state.PendingReconciles[0].ReconcilerID,
 )
 

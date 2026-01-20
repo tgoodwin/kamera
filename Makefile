@@ -11,6 +11,14 @@ determinize:
 	@echo "building determinize..."
 	go build -o $(GOBIN)/determinize ./cmd/determinize
 
+.PHONY: inspect
+inspect:
+	@echo "building inspect..."
+	go build -o $(GOBIN)/inspect ./cmd/inspect
+
+.PHONY: binaries
+binaries: determinize inspect
+
 .PHONY: test
 test:
 	@echo "🧪 Running tests..."

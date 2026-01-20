@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/samber/lo"
@@ -193,97 +194,25 @@ func DebugPaths(paths []ExecutionHistory) {
 	}
 }
 
-// normalizeNoOpSuffix sorts the trailing no-op reconciles (no changes, no errors)
-// so that exploration order does not create spurious path permutations when the
-// remaining work is idempotent.
-func normalizeNoOpSuffix(path ExecutionHistory) ExecutionHistory {
-	cut := len(path)
-	for cut > 0 {
-		r := path[cut-1]
-		if len(r.Changes.ObjectVersions) == 0 && r.Error == "" {
-			cut--
-			continue
-		}
-		break
-	}
-
-	// No no-op suffix or only a single no-op reconcile to reorder.
-	if cut >= len(path)-1 {
-		return path
-	}
-
-	normalized := make(ExecutionHistory, 0, len(path))
-	normalized = append(normalized, path[:cut]...)
-
-	suffix := slices.Clone(path[cut:])
-	sort.SliceStable(suffix, func(i, j int) bool {
-		if suffix[i].ControllerID != suffix[j].ControllerID {
-			return suffix[i].ControllerID < suffix[j].ControllerID
-		}
-		return len(suffix[i].PendingReconciles) < len(suffix[j].PendingReconciles)
-	})
-
-	normalized = append(normalized, suffix...)
-	return normalized
-}
-
-// normalizeAndDedupePaths keeps full execution histories (including no-ops) but
-// normalizes trailing no-op reconciles to a deterministic order and removes
-// duplicate paths that would otherwise differ only by those no-op permutations.
-func normalizeAndDedupePaths(paths []ExecutionHistory) []ExecutionHistory {
-	seen := make(map[string]struct{})
-	deduped := make([]ExecutionHistory, 0, len(paths))
-
-	for _, path := range paths {
-		normalized := normalizeNoOpSuffix(path)
-		sigParts := make([]string, len(normalized))
-		for i, r := range normalized {
-			sigParts[i] = fmt.Sprintf("%s@%d", r.ControllerID, len(r.Deltas))
-		}
-		sig := strings.Join(sigParts, ",")
-		if _, ok := seen[sig]; ok {
-			continue
-		}
-		seen[sig] = struct{}{}
-		deduped = append(deduped, normalized)
-	}
-
-	return deduped
-}
-
-func getUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
+// dedupePathsByUniqueKey deduplicates paths using UniqueKey(), which considers paths
+// equivalent if they have the same sequence of non-no-op steps. The actual paths
+// (including no-ops) are preserved to maintain step-to-step pending reconcile invariants.
+func dedupePathsByUniqueKey(paths []ExecutionHistory) []ExecutionHistory {
 	return lo.UniqBy(paths, func(path ExecutionHistory) string {
 		return path.UniqueKey()
 	})
 }
 
+// GetUniquePaths deduplicates paths using UniqueKey() and filters out paths
+// that are entirely no-ops (have no meaningful steps).
 func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
-	normalized := lo.Map(paths, func(path ExecutionHistory, _ int) ExecutionHistory {
-		return normalizeNoOpSuffix(path)
+	// First deduplicate using UniqueKey
+	deduped := dedupePathsByUniqueKey(paths)
+
+	// Then filter out paths that are entirely no-ops
+	return lo.Filter(deduped, func(path ExecutionHistory, _ int) bool {
+		return len(path) > 0 && len(path.FilterNoOps()) > 0
 	})
-
-	// Deduplicate based on the filtered key (ignoring no-ops), but return the
-	// full normalized paths so the inspector can still display no-op steps.
-	unique := make([]ExecutionHistory, 0, len(normalized))
-	seen := make(map[string]struct{}, len(normalized))
-
-	for _, path := range normalized {
-		if len(path) == 0 {
-			continue
-		}
-		// If the path is entirely no-ops, skip it as before.
-		if len(path.FilterNoOps()) == 0 {
-			continue
-		}
-		key := path.UniqueKey()
-		if _, exists := seen[key]; exists {
-			continue
-		}
-		seen[key] = struct{}{}
-		unique = append(unique, path)
-	}
-
-	return unique
 }
 
 type ObservableState interface {
@@ -304,7 +233,7 @@ type StateNode struct {
 	ExecutionHistory ExecutionHistory
 
 	// used to track children of a divergence point of interest
-	divergenceKey StateHash
+	divergenceKey NodeHash
 
 	depth int
 
@@ -476,19 +405,19 @@ func serializeCompositeKey(ck snapshot.CompositeKey) string {
 	return fmt.Sprintf("%s/%s/%s/%s:%s", group, ck.ResourceKey.Kind, ck.ResourceKey.Namespace, ck.ResourceKey.Name, ck.ObjectID)
 }
 
-// StateHash represents the contents of the state node and the pending reconciles, unaffected by the order of pending reconciles.
-type StateHash string
+// NodeHash represents the contents of the state node and the pending reconciles, unaffected by the order of pending reconciles.
+type NodeHash string
 
 // ContentsHash represents the contents of the state node only, excluding metadata such as pending reconciles.
 type ContentsHash string
 
 // Hash returns a hash of the state node, unaffected by the order of pending reconciles.
-func (sn StateNode) Hash() StateHash {
+func (sn StateNode) Hash() NodeHash {
 	s := sn.Serialize()
-	return StateHash(util.ShortenHash(s))
+	return NodeHash(util.ShortenHash(s))
 }
 
-// ContentsHash returns a hash of just the object contents, excluding pending reconciles.
+// StateHash returns a hash of just the object contents, excluding pending reconciles.
 // This is useful for caching reconcile results since reconciler behavior only depends on objects.
 func (sn StateNode) ContentsHash() ContentsHash {
 	objectKeys := make([]snapshot.CompositeKey, 0, len(sn.Objects()))
@@ -524,36 +453,37 @@ func (sn StateNode) ContentsHash() ContentsHash {
 
 // ConvergenceHash returns a hash normalized for convergence by dropping pending reconciles
 // that are ignorable for convergence (async enqueues / requeues).
-func (sn StateNode) ConvergenceHash() StateHash {
+func (sn StateNode) ConvergenceHash() NodeHash {
 	filtered := lo.Filter(sn.PendingReconciles, func(pr PendingReconcile, _ int) bool {
 		return pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue
 	})
 	clone := sn
 	clone.PendingReconciles = filtered
-	return StateHash(util.ShortenHash(clone.Serialize()))
+	return NodeHash(util.ShortenHash(clone.Serialize()))
 }
 
 // LogicalStateKey uniquely identifies a logical state for subtree completion tracking.
 // Two states with the same LogicalStateKey will have identical future exploration subtrees,
-// regardless of how they were reached (execution history).
-//
-// TODO: Consider adding StuckPositions to the key when staleness expansion is unified
-// with the marker-based completion tracking model.
+// regardless of how they were reached (execution history). Pending reconciles are order-sensitive,
+// and stuck reconciler positions are included because they affect observed state.
 type LogicalStateKey struct {
 	ObjectsHash ContentsHash
 	PendingSet  string
+	StuckKey    string
 }
 
 // LogicalKey returns the LogicalStateKey for this state node.
 func (sn StateNode) LogicalKey() LogicalStateKey {
 	return LogicalStateKey{
 		ObjectsHash: sn.ContentsHash(),
-		PendingSet:  sn.sortedPendingSignature(),
+		PendingSet:  sn.orderedPendingSignature(),
+		StuckKey:    sn.stuckPositionsSignature(),
 	}
 }
 
-// sortedPendingSignature returns an order-insensitive signature of pending reconciles.
-func (sn StateNode) sortedPendingSignature() string {
+// orderedPendingSignature returns an order-sensitive signature of pending reconciles.
+func (sn StateNode) orderedPendingSignature() string {
+	// pendingSignature returns an order-insensitive signature of pending reconciles.
 	if len(sn.PendingReconciles) == 0 {
 		return ""
 	}
@@ -561,8 +491,49 @@ func (sn StateNode) sortedPendingSignature() string {
 	for i, pr := range sn.PendingReconciles {
 		keys[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
 	}
-	sort.Strings(keys)
 	return strings.Join(keys, "|")
+}
+
+// stuckPositionsSignature returns a stable signature for the reconciler "stuck" positions.
+func (sn StateNode) stuckPositionsSignature() string {
+	if len(sn.stuckReconcilerPositions) == 0 {
+		return ""
+	}
+
+	reconcilerIDs := make([]ReconcilerID, 0, len(sn.stuckReconcilerPositions))
+	for id := range sn.stuckReconcilerPositions {
+		reconcilerIDs = append(reconcilerIDs, id)
+	}
+	sort.Slice(reconcilerIDs, func(i, j int) bool {
+		return reconcilerIDs[i] < reconcilerIDs[j]
+	})
+
+	var builder strings.Builder
+	for i, reconcilerID := range reconcilerIDs {
+		if i > 0 {
+			builder.WriteByte('|')
+		}
+		builder.WriteString(string(reconcilerID))
+		builder.WriteByte('=')
+
+		sequences := sn.stuckReconcilerPositions[reconcilerID]
+		kindKeys := make([]string, 0, len(sequences))
+		for kind := range sequences {
+			kindKeys = append(kindKeys, kind)
+		}
+		sort.Strings(kindKeys)
+
+		for j, kind := range kindKeys {
+			if j > 0 {
+				builder.WriteByte(',')
+			}
+			builder.WriteString(kind)
+			builder.WriteByte(':')
+			builder.WriteString(strconv.FormatInt(sequences[kind], 10))
+		}
+	}
+
+	return builder.String()
 }
 
 func (sn *StateSnapshot) trimForInspection() {
@@ -586,17 +557,19 @@ func (sn *StateNode) TrimForInspection() {
 // OrderHash represents the contents of the state node and the order of pending reconciles.
 type OrderHash string
 
-// OrderSensitiveHash returns a hash of the state node and the order of pending reconciles.
-func (sn StateNode) OrderSensitiveHash() OrderHash {
+// OrderHash returns a hash of the state node and the order of pending reconciles.
+func (sn StateNode) OrderHash() OrderHash {
 	s := sn.serialize(true)
 	return OrderHash(util.ShortenHash(s))
 }
 
-func (sn StateNode) LineageHash() string {
+type LineageHash string
+
+func (sn StateNode) LineageHash() LineageHash {
 	if sn.parent == nil {
-		return string(sn.OrderSensitiveHash())
+		return LineageHash(sn.OrderHash())
 	}
-	return fmt.Sprintf("%s->%s", sn.parent.LineageHash(), sn.OrderSensitiveHash())
+	return LineageHash(fmt.Sprintf("%s->%s", sn.parent.LineageHash(), sn.OrderHash()))
 }
 
 func (sn StateNode) DetailedLineage() string {
@@ -609,9 +582,9 @@ func (sn StateNode) DetailedLineage() string {
 		id = "root"
 	}
 	if sn.parent == nil {
-		return fmt.Sprintf("%s:%s", id, sn.OrderSensitiveHash())
+		return fmt.Sprintf("%s:%s", id, sn.OrderHash())
 	}
-	return fmt.Sprintf("%s->%s:%s@%d", sn.parent.DetailedLineage(), id, sn.OrderSensitiveHash(), numChanges)
+	return fmt.Sprintf("%s->%s:%s@%d", sn.parent.DetailedLineage(), id, sn.OrderHash(), numChanges)
 }
 
 func (sn StateNode) ReconcileLineage() string {
@@ -635,10 +608,9 @@ func (sn StateNode) ReconcileLineage() string {
 	return fmt.Sprintf("%s=>%s:%s[%d]", sn.parent.ReconcileLineage(), id, frameID, numChanges)
 }
 
-// expandStateByReconcileOrder handles permuting the order of the reconcilers triggered by the creation of
-// a new StateNode. It produces a new StateNodes for each triggered reconciler where that reconciler is placed
-// as the first element in its PendingReconciles list. This allows the explorer to explore any potential
-// order sensitivity among the reconcilers triggered by the same state change.
+// expandStateByReconcileOrder handles permuting the order of pending reconciles for a new StateNode.
+// By default, it only permutes reconcilers triggered by the last step; when OnlyPermuteTriggered is
+// false, any permutable pending reconciler can be moved to the first position.
 func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []PendingReconcile) []StateNode {
 	// If there are no pending reconciles or just one, just return the original state
 	if len(state.PendingReconciles) <= 1 {
@@ -653,7 +625,11 @@ func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []Pend
 	var result []StateNode
 
 	toPermute := util.NewSet[ReconcilerID]()
-	for _, pr := range triggered {
+	permuteCandidates := triggered
+	if e.Config != nil && !e.Config.Optimizations.OnlyPermuteTriggered {
+		permuteCandidates = originalPending
+	}
+	for _, pr := range permuteCandidates {
 		if permute, ok := e.Config.PermuteOrder[pr.ReconcilerID]; ok && permute {
 			toPermute.Add(pr.ReconcilerID)
 		}
@@ -673,7 +649,7 @@ func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []Pend
 
 		cloned := state.Clone()
 		cloned.PendingReconciles = alternativeOrder
-		cloned.ID = string(cloned.OrderSensitiveHash()) // Generate a new deterministic ID based on the new ordering
+		cloned.ID = string(cloned.OrderHash()) // Generate a new deterministic ID based on the new ordering
 		result = append(result, cloned)
 	}
 

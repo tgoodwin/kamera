@@ -10,8 +10,9 @@ type ExploreStats struct {
 	endTime                *time.Time
 	AbortedPaths           int
 	UniqueNodeVisits       int
+	UniqueResourceStates   int
 	TotalNodeVisits        int
-	SkippedNodeVisits      int
+	AlreadySeenNodeVisits  int // this is just total - unique and tracks how effective the pruning is
 	SkippedPaths           int
 	SkippedOrderExpansions int
 	SkippedSubtrees        int // entire subtrees skipped (same logical state already explored)
@@ -120,7 +121,8 @@ func (s *ExploreStats) Print() {
 	fmt.Printf("Total time: %v\n", s.endTime.Sub(*s.startTime))
 	fmt.Printf("Total node visits: %d\n", s.TotalNodeVisits)
 	fmt.Printf("Unique node visits: %d\n", s.UniqueNodeVisits)
-	fmt.Printf("Skipped node visits: %d\n", s.SkippedNodeVisits)
+	fmt.Printf("Unique resource states: %d\n", s.UniqueResourceStates)
+	fmt.Printf("Skipped node visits: %d\n", s.AlreadySeenNodeVisits)
 	fmt.Printf("Skipped paths: %d\n", s.SkippedPaths)
 	fmt.Printf("Skipped order expansions: %d\n", s.SkippedOrderExpansions)
 	fmt.Printf("Skipped subtrees: %d\n", s.SkippedSubtrees)
@@ -131,6 +133,14 @@ func (s *ExploreStats) Print() {
 	fmt.Printf("Skipped no-op orderings: %d\n", s.SkippedNoOpOrderings)
 	fmt.Printf("Cache predicted skips: %d\n", s.CachePredictedSkips)
 	fmt.Printf("Aborted paths: %d\n", s.AbortedPaths)
+	fmt.Println("Optimization fires:")
+	fmt.Printf("  orderingPruning branch skips: %d\n", s.SkippedOrderExpansions)
+	fmt.Printf("  orderingPruning no-op skips: %d\n", s.SkippedNoOpOrderings)
+	fmt.Printf("  completedPathDedup skips: %d\n", s.SkippedPaths)
+	fmt.Printf("  cachePrediction skips: %d\n", s.CachePredictedSkips)
+	fmt.Printf("  earlyConvergence skips: %d\n", s.EarlyConvergence)
+	fmt.Printf("  subtreeCompletion skips: %d\n", s.SubtreeCompletionSkips)
+	fmt.Printf("  subtreeCompletion diamond skips: %d\n", s.SubtreeDiamondSkips)
 	fmt.Printf("Reconcile steps: %d\n", s.TotalReconcileSteps)
 	fmt.Printf("Avg step latency: %v\n", avgStep)
 	fmt.Printf("Max step latency: %v\n", s.MaxStepLatency)

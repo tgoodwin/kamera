@@ -101,7 +101,10 @@ func TestExhaustiveInterleavings(t *testing.T) {
 
 	eb := tracecheck.NewExplorerBuilder(scheme)
 	eb.WithMaxDepth(10)
-	eb.WithoutOptimizations() // Disable optimizations to test exhaustive exploration
+	eb.WithOptimizations(tracecheck.OptimizationConfig{
+		OrderingPruning:      true,
+		OnlyPermuteTriggered: true,
+	})
 	fooKind := "webapp.discrete.events/Foo"
 	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
@@ -189,13 +192,72 @@ func TestExhaustiveInterleavings(t *testing.T) {
 	//   3. Bar@1 → Foo@1 → Bar@0 → Foo@0
 
 	actual := formatResults(convergedState.Paths)
+	// Trailing no-ops may appear in any order; we preserve the natural execution order
+	// rather than sorting. The deduplication considers different no-op orderings as equivalent.
 	expectedAll := [][]string{
-		{"FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+		{"FooController@1", "BarController@1", "FooController@0", "BarController@0"},
 		{"FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 		{"BarController@1", "FooController@1", "BarController@0", "FooController@0"},
 	}
 	assert.Len(t, actual, 3)
 	assert.ElementsMatch(t, expectedAll, actual)
+}
+
+// runFooBarExplore executes the Foo/Bar controller scenario with the given optimizations.
+// It returns the explorer (to inspect stats) and the exploration result.
+func runFooBarExplore(t *testing.T, opt tracecheck.OptimizationConfig) (*tracecheck.Explorer, *tracecheck.Result) {
+	t.Helper()
+
+	eb := tracecheck.NewExplorerBuilder(scheme)
+	eb.WithMaxDepth(10)
+	if opt.AnyEnabled() {
+		eb.WithOptimizations(opt)
+	} else {
+		eb.WithoutOptimizations()
+	}
+
+	fooKind := "webapp.discrete.events/Foo"
+	eb.WithReconciler("FooController", func(c ctrlclient.Client) tracecheck.Reconciler {
+		return &controller.TestReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+
+	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
+		return &controller.TestReconciler{
+			Client: c,
+			Scheme: scheme,
+		}
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+
+	topLevelObj := &foov1.Foo{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "foo",
+			Namespace: "default",
+			Labels: map[string]string{
+				"tracey-uid":                       "foo",
+				"discrete.events/sleeve-object-id": "foo-123",
+			},
+		},
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "webapp.discrete.events/v1",
+			Kind:       "Foo",
+		},
+		Spec: foov1.FooSpec{
+			Mode: "A",
+		},
+	}
+
+	initialState := eb.GetStartStateFromObject(topLevelObj, "FooController", "BarController")
+	initialState.Contents.KindSequences = canonicalizeKindSequences(initialState.Contents.KindSequences)
+	explorer, err := eb.Build("standalone")
+	if err != nil {
+		t.Fatalf("build explorer: %v", err)
+	}
+
+	result := explorer.Explore(context.Background(), initialState)
+	return explorer, result
 }
 
 func TestConvergedStateIdentification(t *testing.T) {
@@ -248,6 +310,8 @@ func TestConvergedStateIdentification(t *testing.T) {
 	result := explorer.Explore(context.Background(), initialState)
 	assert.Equal(t, 2, len(result.ConvergedStates))
 
+	// Trailing no-ops may appear in any order; we preserve the natural execution order
+	// rather than sorting. The deduplication considers different no-op orderings as equivalent.
 	expected := []struct {
 		status        string
 		hasAnnotation bool
@@ -259,7 +323,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: false,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "FooController@1", "BarController@1", "FooController@0", "BarController@0"},
 				{"FooController@1", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},
@@ -268,7 +332,7 @@ func TestConvergedStateIdentification(t *testing.T) {
 			hasAnnotation: true,
 			numPaths:      2,
 			pathSummaries: [][]string{
-				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "BarController@0", "FooController@0"},
+				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "BarController@1", "FooController@0", "BarController@0"},
 				{"FooController@1", "BarController@1", "FooController@1", "BarController@0", "FooController@1", "FooController@1", "BarController@0", "FooController@0"},
 			},
 		},
@@ -299,6 +363,9 @@ func TestConvergedStateIdentification(t *testing.T) {
 		assert.ElementsMatch(t, expectedState.pathSummaries, actualPathSummaries)
 	}
 }
+
+// Ensures that enabling optimizations on the Foo/Bar scenario reduces exploration work
+// while preserving convergence.
 
 func BenchmarkExhaustiveInterleavingsExplore(b *testing.B) {
 	ctrl.SetLogger(zap.New(

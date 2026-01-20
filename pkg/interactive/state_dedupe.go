@@ -14,7 +14,7 @@ func dedupeResultStates(states []tracecheck.ResultState) []tracecheck.ResultStat
 	}
 
 	unique := make([]tracecheck.ResultState, 0, len(states))
-	indexByHash := make(map[tracecheck.StateHash]int, len(states))
+	indexByHash := make(map[tracecheck.NodeHash]int, len(states))
 
 	for _, state := range states {
 		hash := state.State.ConvergenceHash()

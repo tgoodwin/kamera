@@ -257,11 +257,12 @@ func Test_GetUniquePaths_PreservesConvergenceSteps(t *testing.T) {
 
 func TestExpandStateByReconcileOrder(t *testing.T) {
 	type testCase struct {
-		name            string
-		existingPending []PendingReconcile
-		triggered       []PendingReconcile
-		permuteEnabled  map[ReconcilerID]bool // which reconcilers have permuteOrder=true
-		wantOrders      [][]string            // ordered list of reconcilerIDs, for each result
+		name                 string
+		existingPending      []PendingReconcile
+		triggered            []PendingReconcile
+		permuteEnabled       map[ReconcilerID]bool // which reconcilers have permuteOrder=true
+		onlyPermuteTriggered *bool
+		wantOrders           [][]string // ordered list of reconcilerIDs, for each result
 	}
 	makePR := func(reconcilerID ReconcilerID) PendingReconcile {
 		return PendingReconcile{
@@ -345,6 +346,18 @@ func TestExpandStateByReconcileOrder(t *testing.T) {
 			wantOrders:      [][]string{}, // no change since none triggered
 		},
 		{
+			name:                 "none triggered, permute all pending",
+			existingPending:      []PendingReconcile{makePR("A"), makePR("B"), makePR("C")},
+			triggered:            []PendingReconcile{},
+			permuteEnabled:       map[ReconcilerID]bool{"A": true, "B": true, "C": true},
+			onlyPermuteTriggered: lo.ToPtr(false),
+			wantOrders: [][]string{
+				{"A", "B", "C"},
+				{"B", "A", "C"},
+				{"C", "A", "B"},
+			},
+		},
+		{
 			name:            "three pending reconciles, only two triggered",
 			existingPending: []PendingReconcile{makePR("A"), makePR("B"), makePR("C")},
 			triggered:       []PendingReconcile{makePR("A"), makePR("C")},
@@ -381,7 +394,16 @@ func TestExpandStateByReconcileOrder(t *testing.T) {
 					Name: id,
 				}
 			}
-			cfg := ExploreConfig{PermuteOrder: make(map[ReconcilerID]bool)}
+			onlyPermuteTriggered := true
+			if tc.onlyPermuteTriggered != nil {
+				onlyPermuteTriggered = *tc.onlyPermuteTriggered
+			}
+			cfg := ExploreConfig{
+				PermuteOrder: make(map[ReconcilerID]bool),
+				Optimizations: OptimizationConfig{
+					OnlyPermuteTriggered: onlyPermuteTriggered,
+				},
+			}
 			for id, enabled := range tc.permuteEnabled {
 				cfg.PermuteOrder[id] = enabled
 			}

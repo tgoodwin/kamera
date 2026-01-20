@@ -42,6 +42,10 @@ type ExplorerBuilder struct {
 
 	// for replay mode
 	builder *replay.Builder
+
+	// podCrashProbabilities configures random crash probabilities for the
+	// PodLifecycleController. Maps lifecycle stage to crash probability (0.0 to 1.0).
+	podCrashProbabilities map[controller.PodLifecycleStage]float64
 }
 
 // ReconcilerBuilder enables chaining reconciler-specific configuration
@@ -104,6 +108,9 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			RecordPerfStats: *emitStats,
 			Timeout:         *timeout,
 			PermuteOrder:    make(map[ReconcilerID]bool),
+			Optimizations: OptimizationConfig{
+				OnlyPermuteTriggered: true,
+			},
 			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
 		},
 	}
@@ -176,7 +183,10 @@ func parseKindString(kind string) schema.GroupKind {
 func (b *ExplorerBuilder) ensurePermuteOrderEntry(id ReconcilerID) {
 	if b.config == nil {
 		b.config = &ExploreConfig{
-			PermuteOrder:    make(map[ReconcilerID]bool),
+			PermuteOrder: make(map[ReconcilerID]bool),
+			Optimizations: OptimizationConfig{
+				OnlyPermuteTriggered: true,
+			},
 			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
 		}
 	}
@@ -208,6 +218,26 @@ func (b *ExplorerBuilder) WithPerfStats() *ExplorerBuilder {
 	return b
 }
 
+// WithPodCrashProbability sets the probability that a Pod will crash after
+// reaching the specified lifecycle stage. This introduces intentional
+// nondeterminism for testing multiple converged states.
+//
+// Available stages:
+//   - controller.StageScheduled: After scheduled (Pod is Pending + PodScheduled=True)
+//   - controller.StageRunning: After running but not ready (Pod is Running + Ready=False)
+//   - controller.StageReady: After fully ready (Pod is Running + Ready=True + IPs assigned)
+//
+// Example:
+//
+//	builder.WithPodCrashProbability(controller.StageReady, 0.5) // 50% chance to crash after becoming ready
+func (b *ExplorerBuilder) WithPodCrashProbability(stage controller.PodLifecycleStage, probability float64) *ExplorerBuilder {
+	if b.podCrashProbabilities == nil {
+		b.podCrashProbabilities = make(map[controller.PodLifecycleStage]float64)
+	}
+	b.podCrashProbabilities[stage] = probability
+	return b
+}
+
 func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc PerturbationConfig) *ExplorerBuilder {
 	b.config.perturbationCfg[reconcilerID] = rc
 	return b
@@ -217,7 +247,7 @@ func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc Pertur
 // Entries missing for known reconcilers are defaulted to false so the UI can display them.
 func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{}
+		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
 	}
 	target := perms
 	if target == nil && b.config.PermuteOrder != nil {
@@ -271,13 +301,23 @@ func (b *ExplorerBuilder) WithDivergenceCircuitBreaker(threshold int) *ExplorerB
 	return b
 }
 
+// WithOptimizations configures which exploration optimizations to enable.
+// By default, all optimizations are disabled; opt in per-heuristic for ablation studies.
+func (b *ExplorerBuilder) WithOptimizations(opt OptimizationConfig) *ExplorerBuilder {
+	if b.config == nil {
+		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
+	}
+	b.config.Optimizations = opt
+	return b
+}
+
 // WithoutOptimizations disables all exploration optimizations.
 // Useful for tests that need deterministic, exhaustive exploration.
 func (b *ExplorerBuilder) WithoutOptimizations() *ExplorerBuilder {
-	b.config.DisableEarlyConvergence = true
-	b.config.DisableCachePrediction = true
-	b.config.DisableNoOpOrderingSkip = true
-	b.config.DisableSubtreeCompletion = true
+	if b.config == nil {
+		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
+	}
+	b.config.Optimizations = OptimizationConfig{}
 	return b
 }
 
@@ -294,7 +334,7 @@ func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBu
 // Config returns a copy of the current builder configuration.
 func (b *ExplorerBuilder) Config() ExploreConfig {
 	if b.config == nil {
-		return ExploreConfig{}
+		return ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
 	}
 	return b.config.Clone()
 }
@@ -332,11 +372,13 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "apps", Kind: "Deployment"}, "ReplicaSetController")
 
 	// Pod Lifecycle Controller, e.g. "fake kubelet"
+	// Note: The factory is retrieved at reconciler instantiation time (during Build()),
+	// so crash probabilities configured via WithPodCrashProbability() will be used.
 	b.WithReconciler("PodLifecycleController", func(c client.Client) Reconciler {
 		return controller.NewPodLifecycleReconciler(
 			c,
 			b.scheme,
-			controller.NewDefaultPodLifecycleFactory(),
+			b.getPodLifecycleFactory(),
 			0,
 		)
 	}).For("Pod")
@@ -371,6 +413,18 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")
+}
+
+// getPodLifecycleFactory returns the PodStateMachineFactory to use for the
+// PodLifecycleController, configured with any crash probabilities.
+func (b *ExplorerBuilder) getPodLifecycleFactory() controller.PodStateMachineFactory {
+	if len(b.podCrashProbabilities) == 0 {
+		return controller.NewDefaultPodLifecycleFactory()
+	}
+	return &controller.DeterministicPodStateMachineFactory{
+		Steps:              controller.DefaultPodLifecycle(),
+		CrashProbabilities: b.podCrashProbabilities,
+	}
 }
 
 func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[ReconcilerID]*ReconcilerContainer {
@@ -502,7 +556,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		mode = modes[0]
 	}
 	if b.config == nil {
-		b.config = &ExploreConfig{}
+		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
 	}
 	if b.config.MaxDepth == 0 {
 		b.config.MaxDepth = DefaultMaxDepth

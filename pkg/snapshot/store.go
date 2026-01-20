@@ -1,6 +1,7 @@
 package snapshot
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/tgoodwin/kamera/pkg/util"
@@ -27,6 +28,81 @@ type ResourceKey struct {
 type CompositeKey struct {
 	IdentityKey
 	ResourceKey
+}
+
+// compositeKeyJSON is the JSON representation of CompositeKey.
+// We use explicit field names to avoid Go's embedded struct field collision issue.
+type compositeKeyJSON struct {
+	// Identity fields
+	IdentityGroup string `json:"identityGroup,omitempty"`
+	IdentityKind  string `json:"identityKind,omitempty"`
+	ObjectID      string `json:"objectId,omitempty"`
+	// Resource fields
+	ResourceGroup string `json:"resourceGroup,omitempty"`
+	ResourceKind  string `json:"resourceKind,omitempty"`
+	Namespace     string `json:"namespace,omitempty"`
+	Name          string `json:"name,omitempty"`
+}
+
+// MarshalJSON implements json.Marshaler for CompositeKey.
+func (ck CompositeKey) MarshalJSON() ([]byte, error) {
+	return json.Marshal(compositeKeyJSON{
+		IdentityGroup: ck.IdentityKey.Group,
+		IdentityKind:  ck.IdentityKey.Kind,
+		ObjectID:      ck.IdentityKey.ObjectID,
+		ResourceGroup: ck.ResourceKey.Group,
+		ResourceKind:  ck.ResourceKey.Kind,
+		Namespace:     ck.ResourceKey.Namespace,
+		Name:          ck.ResourceKey.Name,
+	})
+}
+
+// legacyCompositeKeyJSON is the old JSON format that had field collisions.
+// We support reading it for backwards compatibility.
+type legacyCompositeKeyJSON struct {
+	ObjectID  string `json:"ObjectID"`
+	Namespace string `json:"Namespace"`
+	Name      string `json:"Name"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler for CompositeKey.
+// It supports both the new explicit format and the legacy format for backwards compatibility.
+func (ck *CompositeKey) UnmarshalJSON(data []byte) error {
+	// Try new format first
+	var j compositeKeyJSON
+	if err := json.Unmarshal(data, &j); err != nil {
+		return err
+	}
+
+	// If we got the new format fields, use them
+	if j.ResourceKind != "" || j.IdentityKind != "" {
+		ck.IdentityKey = IdentityKey{
+			Group:    j.IdentityGroup,
+			Kind:     j.IdentityKind,
+			ObjectID: j.ObjectID,
+		}
+		ck.ResourceKey = ResourceKey{
+			Group:     j.ResourceGroup,
+			Kind:      j.ResourceKind,
+			Namespace: j.Namespace,
+			Name:      j.Name,
+		}
+		return nil
+	}
+
+	// Fall back to legacy format (ObjectID, Namespace, Name with capital letters)
+	var legacy legacyCompositeKeyJSON
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return err
+	}
+	ck.IdentityKey = IdentityKey{
+		ObjectID: legacy.ObjectID,
+	}
+	ck.ResourceKey = ResourceKey{
+		Namespace: legacy.Namespace,
+		Name:      legacy.Name,
+	}
+	return nil
 }
 
 func NewCompositeKey(kind, namespace, name, sleeveObjectID string) CompositeKey {

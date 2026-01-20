@@ -31,7 +31,7 @@ func TestPodLifecycleSequentialTransitions(t *testing.T) {
 		WithRuntimeObjects(pod).
 		Build()
 
-	factory := &SequentialPodStateMachineFactory{
+	factory := &DeterministicPodStateMachineFactory{
 		Steps: []PodStatusStep{
 			{
 				Phase: corev1.PodPending,
@@ -56,6 +56,7 @@ func TestPodLifecycleSequentialTransitions(t *testing.T) {
 				},
 			},
 		},
+		// CrashProbabilities defaults to nil (no crashes)
 	}
 
 	reconciler := NewPodLifecycleReconciler(client, scheme, factory, 0)

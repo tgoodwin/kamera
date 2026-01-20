@@ -26,6 +26,9 @@ go.work.sum
 # python crap!
 *.pyc
 
+experiments/**/*.jsonl
+examples/**/*.jsonl
+
 .vscode/**
 **/.gocache/**
 **/.gomodcache/**
@@ -38,7 +41,5 @@ results/**
 
 testresults/**
 
-# ignore traces
-*.jsonl
-
 *.dump
+*.txt
