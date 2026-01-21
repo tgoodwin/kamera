@@ -7,7 +7,6 @@ import (
 	"os"
 
 	"github.com/tgoodwin/kamera/pkg/explore"
-	"github.com/tgoodwin/kamera/pkg/interactive"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 )
 
@@ -41,23 +40,6 @@ func main() {
 			os.Exit(1)
 		}
 		builder.SetConfig(loadedCfg)
-	}
-
-	if explore.DumpPath() != "" {
-		explorer, err := builder.Build("standalone")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "build explorer: %v\n", err)
-			os.Exit(1)
-		}
-		result := explorer.Explore(context.Background(), initialState)
-		states := append([]tracecheck.ResultState{}, result.ConvergedStates...)
-		states = append(states, result.AbortedStates...)
-		if err := interactive.SaveInspectorDump(states, explorer.VersionManager(), explore.DumpPath()); err != nil {
-			fmt.Fprintf(os.Stderr, "dump results: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Printf("wrote results to %s\n", explore.DumpPath())
-		return
 	}
 
 	runner, err := explore.NewRunner(builder)

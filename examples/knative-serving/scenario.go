@@ -49,7 +49,7 @@ func buildInitialKnativeState(builder *tracecheck.ExplorerBuilder) tracecheck.St
 	svc := buildBaselineService()
 	tag.AddSleeveObjectID(svc)
 	serviceState := stateBuilder.AddTopLevelObject(svc, "ServiceReconciler")
-	return mergeStateNodes(serviceState)
+	return tracecheck.MergeStateNodes(serviceState)
 }
 
 func buildBaselineService() *v1.Service {
