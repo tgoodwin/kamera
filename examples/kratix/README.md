@@ -1,9 +1,9 @@
 # Kratix + Kamera examples
 
-This example module wires Kratix controllers into Kamera to explore control-plane
-flows in a simulated environment. It mirrors the approach used in the Kratix
-maintainer’s Kamera wiring, but packages the flows into a single binary with a
-`-flow` switch.
+This example module wires Kratix controllers into Kamera to explore Kratix's multi-controller
+"flows" in a simulated environment.
+
+There are currently two Kratix flows configured in this example, based on the experimental PR that Kratix maintainer John Mikos wrote [here](https://github.com/syntasso/kratix/compare/research/kamera?expand=1).
 
 ## Module path note
 
@@ -15,7 +15,7 @@ point at local sources.
 ## Prereqs
 
 - Go 1.24+
-- Kratix cloned locally at `/Users/tgoodwin/projects/kratix` on the branch from
+- Kratix cloned locally at `/Users/$USER/projects/kratix` on the branch from
   the PR compare
 
 ## Setup
@@ -23,9 +23,9 @@ point at local sources.
 The `go.mod` in this directory includes:
 
 - `replace github.com/tgoodwin/kamera => ../..`
-- `replace github.com/syntasso/kratix => /Users/tgoodwin/projects/kratix`
+- `replace github.com/syntasso/kratix => /Users/$USER/projects/kratix`
 
-Adjust the path if your Kratix checkout lives elsewhere.
+Adjust the path if your local Kratix copy lives elsewhere.
 
 ## Running
 
@@ -46,18 +46,6 @@ Disable the interactive inspector UI:
 
 ```bash
 go run . -flow=works -interactive=false
-```
-
-Write an inspector dump instead of running interactively:
-
-```bash
-go run . -flow=works -dump-output=works_dump.json
-```
-
-Open a dump later:
-
-```bash
-go run github.com/tgoodwin/kamera/cmd/inspect --dump works_dump.json
 ```
 
 ## Flows
