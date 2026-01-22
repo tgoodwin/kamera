@@ -10,7 +10,9 @@ Composition → CompositionRevision → XR reconciliation with a stubbed functio
 - Claim syncer.
 - Connection secret publishing.
 - Dynamic watch engine for composed resources.
+- Package manager controllers (FunctionRevision is seeded manually for capability checks).
 - Real function runtime (uses an in-process stubbed FunctionRunner).
+- Kubernetes event recording (events are logged locally instead).
 
 ## Usage
 
