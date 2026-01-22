@@ -227,7 +227,12 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
 	preconditions := ExtractPatchPreconditions(opts)
-	return c.handleEffect(ctx, obj, event.PATCH, &preconditions)
+	op := event.PATCH
+	if patch.Type() == types.ApplyPatchType {
+		// Server-side apply uses PATCH with apply semantics; model it separately.
+		op = event.APPLY
+	}
+	return c.handleEffect(ctx, obj, op, &preconditions)
 }
 
 func (c *Client) Status() client.SubResourceWriter {
@@ -247,7 +252,12 @@ func (c *subResourceClient) Update(ctx context.Context, obj client.Object, opts 
 
 func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 	preconditions := ExtractStatusPatchPreconditions(opts)
-	return c.wrapped.handleEffect(ctx, obj, event.PATCH, &preconditions)
+	op := event.PATCH
+	if patch.Type() == types.ApplyPatchType {
+		// Server-side apply uses PATCH with apply semantics; model it separately.
+		op = event.APPLY
+	}
+	return c.wrapped.handleEffect(ctx, obj, op, &preconditions)
 }
 
 func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {

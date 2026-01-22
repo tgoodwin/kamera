@@ -35,19 +35,25 @@ func NormalizeObject(hash VersionHash) NormalizedObject {
 		}
 	}()
 
-	apiVersion := objMap["apiVersion"].(string)
-	kind := objMap["kind"].(string)
-	metadata := objMap["metadata"].(map[string]interface{})
-	namespace := metadata["namespace"].(string)
+	apiVersion, _ := objMap["apiVersion"].(string)
+	kind, _ := objMap["kind"].(string)
+	metadata, ok := objMap["metadata"].(map[string]interface{})
+	if !ok {
+		metadata = map[string]interface{}{}
+	}
+	namespace, _ := metadata["namespace"].(string)
 
 	// handle cases where the name is generated
 	name, ok := metadata["name"].(string)
 	if !ok {
-		name = metadata["generateName"].(string)
+		name, _ = metadata["generateName"].(string)
 	}
 
 	// extract spec and status
-	spec := objMap["spec"].(map[string]interface{})
+	spec, ok := objMap["spec"].(map[string]interface{})
+	if !ok {
+		spec = map[string]interface{}{}
+	}
 	status, ok := objMap["status"].(map[string]interface{})
 	if !ok {
 		status = make(map[string]interface{})
