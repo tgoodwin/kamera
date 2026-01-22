@@ -220,8 +220,8 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 			Namespace: objectVal.GetNamespace(),
 			Name:      objectVal.GetName(),
 		}
-		// check to ensure the object has a namespaced name
-		if nsName.Name == "" || nsName.Namespace == "" {
+		// ensure the object has a name (namespace may be empty for cluster-scoped objects)
+		if nsName.Name == "" {
 			return nil, fmt.Errorf("resolved object %s has no namespaced name", objKey)
 		}
 
@@ -266,7 +266,7 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 				requests := reg.Mapper(objectVal)
 				for _, req := range requests {
 					nsName := req.NamespacedName
-					if nsName.Namespace == "" || nsName.Name == "" {
+					if nsName.Name == "" {
 						continue
 					}
 					reconcileKey := fmt.Sprintf("%s:%s:%s", reg.ReconcilerID, nsName.Namespace, nsName.Name)
