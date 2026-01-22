@@ -1308,7 +1308,7 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 		return nil, fmt.Errorf("implementation for reconciler %s not found", pr.ReconcilerID)
 	}
 
-	if pr.Request.NamespacedName.Name == "" || pr.Request.NamespacedName.Namespace == "" {
+	if pr.Request.NamespacedName.Name == "" {
 		return nil, fmt.Errorf("empty reconcile request: %v", pr.Request)
 	}
 
