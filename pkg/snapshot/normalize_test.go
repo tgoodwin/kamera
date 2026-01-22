@@ -42,6 +42,17 @@ func TestNormalize(t *testing.T) {
 	}
 }
 
+func TestNormalizeClusterScoped(t *testing.T) {
+	value := NewDefaultHash(`{"apiVersion":"apiextensions.crossplane.io/v1","kind":"CompositionRevision","metadata":{"name":"widget-composition-9622478"},"spec":{"revision":1}}`)
+
+	assert.NotPanics(t, func() {
+		actual := NormalizeObject(value)
+		assert.Equal(t, "CompositionRevision", actual.Kind)
+		assert.Equal(t, "", actual.Namespace)
+		assert.Equal(t, "widget-composition-9622478", actual.Name)
+	})
+}
+
 func TestNormalizedDiff(t *testing.T) {
 	tests := []struct {
 		name          string

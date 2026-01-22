@@ -127,6 +127,61 @@ func TestGetTriggeredBasicCase(t *testing.T) {
 	assert.Equal(t, expected, triggered)
 }
 
+func TestGetTriggeredClusterScopedObject(t *testing.T) {
+	// Set up dependencies
+	nodeKind := canonical("", "Node")
+	deps := ResourceDeps{
+		nodeKind: util.NewSet[ReconcilerID]("nodeController"),
+	}
+
+	owners := PrimariesByKind{
+		nodeKind: util.NewSet[ReconcilerID]("nodeController"),
+	}
+
+	// Create test object (cluster-scoped)
+	nodeObj := createTestObject("Node", "", "node-1", nil)
+
+	// Create mock resolver
+	nodeHash := snapshot.NewDefaultHash("hash-node")
+	resolver := &mockHashResolver{
+		objects: map[snapshot.VersionHash]*unstructured.Unstructured{
+			nodeHash: nodeObj,
+		},
+	}
+
+	// Create trigger manager
+	tm := &TriggerManager{
+		deps:     deps,
+		owners:   owners,
+		resolver: resolver,
+	}
+
+	changes := Changes{
+		Effects: []Effect{
+			{
+				OpType:  event.CREATE,
+				Key:     compositeKey("Node", "", "node-1", "node-1"),
+				Version: nodeHash,
+			},
+		},
+	}
+
+	triggered, err := tm.getTriggered(changes)
+	assert.NoError(t, err)
+
+	expected := []PendingReconcile{
+		{
+			ReconcilerID: "nodeController",
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: "node-1"},
+			},
+			Source: SourceStateChange,
+		},
+	}
+
+	assert.Equal(t, expected, triggered)
+}
+
 func TestGetTriggeredWithOwnerReferences(t *testing.T) {
 	// Set up dependencies
 	podKind := canonical("", "Pod")

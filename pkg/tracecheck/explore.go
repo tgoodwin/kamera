@@ -1150,6 +1150,57 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				}
 			}
 			nextState[effect.Key] = changes[effect.Key]
+		case event.APPLY:
+			// Server-side apply has upsert semantics (create if missing, update if present).
+			if !exists {
+				// Apply has upsert semantics; if the object doesn't exist, treat as CREATE.
+				newObj := e.versionManager.Resolve(changes[effect.Key])
+				if newObj != nil {
+					gen := newObj.GetGeneration()
+					if gen == 0 {
+						newObj.SetGeneration(1)
+						// Update the version hash after modifying Generation
+						changes[effect.Key] = e.versionManager.Publish(newObj)
+					}
+				}
+				nextState[effect.Key] = changes[effect.Key]
+				break
+			}
+
+			if exists && existingKey != effect.Key {
+				delete(nextState, existingKey)
+			}
+
+			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
+			oldObj := e.versionManager.Resolve(nextState[existingKey])
+			newObj := e.versionManager.Resolve(changes[effect.Key])
+			if oldObj != nil && newObj != nil {
+				// Compare specs to determine if Generation should be incremented
+				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
+				// Use a safe check to avoid panics if spec comparison fails
+				specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
+				if err != nil {
+					// If we can't determine if spec changed, conservatively increment Generation
+					// This is safer than not incrementing it
+					stepLogger.V(2).WithValues("key", effect.Key, "error", err).Info("error checking spec change, incrementing Generation conservatively")
+					specChanged = true
+				}
+				if specChanged {
+					oldGen := oldObj.GetGeneration()
+					if oldGen == 0 {
+						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
+						// This can happen if the state snapshot has objects with Generation=0
+						newObj.SetGeneration(1)
+						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", 1).Info("set Generation to 1 on spec update (was 0)")
+					} else {
+						newObj.SetGeneration(oldGen + 1)
+						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", newObj.GetGeneration()).Info("incremented Generation on spec update")
+					}
+					// Update the version hash after modifying Generation
+					changes[effect.Key] = e.versionManager.Publish(newObj)
+				}
+			}
+			nextState[effect.Key] = changes[effect.Key]
 
 		// need to determine how to update state based on preconditions
 		case event.MARK_FOR_DELETION:
@@ -1308,7 +1359,7 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 		return nil, fmt.Errorf("implementation for reconciler %s not found", pr.ReconcilerID)
 	}
 
-	if pr.Request.NamespacedName.Name == "" || pr.Request.NamespacedName.Namespace == "" {
+	if pr.Request.NamespacedName.Name == "" {
 		return nil, fmt.Errorf("empty reconcile request: %v", pr.Request)
 	}
 
