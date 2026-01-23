@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/controllers/state/informer"
 	"sigs.k8s.io/karpenter/pkg/operator/options"
+	"sigs.k8s.io/karpenter/pkg/state/nodepoolhealth"
 	"sigs.k8s.io/karpenter/pkg/test"
 )
 
@@ -56,6 +57,8 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		return prov
 	}
 
+	nodePoolHealth := nodepoolhealth.NewState()
+
 	// Provisioner (singleton-style)
 	b.WithReconciler("provisioner", func(c client.Client) tracecheck.Reconciler {
 		wrapped := &nameGeneratingClient{Client: c}
@@ -82,7 +85,8 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		return wrapWithOptions(informer.NewNodeController(c, getCluster(c)))
 	}).For("Node")
 	b.WithReconciler("state.nodepool", func(c client.Client) tracecheck.Reconciler {
-		return wrapWithOptions(informer.NewNodePoolController(c, cp, getCluster(c)))
+		rec := informer.NewNodePoolController(c, cp, getCluster(c))
+		return wrapWithOptions(reconcile.AsReconciler(c, rec))
 	}).For("NodePool")
 	b.WithReconciler("state.nodeclaim", func(c client.Client) tracecheck.Reconciler {
 		return wrapWithOptions(informer.NewNodeClaimController(c, cp, getCluster(c)))
@@ -95,7 +99,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	}).For("NodeClaim")
 
 	b.WithReconciler("nodeclaim.lifecycle", func(c client.Client) tracecheck.Reconciler {
-		rec := lifecycle.NewController(clk, c, cp, newNoopRecorder(), state.NewNodePoolState())
+		rec := lifecycle.NewController(clk, c, cp, newNoopRecorder(), nodePoolHealth)
 		return wrapWithOptions(reconcile.AsReconciler(c, rec))
 	}).For("NodeClaim").Watches("Node", nodeToNodeClaimMapper())
 

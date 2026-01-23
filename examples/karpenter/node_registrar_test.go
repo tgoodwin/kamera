@@ -5,7 +5,8 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -14,15 +15,14 @@ import (
 )
 
 func TestNodeRegistrarCreatesNode(t *testing.T) {
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = v1.AddToScheme(scheme)
+	s := scheme.Scheme
+	utilruntime.Must(corev1.AddToScheme(s))
 
 	nc := &v1.NodeClaim{}
 	nc.Name = "nc-1"
 	nc.Status.ProviderID = "provider-1"
 
-	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(nc).Build()
+	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(nc).Build()
 	reg := nodeRegistrar{client: cl}
 
 	_, err := reg.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(nc)})
