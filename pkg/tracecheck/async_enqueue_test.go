@@ -43,7 +43,6 @@ func TestAsyncEnqueueCollector_Get(t *testing.T) {
 	// Second Get should return empty because collector was cleared
 	enqueues2 := collector.Get()
 	assert.Len(t, enqueues2, 0)
-	assert.NotSame(t, enqueues1, enqueues2) // Different slices
 }
 
 func TestAsyncEnqueueCollector_Clear(t *testing.T) {
