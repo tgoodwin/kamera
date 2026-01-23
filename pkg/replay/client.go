@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -233,6 +234,40 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 		op = event.APPLY
 	}
 	return c.handleEffect(ctx, obj, op, &preconditions)
+}
+
+// Apply models server-side apply operations introduced in controller-runtime v0.22+.
+func (c *Client) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+	preconditions := ExtractApplyPreconditions(opts)
+	// NOTE: We only record the APPLY effect; we do not materialize merged fields.
+	applyObj, err := applyConfigToUnstructured(obj)
+	if err != nil {
+		return err
+	}
+	return c.handleEffect(ctx, applyObj, event.APPLY, &preconditions)
+}
+
+func applyConfigToUnstructured(obj runtime.ApplyConfiguration) (*unstructured.Unstructured, error) {
+	ac, ok := obj.(interface {
+		GetName() *string
+		GetNamespace() *string
+		GetKind() *string
+		GetAPIVersion() *string
+	})
+	if !ok {
+		return nil, fmt.Errorf("%T is a runtime.ApplyConfiguration but not an applyConfiguration", obj)
+	}
+
+	u := &unstructured.Unstructured{}
+	if name := ptr.Deref(ac.GetName(), ""); name != "" {
+		u.SetName(name)
+	}
+	if ns := ptr.Deref(ac.GetNamespace(), ""); ns != "" {
+		u.SetNamespace(ns)
+	}
+	u.SetKind(ptr.Deref(ac.GetKind(), ""))
+	u.SetAPIVersion(ptr.Deref(ac.GetAPIVersion(), ""))
+	return u, nil
 }
 
 func (c *Client) Status() client.SubResourceWriter {

@@ -11,6 +11,9 @@ import (
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/tag"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -251,4 +254,49 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 
 	c.LogOperation(ctx, objPrePropagation, event.PATCH)
 	return nil
+}
+
+// Apply models server-side apply operations introduced in controller-runtime v0.22+.
+func (c *Client) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+	currLabels := map[string]string{}
+	applyObj, err := applyConfigToUnstructured(obj)
+	if err != nil {
+		return err
+	}
+	currLabels = applyObj.GetLabels()
+
+	tag.LabelChange(applyObj)
+	c.tracker.propagateLabels(applyObj)
+
+	if err := c.Client.Apply(ctx, obj, opts...); err != nil {
+		// revert object labels to original state if the operation fails
+		applyObj.SetLabels(currLabels)
+		return err
+	}
+
+	c.LogOperation(ctx, applyObj, event.APPLY)
+	return nil
+}
+
+func applyConfigToUnstructured(obj runtime.ApplyConfiguration) (*unstructured.Unstructured, error) {
+	ac, ok := obj.(interface {
+		GetName() *string
+		GetNamespace() *string
+		GetKind() *string
+		GetAPIVersion() *string
+	})
+	if !ok {
+		return nil, fmt.Errorf("%T is a runtime.ApplyConfiguration but not an applyConfiguration", obj)
+	}
+
+	u := &unstructured.Unstructured{}
+	if name := ptr.Deref(ac.GetName(), ""); name != "" {
+		u.SetName(name)
+	}
+	if ns := ptr.Deref(ac.GetNamespace(), ""); ns != "" {
+		u.SetNamespace(ns)
+	}
+	u.SetKind(ptr.Deref(ac.GetKind(), ""))
+	u.SetAPIVersion(ptr.Deref(ac.GetAPIVersion(), ""))
+	return u, nil
 }
