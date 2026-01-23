@@ -31,9 +31,12 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	cp := fake.NewCloudProvider()
 	clk := clock.RealClock{}
 	opts := test.Options()
+	switcher := newSwitchingClient()
 
-	wrapWithOptions := func(inner tracecheck.Reconciler) tracecheck.Reconciler {
+	wrapWithOptions := func(c client.Client, inner tracecheck.Reconciler) tracecheck.Reconciler {
 		return reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+			// Ensure shared cluster state sees the correct per-reconciler replay client.
+			switcher.Set(c)
 			ctx = options.ToContext(ctx, opts)
 			return inner.Reconcile(ctx, req)
 		})
@@ -43,7 +46,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	var cluster *state.Cluster
 	getCluster := func(c client.Client) *state.Cluster {
 		clusterOnce.Do(func() {
-			cluster = state.NewCluster(clk, &nameGeneratingClient{Client: c}, cp)
+			cluster = state.NewCluster(clk, switcher, cp)
 		})
 		return cluster
 	}
@@ -68,56 +71,56 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 				return prov.Reconcile(ctx)
 			},
 		}
-		return wrapWithOptions(adapter)
+		return wrapWithOptions(c, adapter)
 	}).For("Pod")
 
 	b.WithReconciler("provisioner.trigger.pod", func(c client.Client) tracecheck.Reconciler {
 		wrapped := &nameGeneratingClient{Client: c}
 		pc := provisioning.NewPodController(wrapped, getProvisioner(wrapped), getCluster(wrapped))
-		return wrapWithOptions(reconcile.AsReconciler(wrapped, pc))
+		return wrapWithOptions(c, reconcile.AsReconciler(wrapped, pc))
 	}).For("Pod")
 
 	// State informers
 	b.WithReconciler("state.pod", func(c client.Client) tracecheck.Reconciler {
-		return wrapWithOptions(informer.NewPodController(c, getCluster(c)))
+		return wrapWithOptions(c, informer.NewPodController(c, getCluster(c)))
 	}).For("Pod")
 	b.WithReconciler("state.node", func(c client.Client) tracecheck.Reconciler {
-		return wrapWithOptions(informer.NewNodeController(c, getCluster(c)))
+		return wrapWithOptions(c, informer.NewNodeController(c, getCluster(c)))
 	}).For("Node")
 	b.WithReconciler("state.nodepool", func(c client.Client) tracecheck.Reconciler {
 		rec := informer.NewNodePoolController(c, cp, getCluster(c))
-		return wrapWithOptions(reconcile.AsReconciler(c, rec))
-	}).For("NodePool")
+		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
+	}).For("karpenter.sh/NodePool")
 	b.WithReconciler("state.nodeclaim", func(c client.Client) tracecheck.Reconciler {
-		return wrapWithOptions(informer.NewNodeClaimController(c, cp, getCluster(c)))
-	}).For("NodeClaim")
+		return wrapWithOptions(c, informer.NewNodeClaimController(c, cp, getCluster(c)))
+	}).For("karpenter.sh/NodeClaim")
 
 	// NodeClaim lifecycle + hydration + consistency
 	b.WithReconciler("nodeclaim.hydration", func(c client.Client) tracecheck.Reconciler {
 		rec := nodeclaimhydration.NewController(c, cp)
-		return wrapWithOptions(reconcile.AsReconciler(c, rec))
-	}).For("NodeClaim")
+		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
+	}).For("karpenter.sh/NodeClaim")
 
 	b.WithReconciler("nodeclaim.lifecycle", func(c client.Client) tracecheck.Reconciler {
 		rec := lifecycle.NewController(clk, c, cp, newNoopRecorder(), nodePoolHealth)
-		return wrapWithOptions(reconcile.AsReconciler(c, rec))
-	}).For("NodeClaim").Watches("Node", nodeToNodeClaimMapper())
+		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
+	}).For("karpenter.sh/NodeClaim").Watches("Node", nodeToNodeClaimMapper())
 
 	b.WithReconciler("nodeclaim.consistency", func(c client.Client) tracecheck.Reconciler {
 		rec := consistency.NewController(clk, c, cp, newNoopRecorder())
-		return wrapWithOptions(reconcile.AsReconciler(c, rec))
-	}).For("NodeClaim").Watches("Node", nodeToNodeClaimMapper())
+		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
+	}).For("karpenter.sh/NodeClaim").Watches("Node", nodeToNodeClaimMapper())
 
 	// Node hydration
 	b.WithReconciler("node.hydration", func(c client.Client) tracecheck.Reconciler {
 		rec := hydration.NewController(c, cp)
-		return wrapWithOptions(reconcile.AsReconciler(c, rec))
+		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
 	}).For("Node")
 
 	// NodeRegistrar shim
 	b.WithReconciler("node.registrar", func(c client.Client) tracecheck.Reconciler {
-		return wrapWithOptions(nodeRegistrar{client: c})
-	}).For("NodeClaim")
+		return wrapWithOptions(c, nodeRegistrar{client: c})
+	}).For("karpenter.sh/NodeClaim")
 
 	// Singleton-style deterministic tick for provisioner.
 	// NOTE: this approximates controller-runtime singleton.Source() using simclock.

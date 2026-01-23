@@ -46,7 +46,9 @@ func buildInitialKarpenterState(builder *tracecheck.ExplorerBuilder) tracecheck.
 	pod := objs[2]
 
 	// Trigger pod-related controllers at start.
-	podState := stateBuilder.AddTopLevelObject(pod, "state.pod", "provisioner.trigger.pod")
+	// NOTE: We explicitly enqueue the provisioner once to simulate the singleton reconcile loop
+	// firing at least once in the DFS. This approximates the real ticker-driven trigger.
+	podState := stateBuilder.AddTopLevelObject(pod, "state.pod", "provisioner.trigger.pod", "provisioner")
 	poolState := stateBuilder.AddTopLevelObject(np, "state.nodepool")
 	classState := stateBuilder.AddTopLevelObject(nc)
 
