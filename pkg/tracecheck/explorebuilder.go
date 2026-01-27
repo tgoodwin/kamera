@@ -2,6 +2,8 @@ package tracecheck
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/samber/lo"
@@ -121,6 +123,67 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	builder.registerCoreControllers()
 
 	return builder
+}
+
+// Fork returns a new builder with shared configuration and fresh mutable state
+// (snapshot store, emitter). This is intended for isolated parallel runs.
+func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
+	if b == nil {
+		return nil
+	}
+
+	return &ExplorerBuilder{
+		reconcilers:                maps.Clone(b.reconcilers),
+		recorderInjectedStrategies: maps.Clone(b.recorderInjectedStrategies),
+		resourceDeps:               cloneResourceDeps(b.resourceDeps),
+		watchers:                   cloneWatchRegistrations(b.watchers),
+		scheme:                     b.scheme,
+		emitter:                    event.NewInMemoryEmitter(),
+		snapStore:                  snapshot.NewStore(),
+		reconcilerToKind:           maps.Clone(b.reconcilerToKind),
+		priorityBuilder:            b.priorityBuilder,
+		config:                     cloneExploreConfig(b.config),
+		builder:                    b.builder,
+		podCrashProbabilities:      maps.Clone(b.podCrashProbabilities),
+	}
+}
+
+func cloneExploreConfig(cfg *ExploreConfig) *ExploreConfig {
+	if cfg == nil {
+		return &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
+	}
+	cloned := cfg.Clone()
+	return &cloned
+}
+
+func cloneResourceDeps(input ResourceDeps) ResourceDeps {
+	if input == nil {
+		return nil
+	}
+	out := make(ResourceDeps, len(input))
+	for kind, deps := range input {
+		if deps == nil {
+			out[kind] = nil
+			continue
+		}
+		copied := util.NewSet[ReconcilerID]()
+		for id := range deps {
+			copied.Add(id)
+		}
+		out[kind] = copied
+	}
+	return out
+}
+
+func cloneWatchRegistrations(input WatchRegistrations) WatchRegistrations {
+	if input == nil {
+		return nil
+	}
+	out := make(WatchRegistrations, len(input))
+	for kind, regs := range input {
+		out[kind] = slices.Clone(regs)
+	}
+	return out
 }
 
 func (b *ExplorerBuilder) WithReconciler(id ReconcilerID, constructor ReconcilerConstructor) *ReconcilerBuilder {
