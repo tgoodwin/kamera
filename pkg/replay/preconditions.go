@@ -96,6 +96,18 @@ func ExtractPatchPreconditions(opts []client.PatchOption) PreconditionInfo {
 	}
 }
 
+// ExtractApplyPreconditions extracts preconditions from ApplyOptions.
+func ExtractApplyPreconditions(opts []client.ApplyOption) PreconditionInfo {
+	applyOpts := &client.ApplyOptions{}
+	for _, opt := range opts {
+		opt.ApplyToApply(applyOpts)
+	}
+
+	return PreconditionInfo{
+		DryRun: containsDryRun(applyOpts.DryRun),
+	}
+}
+
 func ExtractDeleteAllOfPreconditions(opts []client.DeleteAllOfOption) PreconditionInfo {
 	deleteAllOfOpts := &client.DeleteAllOfOptions{}
 	for _, opt := range opts {

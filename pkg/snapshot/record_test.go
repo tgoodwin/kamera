@@ -128,7 +128,6 @@ func TestAsRecord_Serialization(t *testing.T) {
 			"apiVersion": "v1",
 			"kind": "Foo",
 			"metadata": {
-				"creationTimestamp": null,
 				"labels": {
 					"discrete.events/sleeve-object-id": "foo-123",
 					"tracey-uid": "foo"
