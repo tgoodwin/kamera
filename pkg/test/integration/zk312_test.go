@@ -84,7 +84,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	eb.WithResourceDep("zookeeper.pravega.io/ZookeeperCluster", "ZookeeperReconciler")
 	eb.WithResourceDep("core/PersistentVolumeClaim", "ZookeeperReconciler")
 
-	emitter := event.NewDebugEmitter()
+	emitter := event.NewInMemoryEmitter()
 	eb.WithEmitter(emitter)
 
 	stateBuilder := eb.NewStateEventBuilder()
