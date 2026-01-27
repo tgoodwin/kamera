@@ -66,7 +66,41 @@ storage:
 
 These can be built lazily or via a helper to keep the base model minimal.
 
-## Open Questions (Deferred)
-- Canonical representation for core group (empty vs "core") in node IDs.
-- Escaping rules for IDs if resource kinds contain separators.
+## LLM-Friendly Assembly Workflow
+To keep LLM output compact, define a "raw" input format where edges reference
+nodes by canonical string keys. This avoids repeating full node objects per edge
+and keeps the LLM ignorant of internal ID rules.
 
+Canonical GVK string format:
+
+- `<group>/<version>/<kind>`
+- Use `core` as the group for core resources (consistent with
+  `util.CanonicalGroupKind` semantics).
+
+Example:
+
+```json
+{
+  "nodes": [
+    {"kind": "controller", "name": "RouteReconciler"},
+    {"kind": "resource", "gvk": "serving.knative.dev/v1/Route"}
+  ],
+  "edges": [
+    {"kind": "watches", "from": "RouteReconciler", "to": "serving.knative.dev/v1/Route", "watchKind": "primary"},
+    {"kind": "reads", "from": "RouteReconciler", "to": "serving.knative.dev/v1/Route", "target": "status"}
+  ]
+}
+```
+
+The builder assembles this into a `Graph` by:
+
+- Parsing controller names and canonical GVK strings into nodes.
+- Deriving deterministic IDs from controller `name` and resource GVK.
+- Normalizing/validating enums (`kind`, `watchKind`, `target`).
+- Enforcing bipartite edge constraints.
+- Returning errors for unknown kinds or invalid relationships.
+
+This keeps external producers simple while preserving internal consistency.
+
+## Open Questions (Deferred)
+- Escaping rules for IDs if resource kinds contain separators.
