@@ -125,6 +125,20 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	return builder
 }
 
+// BuildRestartSeed materializes the provided state into a restart seed using the builder's store.
+func (b *ExplorerBuilder) BuildRestartSeed(state StateNode) (RestartSeed, error) {
+	if b == nil {
+		return RestartSeed{}, fmt.Errorf("explorer builder is nil")
+	}
+	resolver := NewVersionStore(b.snapStore, b.scheme)
+	seed, err := BuildRestartSeedFromState(state.Objects(), resolver, state.PendingReconciles)
+	if err != nil {
+		return RestartSeed{}, err
+	}
+	seed.Depth = state.depth
+	return seed, nil
+}
+
 // Fork returns a new builder with shared configuration and fresh mutable state
 // (snapshot store, emitter). This is intended for isolated parallel runs.
 func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
