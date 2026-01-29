@@ -42,13 +42,13 @@ When exploring controller behavior, the inspector can produce a DAG (directed ac
 ### Producing DAG Output
 ```bash
 # From a dump file, output DOT to stdout (for LLM analysis)
-go run ./cmd/inspect --dump <dump.jsonl> --interactive=false
+go run ./cmd/inspect exploration <dump.jsonl> --interactive=false
 
 # Write DOT to a file
-go run ./cmd/inspect --dump <dump.jsonl> --dot output.dot --interactive=false
+go run ./cmd/inspect exploration <dump.jsonl> --dot output.dot --interactive=false
 
 # Open in TUI with optional DOT export
-go run ./cmd/inspect --dump <dump.jsonl> --dot output.dot
+go run ./cmd/inspect exploration <dump.jsonl> --dot output.dot
 ```
 
 ### Interpreting the DOT Format
@@ -187,6 +187,16 @@ For instructions on how to generate these graphs for new projects using LLMs, se
 [@docs/design/dependency-analysis.md](docs/design/dependency-analysis.md)
 
 This guide provides heuristics for discovering controllers, extracting topology (Watches), and identifying interactions (Reads/Writes).
+
+## Input Generation Strategy
+
+To automatically generate valid resource inputs for fuzzing, we leverage the target project's own test builders.
+
+For the design and workflow of this "Code-First" generation strategy, see:
+[@docs/design/input-generation.md](docs/design/input-generation.md)
+
+The specific mapping between GVKs and their instantiation logic is defined in the Input Map Schema:
+[@docs/design/input-map-schema.md](docs/design/input-map-schema.md)
 
 ## Landing the Plane (Session Completion)
 
