@@ -53,7 +53,7 @@ Analyze the `Reconcile` function. **Crucial:** Do not stop at the top-level func
     *   **Targeting:**
         *   **Spec:** `client.Update(ctx, obj)` (usually implies a Spec or Label update).
         *   **Status:** `client.Status().Update(...)` or `client.Status().Patch(...)`.
-    *   **Dynamic Clients:** Watch for `unstructured.Unstructured` usage and `SetGroupVersionKind`. Use variable names, GVK construction logic, and context to infer the target Resource (e.g., "Promise-defined CR").
+    *   **Dynamic Clients:** Watch for `unstructured.Unstructured` usage and `SetGroupVersionKind`.
     *   *Graph Edge:* `Controller -> Writes (Target: Spec/Status) -> Resource`
 3.  **Implicit/Chained Writes:**
     *   If a controller creates a `Job` or `Work` object that executes a pipeline, explicitly model the creation of that intermediate object.
@@ -73,6 +73,11 @@ Map Go types to their full GVKs.
     *   Map `appsv1.Deployment` -> `apps/v1/Deployment`.
     *   Map `corev1.Service` -> `core/v1/Service`.
     *   Map `batchv1.Job` -> `batch/v1/Job`.
+4.  **Dynamic/Unstructured Types (Synthetic Nodes):**
+    *   When a controller watches/writes a resource where the GVK is determined at runtime (e.g., via `unstructured.Unstructured`), you MUST create a **Synthetic GVK**.
+    *   **Format:** `dynamic.<original-group>/<version>/<Role>`.
+        *   *Example:* `dynamic.platform.kratix.io/v1alpha1/PromiseRequest`.
+    *   **Rule:** Use the **exact same** Synthetic GVK string for the Controller's `watches` edge and any `reads`/`writes` edges. This ensures the graph remains connected and the dependency is visible.
 
 ## Common Patterns & Pitfalls
 
@@ -90,5 +95,5 @@ To request this analysis in the future, use a prompt like this:
 > 2. **Verification:** Check `cmd/` main files to ensure you haven't missed any registered controllers.
 > 3. **Topology:** For each controller, identify Primary (`For`) and Secondary (`Watches`, `Owns`) triggers.
 > 4. **Interaction:** Analyze `Reconcile` and *all called helper functions* to find `client.Get/List` (Reads) and `client.Create/Update/Patch/Delete` (Writes).
-> 5. **Resolution:** Map all Go types to full GVKs.
+> 5. **Resolution:** Map all Go types to full GVKs. Use `dynamic.<group>/<ver>/<Role>` for unstructured types.
 > Output a JSON graph with nodes (Controllers, Resources) and edges (Watches, Reads, Writes)."
