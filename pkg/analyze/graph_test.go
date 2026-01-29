@@ -83,3 +83,20 @@ func findEdge(t *testing.T, graph *Graph, kind EdgeKind) Edge {
 	require.Fail(t, "edge kind not found", "kind=%v", kind)
 	return Edge{}
 }
+
+func TestBuildGraphAllowsSecondaryWatchKind(t *testing.T) {
+	raw := RawGraph{
+		Nodes: []RawNode{
+			{Kind: "controller", Name: "ExampleReconciler"},
+			{Kind: "resource", GVK: "core/v1/Service"},
+		},
+		Edges: []RawEdge{
+			{Kind: "watches", From: "ExampleReconciler", To: "core/v1/Service", WatchKind: "secondary"},
+		},
+	}
+
+	graph, err := BuildGraphFromRaw(raw)
+	require.NoError(t, err)
+	require.Len(t, graph.Edges, 1)
+	require.Equal(t, WatchUnknown, graph.Edges[0].Attr.Watch.Kind)
+}

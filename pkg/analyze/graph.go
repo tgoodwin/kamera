@@ -275,6 +275,8 @@ func parseWatchKind(kind string) (WatchKind, error) {
 		return WatchOwned, nil
 	case "indexed":
 		return WatchIndexed, nil
+	case "secondary":
+		return WatchUnknown, nil
 	default:
 		return 0, fmt.Errorf("unknown watchKind %q", kind)
 	}
