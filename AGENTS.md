@@ -179,6 +179,15 @@ lifecycle := analysis.AnalyzeObjectLifecycle(dump, stateIdx, pathIdx, key, targe
 4. **Use Go API** to compare StateBefore across paths - this reveals what each controller saw when it made its write
 5. **Check lifecycle** if needed - does the differing hash appear earlier in one path but not another?
 
+## Dependency Graph Analysis (pkg/analyze)
+
+The `pkg/analyze` package (and associated `cmd/analyze` tool) relies on static dependency graphs of Kubernetes operators to identify interaction hotspots.
+
+For instructions on how to generate these graphs for new projects using LLMs, see:
+[@docs/design/dependency-analysis.md](docs/design/dependency-analysis.md)
+
+This guide provides heuristics for discovering controllers, extracting topology (Watches), and identifying interactions (Reads/Writes).
+
 ## Landing the Plane (Session Completion)
 
 **When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
