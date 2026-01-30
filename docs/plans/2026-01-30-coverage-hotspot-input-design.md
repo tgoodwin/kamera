@@ -91,6 +91,19 @@ Inputs: `HotspotInstance`, dependency graph lookup, input map.
 ## Error Handling & Warnings
 - **Missing GVK template:** return error.
 - **Multiple reconciles targets for a controller:** warn and pick deterministically.
+- **No hotspots:** return error (CLI should not emit empty output silently).
 
 ## Rationale
 This keeps the translation deterministic and explicit while remaining independent of `tracecheck`. It also preserves a clean seam for later “dimensions of variation” expansion without changing the core mapping logic.
+
+## CLI Entry Point (Incremental Testing)
+Add a `cmd/generate` command to exercise the pipeline before end-to-end wiring.
+
+Suggested behavior:
+- Inputs: `--graph <graph.json>`, `--input-map <input-map.json>`
+- Output: `--out <inputs.json>` containing a JSON array of `Input`
+- Selection: `--hotspot-type` and `--hotspot-index` to target a single hotspot
+- Failure: error if zero hotspots found
+
+This allows incremental validation of Hotspot → Input translation without
+materializing scenarios or running the explorer.
