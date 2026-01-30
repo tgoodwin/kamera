@@ -55,6 +55,34 @@ exclusive; a subgraph can be tagged by multiple hotspot classes.
 *   **Graph predicate:** A cycle exists where a write by $C_1$ causes a watch/reconcile that eventually causes a write back to a resource that triggers $C_1$.
 *   **Bug pattern:** Oscillation, infinite reconciles, non-convergence.
 
+#### Hotspot Attributes → Scenario Construction Hints
+Each hotspot instance carries lightweight `attributes` to guide scenario construction. These are *hints*, not hard requirements. The goal is to decide (a) which objects to include, (b) which controllers to place in the initial pending set, and (c) which explore parameters to tune (permutations, staleness).
+
+**Multi‑Writer (`target=spec|status|any`)**
+* **Resources:** include the shared resource `R`.
+* **Pending reconciles:** at least the writer controllers.
+* **Explore:** set `PermutationScope` to those writers; if `target` is `spec` or `status`, bias mutations toward that surface.
+
+**Missing Trigger (`missing_trigger=true|false`, `writers=...`)**
+* **Resources:** include `R` plus any listed writers’ output resources.
+* **Pending reconciles:** the reader controller; if `writers` present, include writers too.
+* **Explore:** inject `StaleReads` for `R` (reader side). If writers are present, permute writer vs reader ordering.
+
+**Fan‑Out Converging Writes (`converges_via=direct|owns`)**
+* **Resources:** include the trigger `R_start` and downstream `R_end`. If `owns`, include the parent/child relationship target.
+* **Pending reconciles:** both fan‑out controllers (the converging pair).
+* **Explore:** use `PermutationScope` across the converging controllers; `converges_via=owns` suggests adding parent/child objects to emphasize ordering effects.
+
+**Aggregation / Join (`inputs=...`, `outputs=...`)**
+* **Resources:** include all `inputs` and at least one `output`.
+* **Pending reconciles:** the aggregator controller.
+* **Explore:** staleness injection per input; partial‑update cases (subset of inputs present/updated).
+
+**Feedback Cycle (`cycle_size=N`)**
+* **Resources:** include cycle nodes and their triggering edges.
+* **Pending reconciles:** at least one controller in the cycle; optionally all controllers in the cycle if the goal is to expose oscillation quickly.
+* **Explore:** increase `MaxDepth` (or detect loops early); use permutations within the cycle to expose order sensitivity.
+
 ### 3. Dimensions of Variation
 To test these interaction hotspots, we define "Dimensions" along which we can sweep.
 
