@@ -23,3 +23,9 @@ func TestExplorationHelp(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, code)
 }
+
+func TestHotspotsHelp(t *testing.T) {
+	code, err := runInspect([]string{"hotspots", "--help"})
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+}

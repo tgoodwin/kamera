@@ -28,6 +28,8 @@ func runInspect(args []string) (int, error) {
 		return runDependencyGraph(args[1:]), nil
 	case "exploration":
 		return runExploration(args[1:]), nil
+	case "hotspots":
+		return runHotspots(args[1:]), nil
 	default:
 		return 1, errors.New(inspectUsage())
 	}
@@ -38,5 +40,5 @@ func isHelpArg(arg string) bool {
 }
 
 func inspectUsage() string {
-	return "usage: inspect <dependency-graph|exploration> <args>"
+	return "usage: inspect <dependency-graph|exploration|hotspots> <args>"
 }
