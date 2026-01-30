@@ -36,6 +36,15 @@ type InputTuning struct {
   // canonical groupKind -> lookback limit
   StaleLookback map[string]int
 }
+
+type InputMap struct {
+  Mapping map[string][]InputTemplate `json:"mapping"`
+}
+
+type InputTemplate struct {
+  Name   string                     `json:"name"`
+  Object *unstructured.Unstructured `json:"object"`
+}
 ```
 
 Notes:
@@ -46,6 +55,10 @@ Notes:
 Treat the input map as a **single GVK → template object** lookup (schema seed).
 - If a GVK is missing, **error**.
 - No template selection logic is needed at this stage.
+
+Parsing: deserialize into `InputMap` and decode each `object` into
+`*unstructured.Unstructured` at load time so templates are validated and ready
+for deep-copying during Hotspot → Input.
 
 ## Object Materialization & Normalization
 Each referenced GVK produces exactly **one normalized object** shared across controllers.
