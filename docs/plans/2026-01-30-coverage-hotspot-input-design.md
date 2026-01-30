@@ -102,7 +102,7 @@ Add a `cmd/generate` command to exercise the pipeline before end-to-end wiring.
 Suggested behavior:
 - Inputs: `--graph <graph.json>`, `--input-map <input-map.json>`
 - Output: `--out <inputs.json>` containing a JSON array of `Input`
-- Selection: `--hotspot-type` and `--hotspot-index` to target a single hotspot
+- Selection: `--hotspot-type` and `--limit` to filter and cap output
 - Failure: error if zero hotspots found
 
 This allows incremental validation of Hotspot → Input translation without
