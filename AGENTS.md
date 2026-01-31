@@ -195,8 +195,10 @@ To automatically generate valid resource inputs for fuzzing, we leverage the tar
 For the design and workflow of this "Code-First" generation strategy, see:
 [@docs/design/input-generation.md](docs/design/input-generation.md)
 
-The specific mapping between GVKs and their instantiation logic is defined in the Input Map Schema:
+The specific mapping between GVKs and their instantiation logic is defined in the Schema Map (formerly input-map.json):
 [@docs/design/input-map-schema.md](docs/design/input-map-schema.md)
+
+**Referential Integrity:** It is critical that every GVK node present in the `dependency-graph.json` has a corresponding entry in `schema-map.json`. The input generation tool must validate this integrity and warn the user if any GVKs found in the graph are missing seed templates in the map. For built-in k8s resource types, you can use the static [k8s schema helper](k8s-schema-map.json) file.
 
 ## Landing the Plane (Session Completion)
 
