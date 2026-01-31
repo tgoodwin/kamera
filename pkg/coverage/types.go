@@ -4,10 +4,10 @@ import "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 // Input captures the concrete objects and pending reconciles for a single scenario seed.
 type Input struct {
-	Name    string                      `json:"name"`
+	Name    string                       `json:"name"`
 	Objects []*unstructured.Unstructured `json:"objects"`
-	Pending []Pending                   `json:"pending"`
-	Tuning  InputTuning                 `json:"tuning"`
+	Pending []Pending                    `json:"pending"`
+	Tuning  InputTuning                  `json:"tuning"`
 }
 
 // Pending is a controller + namespaced key pair to enqueue for reconciliation.
