@@ -83,8 +83,8 @@ Inputs: `HotspotInstance`, dependency graph lookup, input map.
    - If multiple reconciles targets exist, emit a **warning** and choose deterministically (lexicographic GVK).
    - Create a `Pending` using the normalized object’s name/namespace for that GVK.
 4. **Set Tuning (compact hints):**
-   - **Multi-writer / Fan-out / Feedback cycle:** `PermuteControllers = hotspot.Controllers`.
-   - **Missing trigger / Aggregation:** `StaleReads[reader] = []groupKind{...}` for referenced inputs.
+   - **Multi-writer / Diamond / Feedback cycle:** `PermuteControllers = hotspot.Controllers`.
+   - **Missing trigger / Reducer:** `StaleReads[reader] = []groupKind{...}` for referenced inputs.
    - `StaleLookback` defaults to a small value (e.g., 1) for those kinds.
    - `MaxDepth` can be increased for feedback cycles.
 

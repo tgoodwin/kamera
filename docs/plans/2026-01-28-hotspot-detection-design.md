@@ -54,7 +54,7 @@ Target refinements (optional):
 **Output instance:**
 - `{controller: C, resource: R, writers: [C2...], is_missing_trigger: bool}`
 
-### 3) Fan-out with Converging Writes (Order Sensitivity)
+### 3) Diamond Pattern (Order Sensitivity)
 **Predicate (direct):**
 - There exists resource `Rstart` and controllers `C1 != C2` such that:
   - `Rstart ∈ Triggers(C1)` and `Rstart ∈ Triggers(C2)`
@@ -67,7 +67,7 @@ Target refinements (optional):
 **Output instance:**
 - `{trigger: Rstart, controllers: [C1, C2], converges_on: Rend}`
 
-### 4) Aggregation / Join Controller
+### 4) Reducer Controller
 **Predicate:**
 - There exists controller `C` where:
   - `|Reads(C)| >= 2`

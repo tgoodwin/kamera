@@ -176,9 +176,9 @@ Implementation details:
 - Error if a controller has no reconciles target or if required GVK missing.
 - Deterministic name: `hs-<type>-<index>-<kind>` (lowercase kind recommended).
 - Tuning:
-  - Multi-writer, fan-out, feedback cycle → `PermuteControllers = controllers`
+  - Multi-writer, diamond, feedback cycle → `PermuteControllers = controllers`
   - Missing trigger → `StaleReads[reader] = []groupKind{resource}`
-  - Aggregation join → `StaleReads[controller] = inputs`
+  - Reducer → `StaleReads[controller] = inputs`
   - Feedback cycle → set `MaxDepth` (e.g., 20)
 
 **Step 4: Run test to verify it passes**
@@ -260,4 +260,3 @@ Expected: PASS
 git add pkg/coverage cmd/generate
 git commit -m "fix generate coverage tests"  # only if needed
 ```
-

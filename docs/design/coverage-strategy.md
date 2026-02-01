@@ -40,15 +40,15 @@ exclusive; a subgraph can be tagged by multiple hotspot classes.
     *   Escalation: another controller writes that resource ($C_2 \xrightarrow{writes} R$).
 *   **Bug pattern:** Stale configs, missed reconciles, non-convergence.
 
-#### Fan-out with Converging Writes (Order Sensitivity)
+#### Diamond Pattern (Order Sensitivity)
 *   **Pattern:** One upstream resource triggers multiple controllers whose effects converge.
 *   **Graph predicate:** $R_{start}$ watches/reconciles into $C_1$ and $C_2$, and both write the same downstream resource $R_{end}$ (or write resources that own/compose into $R_{end}$).
-*   **Bug pattern:** Races and ordering sensitivity across controllers; different final states.
+*   **Bug pattern:** Races and ordering sensitivity across controllers; different final states (last write wins).
 
-#### Aggregation / Join Controller
+#### Reducer Controller
 *   **Pattern:** A controller reads many resources to compute one output.
 *   **Graph predicate:** $|\{R_i : C \xrightarrow{reads} R_i\}| > 1$ and $C \xrightarrow{writes} R_{out}$.
-*   **Bug pattern:** Partial updates, inconsistent snapshots, dropped inputs.
+*   **Bug pattern:** Partial updates, inconsistent snapshots, doesn't re-update in presence of more recent info.
 
 #### Feedback Cycle
 *   **Pattern:** Writes feed back into triggers in a cycle (self or multi-controller).
@@ -68,15 +68,15 @@ Each hotspot instance carries lightweight `attributes` to guide scenario constru
 * **Pending reconciles:** the reader controller; if `writers` present, include writers too.
 * **Explore:** inject `StaleReads` for `R` (reader side). If writers are present, permute writer vs reader ordering.
 
-**Fan‑Out Converging Writes (`converges_via=direct|owns`)**
+**Diamond Pattern (`converges_via=direct|owns`)**
 * **Resources:** include the trigger `R_start` and downstream `R_end`. If `owns`, include the parent/child relationship target.
 * **Pending reconciles:** both fan‑out controllers (the converging pair).
 * **Explore:** use `PermutationScope` across the converging controllers; `converges_via=owns` suggests adding parent/child objects to emphasize ordering effects.
 
-**Aggregation / Join (`inputs=...`, `outputs=...`)**
+**Reducer Controller (`inputs=...`, `outputs=...`)**
 * **Resources:** include all `inputs` and at least one `output`.
-* **Pending reconciles:** the aggregator controller.
-* **Explore:** staleness injection per input; partial‑update cases (subset of inputs present/updated).
+* **Pending reconciles:** the "reducer" controller.
+* **Explore:** staleness injection per input kind; partial‑update cases (subset of inputs present/updated).
 
 **Feedback Cycle (`cycle_size=N`)**
 * **Resources:** include cycle nodes and their triggering edges.
