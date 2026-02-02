@@ -14,7 +14,7 @@ The example depends on Knative Serving controllers, so the first `go mod tidy` w
 
 ## Batch inputs
 
-To run a generated inputs file, pass `-inputs` and set dump directories for per-scenario output:
+To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output:
 
 ```bash
 go run . \

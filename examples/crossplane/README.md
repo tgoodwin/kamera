@@ -28,7 +28,7 @@ go run . \
 
 ## Batch inputs
 
-To run a generated inputs file, pass `-inputs` and set dump directories for per-scenario output:
+To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output:
 
 ```bash
 go run . \
