@@ -14,6 +14,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn/k8schain"
 	"github.com/google/go-containerregistry/pkg/name"
 	knativescheme "github.com/tgoodwin/kamera/examples/knative-serving/knative/scheme"
+	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/explore"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/types"
@@ -153,6 +154,32 @@ func main() {
 			os.Exit(1)
 		}
 		builder.SetConfig(loadedCfg)
+	}
+	if inputsPath := explore.InputsPath(); inputsPath != "" {
+		if explore.InteractiveEnabled() {
+			fmt.Fprintln(os.Stderr, "interactive ignored in batch mode")
+		}
+		inputs, err := coverage.LoadInputs(inputsPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "load inputs: %v\n", err)
+			os.Exit(1)
+		}
+		scenarios, err := scenariosFromInputs(builder, inputs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "convert inputs: %v\n", err)
+			os.Exit(1)
+		}
+		runner, err := explore.NewParallelRunner(builder)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
+			os.Exit(1)
+		}
+		opts := explore.ParallelOptions{DumpDir: explore.DumpPath(), StatsDir: explore.DumpStatsPath()}
+		if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
+			fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
+			os.Exit(1)
+		}
+		return
 	}
 	initialState := buildInitialKnativeState(builder)
 	runner, err := explore.NewRunner(builder)

@@ -6,6 +6,8 @@ import (
 	"time"
 
 	knativeharness "github.com/tgoodwin/kamera/examples/knative-serving/knative"
+	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/tag"
@@ -186,4 +188,8 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 	// builder.WithResourceDep("serving.knative.dev/Route", "RouteReconciler", "ServiceReconciler")
 	// builder.WithResourceDep("networking.internal.knative.dev/Ingress", "IngressStatusStub", "RouteReconciler", "ServerlessServiceReconciler")
 	// builder.WithResourceDep("apps/Deployment", "RevisionReconciler")
+}
+
+func scenariosFromInputs(_ *tracecheck.ExplorerBuilder, _ []coverage.Input) ([]explore.Scenario, error) {
+	return nil, fmt.Errorf("input to scenario conversion not implemented")
 }
