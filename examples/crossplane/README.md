@@ -25,3 +25,14 @@ go run . \
   -interactive=false \
   -dump-output /tmp/kamera-crossplane.jsonl
 ```
+
+## Batch inputs
+
+To run a generated inputs file, pass `-inputs` and set dump directories for per-scenario output:
+
+```bash
+go run . \
+  -inputs /path/to/inputs.json \
+  -dump-output /tmp/crossplane-dumps \
+  -dump-stats /tmp/crossplane-stats
+```

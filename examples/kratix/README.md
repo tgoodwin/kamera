@@ -48,6 +48,18 @@ Disable the interactive inspector UI:
 go run . -flow=works -interactive=false
 ```
 
+## Batch inputs
+
+To run a generated inputs file, pass `-inputs` and set dump directories for per-scenario output:
+
+```bash
+go run . \
+  -flow=works \
+  -inputs /path/to/inputs.json \
+  -dump-output /tmp/kratix-dumps \
+  -dump-stats /tmp/kratix-stats
+```
+
 ## Flows
 
 - `works`: Work + WorkPlacement + Destination + BucketStateStore

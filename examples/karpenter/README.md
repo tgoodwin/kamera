@@ -15,6 +15,17 @@ Pending Pod → Provisioner → NodeClaim → Node registration.
 go run . -interactive=false -dump-output /tmp/kamera-karpenter.jsonl
 ```
 
+## Batch inputs
+
+To run a generated inputs file, pass `-inputs` and set dump directories for per-scenario output:
+
+```bash
+go run . \
+  -inputs /path/to/inputs.json \
+  -dump-output /tmp/karpenter-dumps \
+  -dump-stats /tmp/karpenter-stats
+```
+
 ## Observed flow (expected)
 
 1. `state.pod` records the pending pod in cluster state.
