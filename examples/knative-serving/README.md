@@ -18,7 +18,7 @@ To run a generated inputs file, pass `-inputs` and set dump directories for per-
 
 ```bash
 go run . \
-  -inputs /path/to/inputs.json \
-  -dump-output /tmp/knative-dumps \
-  -dump-stats /tmp/knative-stats
+  --inputs /path/to/inputs.json \
+  --dump-output /tmp/knative-dumps \
+  --dump-stats /tmp/knative-stats
 ```

@@ -21,9 +21,9 @@ To run a generated inputs file, pass `-inputs` and set dump directories for per-
 
 ```bash
 go run . \
-  -inputs /path/to/inputs.json \
-  -dump-output /tmp/karpenter-dumps \
-  -dump-stats /tmp/karpenter-stats
+  --inputs /path/to/inputs.json \
+  --dump-output /tmp/karpenter-dumps \
+  --dump-stats /tmp/karpenter-stats
 ```
 
 ## Observed flow (expected)

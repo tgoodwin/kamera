@@ -55,9 +55,9 @@ To run a generated inputs file, pass `-inputs` and set dump directories for per-
 ```bash
 go run . \
   -flow=works \
-  -inputs /path/to/inputs.json \
-  -dump-output /tmp/kratix-dumps \
-  -dump-stats /tmp/kratix-stats
+  --inputs /path/to/inputs.json \
+  --dump-output /tmp/kratix-dumps \
+  --dump-stats /tmp/kratix-stats
 ```
 
 ## Flows
