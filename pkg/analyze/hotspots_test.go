@@ -52,11 +52,11 @@ func TestDetectHotspots(t *testing.T) {
 	require.True(t, hasMissingTriggerFlag(missing, "true"))
 	require.True(t, hasMissingTriggerFlag(missing, "false"))
 
-	fanout := byType[HotspotFanOutConvergingWrites]
+	fanout := byType[HotspotDiamondPattern]
 	require.NotEmpty(t, fanout)
 	require.True(t, hasFanoutViaOwns(fanout))
 
-	aggregation := byType[HotspotAggregationJoin]
+	aggregation := byType[HotspotReducer]
 	require.Len(t, aggregation, 1)
 	require.True(t, containsNode(aggregation[0].Controllers, NodeID("c:ControllerB")))
 

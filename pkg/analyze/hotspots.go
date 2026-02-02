@@ -17,11 +17,11 @@ import (
 type HotspotType string
 
 const (
-	HotspotMultiWriter            HotspotType = "multi_writer"
-	HotspotMissingTrigger         HotspotType = "missing_trigger"
-	HotspotFanOutConvergingWrites HotspotType = "fan_out_converging_writes"
-	HotspotAggregationJoin        HotspotType = "aggregation_join"
-	HotspotFeedbackCycle          HotspotType = "feedback_cycle"
+	HotspotMultiWriter    HotspotType = "multi_writer"
+	HotspotMissingTrigger HotspotType = "missing_trigger"
+	HotspotDiamondPattern HotspotType = "diamond_pattern"
+	HotspotReducer        HotspotType = "reducer_controller"
+	HotspotFeedbackCycle  HotspotType = "feedback_cycle"
 )
 
 type HotspotInstance struct {
@@ -53,8 +53,8 @@ func DetectHotspots(graph *Graph) ([]HotspotInstance, error) {
 	var hotspots []HotspotInstance
 	hotspots = append(hotspots, detectMultiWriter(idx)...)
 	hotspots = append(hotspots, detectMissingTrigger(idx)...)
-	hotspots = append(hotspots, detectFanOutConvergingWrites(idx)...)
-	hotspots = append(hotspots, detectAggregationJoin(idx)...)
+	hotspots = append(hotspots, detectDiamondPattern(idx)...)
+	hotspots = append(hotspots, detectReducerPattern(idx)...)
 	hotspots = append(hotspots, detectFeedbackCycles(graph, idx)...)
 
 	return hotspots, nil
@@ -164,7 +164,7 @@ func detectMissingTrigger(idx graphIndex) []HotspotInstance {
 	return out
 }
 
-func detectFanOutConvergingWrites(idx graphIndex) []HotspotInstance {
+func detectDiamondPattern(idx graphIndex) []HotspotInstance {
 	var out []HotspotInstance
 	seen := make(map[string]struct{})
 
@@ -194,7 +194,7 @@ func detectFanOutConvergingWrites(idx graphIndex) []HotspotInstance {
 					}
 					seen[key] = struct{}{}
 					out = append(out, HotspotInstance{
-						Type:        HotspotFanOutConvergingWrites,
+						Type:        HotspotDiamondPattern,
 						Controllers: []NodeID{c1, c2},
 						Resources:   []NodeID{triggerResource, rend},
 						Attributes:  map[string]string{"converges_via": "direct"},
@@ -210,7 +210,7 @@ func detectFanOutConvergingWrites(idx graphIndex) []HotspotInstance {
 					}
 					seen[key] = struct{}{}
 					out = append(out, HotspotInstance{
-						Type:        HotspotFanOutConvergingWrites,
+						Type:        HotspotDiamondPattern,
 						Controllers: []NodeID{c1, c2},
 						Resources:   []NodeID{triggerResource, parent},
 						Attributes:  map[string]string{"converges_via": "owns"},
@@ -223,7 +223,7 @@ func detectFanOutConvergingWrites(idx graphIndex) []HotspotInstance {
 	return out
 }
 
-func detectAggregationJoin(idx graphIndex) []HotspotInstance {
+func detectReducerPattern(idx graphIndex) []HotspotInstance {
 	var out []HotspotInstance
 	for controller, reads := range idx.readsByController {
 		if len(reads) < 2 {
@@ -244,7 +244,7 @@ func detectAggregationJoin(idx graphIndex) []HotspotInstance {
 			"outputs": strings.Join(nodeIDStrings(outputs), ","),
 		}
 		out = append(out, HotspotInstance{
-			Type:        HotspotAggregationJoin,
+			Type:        HotspotReducer,
 			Controllers: []NodeID{controller},
 			Resources:   resources,
 			Attributes:  attrs,

@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	defaultNamespace  = "default"
-	feedbackMaxDepth  = 20
+	defaultNamespace = "default"
+	feedbackMaxDepth = 20
+	defaultLookback  = 1
 )
 
 // TranslateHotspots converts hotspot instances into concrete Inputs.
@@ -51,6 +52,7 @@ func TranslateHotspots(graph *analyze.Graph, hotspots []analyze.HotspotInstance,
 				return nil, fmt.Errorf("input map for %s has nil template object", gvk)
 			}
 
+			// make some unique name/namespace for the resource instance
 			name := normalizedName(hotspot.Type, i, node.Resource.Kind)
 			ns := namespaceForTemplate(templates[0].Object)
 			obj := NormalizeTemplate(templates[0].Object, name, ns)
@@ -199,7 +201,7 @@ func buildTuning(hotspot analyze.HotspotInstance, graph *analyze.Graph) InputTun
 
 	controllerNames := controllerNames(graph, hotspot.Controllers)
 	switch hotspot.Type {
-	case analyze.HotspotMultiWriter, analyze.HotspotFanOutConvergingWrites, analyze.HotspotFeedbackCycle:
+	case analyze.HotspotMultiWriter, analyze.HotspotDiamondPattern, analyze.HotspotFeedbackCycle:
 		tuning.PermuteControllers = controllerNames
 	}
 
@@ -213,7 +215,7 @@ func buildTuning(hotspot analyze.HotspotInstance, graph *analyze.Graph) InputTun
 				setLookbackDefaults(tuning.StaleLookback, kinds)
 			}
 		}
-	case analyze.HotspotAggregationJoin:
+	case analyze.HotspotReducer:
 		if len(controllerNames) > 0 {
 			inputs := groupKindsFromAttr(graph, hotspot.Attributes["inputs"])
 			if len(inputs) > 0 {
@@ -267,6 +269,6 @@ func setLookbackDefaults(target map[string]int, kinds []string) {
 		if _, exists := target[kind]; exists {
 			continue
 		}
-		target[kind] = 1
+		target[kind] = defaultLookback
 	}
 }

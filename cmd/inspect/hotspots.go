@@ -11,12 +11,12 @@ import (
 )
 
 type hotspotSummary struct {
-	Type       string            `json:"type"`
-	Kind       string            `json:"kind"`
-	Nodes      []string          `json:"nodes"`
-	Resources  []string          `json:"resources,omitempty"`
-	Controllers []string         `json:"controllers,omitempty"`
-	Attributes map[string]string `json:"attributes,omitempty"`
+	Type        string            `json:"type"`
+	Kind        string            `json:"kind"`
+	Nodes       []string          `json:"nodes"`
+	Resources   []string          `json:"resources,omitempty"`
+	Controllers []string          `json:"controllers,omitempty"`
+	Attributes  map[string]string `json:"attributes,omitempty"`
 }
 
 func runHotspots(args []string) int {
@@ -83,12 +83,12 @@ func summarizeHotspots(hotspots []analyze.HotspotInstance) []hotspotSummary {
 		sort.Strings(resources)
 
 		summary := hotspotSummary{
-			Type:       string(hotspot.Type),
-			Kind:       humanHotspotKind(hotspot.Type),
-			Nodes:      nodes,
-			Resources:  resources,
+			Type:        string(hotspot.Type),
+			Kind:        humanHotspotKind(hotspot.Type),
+			Nodes:       nodes,
+			Resources:   resources,
 			Controllers: controllers,
-			Attributes: hotspot.Attributes,
+			Attributes:  hotspot.Attributes,
 		}
 		out = append(out, summary)
 	}
@@ -117,9 +117,9 @@ func humanHotspotKind(kind analyze.HotspotType) string {
 		return "multi-writer contention"
 	case analyze.HotspotMissingTrigger:
 		return "missing trigger / stale read"
-	case analyze.HotspotFanOutConvergingWrites:
+	case analyze.HotspotDiamondPattern:
 		return "fan-out converging writes"
-	case analyze.HotspotAggregationJoin:
+	case analyze.HotspotReducer:
 		return "aggregation/join"
 	case analyze.HotspotFeedbackCycle:
 		return "feedback cycle"
