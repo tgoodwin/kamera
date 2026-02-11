@@ -52,7 +52,8 @@ Target refinements (optional):
   write and read paths overlap.
 
 **Output instance:**
-- `{controller: C, resource: R, writers: [C2...], is_missing_trigger: bool}`
+- `{controller: C, resource: R, writers: [C2...], missing_trigger_resource: R?}`
+  - Populate `missing_trigger_resource` only when `R ∉ Triggers(C)`.
 
 ### 3) Diamond Pattern (Order Sensitivity)
 **Predicate (direct):**

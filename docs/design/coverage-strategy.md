@@ -63,7 +63,8 @@ Each hotspot instance carries lightweight `attributes` to guide scenario constru
 * **Pending reconciles:** at least the writer controllers.
 * **Explore:** set `PermutationScope` to those writers; if `target` is `spec` or `status`, bias mutations toward that surface.
 
-**Missing Trigger (`missing_trigger=true|false`, `writers=...`)**
+**Missing Trigger (`missing_trigger_resource=...`, `writers=...`)**
+* If `missing_trigger_resource` is absent, the case is read-after-write (trigger exists).
 * **Resources:** include `R` plus any listed writers’ output resources.
 * **Pending reconciles:** the reader controller; if `writers` present, include writers too.
 * **Explore:** inject `StaleReads` for `R` (reader side). If writers are present, permute writer vs reader ordering.
