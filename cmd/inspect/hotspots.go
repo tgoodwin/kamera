@@ -12,7 +12,6 @@ import (
 
 type hotspotSummary struct {
 	Type        string            `json:"type"`
-	Kind        string            `json:"kind"`
 	Nodes       []string          `json:"nodes"`
 	Resources   []string          `json:"resources,omitempty"`
 	Controllers []string          `json:"controllers,omitempty"`
@@ -24,6 +23,7 @@ func runHotspots(args []string) int {
 		fmt.Fprintln(os.Stderr, hotspotsUsage())
 		return 0
 	}
+
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, hotspotsUsage())
 		return 1
@@ -84,7 +84,6 @@ func summarizeHotspots(hotspots []analyze.HotspotInstance) []hotspotSummary {
 
 		summary := hotspotSummary{
 			Type:        string(hotspot.Type),
-			Kind:        humanHotspotKind(hotspot.Type),
 			Nodes:       nodes,
 			Resources:   resources,
 			Controllers: controllers,
@@ -109,23 +108,6 @@ func stripPrefix(prefix string, values []string) []string {
 		out = append(out, strings.TrimPrefix(value, prefix))
 	}
 	return out
-}
-
-func humanHotspotKind(kind analyze.HotspotType) string {
-	switch kind {
-	case analyze.HotspotMultiWriter:
-		return "multi-writer contention"
-	case analyze.HotspotMissingTrigger:
-		return "missing trigger / stale read"
-	case analyze.HotspotDiamondPattern:
-		return "fan-out converging writes"
-	case analyze.HotspotReducer:
-		return "aggregation/join"
-	case analyze.HotspotFeedbackCycle:
-		return "feedback cycle"
-	default:
-		return string(kind)
-	}
 }
 
 func nodeIDStrings(values []analyze.NodeID) []string {

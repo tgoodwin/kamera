@@ -49,8 +49,8 @@ func TestDetectHotspots(t *testing.T) {
 
 	missing := byType[HotspotMissingTrigger]
 	require.GreaterOrEqual(t, len(missing), 2)
-	require.True(t, hasMissingTriggerFlag(missing, "true"))
-	require.True(t, hasMissingTriggerFlag(missing, "false"))
+	require.True(t, hasMissingTriggerResource(missing, NodeID("r:apps/v1/Deployment")))
+	require.True(t, hasMissingTriggerWithoutResource(missing))
 
 	fanout := byType[HotspotDiamondPattern]
 	require.NotEmpty(t, fanout)
@@ -83,9 +83,18 @@ func containsNode(nodes []NodeID, target NodeID) bool {
 	return false
 }
 
-func hasMissingTriggerFlag(hotspots []HotspotInstance, flag string) bool {
+func hasMissingTriggerResource(hotspots []HotspotInstance, resource NodeID) bool {
 	for _, hotspot := range hotspots {
-		if hotspot.Attributes["missing_trigger"] == flag {
+		if hotspot.Attributes["missing_trigger_resource"] == string(resource) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasMissingTriggerWithoutResource(hotspots []HotspotInstance) bool {
+	for _, hotspot := range hotspots {
+		if _, ok := hotspot.Attributes["missing_trigger_resource"]; !ok {
 			return true
 		}
 	}

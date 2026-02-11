@@ -12,7 +12,7 @@ import (
 // semantics (reads/writes/watches/owns) rather than raw graph shape. Each
 // instance records the specific controllers/resources involved and minimal
 // attributes needed for downstream scenario generation (e.g., missing trigger
-// flags or convergence type). See docs/plans/2026-01-28-hotspot-detection-design.md.
+// resources or convergence type). See docs/plans/2026-01-28-hotspot-detection-design.md.
 
 type HotspotType string
 
@@ -147,7 +147,10 @@ func detectMissingTrigger(idx graphIndex) []HotspotInstance {
 			delete(writers, controller)
 
 			if !hasTrigger || len(writers) > 0 {
-				attrs := map[string]string{"missing_trigger": boolString(!hasTrigger)}
+				attrs := make(map[string]string)
+				if !hasTrigger {
+					attrs["missing_trigger_resource"] = string(resource)
+				}
 				if len(writers) > 0 {
 					attrs["writers"] = strings.Join(nodeIDStrings(sortedNodeIDs(writers)), ",")
 				}
