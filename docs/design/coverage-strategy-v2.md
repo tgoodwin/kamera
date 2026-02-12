@@ -157,8 +157,8 @@ It produces:
 
 ### Checkpoint Scanner (Trace Analysis)
 
-The checkpoint scanner analyzes the reference trace to identify intermediate states where a
-perturbation profile could be applied. The high-level intent:
+A trace analysis pass analyzes the reference trace to identify points in the execution where a
+perturbation profile could be applied (a "checkpoint"). The high-level intent:
 
 **For ordering profiles**: identify states where the controllers targeted for permutation are
 simultaneously pending. These are the fork points where scheduling order matters -- in the
@@ -169,12 +169,12 @@ orderings.
 resource that has been mutated during the execution. The reference trace provides the concrete
 prior versions of that resource, giving us real stale values to inject rather than fabricated ones.
 
-A single profile may produce **multiple checkpoints** in one trace (e.g., two controllers are
+A single perturbation profile may produce **multiple checkpoints** in one trace (e.g., two controllers are
 co-pending at several points during execution). Each checkpoint is an independent branching
 opportunity.
 
-The exact predicates and edge cases for checkpoint identification are left to implementation. The
-important property is that checkpoint selection is informed by both the static profile (which
+The exact mechanisms of checkpoint identification are left to implementation. The
+important property is that checkpoint selection is informed by both the static perturbation profile (which
 controllers/resources to look at) and the dynamic trace (when those interactions actually occur).
 
 ### Branched Exploration (Checkpoint-and-Branch)
