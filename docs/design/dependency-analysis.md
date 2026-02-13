@@ -2,7 +2,7 @@
 
 The dependency-analysis workflow is now maintained as a reusable skill:
 
-- `skills/dependency-analysis/SKILL.md`
+- `.agents/skills/dependency-analysis/SKILL.md`
 
 Normative contract for artifact validity:
 

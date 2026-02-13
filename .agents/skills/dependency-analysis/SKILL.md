@@ -67,6 +67,33 @@ For each analyzed project, produce:
 - `supporting`: harness/support objects, non-user top-level fuzz inputs
 - `builtin`: Kubernetes built-in resources
 
+Role assignment heuristics (required):
+- Do not classify from graph shape alone (for example, do not rely only on
+  incoming/outgoing `writes` patterns).
+- Gather local evidence first:
+  - CRD/API docs in repo (`api/`, `config/crd/`, comments, godoc)
+  - sample manifests and walkthroughs in repo (`examples/`, `config/samples/`,
+    tutorials, quickstarts)
+  - controller wiring/ownership context (`For` roots vs derived resources)
+- For ambiguous resources, perform supplementary web search:
+  - prioritize official project documentation and API references
+  - check install/quickstart/tutorial pages for resources users are expected to
+    author directly
+  - check release/migration docs if resource purpose may have changed
+- Evidence threshold for `user-facing`:
+  - at least two independent signals
+  - at least one signal from project docs/examples (local or official site)
+- If evidence is mixed/weak, default to `supporting` and record uncertainty in
+  `analysis-notes.md`.
+
+Decision cues:
+- `user-facing` when docs/examples/CLI workflows instruct users to create or
+  update the resource directly.
+- `supporting` when resource mostly exists for controller internals, plumbing,
+  or simulation scaffolding.
+- `builtin` for Kubernetes built-in API groups (for example `core`, `apps`,
+  `batch`, `rbac.authorization.k8s.io`).
+
 7. Build artifacts:
 - Emit `dependency-graph.json` using contract field names and enums.
 - Emit `schema-map.json` with complete resource-key coverage.
@@ -90,10 +117,13 @@ Use this template when delegating artifact creation to an LLM:
 > 3. Verify controller registration from entrypoints, not grep-only discovery.
 > 4. Traverse reconcile helper call chains for read/write extraction.
 > 5. Assign explicit `role` to every resource node.
-> 6. Ensure every graph resource ID exists in `schema-map.json`.
+> 6. For ambiguous role assignments, run web search against official project
+>    docs and include citations in `analysis-notes.md`.
+> 7. Ensure every graph resource ID exists in `schema-map.json`.
 >
 > Reject output if any required field is missing, any edge endpoint is dangling,
-> any controller lacks `primary` trigger, or schema-map coverage is incomplete.
+> any controller lacks `primary` trigger, any role decision lacks evidence, or
+> schema-map coverage is incomplete.
 
 ## Reviewer Checks
 
@@ -102,6 +132,9 @@ Use this template when delegating artifact creation to an LLM:
 scripts/validate-dependency-graph.sh \
   --graph dependency-graph.json \
   --schema-map schema-map.json
+
+# role evidence sanity check (should list each resource role rationale)
+rg "role rationale" analysis-notes.md
 
 # resource coverage spot-check (should be empty)
 comm -23 \
