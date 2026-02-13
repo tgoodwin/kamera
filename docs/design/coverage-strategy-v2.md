@@ -210,9 +210,9 @@ some expected goal is unmet. Requires a domain-specific assertion attached to th
 
 ## Open Questions
 
-1. **Seed scope**: How do we determine which GVKs are "user-facing" vs "intermediate"?
-   Heuristic: resources with a `reconciles` (primary) edge but no `writes` edge pointing to them
-   are likely user-facing. Resources that are only created via `writes` edges are intermediate.
+1. **Seed scope**: How do we determine which GVKs are user-facing vs non-user-facing?
+   Use explicit resource role metadata from the dependency graph contract
+   (`docs/design/dependency-graph-contract.md`), not runtime heuristics over edges.
 
 2. **Seed flow enumeration**: Determining the full set of valid user-facing input flows -- which
    resources can be created independently, which must be co-created, what structural combinations
