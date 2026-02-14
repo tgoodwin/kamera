@@ -28,6 +28,8 @@ import (
 
 var scheme = knativescheme.Default
 
+var parallelFlag = flag.Bool("parallel", false, "run parallel scenario mode; if --inputs is omitted, use built-in knative baseline inputs")
+
 type digestBypassResolver struct{}
 
 func (digestBypassResolver) Resolve(_ *zap.SugaredLogger, rev *v1.Revision, _ k8schain.Options, registriesToSkip sets.Set[string], _ time.Duration) ([]v1.ContainerStatus, []v1.ContainerStatus, error) {
@@ -155,15 +157,16 @@ func main() {
 		}
 		builder.SetConfig(loadedCfg)
 	}
-	if inputsPath := explore.InputsPath(); inputsPath != "" {
+	inputs, batchMode, err := batchInputsForRun(*parallelFlag, explore.InputsPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load inputs: %v\n", err)
+		os.Exit(1)
+	}
+	if batchMode {
 		if explore.InteractiveEnabled() {
 			fmt.Fprintln(os.Stderr, "interactive ignored in batch mode")
 		}
-		inputs, err := coverage.LoadInputs(inputsPath)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "load inputs: %v\n", err)
-			os.Exit(1)
-		}
+
 		scenarios, err := scenariosFromInputs(builder, inputs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "convert inputs: %v\n", err)
@@ -191,4 +194,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "session error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func batchInputsForRun(parallel bool, inputsPath string) ([]coverage.Input, bool, error) {
+	if inputsPath != "" {
+		inputs, err := coverage.LoadInputs(inputsPath)
+		if err != nil {
+			return nil, false, err
+		}
+		return inputs, true, nil
+	}
+	if !parallel {
+		return nil, false, nil
+	}
+	inputs, err := defaultKnativeInputs()
+	if err != nil {
+		return nil, false, err
+	}
+	return inputs, true, nil
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	knativeharness "github.com/tgoodwin/kamera/examples/knative-serving/knative"
@@ -15,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
 	"knative.dev/pkg/logging"
@@ -190,6 +192,317 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 	// builder.WithResourceDep("apps/Deployment", "RevisionReconciler")
 }
 
-func scenariosFromInputs(_ *tracecheck.ExplorerBuilder, _ []coverage.Input) ([]explore.Scenario, error) {
-	return nil, fmt.Errorf("input to scenario conversion not implemented")
+func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.Input) ([]explore.Scenario, error) {
+	if builder == nil {
+		return nil, fmt.Errorf("builder is nil")
+	}
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("no inputs supplied")
+	}
+
+	baseCfg := builder.Config()
+	scenarios := make([]explore.Scenario, 0, len(inputs))
+	for idx, input := range inputs {
+		variants, err := expandKnativeSingleActionInput(input)
+		if err != nil {
+			return nil, fmt.Errorf("expand input %d (%s): %w", idx, input.Name, err)
+		}
+
+		for _, variant := range variants {
+			state, err := buildStateFromCoverageInput(builder, variant)
+			if err != nil {
+				return nil, fmt.Errorf("build start state for %s: %w", variant.Name, err)
+			}
+
+			scenarios = append(scenarios, explore.Scenario{
+				Name:         variant.Name,
+				InitialState: state,
+				Config:       applyInputTuning(baseCfg, variant.Tuning),
+			})
+		}
+	}
+
+	if len(scenarios) == 0 {
+		return nil, fmt.Errorf("no scenarios produced")
+	}
+	return scenarios, nil
+}
+
+func defaultKnativeInputs() ([]coverage.Input, error) {
+	serviceObj, err := serviceToUnstructured(buildBaselineService())
+	if err != nil {
+		return nil, err
+	}
+	return []coverage.Input{
+		{
+			Name:    "knative-default",
+			Objects: []*unstructured.Unstructured{serviceObj},
+			Pending: []coverage.Pending{
+				{
+					ControllerID: "ServiceReconciler",
+					Key: coverage.NamespacedName{
+						Namespace: "default",
+						Name:      "demo",
+					},
+				},
+			},
+		},
+	}, nil
+}
+
+type singleActionMutation struct {
+	name  string
+	apply func(*v1.Service)
+}
+
+func expandKnativeSingleActionInput(input coverage.Input) ([]coverage.Input, error) {
+	baseName := strings.TrimSpace(input.Name)
+	if baseName == "" {
+		baseName = "scenario"
+	}
+
+	base := cloneCoverageInput(input)
+	base.Name = baseName + "/base"
+	serviceIdx := findKnativeService(base.Objects)
+	if serviceIdx < 0 {
+		return []coverage.Input{base}, nil
+	}
+
+	templateSvc, err := unstructuredToService(base.Objects[serviceIdx])
+	if err != nil {
+		return nil, err
+	}
+
+	variants := []coverage.Input{base}
+	for _, mutation := range singleActionMutations() {
+		updated := cloneCoverageInput(input)
+		updated.Name = fmt.Sprintf("%s/%s", baseName, mutation.name)
+
+		svc := templateSvc.DeepCopy()
+		mutation.apply(svc)
+		updated.Objects[serviceIdx], err = serviceToUnstructured(svc)
+		if err != nil {
+			return nil, fmt.Errorf("apply mutation %q: %w", mutation.name, err)
+		}
+
+		variants = append(variants, updated)
+	}
+	return variants, nil
+}
+
+func singleActionMutations() []singleActionMutation {
+	return []singleActionMutation{
+		{
+			name: "set-image-v2",
+			apply: func(svc *v1.Service) {
+				ensurePrimaryContainer(svc).Image = "dev.local/test:v2"
+			},
+		},
+		{
+			name: "set-min-scale-1",
+			apply: func(svc *v1.Service) {
+				anns := ensureTemplateAnnotations(svc)
+				anns[autoscaling.MinScaleAnnotationKey] = "1"
+			},
+		},
+		{
+			name: "set-max-scale-5",
+			apply: func(svc *v1.Service) {
+				anns := ensureTemplateAnnotations(svc)
+				anns[autoscaling.MaxScaleAnnotationKey] = "5"
+			},
+		},
+		{
+			name: "set-concurrency-1",
+			apply: func(svc *v1.Service) {
+				one := int64(1)
+				svc.Spec.Template.Spec.ContainerConcurrency = &one
+			},
+		},
+	}
+}
+
+func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, error) {
+	if len(input.Objects) == 0 {
+		return tracecheck.StateNode{}, fmt.Errorf("input has no objects")
+	}
+
+	objects := make([]client.Object, 0, len(input.Objects))
+	for idx, obj := range input.Objects {
+		if obj == nil {
+			return tracecheck.StateNode{}, fmt.Errorf("input object %d is nil", idx)
+		}
+		clone := obj.DeepCopy()
+		tag.AddSleeveObjectID(clone)
+		objects = append(objects, clone)
+	}
+
+	pending := make([]tracecheck.PendingReconcile, 0, len(input.Pending))
+	for _, p := range input.Pending {
+		pending = append(pending, tracecheck.PendingReconcile{
+			ReconcilerID: tracecheck.ReconcilerID(p.ControllerID),
+			Request: reconcile.Request{
+				NamespacedName: client.ObjectKey{
+					Namespace: p.Key.Namespace,
+					Name:      p.Key.Name,
+				},
+			},
+			Source: tracecheck.SourceStateChange,
+		})
+	}
+	if len(pending) == 0 {
+		for _, obj := range objects {
+			if isKnativeService(obj) {
+				pending = append(pending, tracecheck.PendingReconcile{
+					ReconcilerID: "ServiceReconciler",
+					Request: reconcile.Request{
+						NamespacedName: client.ObjectKey{
+							Namespace: obj.GetNamespace(),
+							Name:      obj.GetName(),
+						},
+					},
+					Source: tracecheck.SourceStateChange,
+				})
+			}
+		}
+	}
+	if len(pending) == 0 {
+		return tracecheck.StateNode{}, fmt.Errorf("input has no pending reconciles")
+	}
+
+	return builder.BuildStartStateFromObjects(objects, pending)
+}
+
+func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
+	cfg := base.Clone()
+	if tuning.MaxDepth > 0 {
+		cfg.MaxDepth = tuning.MaxDepth
+	}
+	if len(tuning.PermuteControllers) > 0 {
+		if cfg.PermuteOrder == nil {
+			cfg.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+		}
+		for _, controllerID := range tuning.PermuteControllers {
+			cfg.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
+		}
+	}
+	return cfg
+}
+
+func cloneCoverageInput(input coverage.Input) coverage.Input {
+	objects := make([]*unstructured.Unstructured, 0, len(input.Objects))
+	for _, obj := range input.Objects {
+		if obj == nil {
+			objects = append(objects, nil)
+			continue
+		}
+		objects = append(objects, obj.DeepCopy())
+	}
+
+	pending := append([]coverage.Pending(nil), input.Pending...)
+	tuning := coverage.InputTuning{
+		MaxDepth:           input.Tuning.MaxDepth,
+		PermuteControllers: append([]string(nil), input.Tuning.PermuteControllers...),
+		StaleReads:         cloneStringSliceMap(input.Tuning.StaleReads),
+		StaleLookback:      cloneIntMap(input.Tuning.StaleLookback),
+	}
+	return coverage.Input{
+		Name:    input.Name,
+		Objects: objects,
+		Pending: pending,
+		Tuning:  tuning,
+	}
+}
+
+func cloneStringSliceMap(in map[string][]string) map[string][]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(in))
+	for k, v := range in {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
+}
+
+func cloneIntMap(in map[string]int) map[string]int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func findKnativeService(objects []*unstructured.Unstructured) int {
+	for idx, obj := range objects {
+		if obj == nil {
+			continue
+		}
+		if isKnativeService(obj) {
+			return idx
+		}
+	}
+	return -1
+}
+
+func isKnativeService(obj client.Object) bool {
+	if obj == nil {
+		return false
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Kind != "Service" {
+		return false
+	}
+	if gvk.Group == "serving.knative.dev" {
+		return true
+	}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return strings.HasPrefix(u.GetAPIVersion(), "serving.knative.dev/")
+	}
+	return false
+}
+
+func ensurePrimaryContainer(svc *v1.Service) *corev1.Container {
+	containers := svc.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		svc.Spec.Template.Spec.Containers = []corev1.Container{{Name: "user-container", Image: "dev.local/test"}}
+	}
+	return &svc.Spec.Template.Spec.Containers[0]
+}
+
+func ensureTemplateAnnotations(svc *v1.Service) map[string]string {
+	anns := svc.Spec.Template.ObjectMeta.Annotations
+	if anns == nil {
+		anns = map[string]string{}
+		svc.Spec.Template.ObjectMeta.Annotations = anns
+	}
+	return anns
+}
+
+func unstructuredToService(obj *unstructured.Unstructured) (*v1.Service, error) {
+	if obj == nil {
+		return nil, fmt.Errorf("service object is nil")
+	}
+	var svc v1.Service
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &svc); err != nil {
+		return nil, fmt.Errorf("convert service from unstructured: %w", err)
+	}
+	svc.SetGroupVersionKind(v1.SchemeGroupVersion.WithKind("Service"))
+	return &svc, nil
+}
+
+func serviceToUnstructured(svc *v1.Service) (*unstructured.Unstructured, error) {
+	if svc == nil {
+		return nil, fmt.Errorf("service is nil")
+	}
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(svc)
+	if err != nil {
+		return nil, fmt.Errorf("convert service to unstructured: %w", err)
+	}
+	u := &unstructured.Unstructured{Object: obj}
+	u.SetGroupVersionKind(v1.SchemeGroupVersion.WithKind("Service"))
+	return u, nil
 }
