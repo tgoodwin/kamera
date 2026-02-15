@@ -1,6 +1,10 @@
 package main
 
 import (
+	"fmt"
+
+	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	corev1 "k8s.io/api/core/v1"
@@ -54,4 +58,8 @@ func buildInitialKarpenterState(builder *tracecheck.ExplorerBuilder) tracecheck.
 
 	state := tracecheck.MergeStateNodes(podState, poolState)
 	return tracecheck.MergeStateNodes(state, classState)
+}
+
+func scenariosFromInputs(_ *tracecheck.ExplorerBuilder, _ []coverage.Input) ([]explore.Scenario, error) {
+	return nil, fmt.Errorf("input to scenario conversion not implemented")
 }

@@ -11,3 +11,14 @@ go run .      # launches the explorer + inspector UI
 ```
 
 The example depends on Knative Serving controllers, so the first `go mod tidy` will download `knative.dev/serving` and its dependencies. The main module already uses a local `replace` directive so it will consume the checked-out copy of `kamera` in this repository.
+
+## Batch inputs
+
+To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output:
+
+```bash
+go run . \
+  --inputs /path/to/inputs.json \
+  --dump-output /tmp/knative-dumps \
+  --dump-stats /tmp/knative-stats
+```

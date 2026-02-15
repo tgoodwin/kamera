@@ -10,6 +10,8 @@ import (
 	"github.com/syntasso/kratix/internal/controller"
 	"github.com/syntasso/kratix/lib/compression"
 	"github.com/syntasso/kratix/lib/writers"
+	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -264,4 +266,8 @@ func buildPromisesFlow() (*tracecheck.ExplorerBuilder, tracecheck.StateNode, err
 	}
 
 	return eb, initialState, nil
+}
+
+func scenariosFromInputs(_ *tracecheck.ExplorerBuilder, _ []coverage.Input) ([]explore.Scenario, error) {
+	return nil, fmt.Errorf("input to scenario conversion not implemented")
 }

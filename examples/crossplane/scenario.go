@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+
 	"github.com/crossplane/crossplane-runtime/v2/pkg/event"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource/fake"
@@ -12,6 +14,8 @@ import (
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composition"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/revision"
 
+	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	sleevelog "github.com/tgoodwin/kamera/pkg/util/logger"
@@ -215,4 +219,8 @@ func copyAnnotations(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func scenariosFromInputs(_ *tracecheck.ExplorerBuilder, _ []coverage.Input) ([]explore.Scenario, error) {
+	return nil, fmt.Errorf("input to scenario conversion not implemented")
 }

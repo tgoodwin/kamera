@@ -14,6 +14,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn/k8schain"
 	"github.com/google/go-containerregistry/pkg/name"
 	knativescheme "github.com/tgoodwin/kamera/examples/knative-serving/knative/scheme"
+	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/explore"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/types"
@@ -26,6 +27,8 @@ import (
 )
 
 var scheme = knativescheme.Default
+
+var parallelFlag = flag.Bool("parallel", false, "run parallel scenario mode; if --inputs is omitted, use built-in knative baseline inputs")
 
 type digestBypassResolver struct{}
 
@@ -154,6 +157,33 @@ func main() {
 		}
 		builder.SetConfig(loadedCfg)
 	}
+	inputs, batchMode, err := batchInputsForRun(*parallelFlag, explore.InputsPath())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load inputs: %v\n", err)
+		os.Exit(1)
+	}
+	if batchMode {
+		if explore.InteractiveEnabled() {
+			fmt.Fprintln(os.Stderr, "interactive ignored in batch mode")
+		}
+
+		scenarios, err := scenariosFromInputs(builder, inputs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "convert inputs: %v\n", err)
+			os.Exit(1)
+		}
+		runner, err := explore.NewParallelRunner(builder)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
+			os.Exit(1)
+		}
+		opts := explore.ParallelOptions{DumpDir: explore.DumpPath(), StatsDir: explore.DumpStatsPath()}
+		if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
+			fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	initialState := buildInitialKnativeState(builder)
 	runner, err := explore.NewRunner(builder)
 	if err != nil {
@@ -164,4 +194,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "session error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func batchInputsForRun(parallel bool, inputsPath string) ([]coverage.Input, bool, error) {
+	if inputsPath != "" {
+		inputs, err := coverage.LoadInputs(inputsPath)
+		if err != nil {
+			return nil, false, err
+		}
+		return inputs, true, nil
+	}
+	if !parallel {
+		return nil, false, nil
+	}
+	inputs, err := defaultKnativeInputs()
+	if err != nil {
+		return nil, false, err
+	}
+	return inputs, true, nil
 }
