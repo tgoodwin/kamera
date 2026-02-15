@@ -18,7 +18,7 @@ chmod -R u+rwX ~/tmp/gomodcache
 
 4. Determinize the dependencies you care about
 ```
-go run ~/projects/kamera/cmd/determinize/main.go ~/tmp/gomodcache/knative.dev/
+go run ~/projects/kamera/cmd/kamera determinize ~/tmp/gomodcache/knative.dev/
 ```
 
 5. run the simulation against newly determinized code!
@@ -26,6 +26,5 @@ go run ~/projects/kamera/cmd/determinize/main.go ~/tmp/gomodcache/knative.dev/
 cd examples/knative-serving
 GOMODCACHE=~/tmp/gomodcache GOCACHE=~/tmp/gocache go run . --depth 10
 ```
-
 
 

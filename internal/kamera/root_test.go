@@ -16,7 +16,7 @@ func TestRunRootHelp(t *testing.T) {
 	require.Contains(t, stdout.String(), "kamera")
 }
 
-func TestRunInspectHelp(t *testing.T) {
+func TestRootRunInspectHelp(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 

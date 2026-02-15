@@ -6,23 +6,13 @@ export PATH := $(GOBIN):$(PATH)
 .PHONY: all
 all: test
 
-.PHONY: determinize
-determinize:
-	@echo "building determinize..."
-	go build -o $(GOBIN)/determinize ./cmd/determinize
-
 .PHONY: kamera
 kamera:
 	@echo "building kamera..."
 	go build -o $(GOBIN)/kamera ./cmd/kamera
 
-.PHONY: inspect
-inspect:
-	@echo "building inspect..."
-	go build -o $(GOBIN)/inspect ./cmd/inspect
-
 .PHONY: binaries
-binaries: kamera determinize inspect
+binaries: kamera
 
 .PHONY: test
 test:
