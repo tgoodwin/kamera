@@ -1,0 +1,12 @@
+{
+  "nodes": [
+    {"kind": "controller", "name": "RouteReconciler"},
+    {"kind": "resource", "gvk": "serving.knative.dev/v1/Route"},
+    {"kind": "resource", "gvk": "core/v1/Service"}
+  ],
+  "edges": [
+    {"kind": "watches", "from": "RouteReconciler", "to": "serving.knative.dev/v1/Route", "watchKind": "primary"},
+    {"kind": "reads", "from": "RouteReconciler", "to": "serving.knative.dev/v1/Route", "target": "status"},
+    {"kind": "writes", "from": "RouteReconciler", "to": "core/v1/Service", "target": "spec"}
+  ]
+}

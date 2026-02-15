@@ -32,8 +32,7 @@ examples/**/*.jsonl
 .vscode/**
 **/.gocache/**
 **/.gomodcache/**
-**/debug.log
-.**.log
+/**/*.log
 
 examples/chaos/**
 
@@ -43,3 +42,5 @@ testresults/**
 
 *.dump
 *.txt
+
+.worktrees/

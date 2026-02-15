@@ -7,6 +7,7 @@ var (
 	dumpPathFlag    = flag.String("dump-output", "", "optional path to write exploration results (converged + aborted) to disk")
 	configPathFlag  = flag.String("explore-config", "", "optional JSON file to configure exploration")
 	dumpStatsPath   = flag.String("dump-stats", "", "optional path to write exploration stats (JSON)")
+	inputsPathFlag  = flag.String("inputs", "", `path to input JSON file`)
 )
 
 // InteractiveEnabled returns the parsed value for the interactive flag.
@@ -27,4 +28,9 @@ func ConfigPath() string {
 // DumpStatsPath returns the parsed path for dumping exploration stats.
 func DumpStatsPath() string {
 	return *dumpStatsPath
+}
+
+// InputsPath returns the parsed path to an optional inputs file.
+func InputsPath() string {
+	return *inputsPathFlag
 }
