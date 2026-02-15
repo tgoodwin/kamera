@@ -42,13 +42,13 @@ When exploring controller behavior, the inspector can produce a DAG (directed ac
 ### Producing DAG Output
 ```bash
 # From a dump file, output DOT to stdout (for LLM analysis)
-go run ./cmd/inspect exploration <dump.jsonl> --interactive=false
+go run ./cmd/kamera inspect exploration <dump.jsonl> --interactive=false
 
 # Write DOT to a file
-go run ./cmd/inspect exploration <dump.jsonl> --dot output.dot --interactive=false
+go run ./cmd/kamera inspect exploration <dump.jsonl> --dot output.dot --interactive=false
 
 # Open in TUI with optional DOT export
-go run ./cmd/inspect exploration <dump.jsonl> --dot output.dot
+go run ./cmd/kamera inspect exploration <dump.jsonl> --dot output.dot
 ```
 
 ### Interpreting the DOT Format
@@ -99,17 +99,17 @@ jq '.objects[] | select(.hash.Value | startswith("abc123"))' dump.jsonl
 
 ## Backward-Trace Analysis Tools
 
-The `kamera-analyze` CLI provides tools for investigating divergence in exploration results. The approach is "backward-trace": start from known differences in converged states and trace backwards to understand root causes.
+The `kamera analyze` command provides tools for investigating divergence in exploration results. The approach is "backward-trace": start from known differences in converged states and trace backwards to understand root causes.
 
 ### Building the Analyzer
 ```bash
-go build -o bin/kamera-analyze ./cmd/kamera-analyze
+go build -o bin/kamera ./cmd/kamera
 ```
 
 ### Finding Differing Objects (Module 0)
 The `diff` command compares converged states and identifies objects with different final values:
 ```bash
-./bin/kamera-analyze diff <dump.jsonl>
+./bin/kamera analyze diff <dump.jsonl>
 ```
 
 Example output:
@@ -128,7 +128,7 @@ Example output:
 ### Last Write Analysis (Module 1)
 The `report` command shows which controller last wrote each differing object:
 ```bash
-./bin/kamera-analyze report <dump.jsonl>
+./bin/kamera analyze report <dump.jsonl>
 ```
 
 Example output:

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"github.com/tgoodwin/kamera/internal/kamera"
 )
 
 func main() {
@@ -11,4 +13,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	os.Exit(code)
+}
+
+func runGenerate(args []string) (int, error) {
+	return kamera.RunGenerate(args)
 }
