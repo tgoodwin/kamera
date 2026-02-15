@@ -19,9 +19,9 @@ jobs:
 
       # Step 2: Set up Go
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: 1.23  # Adjust to your project's Go version
+          go-version-file: go.mod
 
       # Step 3: Install dependencies
       - name: Install dependencies
