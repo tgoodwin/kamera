@@ -56,7 +56,9 @@ type OptimizationConfig struct {
 }
 
 func (opt OptimizationConfig) AnyEnabled() bool {
-	return opt.EarlyConvergence || opt.CompletedPathDedup || opt.OrderingPruning || opt.CachePrediction || opt.SubtreeCompletion || opt.OnlyPermuteTriggered
+	// OnlyPermuteTriggered scopes permutation behavior; it does not independently
+	// turn on any optimization heuristic.
+	return opt.EarlyConvergence || opt.CompletedPathDedup || opt.OrderingPruning || opt.CachePrediction || opt.SubtreeCompletion
 }
 
 type ExploreConfig struct {

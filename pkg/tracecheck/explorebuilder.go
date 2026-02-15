@@ -78,11 +78,16 @@ func (rb *ReconcilerBuilder) WatchesGK(gk schema.GroupKind, mapper WatchMapper) 
 }
 
 // PermuteOrder marks this reconciler as eligible for order permutation during exploration.
-// When enabled, the explorer will consider alternative orderings where this reconciler
-// is processed first among pending reconciles.
+//
+// Deprecated: configure permutations via the centralized ExploreConfig:
+//
+//	cfg := builder.Config()
+//	cfg.PermuteOrder[id] = true
+//	builder.SetConfig(cfg)
 func (rb *ReconcilerBuilder) PermuteOrder() *ReconcilerBuilder {
-	rb.parent.ensurePermuteOrderEntry(rb.id)
-	rb.parent.config.PermuteOrder[rb.id] = true
+	cfg := rb.parent.Config()
+	cfg.PermuteOrder[rb.id] = true
+	rb.parent.SetConfig(cfg)
 	return rb
 }
 
@@ -320,8 +325,27 @@ func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc Pertur
 	return b
 }
 
+// WithPermuteOrder sets permutation eligibility for a single reconciler.
+//
+// Deprecated: configure permutations via the centralized ExploreConfig:
+//
+//	cfg := b.Config()
+//	cfg.PermuteOrder[id] = enabled
+//	b.SetConfig(cfg)
+func (b *ExplorerBuilder) WithPermuteOrder(id ReconcilerID, enabled bool) *ExplorerBuilder {
+	cfg := b.Config()
+	cfg.PermuteOrder[id] = enabled
+	return b.SetConfig(cfg)
+}
+
 // WithPermuteOrders sets the per-reconciler permute-order configuration.
 // Entries missing for known reconcilers are defaulted to false so the UI can display them.
+//
+// Deprecated: configure permutations via the centralized ExploreConfig:
+//
+//	cfg := b.Config()
+//	cfg.PermuteOrder = map[ReconcilerID]bool{...}
+//	b.SetConfig(cfg)
 func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *ExplorerBuilder {
 	if b.config == nil {
 		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}

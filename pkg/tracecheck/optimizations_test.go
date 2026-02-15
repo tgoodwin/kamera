@@ -48,6 +48,14 @@ func groupForTestKind(kind string) string {
 	}
 }
 
+func setPermuteOrders(eb *ExplorerBuilder, perms map[ReconcilerID]bool) {
+	cfg := eb.Config()
+	for id, enabled := range perms {
+		cfg.PermuteOrder[id] = enabled
+	}
+	eb.SetConfig(cfg)
+}
+
 func runFooBarExplore(t *testing.T, opt OptimizationConfig) (*Explorer, *Result) {
 	t.Helper()
 
@@ -66,14 +74,18 @@ func runFooBarExplore(t *testing.T, opt OptimizationConfig) (*Explorer, *Result)
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, EnqueueRequestForObject()).PermuteOrder()
+	}).For(fooKind).Watches(fooKind, EnqueueRequestForObject())
 
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, EnqueueRequestForObject()).PermuteOrder()
+	}).For(fooKind).Watches(fooKind, EnqueueRequestForObject())
+	setPermuteOrders(eb, map[ReconcilerID]bool{
+		"FooController": true,
+		"BarController": true,
+	})
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{

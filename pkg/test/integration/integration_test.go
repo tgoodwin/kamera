@@ -92,6 +92,14 @@ func formatResults(paths []tracecheck.ExecutionHistory) [][]string {
 	return formatted
 }
 
+func setExplorePermuteConfig(eb *tracecheck.ExplorerBuilder, perms map[tracecheck.ReconcilerID]bool) {
+	cfg := eb.Config()
+	for id, enabled := range perms {
+		cfg.PermuteOrder[id] = enabled
+	}
+	eb.SetConfig(cfg)
+}
+
 func TestExhaustiveInterleavings(t *testing.T) {
 	opts := zap.Options{
 		Development: true,
@@ -111,14 +119,18 @@ func TestExhaustiveInterleavings(t *testing.T) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
 
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	setExplorePermuteConfig(eb, map[tracecheck.ReconcilerID]bool{
+		"FooController": true,
+		"BarController": true,
+	})
 
 	// Testing two controllers whos behavior is identical
 	// and who both depend on the same object.
@@ -222,14 +234,18 @@ func runFooBarExplore(t *testing.T, opt tracecheck.OptimizationConfig) (*tracech
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
 
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	setExplorePermuteConfig(eb, map[tracecheck.ReconcilerID]bool{
+		"FooController": true,
+		"BarController": true,
+	})
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
@@ -272,14 +288,18 @@ func TestConvergedStateIdentification(t *testing.T) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For("webapp.discrete.events/Foo").PermuteOrder()
+	}).For("webapp.discrete.events/Foo")
 
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.BarReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For("webapp.discrete.events/Foo").PermuteOrder()
+	}).For("webapp.discrete.events/Foo")
+	setExplorePermuteConfig(eb, map[tracecheck.ReconcilerID]bool{
+		"FooController": true,
+		"BarController": true,
+	})
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
@@ -384,13 +404,17 @@ func BenchmarkExhaustiveInterleavingsExplore(b *testing.B) {
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
 	eb.WithReconciler("BarController", func(c ctrlclient.Client) tracecheck.Reconciler {
 		return &controller.TestReconciler{
 			Client: c,
 			Scheme: scheme,
 		}
-	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject()).PermuteOrder()
+	}).For(fooKind).Watches(fooKind, tracecheck.EnqueueRequestForObject())
+	setExplorePermuteConfig(eb, map[tracecheck.ReconcilerID]bool{
+		"FooController": true,
+		"BarController": true,
+	})
 
 	topLevelObj := &foov1.Foo{
 		ObjectMeta: metav1.ObjectMeta{
