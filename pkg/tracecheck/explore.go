@@ -70,7 +70,7 @@ type ExploreConfig struct {
 	PermuteOrder map[ReconcilerID]bool
 
 	// per-reconciler perturbation config
-	perturbationCfg map[ReconcilerID]PerturbationConfig
+	Perturbations map[ReconcilerID]PerturbationConfig
 
 	// divergenceCircuitBreakerThreshold limits exploration below certain subtrees
 	// if enough paths below that subtree converge to the same state.
@@ -83,7 +83,7 @@ type ExploreConfig struct {
 // Clone returns a deep copy of the ExploreConfig, including map fields.
 func (cfg ExploreConfig) Clone() ExploreConfig {
 	out := cfg
-	out.perturbationCfg = maps.Clone(cfg.perturbationCfg)
+	out.Perturbations = maps.Clone(cfg.Perturbations)
 	out.PermuteOrder = maps.Clone(cfg.PermuteOrder)
 	return out
 }
@@ -1385,7 +1385,7 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID ReconcilerID, currDepth int) ([]StateNode, error) {
 	currSnapshot := currState.Contents
-	config, ok := e.Config.perturbationCfg[reconcilerID]
+	config, ok := e.Config.Perturbations[reconcilerID]
 	if !ok {
 		logger.V(2).Info("no staleness bounds configured for reconciler", "ReconcilerID", reconcilerID)
 		// no staleness bounds configured for this reconciler, so dont compute stale states

@@ -20,8 +20,8 @@ func TestNewExplorerBuilder_DefaultConfigIsOptIn(t *testing.T) {
 		}
 	}
 
-	if len(cfg.perturbationCfg) != 0 {
-		t.Fatalf("expected no perturbation config by default, found %d entries", len(cfg.perturbationCfg))
+	if len(cfg.Perturbations) != 0 {
+		t.Fatalf("expected no perturbation config by default, found %d entries", len(cfg.Perturbations))
 	}
 }
 
@@ -45,5 +45,29 @@ func TestExplorerBuilderSetConfigSetsPermuteOrder(t *testing.T) {
 	}
 	if got.PermuteOrder["EndpointsController"] {
 		t.Fatalf("expected EndpointsController permutation disabled")
+	}
+}
+
+func TestExplorerBuilderSetConfigSetsPerturbationConfig(t *testing.T) {
+	builder := NewExplorerBuilder(runtime.NewScheme())
+	cfg := builder.Config()
+	cfg.Perturbations["ServiceController"] = PerturbationConfig{
+		StaleReadBounds: LookbackLimits{
+			"core/Service": 2,
+		},
+		MaxRestarts: 1,
+	}
+	builder.SetConfig(cfg)
+
+	got := builder.Config()
+	rc, ok := got.Perturbations["ServiceController"]
+	if !ok {
+		t.Fatalf("expected ServiceController perturbation config to be set")
+	}
+	if rc.MaxRestarts != 1 {
+		t.Fatalf("expected MaxRestarts=1, got %d", rc.MaxRestarts)
+	}
+	if rc.StaleReadBounds["core/Service"] != 2 {
+		t.Fatalf("expected core/Service lookback=2, got %d", rc.StaleReadBounds["core/Service"])
 	}
 }
