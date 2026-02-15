@@ -1,4 +1,4 @@
-package main
+package kamera
 
 import (
 	"encoding/json"
@@ -13,7 +13,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/coverage"
 )
 
-func runGenerate(args []string) (int, error) {
+func RunGenerate(args []string) (int, error) {
 	if len(args) == 0 {
 		return 1, errors.New(generateUsage())
 	}
@@ -117,8 +117,4 @@ func filterHotspots(hotspots []analyze.HotspotInstance, hotspotType string, limi
 
 func generateUsage() string {
 	return "usage: generate --graph <graph.json> --input-map <input-map.json> --out <inputs.json> [--hotspot-type <type>] [--limit N]"
-}
-
-func isHelpArg(arg string) bool {
-	return arg == "-h" || arg == "--help" || arg == "help"
 }

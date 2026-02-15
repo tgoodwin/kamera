@@ -1,4 +1,4 @@
-package main
+package kamera
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +23,47 @@ var skipModulePrefixes = []string{
 	"k8s.io/utils@",
 }
 
+const simclockImportPath = "github.com/tgoodwin/kamera/pkg/simclock"
+
+func RunDeterminize(args []string, stderr io.Writer) int {
+	fs := flag.NewFlagSet("determinize", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.Usage = func() {
+		fmt.Fprintf(fs.Output(), "Usage: determinize [paths...]\n")
+	}
+
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+
+	targets := fs.Args()
+	if len(targets) == 0 {
+		fs.Usage()
+		return 2
+	}
+
+	files, err := collectGoFiles(targets)
+	if err != nil {
+		fmt.Fprintf(stderr, "collect files: %v\n", err)
+		return 1
+	}
+
+	var failed bool
+	for _, file := range files {
+		if err := rewriteFile(file); err != nil {
+			fmt.Fprintf(stderr, "rewrite %s: %v\n", file, err)
+			failed = true
+		}
+	}
+	if failed {
+		return 1
+	}
+	return 0
+}
+
 func skipModule(path string) bool {
 	normalized := filepath.ToSlash(path)
 	for _, prefix := range skipModulePrefixes {
@@ -30,37 +72,6 @@ func skipModule(path string) bool {
 		}
 	}
 	return false
-}
-
-const simclockImportPath = "github.com/tgoodwin/kamera/pkg/simclock"
-
-func main() {
-	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: determinize [paths...]\n")
-	}
-	flag.Parse()
-	targets := flag.Args()
-	if len(targets) == 0 {
-		flag.Usage()
-		os.Exit(2)
-	}
-
-	files, err := collectGoFiles(targets)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "collect files: %v\n", err)
-		os.Exit(1)
-	}
-
-	var failed bool
-	for _, file := range files {
-		if err := rewriteFile(file); err != nil {
-			fmt.Fprintf(os.Stderr, "rewrite %s: %v\n", file, err)
-			failed = true
-		}
-	}
-	if failed {
-		os.Exit(1)
-	}
 }
 
 func collectGoFiles(paths []string) ([]string, error) {
