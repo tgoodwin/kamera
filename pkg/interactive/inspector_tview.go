@@ -395,7 +395,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 
 	showConfirm := func(seed tracecheck.RestartSeed, prefix tracecheck.ExecutionHistory) {
 		nextCfg := currentConfig.Clone()
-		permuteSelections := maps.Clone(nextCfg.PermuteOrder)
+		permuteSelections := maps.Clone(nextCfg.Perturbations.PermuteOrder)
 		if permuteSelections == nil {
 			permuteSelections = make(map[tracecheck.ReconcilerID]bool)
 		}
@@ -452,7 +452,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 					return
 				}
 			}
-			nextCfg.PermuteOrder = permuteSelections
+			nextCfg.Perturbations.PermuteOrder = permuteSelections
 			restartRequest = &tracecheck.RestartRequest{
 				Seed:            seed,
 				Config:          nextCfg,

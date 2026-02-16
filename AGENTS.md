@@ -1,7 +1,7 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `cmd/`: CLI entrypoints for trace analysis (`analyze`, `collect`), deterministic builds (`determinize`), inspection (`inspect`), and sleeve demos.
+- `cmd/`: CLI entrypoints, with `cmd/kamera` as the unified command surface. `collect` and `sleeve` are legacy paths.
 - `pkg/`: core libraries (`tracecheck`, `replay`, `interactive`, `tracegen`, `diff`, `util`, etc.) with tests beside implementations.
 - `internal/`: helper wiring for CLIs and lenses; `mocks/` holds generated doubles.
 - `examples/`: runnable scenarios such as `examples/knative-serving`; `visualizer/` and `analysis/` contain small scripts for rendering and post-processing traces.
@@ -11,8 +11,8 @@
 ```bash
 make test                     # runs go test ./... across the repo
 go test ./pkg/...             # fast inner-loop unit tests for core libs
-make determinize              # builds ./cmd/determinize into ./bin
-go run ./cmd/inspect --dump <file>   # open a saved inspector dump
+make kamera                   # builds ./cmd/kamera into ./bin
+go run ./cmd/kamera inspect exploration <dump.jsonl>  # open inspector/TUI
 ```
 Use Go 1.24+. After dependency changes run `go mod tidy`; before review run `go fmt ./...` (or `gofmt -w`) to keep imports and spacing clean.
 
@@ -42,13 +42,13 @@ When exploring controller behavior, the inspector can produce a DAG (directed ac
 ### Producing DAG Output
 ```bash
 # From a dump file, output DOT to stdout (for LLM analysis)
-go run ./cmd/inspect exploration <dump.jsonl> --interactive=false
+go run ./cmd/kamera inspect exploration <dump.jsonl> --interactive=false
 
 # Write DOT to a file
-go run ./cmd/inspect exploration <dump.jsonl> --dot output.dot --interactive=false
+go run ./cmd/kamera inspect exploration <dump.jsonl> --dot output.dot --interactive=false
 
 # Open in TUI with optional DOT export
-go run ./cmd/inspect exploration <dump.jsonl> --dot output.dot
+go run ./cmd/kamera inspect exploration <dump.jsonl> --dot output.dot
 ```
 
 ### Interpreting the DOT Format
@@ -99,17 +99,17 @@ jq '.objects[] | select(.hash.Value | startswith("abc123"))' dump.jsonl
 
 ## Backward-Trace Analysis Tools
 
-The `kamera-analyze` CLI provides tools for investigating divergence in exploration results. The approach is "backward-trace": start from known differences in converged states and trace backwards to understand root causes.
+The `kamera analyze` command provides tools for investigating divergence in exploration results. The approach is "backward-trace": start from known differences in converged states and trace backwards to understand root causes.
 
 ### Building the Analyzer
 ```bash
-go build -o bin/kamera-analyze ./cmd/kamera-analyze
+go build -o bin/kamera ./cmd/kamera
 ```
 
 ### Finding Differing Objects (Module 0)
 The `diff` command compares converged states and identifies objects with different final values:
 ```bash
-./bin/kamera-analyze diff <dump.jsonl>
+./bin/kamera analyze diff <dump.jsonl>
 ```
 
 Example output:
@@ -128,7 +128,7 @@ Example output:
 ### Last Write Analysis (Module 1)
 The `report` command shows which controller last wrote each differing object:
 ```bash
-./bin/kamera-analyze report <dump.jsonl>
+./bin/kamera analyze report <dump.jsonl>
 ```
 
 Example output:
@@ -189,6 +189,7 @@ For instructions on how to generate these graphs for new projects using LLMs, se
 This guide provides heuristics for discovering controllers, extracting topology (Watches), and identifying interactions (Reads/Writes).
 
 ## Input Generation Strategy
+NOTE: this subsection is now obsolte. See [@docs/plans/2026-02-15-action-catalog-workflow-poc-design.md](this revised, smaller-scoped strategy) for context.
 
 To automatically generate valid resource inputs for fuzzing, we leverage the target project's own test builders.
 
@@ -197,8 +198,6 @@ For the design and workflow of this "Code-First" generation strategy, see:
 
 The specific mapping between GVKs and their instantiation logic is defined in the Schema Map (formerly input-map.json):
 [@docs/design/input-map-schema.md](docs/design/input-map-schema.md)
-
-**Referential Integrity:** It is critical that every GVK node present in the `dependency-graph.json` has a corresponding entry in `schema-map.json`. The input generation tool must validate this integrity and warn the user if any GVKs found in the graph are missing seed templates in the map. For built-in k8s resource types, you can use the static [k8s schema helper](k8s-schema-map.json) file.
 
 ## Landing the Plane (Session Completion)
 

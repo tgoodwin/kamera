@@ -25,8 +25,8 @@ func TestExplorerBuilderForkIsolatesStoresAndConfig(t *testing.T) {
 		t.Fatalf("expected config to be cloned")
 	}
 
-	fork.config.PermuteOrder[ReconcilerID("X")] = true
-	if b.config.PermuteOrder[ReconcilerID("X")] {
+	fork.config.Perturbations.PermuteOrder[ReconcilerID("X")] = true
+	if b.config.Perturbations.PermuteOrder[ReconcilerID("X")] {
 		t.Fatalf("expected permute map to be cloned")
 	}
 }

@@ -1,4 +1,4 @@
-package main
+package kamera
 
 import (
 	"encoding/json"
@@ -11,12 +11,12 @@ import (
 	"github.com/tgoodwin/kamera/pkg/coverage"
 )
 
-func TestGenerateOutputsInputs(t *testing.T) {
-	graphPath := writeTempGraph(t)
-	inputMapPath := writeTempInputMap(t)
+func TestRunGenerateOutputsInputs(t *testing.T) {
+	graphPath := writeGenerateTempGraph(t)
+	inputMapPath := writeGenerateTempInputMap(t)
 	outPath := filepath.Join(t.TempDir(), "inputs.json")
 
-	code, err := runGenerate([]string{
+	code, err := RunGenerate([]string{
 		"--graph", graphPath,
 		"--input-map", inputMapPath,
 		"--out", outPath,
@@ -32,7 +32,7 @@ func TestGenerateOutputsInputs(t *testing.T) {
 	require.NotEmpty(t, inputs)
 }
 
-func writeTempGraph(t *testing.T) string {
+func writeGenerateTempGraph(t *testing.T) string {
 	t.Helper()
 	raw := analyze.RawGraph{
 		Nodes: []analyze.RawNode{
@@ -55,7 +55,7 @@ func writeTempGraph(t *testing.T) string {
 	return path
 }
 
-func writeTempInputMap(t *testing.T) string {
+func writeGenerateTempInputMap(t *testing.T) string {
 	t.Helper()
 	payload := map[string]any{
 		"mapping": map[string]any{

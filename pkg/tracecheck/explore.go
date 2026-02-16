@@ -37,6 +37,11 @@ type EffectContextManager interface {
 }
 
 type PerturbationConfig struct {
+	PermuteOrder map[ReconcilerID]bool
+	Staleness    map[ReconcilerID]StalenessConfig
+}
+
+type StalenessConfig struct {
 	StaleReadBounds LookbackLimits
 	MaxRestarts     int
 }
@@ -56,19 +61,19 @@ type OptimizationConfig struct {
 }
 
 func (opt OptimizationConfig) AnyEnabled() bool {
-	return opt.EarlyConvergence || opt.CompletedPathDedup || opt.OrderingPruning || opt.CachePrediction || opt.SubtreeCompletion || opt.OnlyPermuteTriggered
+	// OnlyPermuteTriggered scopes permutation behavior; it does not independently
+	// turn on any optimization heuristic.
+	return opt.EarlyConvergence || opt.CompletedPathDedup || opt.OrderingPruning || opt.CachePrediction || opt.SubtreeCompletion
 }
 
 type ExploreConfig struct {
 	MaxDepth        int
 	RecordPerfStats bool
 	Timeout         time.Duration
-	// PermuteOrder enables order permutation for specific reconcilers during exploration.
-	// When true, alternative pending reconcile orderings are generated with that reconciler first.
-	PermuteOrder map[ReconcilerID]bool
 
-	// per-reconciler perturbation config
-	perturbationCfg map[ReconcilerID]PerturbationConfig
+	// Perturbations configures optional behavioral perturbations (opt-in), such as
+	// reconcile ordering permutations and stale-read view injection.
+	Perturbations PerturbationConfig
 
 	// divergenceCircuitBreakerThreshold limits exploration below certain subtrees
 	// if enough paths below that subtree converge to the same state.
@@ -81,8 +86,13 @@ type ExploreConfig struct {
 // Clone returns a deep copy of the ExploreConfig, including map fields.
 func (cfg ExploreConfig) Clone() ExploreConfig {
 	out := cfg
-	out.perturbationCfg = maps.Clone(cfg.perturbationCfg)
-	out.PermuteOrder = maps.Clone(cfg.PermuteOrder)
+	out.Perturbations.PermuteOrder = maps.Clone(cfg.Perturbations.PermuteOrder)
+	out.Perturbations.Staleness = make(map[ReconcilerID]StalenessConfig, len(cfg.Perturbations.Staleness))
+	for id, st := range cfg.Perturbations.Staleness {
+		copied := st
+		copied.StaleReadBounds = maps.Clone(st.StaleReadBounds)
+		out.Perturbations.Staleness[id] = copied
+	}
 	return out
 }
 
@@ -1060,7 +1070,7 @@ func (e *Explorer) explore(
 
 			if len(newState.PendingReconciles) > 1 {
 				// When ordering pruning is enabled, we only expand once per logical state.
-				alreadyExpanded := e.optimizations != nil && e.optimizations.branchAlreadyExpanded(branchStateKey, triggeredByStep, e.Config.PermuteOrder)
+				alreadyExpanded := e.optimizations != nil && e.optimizations.branchAlreadyExpanded(branchStateKey, triggeredByStep, e.Config.Perturbations.PermuteOrder)
 				if !alreadyExpanded {
 					expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
 
@@ -1100,7 +1110,7 @@ func (e *Explorer) explore(
 						statesToEnqueue = append(statesToEnqueue, orderVariant)
 					}
 					if e.optimizations != nil {
-						e.optimizations.markBranchExpanded(branchStateKey, triggeredByStep, e.Config.PermuteOrder)
+						e.optimizations.markBranchExpanded(branchStateKey, triggeredByStep, e.Config.Perturbations.PermuteOrder)
 					}
 				} else if e.optimizations != nil {
 					if logOrderingPrune {
@@ -1119,7 +1129,7 @@ func (e *Explorer) explore(
 							"orderHash", newState.OrderHash(),
 							"orderSensitiveKey", orderPruneUseOrderHash,
 							"contentsHash", newState.ContentsHash(),
-							"permuteSignature", e.optimizations.permuteSignature(triggeredByStep, e.Config.PermuteOrder),
+							"permuteSignature", e.optimizations.permuteSignature(triggeredByStep, e.Config.Perturbations.PermuteOrder),
 							"pending", pendingIDs,
 							"triggeredByStep", triggeredIDs,
 						)
@@ -1488,7 +1498,7 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID ReconcilerID, currDepth int) ([]StateNode, error) {
 	currSnapshot := currState.Contents
-	config, ok := e.Config.perturbationCfg[reconcilerID]
+	config, ok := e.Config.Perturbations.Staleness[reconcilerID]
 	if !ok {
 		logger.V(2).Info("no staleness bounds configured for reconciler", "ReconcilerID", reconcilerID)
 		// no staleness bounds configured for this reconciler, so dont compute stale states

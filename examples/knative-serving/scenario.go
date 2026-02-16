@@ -102,7 +102,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("RevisionReconciler"))
 		return strategy
-	}).For("serving.knative.dev/Revision").PermuteOrder()
+	}).For("serving.knative.dev/Revision")
 
 	builder.WithCustomStrategy("KPA", func(r replay.EffectRecorder) tracecheck.Strategy {
 		factory := func(ctx context.Context, cmw configmap.Watcher) *controller.Impl {
@@ -120,7 +120,7 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("KPAReconciler"))
 		return strategy
-	}).For("autoscaling.internal.knative.dev/PodAutoscaler").PermuteOrder()
+	}).For("autoscaling.internal.knative.dev/PodAutoscaler")
 
 	builder.WithCustomStrategy("ServiceReconciler", func(r replay.EffectRecorder) tracecheck.Strategy {
 		strategy, err := knativeharness.NewKnativeStrategy(servicecontroller.NewController, r)
@@ -379,11 +379,11 @@ func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 		cfg.MaxDepth = tuning.MaxDepth
 	}
 	if len(tuning.PermuteControllers) > 0 {
-		if cfg.PermuteOrder == nil {
-			cfg.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+		if cfg.Perturbations.PermuteOrder == nil {
+			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
 		}
 		for _, controllerID := range tuning.PermuteControllers {
-			cfg.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
+			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
 		}
 	}
 	return cfg

@@ -1,7 +1,11 @@
 package main
 
-import "github.com/tgoodwin/kamera/internal/cli"
+import (
+	"fmt"
+	"os"
+)
 
 func main() {
-	cli.Execute()
+	fmt.Fprintln(os.Stderr, "sleeve is legacy and unsupported; use `kamera`")
+	os.Exit(1)
 }

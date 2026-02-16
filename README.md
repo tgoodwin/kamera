@@ -157,7 +157,19 @@ if err := interactive.SaveInspectorDump(states, resolver, "inspector_dump.json")
 }
 ```
 
-Dump files can be reopened at any time via `go run ./cmd/inspect --dump inspector_dump.json`, which restores the same UI. The inspector provides keyboard shortcuts (shown in the status bar) to switch between states, examine individual reconcile steps, and export dumps from within the UI.
+Dump files can be reopened at any time via `go run ./cmd/kamera inspect exploration inspector_dump.json`, which restores the same UI. The inspector provides keyboard shortcuts (shown in the status bar) to switch between states, examine individual reconcile steps, and export dumps from within the UI.
+
+### Unified CLI entrypoint
+
+Kamera commands are available behind a single entrypoint:
+
+```bash
+go run ./cmd/kamera --help
+go run ./cmd/kamera inspect exploration <dump.jsonl>
+go run ./cmd/kamera determinize ./...
+go run ./cmd/kamera generate --graph <graph.json> --input-map <input-map.json> --out <inputs.json>
+go run ./cmd/kamera analyze report <dump.jsonl>
+```
 
 ### Using Kamera in test suites
 
