@@ -197,9 +197,9 @@ func (e stackEntry) isStaleViewEntry() bool {
 // StaleViewBranchKey identifies a stale view branching point.
 // All stale views for the same (parent state, reconcile) share this key.
 type StaleViewBranchKey struct {
-	ParentStateHash NodeHash
-	ReconcilerID    ReconcilerID
-	RequestKey      string // NamespacedName.String()
+	ParentLogicalKey LogicalStateKey
+	ReconcilerID     ReconcilerID
+	RequestKey       string // NamespacedName.String()
 }
 
 // subtreeTracker tracks completion status of logical state subtrees.
@@ -355,6 +355,48 @@ func (e *Explorer) enqueueStates(
 	}
 
 	return stack, enqueued
+}
+
+// enqueueStaleViewStates enqueues stale-view variants onto the DFS stack.
+// When subtree completion is enabled, stale view branches use their own
+// completion markers to avoid re-exploring completed stale subtrees.
+func (e *Explorer) enqueueStaleViewStates(
+	stack []stackEntry,
+	tracker *staleViewTracker,
+	parent StateNode,
+	pendingReconcile PendingReconcile,
+	possibleViews []StateNode,
+	useSubtreeCompletion bool,
+) ([]stackEntry, bool) {
+	if len(possibleViews) == 0 {
+		return stack, false
+	}
+
+	if useSubtreeCompletion {
+		staleKey := StaleViewBranchKey{
+			ParentLogicalKey: parent.LogicalKey(),
+			ReconcilerID:     pendingReconcile.ReconcilerID,
+			RequestKey:       pendingReconcile.Request.NamespacedName.String(),
+		}
+		if tracker.isCompleted(staleKey) {
+			e.stats.StaleViewCompletionSkips++
+			logger.V(1).Info("skipping stale view branch - already completed",
+				"depth", parent.depth, "staleViewKey", staleKey)
+			return stack, false
+		}
+
+		tracker.markInProgress(staleKey)
+		stack = append(stack, stackEntry{staleViewMarker: &staleKey})
+	}
+
+	for i := range possibleViews {
+		stack = append(stack, stackEntry{
+			state:              &possibleViews[i],
+			staleViewReconcile: &pendingReconcile,
+		})
+	}
+
+	return stack, true
 }
 
 // Explore takes an initial state and explores the state space to find all execution paths
@@ -841,30 +883,12 @@ func (e *Explorer) explore(
 
 			// If multiple stale views, push all onto stack with marker (stack-based branching)
 			if len(possibleViews) > 1 {
-				staleKey := StaleViewBranchKey{
-					ParentStateHash: currentState.Hash(),
-					ReconcilerID:    pendingReconcile.ReconcilerID,
-					RequestKey:      pendingReconcile.Request.NamespacedName.String(),
-				}
-
-				// Check if already completed (optimization)
-				if useSubtreeCompletion && staleViewTracker.isCompleted(staleKey) {
-					e.stats.StaleViewCompletionSkips++
-					logger.V(1).Info("skipping stale view branch - already completed",
-						"depth", currentState.depth, "staleViewKey", staleKey)
+				var didEnqueue bool
+				stack, didEnqueue = e.enqueueStaleViewStates(
+					stack, staleViewTracker, currentState, pendingReconcile, possibleViews, useSubtreeCompletion,
+				)
+				if !didEnqueue {
 					continue
-				}
-
-				// Push marker, then all views
-				if useSubtreeCompletion {
-					staleViewTracker.markInProgress(staleKey)
-					stack = append(stack, stackEntry{staleViewMarker: &staleKey})
-				}
-				for i := range possibleViews {
-					stack = append(stack, stackEntry{
-						state:              &possibleViews[i],
-						staleViewReconcile: &pendingReconcile,
-					})
 				}
 				continue
 			}
@@ -878,7 +902,6 @@ func (e *Explorer) explore(
 		{
 			if logger.V(2).Enabled() {
 				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderHash(), "Request", pendingReconcile.Request).Info("BEFORE")
-				logger.V(2).WithValues("Stack", dumpStack(stack)).Info("Stack")
 				stateView.Contents.DumpContents()
 				stateView.DumpPending()
 			}
@@ -988,7 +1011,6 @@ func (e *Explorer) explore(
 			logger.V(1).WithValues("Depth", currentState.depth, "NewPendingReconciles", newState.PendingReconciles).Info("reconcile step completed")
 			if logger.V(2).Enabled() {
 				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
-				logger.V(2).WithValues("Stack", dumpStack(stack)).Info("Stack")
 				newState.Contents.DumpContents()
 				newState.DumpPending()
 			}
@@ -1581,18 +1603,6 @@ func dumpQueue(queue []StateNode) []string {
 		return string(sn.OrderHash())
 	})
 	return queueStr
-}
-
-func dumpStack(stack []stackEntry) []string {
-	result := make([]string, len(stack))
-	for i, entry := range stack {
-		if entry.isMarker() {
-			result[i] = fmt.Sprintf("M:%s|%s", entry.marker.ObjectsHash, entry.marker.PendingSet[:min(20, len(entry.marker.PendingSet))])
-		} else {
-			result[i] = string(entry.state.OrderHash())
-		}
-	}
-	return result
 }
 
 func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state StateNode, reconcileInput PendingReconcile, result *ReconcileResult) []PendingReconcile {
