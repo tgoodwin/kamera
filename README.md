@@ -51,11 +51,6 @@ go run .
     eb.WithMaxDepth(100) // optional
     ```
 
-    Exploration defaults are conservative and opt-in:
-    - No reconcile-order permutation is applied unless you explicitly set it in the explore config (for example: `cfg := eb.Config(); cfg.Perturbations.PermuteOrder["FooController"] = true; eb.SetConfig(cfg)`).
-    - No staleness/perturbation injection is applied unless you explicitly set it in the explore config (for example: `cfg := eb.Config(); cfg.Perturbations.Staleness["FooController"] = tracecheck.StalenessConfig{...}; eb.SetConfig(cfg)`).
-    - `OnlyPermuteTriggered` only affects permutation scope when at least one reconciler has permutation enabled; otherwise it has no effect.
-
 4. **Register each controller-runtime reconciler.** Supply a factory that accepts a controller-runtime `client.Client`. The returned `ReconcilerBuilder` lets you chain `.For()` (primary resource) and `.Watches()` registrations. For non controller-runtime implementations, see [below](#using-non-controller-runtime-controllers).
 
     ```go
