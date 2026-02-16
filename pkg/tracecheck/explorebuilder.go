@@ -78,12 +78,6 @@ func (rb *ReconcilerBuilder) WatchesGK(gk schema.GroupKind, mapper WatchMapper) 
 }
 
 // PermuteOrder marks this reconciler as eligible for order permutation during exploration.
-//
-// Deprecated: configure permutations via the centralized ExploreConfig:
-//
-//	cfg := builder.Config()
-//	cfg.Perturbations.PermuteOrder[id] = true
-//	builder.SetConfig(cfg)
 func (rb *ReconcilerBuilder) PermuteOrder() *ReconcilerBuilder {
 	cfg := rb.parent.Config()
 	cfg.Perturbations.PermuteOrder[rb.id] = true
@@ -331,12 +325,6 @@ func (b *ExplorerBuilder) WithPodCrashProbability(stage controller.PodLifecycleS
 }
 
 // WithPerturbations sets stale-read perturbation config for a single reconciler.
-//
-// Deprecated: configure perturbations via the centralized ExploreConfig:
-//
-//	cfg := b.Config()
-//	cfg.Perturbations.Staleness[reconcilerID] = rc
-//	b.SetConfig(cfg)
 func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc StalenessConfig) *ExplorerBuilder {
 	cfg := b.Config()
 	if cfg.Perturbations.Staleness == nil {
@@ -347,12 +335,6 @@ func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc Stalen
 }
 
 // WithPermuteOrder sets permutation eligibility for a single reconciler.
-//
-// Deprecated: configure permutations via the centralized ExploreConfig:
-//
-//	cfg := b.Config()
-//	cfg.Perturbations.PermuteOrder[id] = enabled
-//	b.SetConfig(cfg)
 func (b *ExplorerBuilder) WithPermuteOrder(id ReconcilerID, enabled bool) *ExplorerBuilder {
 	cfg := b.Config()
 	if cfg.Perturbations.PermuteOrder == nil {
@@ -364,12 +346,6 @@ func (b *ExplorerBuilder) WithPermuteOrder(id ReconcilerID, enabled bool) *Explo
 
 // WithPermuteOrders sets the per-reconciler permute-order configuration.
 // Entries missing for known reconcilers are defaulted to false so the UI can display them.
-//
-// Deprecated: configure permutations via the centralized ExploreConfig:
-//
-//	cfg := b.Config()
-//	cfg.Perturbations.PermuteOrder = map[ReconcilerID]bool{...}
-//	b.SetConfig(cfg)
 func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *ExplorerBuilder {
 	if b.config == nil {
 		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
