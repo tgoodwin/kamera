@@ -51,7 +51,7 @@ func groupForTestKind(kind string) string {
 func setPermuteOrders(eb *ExplorerBuilder, perms map[ReconcilerID]bool) {
 	cfg := eb.Config()
 	for id, enabled := range perms {
-		cfg.PermuteOrder[id] = enabled
+		cfg.Perturbations.PermuteOrder[id] = enabled
 	}
 	eb.SetConfig(cfg)
 }

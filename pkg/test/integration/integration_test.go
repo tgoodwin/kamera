@@ -95,7 +95,7 @@ func formatResults(paths []tracecheck.ExecutionHistory) [][]string {
 func setExplorePermuteConfig(eb *tracecheck.ExplorerBuilder, perms map[tracecheck.ReconcilerID]bool) {
 	cfg := eb.Config()
 	for id, enabled := range perms {
-		cfg.PermuteOrder[id] = enabled
+		cfg.Perturbations.PermuteOrder[id] = enabled
 	}
 	eb.SetConfig(cfg)
 }

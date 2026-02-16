@@ -14,14 +14,14 @@ func TestNewExplorerBuilder_DefaultConfigIsOptIn(t *testing.T) {
 		t.Fatalf("expected optimizations disabled by default")
 	}
 
-	for id, enabled := range cfg.PermuteOrder {
+	for id, enabled := range cfg.Perturbations.PermuteOrder {
 		if enabled {
 			t.Fatalf("expected permutation to be opt-in, but %s is enabled by default", id)
 		}
 	}
 
-	if len(cfg.Perturbations) != 0 {
-		t.Fatalf("expected no perturbation config by default, found %d entries", len(cfg.Perturbations))
+	if len(cfg.Perturbations.Staleness) != 0 {
+		t.Fatalf("expected no perturbation config by default, found %d entries", len(cfg.Perturbations.Staleness))
 	}
 }
 
@@ -35,15 +35,15 @@ func TestOptimizationConfigAnyEnabled_OnlyPermuteTriggeredDoesNotEnableOptimizat
 func TestExplorerBuilderSetConfigSetsPermuteOrder(t *testing.T) {
 	builder := NewExplorerBuilder(runtime.NewScheme())
 	cfg := builder.Config()
-	cfg.PermuteOrder["ServiceController"] = true
-	cfg.PermuteOrder["EndpointsController"] = false
+	cfg.Perturbations.PermuteOrder["ServiceController"] = true
+	cfg.Perturbations.PermuteOrder["EndpointsController"] = false
 	builder.SetConfig(cfg)
 
 	got := builder.Config()
-	if !got.PermuteOrder["ServiceController"] {
+	if !got.Perturbations.PermuteOrder["ServiceController"] {
 		t.Fatalf("expected ServiceController permutation enabled")
 	}
-	if got.PermuteOrder["EndpointsController"] {
+	if got.Perturbations.PermuteOrder["EndpointsController"] {
 		t.Fatalf("expected EndpointsController permutation disabled")
 	}
 }
@@ -51,7 +51,7 @@ func TestExplorerBuilderSetConfigSetsPermuteOrder(t *testing.T) {
 func TestExplorerBuilderSetConfigSetsPerturbationConfig(t *testing.T) {
 	builder := NewExplorerBuilder(runtime.NewScheme())
 	cfg := builder.Config()
-	cfg.Perturbations["ServiceController"] = PerturbationConfig{
+	cfg.Perturbations.Staleness["ServiceController"] = StalenessConfig{
 		StaleReadBounds: LookbackLimits{
 			"core/Service": 2,
 		},
@@ -60,7 +60,7 @@ func TestExplorerBuilderSetConfigSetsPerturbationConfig(t *testing.T) {
 	builder.SetConfig(cfg)
 
 	got := builder.Config()
-	rc, ok := got.Perturbations["ServiceController"]
+	rc, ok := got.Perturbations.Staleness["ServiceController"]
 	if !ok {
 		t.Fatalf("expected ServiceController perturbation config to be set")
 	}

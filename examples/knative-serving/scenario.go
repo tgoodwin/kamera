@@ -379,11 +379,11 @@ func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 		cfg.MaxDepth = tuning.MaxDepth
 	}
 	if len(tuning.PermuteControllers) > 0 {
-		if cfg.PermuteOrder == nil {
-			cfg.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+		if cfg.Perturbations.PermuteOrder == nil {
+			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
 		}
 		for _, controllerID := range tuning.PermuteControllers {
-			cfg.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
+			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
 		}
 	}
 	return cfg

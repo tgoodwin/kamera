@@ -617,7 +617,7 @@ func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []Pend
 		return []StateNode{state}
 	}
 
-	if e.Config == nil || e.Config.PermuteOrder == nil {
+	if e.Config == nil || e.Config.Perturbations.PermuteOrder == nil {
 		return []StateNode{state}
 	}
 
@@ -630,7 +630,7 @@ func (e *Explorer) expandStateByReconcileOrder(state StateNode, triggered []Pend
 		permuteCandidates = originalPending
 	}
 	for _, pr := range permuteCandidates {
-		if permute, ok := e.Config.PermuteOrder[pr.ReconcilerID]; ok && permute {
+		if permute, ok := e.Config.Perturbations.PermuteOrder[pr.ReconcilerID]; ok && permute {
 			toPermute.Add(pr.ReconcilerID)
 		}
 	}

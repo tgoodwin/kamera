@@ -71,10 +71,10 @@ func CreatePVCObject(name, namespace, uid string, zkName string, ownerRef []meta
 func setPerturbationConfig(
 	eb *tracecheck.ExplorerBuilder,
 	reconcilerID tracecheck.ReconcilerID,
-	rc tracecheck.PerturbationConfig,
+	rc tracecheck.StalenessConfig,
 ) {
 	cfg := eb.Config()
-	cfg.Perturbations[reconcilerID] = rc
+	cfg.Perturbations.Staleness[reconcilerID] = rc
 	eb.SetConfig(cfg)
 }
 
@@ -164,7 +164,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	pvc6 := CreatePVCObject("zk-cluster-pvc-2", "default", "pvc-uid-6", "zk-cluster", []metav1.OwnerReference{zk2OwnerRef}, nil)
 	stateBuilder.AddStateEvent("PersistentVolumeClaim", "pvc-uid-6", pvc6, event.CREATE, "ZookeeperReconciler")
 
-	setPerturbationConfig(eb, "ZookeeperReconciler", tracecheck.PerturbationConfig{
+	setPerturbationConfig(eb, "ZookeeperReconciler", tracecheck.StalenessConfig{
 		StaleReadBounds: tracecheck.LookbackLimits{
 			"zookeeper.pravega.io/ZookeeperCluster": 4,
 			"core/PersistentVolumeClaim":            1,
@@ -217,7 +217,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 
 	t.Run("Bug manifests under stale reads", func(t *testing.T) {
 		eb.WithMaxDepth(10)
-		setPerturbationConfig(eb, "ZookeeperReconciler", tracecheck.PerturbationConfig{
+		setPerturbationConfig(eb, "ZookeeperReconciler", tracecheck.StalenessConfig{
 			StaleReadBounds: tracecheck.LookbackLimits{
 				"ZookeeperCluster": 4, // using staleness to go back to the previous version
 			},
@@ -255,7 +255,7 @@ func TestZookeeperControllerStalenessIssue(t *testing.T) {
 	})
 
 	t.Run("Bug does not manifest if staleness doesnt go back far enough", func(t *testing.T) {
-		setPerturbationConfig(eb, "ZookeeperReconciler", tracecheck.PerturbationConfig{
+		setPerturbationConfig(eb, "ZookeeperReconciler", tracecheck.StalenessConfig{
 			StaleReadBounds: tracecheck.LookbackLimits{
 				"ZookeeperCluster": 1, // using staleness to go back to the previous version
 			},
