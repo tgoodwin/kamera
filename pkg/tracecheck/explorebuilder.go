@@ -78,11 +78,10 @@ func (rb *ReconcilerBuilder) WatchesGK(gk schema.GroupKind, mapper WatchMapper) 
 }
 
 // PermuteOrder marks this reconciler as eligible for order permutation during exploration.
-// When enabled, the explorer will consider alternative orderings where this reconciler
-// is processed first among pending reconciles.
 func (rb *ReconcilerBuilder) PermuteOrder() *ReconcilerBuilder {
-	rb.parent.ensurePermuteOrderEntry(rb.id)
-	rb.parent.config.PermuteOrder[rb.id] = true
+	cfg := rb.parent.Config()
+	cfg.Perturbations.PermuteOrder[rb.id] = true
+	rb.parent.SetConfig(cfg)
 	return rb
 }
 
@@ -109,11 +108,13 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			MaxDepth:        *searchDepth,
 			RecordPerfStats: *emitStats,
 			Timeout:         *timeout,
-			PermuteOrder:    make(map[ReconcilerID]bool),
 			Optimizations: OptimizationConfig{
 				OnlyPermuteTriggered: true,
 			},
-			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
+			Perturbations: PerturbationConfig{
+				PermuteOrder: make(map[ReconcilerID]bool),
+				Staleness:    make(map[ReconcilerID]StalenessConfig),
+			},
 		},
 	}
 	if builder.config.MaxDepth == 0 {
@@ -164,7 +165,13 @@ func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 
 func cloneExploreConfig(cfg *ExploreConfig) *ExploreConfig {
 	if cfg == nil {
-		return &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
+		return &ExploreConfig{
+			Perturbations: PerturbationConfig{
+				PermuteOrder: make(map[ReconcilerID]bool),
+				Staleness:    make(map[ReconcilerID]StalenessConfig),
+			},
+			Optimizations: OptimizationConfig{OnlyPermuteTriggered: true},
+		}
 	}
 	cloned := cfg.Clone()
 	return &cloned
@@ -260,18 +267,20 @@ func parseKindString(kind string) schema.GroupKind {
 func (b *ExplorerBuilder) ensurePermuteOrderEntry(id ReconcilerID) {
 	if b.config == nil {
 		b.config = &ExploreConfig{
-			PermuteOrder: make(map[ReconcilerID]bool),
 			Optimizations: OptimizationConfig{
 				OnlyPermuteTriggered: true,
 			},
-			perturbationCfg: make(map[ReconcilerID]PerturbationConfig),
+			Perturbations: PerturbationConfig{
+				PermuteOrder: make(map[ReconcilerID]bool),
+				Staleness:    make(map[ReconcilerID]StalenessConfig),
+			},
 		}
 	}
-	if b.config.PermuteOrder == nil {
-		b.config.PermuteOrder = make(map[ReconcilerID]bool)
+	if b.config.Perturbations.PermuteOrder == nil {
+		b.config.Perturbations.PermuteOrder = make(map[ReconcilerID]bool)
 	}
-	if _, ok := b.config.PermuteOrder[id]; !ok {
-		b.config.PermuteOrder[id] = false
+	if _, ok := b.config.Perturbations.PermuteOrder[id]; !ok {
+		b.config.Perturbations.PermuteOrder[id] = false
 	}
 }
 
@@ -315,9 +324,24 @@ func (b *ExplorerBuilder) WithPodCrashProbability(stage controller.PodLifecycleS
 	return b
 }
 
-func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc PerturbationConfig) *ExplorerBuilder {
-	b.config.perturbationCfg[reconcilerID] = rc
-	return b
+// WithPerturbations sets stale-read perturbation config for a single reconciler.
+func (b *ExplorerBuilder) WithPerturbations(reconcilerID ReconcilerID, rc StalenessConfig) *ExplorerBuilder {
+	cfg := b.Config()
+	if cfg.Perturbations.Staleness == nil {
+		cfg.Perturbations.Staleness = make(map[ReconcilerID]StalenessConfig)
+	}
+	cfg.Perturbations.Staleness[reconcilerID] = rc
+	return b.SetConfig(cfg)
+}
+
+// WithPermuteOrder sets permutation eligibility for a single reconciler.
+func (b *ExplorerBuilder) WithPermuteOrder(id ReconcilerID, enabled bool) *ExplorerBuilder {
+	cfg := b.Config()
+	if cfg.Perturbations.PermuteOrder == nil {
+		cfg.Perturbations.PermuteOrder = make(map[ReconcilerID]bool)
+	}
+	cfg.Perturbations.PermuteOrder[id] = enabled
+	return b.SetConfig(cfg)
 }
 
 // WithPermuteOrders sets the per-reconciler permute-order configuration.
@@ -327,22 +351,22 @@ func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *Explor
 		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
 	}
 	target := perms
-	if target == nil && b.config.PermuteOrder != nil {
-		target = b.config.PermuteOrder
+	if target == nil && b.config.Perturbations.PermuteOrder != nil {
+		target = b.config.Perturbations.PermuteOrder
 	}
-	b.config.PermuteOrder = make(map[ReconcilerID]bool, len(target))
+	b.config.Perturbations.PermuteOrder = make(map[ReconcilerID]bool, len(target))
 	for id, enabled := range target {
-		b.config.PermuteOrder[id] = enabled
+		b.config.Perturbations.PermuteOrder[id] = enabled
 	}
 	// ensure all reconcilers are represented even if not provided in perms
 	for id := range b.reconcilers {
-		if _, ok := b.config.PermuteOrder[id]; !ok {
-			b.config.PermuteOrder[id] = false
+		if _, ok := b.config.Perturbations.PermuteOrder[id]; !ok {
+			b.config.Perturbations.PermuteOrder[id] = false
 		}
 	}
 	for id := range b.recorderInjectedStrategies {
-		if _, ok := b.config.PermuteOrder[id]; !ok {
-			b.config.PermuteOrder[id] = false
+		if _, ok := b.config.Perturbations.PermuteOrder[id]; !ok {
+			b.config.Perturbations.PermuteOrder[id] = false
 		}
 	}
 	return b
@@ -352,11 +376,11 @@ func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *Explor
 // Maps are cloned and missing permute entries are defaulted for known reconcilers.
 func (b *ExplorerBuilder) SetConfig(cfg ExploreConfig) *ExplorerBuilder {
 	cloned := cfg.Clone()
-	if cloned.PermuteOrder == nil {
-		cloned.PermuteOrder = make(map[ReconcilerID]bool)
+	if cloned.Perturbations.PermuteOrder == nil {
+		cloned.Perturbations.PermuteOrder = make(map[ReconcilerID]bool)
 	}
-	if cloned.perturbationCfg == nil {
-		cloned.perturbationCfg = make(map[ReconcilerID]PerturbationConfig)
+	if cloned.Perturbations.Staleness == nil {
+		cloned.Perturbations.Staleness = make(map[ReconcilerID]StalenessConfig)
 	}
 	b.config = &cloned
 	for id := range b.reconcilers {
@@ -411,7 +435,13 @@ func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBu
 // Config returns a copy of the current builder configuration.
 func (b *ExplorerBuilder) Config() ExploreConfig {
 	if b.config == nil {
-		return ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
+		return ExploreConfig{
+			Perturbations: PerturbationConfig{
+				PermuteOrder: make(map[ReconcilerID]bool),
+				Staleness:    make(map[ReconcilerID]StalenessConfig),
+			},
+			Optimizations: OptimizationConfig{OnlyPermuteTriggered: true},
+		}
 	}
 	return b.config.Clone()
 }

@@ -399,13 +399,15 @@ func TestExpandStateByReconcileOrder(t *testing.T) {
 				onlyPermuteTriggered = *tc.onlyPermuteTriggered
 			}
 			cfg := ExploreConfig{
-				PermuteOrder: make(map[ReconcilerID]bool),
+				Perturbations: PerturbationConfig{
+					PermuteOrder: make(map[ReconcilerID]bool),
+				},
 				Optimizations: OptimizationConfig{
 					OnlyPermuteTriggered: onlyPermuteTriggered,
 				},
 			}
 			for id, enabled := range tc.permuteEnabled {
-				cfg.PermuteOrder[id] = enabled
+				cfg.Perturbations.PermuteOrder[id] = enabled
 			}
 			explorer := &Explorer{reconcilers: reconcilers, Config: &cfg}
 
