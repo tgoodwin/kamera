@@ -2,7 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/rand"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +37,8 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+var errInvalidKnativeParams = errors.New("invalid knative service params")
 
 func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Configure simclock to use 2s steps instead of 1s to speed up scale-to-zero simulation
@@ -203,7 +209,7 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 	baseCfg := builder.Config()
 	scenarios := make([]explore.Scenario, 0, len(inputs))
 	for idx, input := range inputs {
-		variants, err := expandKnativeSingleActionInput(input)
+		variants, err := expandKnativeParameterizedInput(input, *fuzzCasesFlag, *fuzzSeedFlag)
 		if err != nil {
 			return nil, fmt.Errorf("expand input %d (%s): %w", idx, input.Name, err)
 		}
@@ -250,12 +256,18 @@ func defaultKnativeInputs() ([]coverage.Input, error) {
 	}, nil
 }
 
-type singleActionMutation struct {
-	name  string
-	apply func(*v1.Service)
+type knativeParamSpec struct {
+	name    string
+	options []knativeParamOption
 }
 
-func expandKnativeSingleActionInput(input coverage.Input) ([]coverage.Input, error) {
+type knativeParamOption struct {
+	label      string
+	isBaseline bool
+	apply      func(*v1.Service)
+}
+
+func expandKnativeParameterizedInput(input coverage.Input, fuzzCases int, fuzzSeed int64) ([]coverage.Input, error) {
 	baseName := strings.TrimSpace(input.Name)
 	if baseName == "" {
 		baseName = "scenario"
@@ -274,52 +286,259 @@ func expandKnativeSingleActionInput(input coverage.Input) ([]coverage.Input, err
 	}
 
 	variants := []coverage.Input{base}
-	for _, mutation := range singleActionMutations() {
-		updated := cloneCoverageInput(input)
-		updated.Name = fmt.Sprintf("%s/%s", baseName, mutation.name)
+	singleVariants, err := expandKnativeSingleParamVariants(input, baseName, serviceIdx, templateSvc)
+	if err != nil {
+		return nil, err
+	}
+	variants = append(variants, singleVariants...)
 
-		svc := templateSvc.DeepCopy()
-		mutation.apply(svc)
-		updated.Objects[serviceIdx], err = serviceToUnstructured(svc)
-		if err != nil {
-			return nil, fmt.Errorf("apply mutation %q: %w", mutation.name, err)
+	sampledVariants, err := expandKnativeSampledParamVariants(input, baseName, serviceIdx, templateSvc, fuzzCases, fuzzSeed)
+	if err != nil {
+		return nil, err
+	}
+	variants = append(variants, sampledVariants...)
+
+	return variants, nil
+}
+
+func knativeParamCatalog() []knativeParamSpec {
+	return []knativeParamSpec{
+		{
+			name: "image",
+			options: []knativeParamOption{
+				{label: "baseline", isBaseline: true, apply: func(*v1.Service) {}},
+				{label: "v2", apply: func(svc *v1.Service) { ensurePrimaryContainer(svc).Image = "dev.local/test:v2" }},
+				{label: "v3", apply: func(svc *v1.Service) { ensurePrimaryContainer(svc).Image = "dev.local/test:v3" }},
+			},
+		},
+		{
+			name: "min-scale",
+			options: []knativeParamOption{
+				{label: "baseline", isBaseline: true, apply: func(*v1.Service) {}},
+				{label: "1", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MinScaleAnnotationKey] = "1" }},
+				{label: "2", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MinScaleAnnotationKey] = "2" }},
+			},
+		},
+		{
+			name: "max-scale",
+			options: []knativeParamOption{
+				{label: "baseline", isBaseline: true, apply: func(*v1.Service) {}},
+				{label: "1", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MaxScaleAnnotationKey] = "1" }},
+				{label: "5", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MaxScaleAnnotationKey] = "5" }},
+				{label: "10", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MaxScaleAnnotationKey] = "10" }},
+			},
+		},
+		{
+			name: "concurrency",
+			options: []knativeParamOption{
+				{label: "baseline", isBaseline: true, apply: func(*v1.Service) {}},
+				{label: "0", apply: func(svc *v1.Service) { zero := int64(0); svc.Spec.Template.Spec.ContainerConcurrency = &zero }},
+				{label: "1", apply: func(svc *v1.Service) { one := int64(1); svc.Spec.Template.Spec.ContainerConcurrency = &one }},
+				{label: "10", apply: func(svc *v1.Service) { ten := int64(10); svc.Spec.Template.Spec.ContainerConcurrency = &ten }},
+				{label: "100", apply: func(svc *v1.Service) { hundred := int64(100); svc.Spec.Template.Spec.ContainerConcurrency = &hundred }},
+			},
+		},
+	}
+}
+
+func expandKnativeSingleParamVariants(input coverage.Input, baseName string, serviceIdx int, templateSvc *v1.Service) ([]coverage.Input, error) {
+	variants := make([]coverage.Input, 0)
+	for _, spec := range knativeParamCatalog() {
+		for _, option := range spec.options {
+			if option.isBaseline {
+				continue
+			}
+			name := fmt.Sprintf("%s/single/%s-%s", baseName, spec.name, option.label)
+			updated, err := buildKnativeVariantInput(input, serviceIdx, templateSvc, name, []knativeParamOption{option})
+			if err != nil {
+				return nil, err
+			}
+			variants = append(variants, updated)
 		}
-
-		variants = append(variants, updated)
 	}
 	return variants, nil
 }
 
-func singleActionMutations() []singleActionMutation {
-	return []singleActionMutation{
-		{
-			name: "set-image-v2",
-			apply: func(svc *v1.Service) {
-				ensurePrimaryContainer(svc).Image = "dev.local/test:v2"
-			},
-		},
-		{
-			name: "set-min-scale-1",
-			apply: func(svc *v1.Service) {
-				anns := ensureTemplateAnnotations(svc)
-				anns[autoscaling.MinScaleAnnotationKey] = "1"
-			},
-		},
-		{
-			name: "set-max-scale-5",
-			apply: func(svc *v1.Service) {
-				anns := ensureTemplateAnnotations(svc)
-				anns[autoscaling.MaxScaleAnnotationKey] = "5"
-			},
-		},
-		{
-			name: "set-concurrency-1",
-			apply: func(svc *v1.Service) {
-				one := int64(1)
-				svc.Spec.Template.Spec.ContainerConcurrency = &one
-			},
-		},
+func expandKnativeSampledParamVariants(input coverage.Input, baseName string, serviceIdx int, templateSvc *v1.Service, cases int, seed int64) ([]coverage.Input, error) {
+	if cases <= 0 {
+		return nil, nil
 	}
+
+	specs := knativeParamCatalog()
+	rng := rand.New(rand.NewSource(seed))
+	seenAssignments := map[string]struct{}{}
+	variants := make([]coverage.Input, 0, cases)
+
+	maxAttempts := cases * 20
+	for attempts := 0; attempts < maxAttempts && len(variants) < cases; attempts++ {
+		selection := sampleKnativeParamSelection(rng, specs)
+		key := knativeSelectionKey(selection)
+		if key == "" {
+			continue
+		}
+		if _, exists := seenAssignments[key]; exists {
+			continue
+		}
+		seenAssignments[key] = struct{}{}
+
+		choiceOptions := make([]knativeParamOption, 0, len(selection))
+		choiceNames := make([]string, 0, len(selection))
+		for specIdx, optionIdx := range selection {
+			spec := specs[specIdx]
+			option := spec.options[optionIdx]
+			choiceOptions = append(choiceOptions, option)
+			choiceNames = append(choiceNames, fmt.Sprintf("%s-%s", spec.name, option.label))
+		}
+		sort.Strings(choiceNames)
+		name := fmt.Sprintf("%s/sampled-%03d/%s", baseName, len(variants)+1, strings.Join(choiceNames, "+"))
+
+		updated, err := buildKnativeVariantInput(input, serviceIdx, templateSvc, name, choiceOptions)
+		if err != nil {
+			if errors.Is(err, errInvalidKnativeParams) {
+				continue
+			}
+			return nil, err
+		}
+		variants = append(variants, updated)
+	}
+
+	return variants, nil
+}
+
+func buildKnativeVariantInput(input coverage.Input, serviceIdx int, templateSvc *v1.Service, name string, options []knativeParamOption) (coverage.Input, error) {
+	updated := cloneCoverageInput(input)
+	updated.Name = name
+
+	svc := templateSvc.DeepCopy()
+	for _, option := range options {
+		option.apply(svc)
+	}
+
+	if err := validateKnativeServiceParams(svc); err != nil {
+		return coverage.Input{}, fmt.Errorf("%w for %q: %v", errInvalidKnativeParams, name, err)
+	}
+
+	serviceObj, err := serviceToUnstructured(svc)
+	if err != nil {
+		return coverage.Input{}, fmt.Errorf("convert parameterized service for %q: %w", name, err)
+	}
+	updated.Objects[serviceIdx] = serviceObj
+	return updated, nil
+}
+
+func sampleKnativeParamSelection(rng *rand.Rand, specs []knativeParamSpec) map[int]int {
+	selection := map[int]int{}
+	if len(specs) == 0 {
+		return selection
+	}
+
+	primaryIdx := rng.Intn(len(specs))
+	selection[primaryIdx] = randomKnativeNonBaselineOptionIndex(rng, specs[primaryIdx])
+
+	secondaryProb := rng.Intn(100)
+	if secondaryProb < 30 {
+		if secondaryIdx, ok := randomKnativeSpecIndexExcluding(rng, len(specs), selection); ok {
+			selection[secondaryIdx] = randomKnativeNonBaselineOptionIndex(rng, specs[secondaryIdx])
+		}
+	}
+
+	thirdProb := rng.Intn(100)
+	if thirdProb < 5 {
+		if thirdIdx, ok := randomKnativeSpecIndexExcluding(rng, len(specs), selection); ok {
+			selection[thirdIdx] = randomKnativeNonBaselineOptionIndex(rng, specs[thirdIdx])
+		}
+	}
+
+	return selection
+}
+
+func randomKnativeSpecIndexExcluding(rng *rand.Rand, total int, excluded map[int]int) (int, bool) {
+	candidates := make([]int, 0, total-len(excluded))
+	for i := 0; i < total; i++ {
+		if _, blocked := excluded[i]; blocked {
+			continue
+		}
+		candidates = append(candidates, i)
+	}
+	if len(candidates) == 0 {
+		return 0, false
+	}
+	return candidates[rng.Intn(len(candidates))], true
+}
+
+func randomKnativeNonBaselineOptionIndex(rng *rand.Rand, spec knativeParamSpec) int {
+	choices := make([]int, 0, len(spec.options))
+	for idx, option := range spec.options {
+		if option.isBaseline {
+			continue
+		}
+		choices = append(choices, idx)
+	}
+	if len(choices) == 0 {
+		return 0
+	}
+	return choices[rng.Intn(len(choices))]
+}
+
+func knativeSelectionKey(selection map[int]int) string {
+	if len(selection) == 0 {
+		return ""
+	}
+	keys := make([]int, 0, len(selection))
+	for k := range selection {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%d=%d", k, selection[k]))
+	}
+	return strings.Join(parts, ",")
+}
+
+func validateKnativeServiceParams(svc *v1.Service) error {
+	if svc == nil {
+		return fmt.Errorf("service is nil")
+	}
+	if len(svc.Spec.Template.Spec.Containers) == 0 {
+		return fmt.Errorf("service template has no containers")
+	}
+
+	minScale, hasMin, err := parseScaleAnnotation(svc, autoscaling.MinScaleAnnotationKey)
+	if err != nil {
+		return err
+	}
+	maxScale, hasMax, err := parseScaleAnnotation(svc, autoscaling.MaxScaleAnnotationKey)
+	if err != nil {
+		return err
+	}
+	if hasMin && hasMax && minScale > maxScale {
+		return fmt.Errorf("min scale %d exceeds max scale %d", minScale, maxScale)
+	}
+	if svc.Spec.Template.Spec.ContainerConcurrency != nil && *svc.Spec.Template.Spec.ContainerConcurrency < 0 {
+		return fmt.Errorf("containerConcurrency must be >= 0")
+	}
+	return nil
+}
+
+func parseScaleAnnotation(svc *v1.Service, key string) (int64, bool, error) {
+	anns := svc.Spec.Template.ObjectMeta.Annotations
+	if len(anns) == 0 {
+		return 0, false, nil
+	}
+	raw := strings.TrimSpace(anns[key])
+	if raw == "" {
+		return 0, false, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, true, fmt.Errorf("parse %s=%q: %w", key, raw, err)
+	}
+	if value < 0 {
+		return 0, true, fmt.Errorf("%s must be >= 0", key)
+	}
+	return value, true, nil
 }
 
 func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, error) {
