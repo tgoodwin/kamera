@@ -18,9 +18,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
+// InspectorDumpContext carries optional scenario metadata stored with a dump file.
+type InspectorDumpContext struct {
+	ScenarioName     string
+	ScenarioRunIndex *int
+	Workflow         string
+	InputRef         string
+	Attributes       map[string]string
+}
+
 // SaveInspectorDump serializes the supplied inspector states to the provided path using the resolver to materialize objects.
 func SaveInspectorDump(states []tracecheck.ResultState, resolver tracecheck.VersionManager, path string) error {
-	dump, err := buildInspectorDump(states, resolver)
+	return SaveInspectorDumpWithContext(states, resolver, path, nil)
+}
+
+// SaveInspectorDumpWithContext serializes inspector states and includes optional scenario metadata.
+func SaveInspectorDumpWithContext(states []tracecheck.ResultState, resolver tracecheck.VersionManager, path string, ctx *InspectorDumpContext) error {
+	dump, err := buildInspectorDump(states, resolver, ctx)
 	if err != nil {
 		return err
 	}
@@ -46,10 +60,9 @@ func LoadInspectorDump(path string) ([]tracecheck.ResultState, tracecheck.Versio
 	return dumpToResultStates(dump)
 }
 
-
-func buildInspectorDump(states []tracecheck.ResultState, resolver tracecheck.VersionManager) (*analysis.Dump, error) {
+func buildInspectorDump(states []tracecheck.ResultState, resolver tracecheck.VersionManager, context *InspectorDumpContext) (*analysis.Dump, error) {
 	if len(states) == 0 {
-		return &analysis.Dump{}, nil
+		return &analysis.Dump{Context: buildAnalysisDumpContext(context)}, nil
 	}
 
 	if resolver == nil {
@@ -138,9 +151,43 @@ func buildInspectorDump(states []tracecheck.ResultState, resolver tracecheck.Ver
 	})
 
 	return &analysis.Dump{
+		Context: buildAnalysisDumpContext(context),
 		Objects: objects,
 		States:  resultStates,
 	}, nil
+}
+
+func buildAnalysisDumpContext(ctx *InspectorDumpContext) *analysis.DumpContext {
+	if ctx == nil {
+		return nil
+	}
+	if ctx.ScenarioName == "" && ctx.ScenarioRunIndex == nil && ctx.Workflow == "" && ctx.InputRef == "" && len(ctx.Attributes) == 0 {
+		return nil
+	}
+
+	attributes := make(map[string]string, len(ctx.Attributes))
+	for key, value := range ctx.Attributes {
+		attributes[key] = value
+	}
+	if len(attributes) == 0 {
+		attributes = nil
+	}
+
+	var runIndex *int
+	if ctx.ScenarioRunIndex != nil {
+		indexCopy := *ctx.ScenarioRunIndex
+		runIndex = &indexCopy
+	}
+
+	return &analysis.DumpContext{
+		Scenario: &analysis.DumpScenarioContext{
+			Name:       ctx.ScenarioName,
+			RunIndex:   runIndex,
+			Workflow:   ctx.Workflow,
+			InputRef:   ctx.InputRef,
+			Attributes: attributes,
+		},
+	}
 }
 
 func dumpToResultStates(d *analysis.Dump) ([]tracecheck.ResultState, tracecheck.VersionManager, error) {

@@ -24,6 +24,11 @@ type hotspotSummary struct {
 	Attributes  map[string]string `json:"attributes,omitempty"`
 }
 
+var (
+	runDirectoryInspectorUI = interactive.RunDirectoryInspectorTUIView
+	runStateInspectorUI     = interactive.RunStateInspectorTUIView
+)
+
 func RunInspect(args []string) (int, error) {
 	if len(args) == 0 {
 		return 1, errors.New(inspectUsage())
@@ -62,18 +67,52 @@ func runExploration(args []string) int {
 		return 1
 	}
 
-	dumpPath := fs.Arg(0)
-	if dumpPath == "" {
+	targetPath := fs.Arg(0)
+	if targetPath == "" {
 		fmt.Fprintln(os.Stderr, explorationUsage())
 		return 1
 	}
 
+	info, err := os.Stat(targetPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "inspect target: %v\n", err)
+		return 1
+	}
+	if info.IsDir() {
+		return runExplorationDirectory(targetPath, dotPath, interactiveMode)
+	}
+	return runExplorationDumpFile(targetPath, dotPath, interactiveMode)
+}
+
+func runExplorationDirectory(dir, dotPath string, interactiveMode bool) int {
+	entries, err := interactive.LoadDumpCatalogEntries(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load dump directory: %v\n", err)
+		return 1
+	}
+
+	if !interactiveMode {
+		if dotPath != "" {
+			fmt.Fprintln(os.Stderr, "--dot is only supported for a single dump file when --interactive=false")
+			return 1
+		}
+		fmt.Print(interactive.RenderDumpCatalogTable(entries))
+		return 0
+	}
+
+	if err := runDirectoryInspectorUI(entries); err != nil {
+		fmt.Fprintf(os.Stderr, "run dump directory inspector: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runExplorationDumpFile(dumpPath, dotPath string, interactiveMode bool) int {
 	states, resolver, err := interactive.LoadInspectorDump(dumpPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "load dump: %v\n", err)
 		return 1
 	}
-
 	dag := tracecheck.BuildStateDAG(tracecheck.Result{ConvergedStates: states})
 	dot := tracecheck.RenderStateDAGDOT(dag, tracecheck.GraphvizOpts{LabelEdges: true, DropSelfLoops: true})
 
@@ -96,7 +135,7 @@ func runExploration(args []string) int {
 		return 0
 	}
 
-	if _, err := interactive.RunStateInspectorTUIView(states, resolver, false, tracecheck.ExploreConfig{}); err != nil {
+	if _, err := runStateInspectorUI(states, resolver, false, tracecheck.ExploreConfig{}, false); err != nil {
 		fmt.Fprintf(os.Stderr, "run inspector: %v\n", err)
 		return 1
 	}
@@ -105,7 +144,7 @@ func runExploration(args []string) int {
 }
 
 func explorationUsage() string {
-	return "usage: inspect exploration <dump> [--dot <path>] [--interactive=false]"
+	return "usage: inspect exploration [--dot <path>] [--interactive=false] <dump-or-dir>"
 }
 
 func runDependencyGraph(args []string) int {

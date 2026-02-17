@@ -32,6 +32,25 @@ func dumpStatsIfRequested(stats *tracecheck.ExploreStats, runIdx int) error {
 	return nil
 }
 
+func standaloneDumpContext(runIdx int) *interactive.InspectorDumpContext {
+	index := runIdx
+	attributes := map[string]string{}
+	if config := ConfigPath(); config != "" {
+		attributes["exploreConfig"] = config
+	}
+	if len(attributes) == 0 {
+		attributes = nil
+	}
+
+	return &interactive.InspectorDumpContext{
+		ScenarioName:     "standalone",
+		ScenarioRunIndex: &index,
+		Workflow:         "standalone",
+		InputRef:         InputsPath(),
+		Attributes:       attributes,
+	}
+}
+
 func withRunSuffix(base string, runIdx int) string {
 	if runIdx == 0 {
 		return base
@@ -124,7 +143,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 	}
 
 	if DumpPath() != "" {
-		if err := interactive.SaveInspectorDump(states, resolver, DumpPath()); err != nil {
+		if err := interactive.SaveInspectorDumpWithContext(states, resolver, DumpPath(), standaloneDumpContext(runIdx)); err != nil {
 			return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)
 		}
 		fmt.Printf("wrote results to %s\n", DumpPath())
@@ -140,7 +159,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 	for {
 		// seed is an intermediate state node that can be used to restart the exploration
 		// from that point. If the user decides not to restart, seed will be nil.
-		restart, err := interactive.RunStateInspectorTUIView(states, resolver, true, currentConfig)
+		restart, err := interactive.RunStateInspectorTUIView(states, resolver, true, currentConfig, false)
 		if err != nil {
 			return fmt.Errorf("inspector error: %w", err)
 		}
@@ -181,7 +200,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 			states = newStates
 		}
 		if DumpPath() != "" {
-			if err := interactive.SaveInspectorDump(states, resolver, DumpPath()); err != nil {
+			if err := interactive.SaveInspectorDumpWithContext(states, resolver, DumpPath(), standaloneDumpContext(runIdx)); err != nil {
 				return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)
 			}
 			fmt.Printf("wrote results to %s\n", DumpPath())

@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
+	"github.com/tgoodwin/kamera/pkg/analysis"
 	foov1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
+	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -102,6 +103,13 @@ func TestParallelRunnerWritesDump(t *testing.T) {
 			Name:         "Foo Scenario",
 			InitialState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
+			Context: ScenarioContext{
+				Workflow: "smoke-workflow",
+				InputRef: "inputs.json#foo-scenario",
+				Attributes: map[string]string{
+					"seed": "1234",
+				},
+			},
 		},
 	}
 
@@ -129,6 +137,30 @@ func TestParallelRunnerWritesDump(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dumpDir, name)); err != nil {
 		t.Fatalf("stat dump file: %v", err)
+	}
+
+	dumpPath := filepath.Join(dumpDir, name)
+	dump, err := analysis.LoadDump(dumpPath)
+	if err != nil {
+		t.Fatalf("load dump: %v", err)
+	}
+	if dump.Context == nil || dump.Context.Scenario == nil {
+		t.Fatalf("expected dump context scenario metadata to be present")
+	}
+	if dump.Context.Scenario.Name != "Foo Scenario" {
+		t.Fatalf("expected scenario name in dump context, got %q", dump.Context.Scenario.Name)
+	}
+	if dump.Context.Scenario.RunIndex == nil || *dump.Context.Scenario.RunIndex != 0 {
+		t.Fatalf("expected run index 0 in dump context")
+	}
+	if dump.Context.Scenario.Workflow != "smoke-workflow" {
+		t.Fatalf("expected workflow in dump context, got %q", dump.Context.Scenario.Workflow)
+	}
+	if dump.Context.Scenario.InputRef != "inputs.json#foo-scenario" {
+		t.Fatalf("expected input ref in dump context, got %q", dump.Context.Scenario.InputRef)
+	}
+	if dump.Context.Scenario.Attributes["seed"] != "1234" {
+		t.Fatalf("expected seed attribute in dump context")
 	}
 }
 

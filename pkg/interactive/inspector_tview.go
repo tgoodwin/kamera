@@ -2,6 +2,7 @@ package interactive
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,9 @@ import (
 	"github.com/tgoodwin/kamera/pkg/util"
 	"golang.org/x/exp/slices"
 )
+
+// ErrReturnToCatalog indicates the user requested returning to the dump catalog.
+var ErrReturnToCatalog = errors.New("return to catalog")
 
 // openStateDAGGraph builds a DAG from the given states, renders it to DOT format,
 // and opens it as a PDF using the system's default PDF viewer (Preview on macOS).
@@ -155,14 +159,45 @@ type stepCache struct {
 
 // RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
 // When allowDump is false, the dump shortcut is disabled (used for trace-hydrated sessions).
+// If allowEscToCatalog is true, pressing Esc at the top level returns ErrReturnToCatalog.
 // If the user requests a restart, the inspector exits and returns a RestartRequest to the caller.
-func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver tracecheck.VersionManager, allowDump bool, cfg tracecheck.ExploreConfig) (*tracecheck.RestartRequest, error) {
+func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver tracecheck.VersionManager, allowDump bool, cfg tracecheck.ExploreConfig, allowEscToCatalog bool) (*tracecheck.RestartRequest, error) {
+	app := tview.NewApplication()
+	root, inspectResult, err := buildStateInspectorRoot(app, states, resolver, allowDump, cfg, allowEscToCatalog, func() {
+		app.Stop()
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = app.SetRoot(root, true).EnableMouse(true).Run()
+	restartRequest, returnToCatalog := inspectResult()
+	if err != nil {
+		return restartRequest, err
+	}
+	if returnToCatalog {
+		return nil, ErrReturnToCatalog
+	}
+	return restartRequest, nil
+}
+
+func buildStateInspectorRoot(
+	app *tview.Application,
+	states []tracecheck.ResultState,
+	resolver tracecheck.VersionManager,
+	allowDump bool,
+	cfg tracecheck.ExploreConfig,
+	allowEscToCatalog bool,
+	onReturnToCatalog func(),
+) (tview.Primitive, func() (*tracecheck.RestartRequest, bool), error) {
+	if app == nil {
+		return nil, nil, fmt.Errorf("application is required")
+	}
 	states = validateResultStates(states)
 	states = tracecheck.TrimStatesForInspection(states)
 	states = dedupeResultStates(states)
 
 	if len(states) == 0 {
-		return nil, fmt.Errorf("no converged states supplied")
+		return nil, nil, fmt.Errorf("no converged states supplied")
 	}
 
 	var resolverCache *objectCache
@@ -171,7 +206,6 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 	}
 	getCache := func() *objectCache { return resolverCache }
 
-	app := tview.NewApplication()
 	pages := tview.NewPages()
 	const comparePageName = "compare"
 
@@ -198,10 +232,14 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 	}
 	restartHint := " • [yellow]r[-] restart"
 	graphHint := " • [yellow]g[-] graph"
+	topBackHint := ""
+	if allowEscToCatalog {
+		topBackHint = " • [yellow]Esc[-] back"
+	}
 
 	statusBar := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText(`[yellow]<Tab>[-] move • [yellow]Enter[-] select` + graphHint + dumpHint + ` • [yellow]q[-] quit`).
+		SetText(`[yellow]<Tab>[-] move • [yellow]Enter[-] select` + topBackHint + graphHint + dumpHint + ` • [yellow]q[-] quit`).
 		SetTextAlign(tview.AlignCenter)
 
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -222,6 +260,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		stateDetailRow        = 1
 		stepDetailRow         = 1
 		pendingDetailRow      = 1
+		returnToCatalog       = false
 	)
 
 	layoutMode := ""
@@ -262,7 +301,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 	}
 
 	baseQuit := " • [yellow]q[-] quit"
-	stateStatusMessage := `[yellow]Enter/d[-] describe object • [yellow]c[-] compare across states • [yellow]Tab[-] swap focus` + graphHint + dumpShortcut + baseQuit
+	stateStatusMessage := `[yellow]Enter/d[-] describe object • [yellow]c[-] compare across states • [yellow]Tab[-] swap focus` + topBackHint + graphHint + dumpShortcut + baseQuit
 	stateDescribeStatus := `[yellow]Esc[-] back` + graphHint + dumpShortcut + baseQuit
 	pathStatusMessage := `[yellow]Enter[-] open steps • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + graphHint + dumpShortcut + baseQuit
 	stepStatusMessage := `[yellow]Enter/d[-] inspect reconcile • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + graphHint + dumpShortcut + baseQuit
@@ -592,6 +631,20 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		}
 	}
 
+	handleEscape := func() bool {
+		if goBack() {
+			return true
+		}
+		if allowEscToCatalog && mode == modeStates && returnFromText == nil {
+			returnToCatalog = true
+			if onReturnToCatalog != nil {
+				onReturnToCatalog()
+			}
+			return true
+		}
+		return false
+	}
+
 	restartFromStep := func() {
 		if selectedState < 0 || selectedState >= len(states) {
 			updateStatus("[yellow]select a state first[-]")
@@ -637,7 +690,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			focusDetail()
 			return nil
 		case tcell.KeyEscape:
-			if goBack() {
+			if handleEscape() {
 				return nil
 			}
 		}
@@ -666,7 +719,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			}
 			return nil
 		case tcell.KeyEscape:
-			if goBack() {
+			if handleEscape() {
 				return nil
 			}
 		case tcell.KeyEnter:
@@ -704,7 +757,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			}
 			return nil
 		case tcell.KeyEscape:
-			if goBack() {
+			if handleEscape() {
 				return nil
 			}
 		case tcell.KeyEnter:
@@ -737,7 +790,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			}
 			return nil
 		case tcell.KeyEscape:
-			if goBack() {
+			if handleEscape() {
 				return nil
 			}
 		}
@@ -1583,8 +1636,9 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 
 	applyMode(modeStates)
 
-	err := app.SetRoot(pages, true).EnableMouse(true).Run()
-	return restartRequest, err
+	return pages, func() (*tracecheck.RestartRequest, bool) {
+		return restartRequest, returnToCatalog
+	}, nil
 }
 
 func configureTable(title string, selectable bool) *tview.Table {

@@ -167,7 +167,15 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		states = append(states, res.AbortedStates...)
 		if len(states) > 0 {
 			path := scenarioDumpPath(opts.DumpDir, scenario.Name, idx)
-			if err := interactive.SaveInspectorDump(states, result.VersionManager, path); err != nil {
+			runIdx := idx
+			dumpContext := &interactive.InspectorDumpContext{
+				ScenarioName:     scenario.Name,
+				ScenarioRunIndex: &runIdx,
+				Workflow:         scenario.Context.Workflow,
+				InputRef:         scenario.Context.InputRef,
+				Attributes:       scenario.Context.Attributes,
+			}
+			if err := interactive.SaveInspectorDumpWithContext(states, result.VersionManager, path, dumpContext); err != nil {
 				result.Err = fmt.Errorf("dump scenario %s: %w", scenario.Name, err)
 			} else {
 				result.DumpPath = path
