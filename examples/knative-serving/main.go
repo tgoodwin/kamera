@@ -29,8 +29,12 @@ import (
 var scheme = knativescheme.Default
 
 var parallelFlag = flag.Bool("parallel", false, "run parallel scenario mode; if --inputs is omitted, use built-in knative baseline inputs")
+var parallelModeFlag = flag.String("parallel-mode", "goroutine", "parallel execution mode: goroutine or process")
+var parallelWorkersFlag = flag.Int("parallel-workers", 0, "number of workers for parallel execution (0 uses GOMAXPROCS)")
 var fuzzCasesFlag = flag.Int("fuzz-cases", 20, "number of sampled parameterized scenarios to generate per input")
 var fuzzSeedFlag = flag.Int64("fuzz-seed", 1337, "seed for deterministic sampled parameterized scenario generation")
+var parallelChildFlag = flag.Bool("parallel-child", false, "internal: run a single batch scenario in child mode")
+var scenarioIndexFlag = flag.Int("scenario-index", -1, "internal: scenario index for child mode")
 
 type digestBypassResolver struct{}
 
@@ -164,6 +168,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "load inputs: %v\n", err)
 		os.Exit(1)
 	}
+	if *parallelChildFlag {
+		if err := runParallelChild(ctx, builder, inputs, batchMode); err != nil {
+			fmt.Fprintf(os.Stderr, "child run error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if batchMode {
 		if explore.InteractiveEnabled() {
 			fmt.Fprintln(os.Stderr, "interactive ignored in batch mode")
@@ -174,13 +185,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "convert inputs: %v\n", err)
 			os.Exit(1)
 		}
-		runner, err := explore.NewParallelRunner(builder)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
-			os.Exit(1)
-		}
-		opts := explore.ParallelOptions{DumpDir: explore.DumpPath(), StatsDir: explore.DumpStatsPath()}
-		if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
+		if _, err := runBatchScenarios(ctx, builder, scenarios); err != nil {
 			fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
 			os.Exit(1)
 		}
