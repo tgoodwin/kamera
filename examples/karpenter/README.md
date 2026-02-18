@@ -17,14 +17,19 @@ go run . -interactive=false -dump-output /tmp/kamera-karpenter.jsonl
 
 ## Batch inputs
 
-To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output:
+To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output. For example:
 
 ```bash
 go run . \
-  --inputs /path/to/inputs.json \
+  --inputs inputs.json \
+  --fuzz-cases 12 \
+  --fuzz-seed 1337 \
   --dump-output /tmp/karpenter-dumps \
   --dump-stats /tmp/karpenter-stats
 ```
+
+- `--fuzz-cases` controls how many sampled parameterized variants are generated per input.
+- `--fuzz-seed` keeps sampled variants deterministic across runs.
 
 ## Observed flow (expected)
 
