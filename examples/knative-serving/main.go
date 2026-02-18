@@ -31,8 +31,6 @@ import (
 var scheme = knativescheme.Default
 
 var parallelFlag = flag.Bool("parallel", false, "run parallel scenario mode; if --inputs is omitted, load default knative inputs from file")
-var fuzzCasesFlag = flag.Int("fuzz-cases", 20, "number of sampled parameterized scenarios to generate per input")
-var fuzzSeedFlag = flag.Int64("fuzz-seed", 1337, "seed for deterministic sampled parameterized scenario generation")
 
 type digestBypassResolver struct{}
 

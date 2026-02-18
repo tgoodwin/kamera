@@ -19,11 +19,11 @@ func TestScenariosFromInputsRequiresBuilder(t *testing.T) {
 	}
 }
 
-func TestScenariosFromInputsGeneratesSingleActionVariants(t *testing.T) {
+func TestScenariosFromInputsUsesInputsAsFinalScenarioUnits(t *testing.T) {
 	builder := newKnativeExplorerBuilder()
 
-	input := coverage.Input{
-		Name: "knative-base",
+	inputA := coverage.Input{
+		Name: "knative-a",
 		Objects: []*unstructured.Unstructured{
 			mustServiceAsUnstructured(t),
 		},
@@ -37,17 +37,22 @@ func TestScenariosFromInputsGeneratesSingleActionVariants(t *testing.T) {
 			},
 		},
 	}
+	inputB := coverage.Input{
+		Name: "knative-b",
+		Objects: []*unstructured.Unstructured{
+			mustServiceAsUnstructured(t),
+		},
+	}
 
-	scenarios, err := scenariosFromInputs(builder, []coverage.Input{input})
+	scenarios, err := scenariosFromInputs(builder, []coverage.Input{inputA, inputB})
 	if err != nil {
 		t.Fatalf("scenariosFromInputs error = %v", err)
 	}
-	if len(scenarios) < 2 {
-		t.Fatalf("expected at least 2 scenarios, got %d", len(scenarios))
+	if len(scenarios) != 2 {
+		t.Fatalf("expected exactly 2 scenarios, got %d", len(scenarios))
 	}
 
-	seenImageVariant := false
-	seenSampledVariant := false
+	seen := map[string]bool{}
 	for _, sc := range scenarios {
 		if len(sc.InitialState.Objects()) == 0 {
 			t.Fatalf("scenario %q has empty state objects", sc.Name)
@@ -55,18 +60,10 @@ func TestScenariosFromInputsGeneratesSingleActionVariants(t *testing.T) {
 		if len(sc.InitialState.PendingReconciles) == 0 {
 			t.Fatalf("scenario %q has no pending reconciles", sc.Name)
 		}
-		if strings.Contains(sc.Name, "/single/image-") {
-			seenImageVariant = true
-		}
-		if strings.Contains(sc.Name, "/sampled-") {
-			seenSampledVariant = true
-		}
+		seen[sc.Name] = true
 	}
-	if !seenImageVariant {
-		t.Fatalf("expected at least one image variant, got names: %v", scenarioNames(scenarios))
-	}
-	if !seenSampledVariant {
-		t.Fatalf("expected at least one sampled variant, got names: %v", scenarioNames(scenarios))
+	if !seen["knative-a"] || !seen["knative-b"] {
+		t.Fatalf("expected original scenario names, got names: %v", scenarioNames(scenarios))
 	}
 }
 
@@ -118,48 +115,6 @@ func scenarioNames(scenarios []explore.Scenario) []string {
 		names = append(names, sc.Name)
 	}
 	return names
-}
-
-func TestScenariosFromInputsUsesFuzzCasesFlagBudget(t *testing.T) {
-	builder := newKnativeExplorerBuilder()
-	input := coverage.Input{
-		Name: "knative-budget",
-		Objects: []*unstructured.Unstructured{
-			mustServiceAsUnstructured(t),
-		},
-	}
-
-	restore := setFuzzSamplingForTest(t, 3, 42)
-	defer restore()
-
-	scenarios, err := scenariosFromInputs(builder, []coverage.Input{input})
-	if err != nil {
-		t.Fatalf("scenariosFromInputs error = %v", err)
-	}
-
-	sampled := 0
-	for _, sc := range scenarios {
-		if strings.Contains(sc.Name, "/sampled-") {
-			sampled++
-		}
-	}
-	if sampled != 3 {
-		t.Fatalf("expected 3 sampled scenarios, got %d (names=%v)", sampled, scenarioNames(scenarios))
-	}
-}
-
-func setFuzzSamplingForTest(t *testing.T, cases int, seed int64) func() {
-	t.Helper()
-	oldCases := *fuzzCasesFlag
-	oldSeed := *fuzzSeedFlag
-
-	*fuzzCasesFlag = cases
-	*fuzzSeedFlag = seed
-
-	return func() {
-		*fuzzCasesFlag = oldCases
-		*fuzzSeedFlag = oldSeed
-	}
 }
 
 func Example_validateKnativeServiceParams() {

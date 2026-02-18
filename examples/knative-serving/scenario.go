@@ -209,23 +209,16 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 	baseCfg := builder.Config()
 	scenarios := make([]explore.Scenario, 0, len(inputs))
 	for idx, input := range inputs {
-		variants, err := expandKnativeParameterizedInput(input, *fuzzCasesFlag, *fuzzSeedFlag)
+		state, err := buildStateFromCoverageInput(builder, input)
 		if err != nil {
-			return nil, fmt.Errorf("expand input %d (%s): %w", idx, input.Name, err)
+			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
 		}
 
-		for _, variant := range variants {
-			state, err := buildStateFromCoverageInput(builder, variant)
-			if err != nil {
-				return nil, fmt.Errorf("build start state for %s: %w", variant.Name, err)
-			}
-
-			scenarios = append(scenarios, explore.Scenario{
-				Name:         variant.Name,
-				InitialState: state,
-				Config:       applyInputTuning(baseCfg, variant.Tuning),
-			})
-		}
+		scenarios = append(scenarios, explore.Scenario{
+			Name:         input.Name,
+			InitialState: state,
+			Config:       applyInputTuning(baseCfg, input.Tuning),
+		})
 	}
 
 	if len(scenarios) == 0 {

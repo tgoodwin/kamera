@@ -22,8 +22,11 @@ func TestBatchInputsForRunParallelWithoutInputsUsesDefaults(t *testing.T) {
 	if len(inputs) == 0 {
 		t.Fatal("expected default inputs")
 	}
-	if inputs[0].Name != "knative-default" {
-		t.Fatalf("expected default scenario name, got %#v", inputs[0].Name)
+	if len(inputs) < 2 {
+		t.Fatalf("expected expanded default inputs array, got %d input(s)", len(inputs))
+	}
+	if inputs[0].Name != "knative-default/base" {
+		t.Fatalf("expected first default scenario name, got %#v", inputs[0].Name)
 	}
 	if len(inputs[0].Objects) == 0 {
 		t.Fatalf("expected default input objects, got %#v", inputs[0])
