@@ -171,6 +171,13 @@ go run ./cmd/kamera generate --graph <graph.json> --input-map <input-map.json> -
 go run ./cmd/kamera analyze report <dump.jsonl>
 ```
 
+`inputs.json` uses a top-level JSON array (`[]coverage.Input`). Each entry must include:
+- `name`: non-empty scenario name (unique within the file)
+- `objects`: at least one Kubernetes object with `apiVersion` and `kind`
+- `pending` (optional): each entry must set `controllerId` and `key.name` (`key.namespace` may be empty for cluster-scoped keys)
+
+`coverage.LoadInputs` validates these constraints and returns index-specific errors for invalid files.
+
 ### Using Kamera in test suites
 
 Kamera can be run with `go test`, so you can easily cover multi-controller reconciliation flows in your test suites without relying on heavy integration test infrastructure. You can use Kamera to assert that these flows converge deterministically and that your domain-specific invariants hold across all executions.
