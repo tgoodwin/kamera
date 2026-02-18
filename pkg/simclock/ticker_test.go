@@ -122,3 +122,24 @@ func TestNewK8sTickerAdapter(t *testing.T) {
 		t.Fatalf("expected tick at depth 1 via k8s ticker adapter")
 	}
 }
+
+func TestTickerPanicsOnInvalidIntervalSteps(t *testing.T) {
+	restore := SetDepth(0)
+	defer restore()
+
+	ch := make(chan time.Time, 1)
+	ticker := &Ticker{
+		C:             ch,
+		ch:            ch,
+		id:            999999,
+		interval:      time.Second,
+		intervalSteps: 0,
+		startDepth:    0,
+	}
+	registerTicker(ticker)
+	defer deregisterTicker(ticker.id)
+
+	require.Panics(t, func() {
+		SetDepth(1)
+	})
+}

@@ -93,6 +93,9 @@ func (t *Ticker) tickIfDue(prevDepth, depth int64) {
 	if t.stopped {
 		return
 	}
+	if t.intervalSteps <= 0 {
+		panic("simclock: ticker intervalSteps must be > 0")
+	}
 
 	// Compute whether this depth advancement crossed at least one tick boundary.
 	// Tick boundaries are at: startDepth + intervalSteps, startDepth + 2*intervalSteps, ...
