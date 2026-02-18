@@ -1,0 +1,43 @@
+[
+  {
+    "name": "knative-default",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "name": "kamera-test",
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              }
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test"
+                }
+              ]
+            }
+          }
+        }
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ]
+  }
+]

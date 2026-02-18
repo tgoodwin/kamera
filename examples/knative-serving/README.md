@@ -14,6 +14,16 @@ The example depends on Knative Serving controllers, so the first `go mod tidy` w
 
 ## Batch inputs
 
+The example ships with a baseline `inputs.json` file in this directory. Running with
+`--parallel` and no explicit `--inputs` path loads that file automatically.
+
+```bash
+go run . \
+  --parallel \
+  --dump-output /tmp/knative-dumps \
+  --dump-stats /tmp/knative-stats
+```
+
 To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output:
 
 ```bash

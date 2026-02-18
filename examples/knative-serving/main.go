@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"time"
 	"unsafe"
@@ -28,7 +30,7 @@ import (
 
 var scheme = knativescheme.Default
 
-var parallelFlag = flag.Bool("parallel", false, "run parallel scenario mode; if --inputs is omitted, use built-in knative baseline inputs")
+var parallelFlag = flag.Bool("parallel", false, "run parallel scenario mode; if --inputs is omitted, load default knative inputs from file")
 var fuzzCasesFlag = flag.Int("fuzz-cases", 20, "number of sampled parameterized scenarios to generate per input")
 var fuzzSeedFlag = flag.Int64("fuzz-seed", 1337, "seed for deterministic sampled parameterized scenario generation")
 
@@ -209,9 +211,38 @@ func batchInputsForRun(parallel bool, inputsPath string) ([]coverage.Input, bool
 	if !parallel {
 		return nil, false, nil
 	}
-	inputs, err := defaultKnativeInputs()
+	inputs, _, err := loadInputsFromSearchPaths(defaultKnativeInputSearchPaths(), coverage.LoadInputs)
 	if err != nil {
 		return nil, false, err
 	}
 	return inputs, true, nil
+}
+
+func defaultKnativeInputSearchPaths() []string {
+	return []string{
+		"inputs.json",
+		filepath.Join("examples", "knative-serving", "inputs.json"),
+	}
+}
+
+func loadInputsFromSearchPaths(paths []string, loader func(path string) ([]coverage.Input, error)) ([]coverage.Input, string, error) {
+	if len(paths) == 0 {
+		return nil, "", fmt.Errorf("no default inputs search paths configured")
+	}
+	if loader == nil {
+		return nil, "", fmt.Errorf("inputs loader is nil")
+	}
+
+	for _, path := range paths {
+		inputs, err := loader(path)
+		if err == nil {
+			return inputs, path, nil
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		return nil, "", fmt.Errorf("load inputs from %s: %w", path, err)
+	}
+
+	return nil, "", fmt.Errorf("inputs file not found in search paths %v: %w", paths, os.ErrNotExist)
 }

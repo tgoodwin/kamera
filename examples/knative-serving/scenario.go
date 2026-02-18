@@ -234,28 +234,6 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 	return scenarios, nil
 }
 
-func defaultKnativeInputs() ([]coverage.Input, error) {
-	serviceObj, err := serviceToUnstructured(buildBaselineService())
-	if err != nil {
-		return nil, err
-	}
-	return []coverage.Input{
-		{
-			Name:    "knative-default",
-			Objects: []*unstructured.Unstructured{serviceObj},
-			Pending: []coverage.Pending{
-				{
-					ControllerID: "ServiceReconciler",
-					Key: coverage.NamespacedName{
-						Namespace: "default",
-						Name:      "demo",
-					},
-				},
-			},
-		},
-	}, nil
-}
-
 type knativeParamSpec struct {
 	name    string
 	options []knativeParamOption
