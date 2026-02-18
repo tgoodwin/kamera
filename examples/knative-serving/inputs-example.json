@@ -1,0 +1,1625 @@
+[
+  {
+    "name": "knative-default/base",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/image-v2",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test:v2",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/image-v3",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test:v3",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/min-scale-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "1"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/min-scale-2",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "2"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/max-scale-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/max-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/max-scale-5",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/max-scale": "5",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/max-scale-10",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/max-scale": "10",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/concurrency-0",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 0,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/concurrency-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 1,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/concurrency-10",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 10,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/single/concurrency-100",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 100,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-001/max-scale-10",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/max-scale": "10",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-002/image-v2",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test:v2",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-003/concurrency-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 1,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-004/concurrency-100+min-scale-2",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "2"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 100,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-005/concurrency-0",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 0,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-006/image-v2+max-scale-10",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/max-scale": "10",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test:v2",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-007/concurrency-10+min-scale-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "1"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 10,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-008/concurrency-0+min-scale-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "1"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 0,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-009/max-scale-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/max-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-010/min-scale-2",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "2"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-011/min-scale-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "1"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-012/concurrency-1+max-scale-10",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/max-scale": "10",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 1,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-013/concurrency-10",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 10,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-014/max-scale-5",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/max-scale": "5",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-015/image-v3+min-scale-2",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "2"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test:v3",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-016/image-v3",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test:v3",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-017/concurrency-1+image-v3",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 1,
+              "containers": [
+                {
+                  "image": "dev.local/test:v3",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-018/concurrency-1+min-scale-2",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "2"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 1,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-019/image-v2+min-scale-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/min-scale": "1"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containers": [
+                {
+                  "image": "dev.local/test:v2",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  },
+  {
+    "name": "knative-default/sampled-020/concurrency-1+max-scale-1",
+    "objects": [
+      {
+        "apiVersion": "serving.knative.dev/v1",
+        "kind": "Service",
+        "metadata": {
+          "name": "demo",
+          "namespace": "default"
+        },
+        "spec": {
+          "template": {
+            "metadata": {
+              "annotations": {
+                "autoscaling.knative.dev/class": "kpa.autoscaling.knative.dev",
+                "autoscaling.knative.dev/initial-scale": "1",
+                "autoscaling.knative.dev/max-scale": "1",
+                "autoscaling.knative.dev/min-scale": "0"
+              },
+              "name": "kamera-test"
+            },
+            "spec": {
+              "containerConcurrency": 1,
+              "containers": [
+                {
+                  "image": "dev.local/test",
+                  "name": "",
+                  "resources": {}
+                }
+              ]
+            }
+          }
+        },
+        "status": {}
+      }
+    ],
+    "pending": [
+      {
+        "controllerId": "ServiceReconciler",
+        "key": {
+          "namespace": "default",
+          "name": "demo"
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    }
+  }
+]

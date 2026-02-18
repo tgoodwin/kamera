@@ -14,8 +14,14 @@ The example depends on Knative Serving controllers, so the first `go mod tidy` w
 
 ## Batch inputs
 
-The example ships with a baseline `inputs.json` file in this directory. Running with
-`--parallel` and no explicit `--inputs` path loads that file automatically.
+The example ships with an expanded `inputs.json` file in this directory. Each entry in
+that top-level `[]Input` array is treated as a final scenario unit; the harness does not
+perform additional parameter expansion at runtime.
+
+Behavior:
+- `--inputs <path>` enables batch mode, even if `--parallel` is not set.
+- `--parallel` with no `--inputs` loads the default `./inputs.json` (or `examples/knative-serving/inputs.json` from repo root).
+- `--timeout` applies per input/scenario run, not as an overall batch timeout.
 
 ```bash
 go run . \
@@ -28,7 +34,9 @@ To run a generated inputs file, pass `--inputs` and set dump directories for per
 
 ```bash
 go run . \
-  --inputs /path/to/inputs.json \
+  --inputs inputs.json \
   --dump-output /tmp/knative-dumps \
+  --depth 100 \
+  --timeout 60s \
   --dump-stats /tmp/knative-stats
 ```
