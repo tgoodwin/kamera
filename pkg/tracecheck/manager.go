@@ -196,6 +196,7 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	changes := Changes{
 		ObjectVersions: out,
 		Effects:        effects.writes,
+		Observations:   effects.reads,
 	}
 	return changes, nil
 }

@@ -82,6 +82,7 @@ type DumpReconcileResult struct {
 type DumpChanges struct {
 	ObjectVersions []DumpObjectVersion `json:"objectVersions"`
 	Effects        []tracecheck.Effect `json:"effects"`
+	Observations   []tracecheck.Effect `json:"observations,omitempty"`
 }
 
 // DumpDelta represents a delta (diff) for a specific object key.

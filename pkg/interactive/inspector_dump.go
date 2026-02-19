@@ -255,6 +255,11 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 		eff.Key = ensureKeyKindWithObject(eff.Key, eff.Version, objIndex)
 		effects[i] = eff
 	}
+	observations := make([]tracecheck.Effect, len(step.Changes.Observations))
+	for i, obs := range step.Changes.Observations {
+		obs.Key = ensureKeyKindWithObject(obs.Key, obs.Version, objIndex)
+		observations[i] = obs
+	}
 
 	// Compute ContentsHash for StateAfter to enable DAG cross-referencing
 	var contentsHashAfter string
@@ -273,6 +278,7 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 		Changes: analysis.DumpChanges{
 			ObjectVersions: toDumpObjectVersions(step.Changes.ObjectVersions, objIndex),
 			Effects:        effects,
+			Observations:   observations,
 		},
 		Error:         step.Error,
 		Deltas:        toDumpDeltas(step.Deltas, step.Changes.ObjectVersions),
@@ -292,6 +298,7 @@ func fromDumpReconcileResult(dump analysis.DumpReconcileResult, resolver *dumpKe
 		Changes: tracecheck.Changes{
 			ObjectVersions: fromDumpObjectVersions(dump.Changes.ObjectVersions, resolver),
 			Effects:        fromDumpEffects(dump.Changes.Effects, resolver),
+			Observations:   fromDumpEffects(dump.Changes.Observations, resolver),
 		},
 		Error:             dump.Error,
 		Deltas:            fromDumpDeltas(dump.Deltas, resolver),
@@ -483,6 +490,11 @@ func collectReconcileHashes(step *tracecheck.ReconcileResult, add func(snapshot.
 	}
 	for _, eff := range step.Changes.Effects {
 		if err := add(eff.Version); err != nil {
+			return err
+		}
+	}
+	for _, obs := range step.Changes.Observations {
+		if err := add(obs.Version); err != nil {
 			return err
 		}
 	}
