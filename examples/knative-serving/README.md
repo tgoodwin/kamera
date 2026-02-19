@@ -20,7 +20,7 @@ perform additional parameter expansion at runtime.
 
 Behavior:
 - `--inputs <path>` enables batch mode, even if `--parallel` is not set.
-- `--parallel` with no `--inputs` loads the default `./inputs.json` (or `examples/knative-serving/inputs.json` from repo root).
+- `--parallel` with no `--inputs` loads the default `inputs-example.json`.
 - `--timeout` applies per input/scenario run, not as an overall batch timeout.
 
 ```bash
@@ -34,7 +34,7 @@ To run a generated inputs file, pass `--inputs` and set dump directories for per
 
 ```bash
 go run . \
-  --inputs inputs.json \
+  --inputs inputs-example.json \
   --dump-output /tmp/knative-dumps \
   --depth 100 \
   --timeout 60s \

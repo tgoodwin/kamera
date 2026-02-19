@@ -201,46 +201,32 @@ func main() {
 func batchInputsForRun(parallel bool, inputsPath string) ([]coverage.Input, bool, error) {
 	if inputsPath != "" {
 		inputs, err := coverage.LoadInputs(inputsPath)
-		if err != nil {
-			return nil, false, err
-		}
-		return inputs, true, nil
+		return inputs, true, err
 	}
 	if !parallel {
 		return nil, false, nil
 	}
-	inputs, _, err := loadInputsFromSearchPaths(defaultKnativeInputSearchPaths(), coverage.LoadInputs)
+	inputs, err := loadDefaultKnativeInputs()
 	if err != nil {
 		return nil, false, err
 	}
 	return inputs, true, nil
 }
 
-func defaultKnativeInputSearchPaths() []string {
-	return []string{
-		"inputs.json",
-		filepath.Join("examples", "knative-serving", "inputs.json"),
-	}
+var defaultKnativeInputsSearchPaths = []string{
+	"inputs-example.json",
+	filepath.Join("examples", "knative-serving", "inputs-example.json"),
 }
 
-func loadInputsFromSearchPaths(paths []string, loader func(path string) ([]coverage.Input, error)) ([]coverage.Input, string, error) {
-	if len(paths) == 0 {
-		return nil, "", fmt.Errorf("no default inputs search paths configured")
-	}
-	if loader == nil {
-		return nil, "", fmt.Errorf("inputs loader is nil")
-	}
-
-	for _, path := range paths {
-		inputs, err := loader(path)
+func loadDefaultKnativeInputs() ([]coverage.Input, error) {
+	for _, path := range defaultKnativeInputsSearchPaths {
+		inputs, err := coverage.LoadInputs(path)
 		if err == nil {
-			return inputs, path, nil
+			return inputs, nil
 		}
-		if errors.Is(err, os.ErrNotExist) {
-			continue
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("load inputs from %s: %w", path, err)
 		}
-		return nil, "", fmt.Errorf("load inputs from %s: %w", path, err)
 	}
-
-	return nil, "", fmt.Errorf("inputs file not found in search paths %v: %w", paths, os.ErrNotExist)
+	return nil, fmt.Errorf("inputs file not found in search paths %v: %w", defaultKnativeInputsSearchPaths, os.ErrNotExist)
 }

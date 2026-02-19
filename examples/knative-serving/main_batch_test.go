@@ -12,6 +12,17 @@ import (
 )
 
 func TestBatchInputsForRunParallelWithoutInputsUsesDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	defaultPath := filepath.Join(tmpDir, "inputs.json")
+	data, err := json.Marshal(validInputs("knative-default/base"))
+	if err != nil {
+		t.Fatalf("marshal default inputs: %v", err)
+	}
+	if err := os.WriteFile(defaultPath, data, 0o644); err != nil {
+		t.Fatalf("write default inputs file: %v", err)
+	}
+	withDefaultKnativeInputSearchPaths(t, []string{defaultPath})
+
 	inputs, batchMode, err := batchInputsForRun(true, "")
 	if err != nil {
 		t.Fatalf("batchInputsForRun error = %v", err)
@@ -21,9 +32,6 @@ func TestBatchInputsForRunParallelWithoutInputsUsesDefaults(t *testing.T) {
 	}
 	if len(inputs) == 0 {
 		t.Fatal("expected default inputs")
-	}
-	if len(inputs) < 2 {
-		t.Fatalf("expected expanded default inputs array, got %d input(s)", len(inputs))
 	}
 	if inputs[0].Name != "knative-default/base" {
 		t.Fatalf("expected first default scenario name, got %#v", inputs[0].Name)
@@ -71,11 +79,12 @@ func TestBatchInputsForRunUsesInputsFile(t *testing.T) {
 	}
 }
 
-func TestLoadInputsFromSearchPathsUsesFirstExisting(t *testing.T) {
+func TestLoadDefaultKnativeInputsUsesFirstExisting(t *testing.T) {
 	tmpDir := t.TempDir()
 	missing := filepath.Join(tmpDir, "missing.json")
 	second := filepath.Join(tmpDir, "second.json")
 	first := filepath.Join(tmpDir, "first.json")
+	withDefaultKnativeInputSearchPaths(t, []string{missing, second, first})
 
 	secondData, err := json.Marshal(validInputs("second"))
 	if err != nil {
@@ -93,24 +102,22 @@ func TestLoadInputsFromSearchPathsUsesFirstExisting(t *testing.T) {
 		t.Fatalf("write first inputs file: %v", err)
 	}
 
-	inputs, pathUsed, err := loadInputsFromSearchPaths([]string{missing, second, first}, coverage.LoadInputs)
+	inputs, err := loadDefaultKnativeInputs()
 	if err != nil {
-		t.Fatalf("loadInputsFromSearchPaths error = %v", err)
-	}
-	if pathUsed != second {
-		t.Fatalf("expected first existing path %q, got %q", second, pathUsed)
+		t.Fatalf("loadDefaultKnativeInputs error = %v", err)
 	}
 	if len(inputs) != 1 || inputs[0].Name != "second" {
 		t.Fatalf("unexpected loaded inputs: %#v", inputs)
 	}
 }
 
-func TestLoadInputsFromSearchPathsAllMissing(t *testing.T) {
+func TestLoadDefaultKnativeInputsAllMissing(t *testing.T) {
 	tmpDir := t.TempDir()
 	missingA := filepath.Join(tmpDir, "missing-a.json")
 	missingB := filepath.Join(tmpDir, "missing-b.json")
+	withDefaultKnativeInputSearchPaths(t, []string{missingA, missingB})
 
-	_, _, err := loadInputsFromSearchPaths([]string{missingA, missingB}, coverage.LoadInputs)
+	_, err := loadDefaultKnativeInputs()
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -120,20 +127,13 @@ func TestLoadInputsFromSearchPathsAllMissing(t *testing.T) {
 }
 
 func TestBatchInputsForRunParallelWithoutInputsMissingDefaults(t *testing.T) {
-	wd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	if err := os.Chdir(t.TempDir()); err != nil {
-		t.Fatalf("chdir temp: %v", err)
-	}
-	t.Cleanup(func() {
-		if chdirErr := os.Chdir(wd); chdirErr != nil {
-			t.Fatalf("restore cwd: %v", chdirErr)
-		}
+	tmpDir := t.TempDir()
+	withDefaultKnativeInputSearchPaths(t, []string{
+		filepath.Join(tmpDir, "missing-a.json"),
+		filepath.Join(tmpDir, "missing-b.json"),
 	})
 
-	_, _, err = batchInputsForRun(true, "")
+	_, _, err := batchInputsForRun(true, "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -159,4 +159,13 @@ func validInputs(name string) []coverage.Input {
 			},
 		},
 	}
+}
+
+func withDefaultKnativeInputSearchPaths(t *testing.T, paths []string) {
+	t.Helper()
+	origPaths := defaultKnativeInputsSearchPaths
+	defaultKnativeInputsSearchPaths = paths
+	t.Cleanup(func() {
+		defaultKnativeInputsSearchPaths = origPaths
+	})
 }
