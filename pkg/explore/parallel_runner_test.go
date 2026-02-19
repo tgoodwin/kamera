@@ -2,17 +2,24 @@ package explore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tgoodwin/kamera/pkg/analysis"
+	"github.com/tgoodwin/kamera/pkg/coverage"
 	foov1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -194,4 +201,216 @@ func TestParallelRunnerCapturesInvariantError(t *testing.T) {
 	if results[0].InvariantError == nil {
 		t.Fatalf("expected invariant error to be captured")
 	}
+}
+
+func TestParallelRunnerProcessModeRequiresInputsFile(t *testing.T) {
+	withProcessModeFlags(t, true, -1, "")
+
+	builder, state := newTestBuilder(t)
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	scenarios := []Scenario{
+		{
+			Name:         "x",
+			InitialState: state.Clone(),
+			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
+		},
+	}
+
+	_, err = runner.RunAll(context.Background(), scenarios, ParallelOptions{})
+	if err == nil || !strings.Contains(err.Error(), "--inputs") {
+		t.Fatalf("expected --inputs validation error, got %v", err)
+	}
+}
+
+func TestParallelRunnerChildModeFailsWhenSelectedInputMapsToMultipleScenarios(t *testing.T) {
+	builder, state := newTestBuilder(t)
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	inputsPath := writeInputNamesFile(t, "alpha", "beta")
+	withProcessModeFlags(t, true, 0, inputsPath)
+	dumpDir := t.TempDir()
+
+	scenarios := []Scenario{
+		{
+			Name:         "alpha/base",
+			InitialState: state.Clone(),
+			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
+		},
+		{
+			Name:         "alpha/single/foo",
+			InitialState: state.Clone(),
+			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
+		},
+		{
+			Name:         "beta",
+			InitialState: state.Clone(),
+			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
+		},
+	}
+
+	results, err := runner.RunAll(context.Background(), scenarios, ParallelOptions{DumpDir: dumpDir})
+	if err == nil || !strings.Contains(err.Error(), "expected exactly one scenario") {
+		t.Fatalf("expected single-scenario contract error, got %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one child result, got %d", len(results))
+	}
+	if results[0].Err == nil {
+		t.Fatalf("expected child result error")
+	}
+	if results[0].DumpPath == "" {
+		t.Fatalf("expected child failure dump path")
+	}
+
+	dump, loadErr := analysis.LoadDump(results[0].DumpPath)
+	if loadErr != nil {
+		t.Fatalf("load failure dump: %v", loadErr)
+	}
+	if dump.Context == nil || dump.Context.Scenario == nil {
+		t.Fatalf("expected dump context scenario metadata")
+	}
+	attrs := dump.Context.Scenario.Attributes
+	if attrs["status"] != "error" {
+		t.Fatalf("expected status=error attribute")
+	}
+	if attrs["error_phase"] != "select_scenario" {
+		t.Fatalf("expected select_scenario phase, got %q", attrs["error_phase"])
+	}
+	if attrs["error_message"] == "" {
+		t.Fatalf("expected error_message attribute")
+	}
+}
+
+func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing.T) {
+	withProcessModeFlags(t, true, -1, "/tmp/inputs.json")
+
+	builder, state := newTestBuilder(t)
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	var mu sync.Mutex
+	var seen []int
+	var calls atomic.Int32
+
+	runner.loadInputsFn = func(path string) ([]coverage.Input, error) {
+		if path != "/tmp/inputs.json" {
+			return nil, fmt.Errorf("unexpected path %q", path)
+		}
+		return []coverage.Input{
+			{Name: "a"},
+			{Name: "b"},
+			{Name: "c"},
+		}, nil
+	}
+	runner.parentArgsFn = func() []string {
+		return []string{"harness", "--parallel-processes", "--inputs", "/tmp/inputs.json", "--interactive=false"}
+	}
+	runner.cwdFn = func() (string, error) {
+		return t.TempDir(), nil
+	}
+	runner.checkModuleDirFn = func(string) error { return nil }
+	runner.spawnChildFn = func(_ context.Context, req childProcessRequest) childProcessResult {
+		calls.Add(1)
+		mu.Lock()
+		seen = append(seen, req.ChildIndex)
+		mu.Unlock()
+		if req.ChildIndex == 1 {
+			return childProcessResult{
+				ChildIndex: req.ChildIndex,
+				Err:        errors.New("exit status 1"),
+				Stderr:     "boom",
+			}
+		}
+		return childProcessResult{ChildIndex: req.ChildIndex}
+	}
+
+	scenarios := []Scenario{
+		{Name: "a", InitialState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
+		{Name: "b", InitialState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
+		{Name: "c", InitialState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
+	}
+	results, runErr := runner.RunAll(context.Background(), scenarios, ParallelOptions{MaxParallel: 2})
+
+	if calls.Load() != 3 {
+		t.Fatalf("expected 3 child runs, got %d", calls.Load())
+	}
+	slices.Sort(seen)
+	if !slices.Equal(seen, []int{0, 1, 2}) {
+		t.Fatalf("expected child indices [0 1 2], got %v", seen)
+	}
+	if runErr == nil || !strings.Contains(runErr.Error(), "failed child indices: 1") {
+		t.Fatalf("expected aggregate failure with index 1, got %v", runErr)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected 3 results, got %d", len(results))
+	}
+	if results[1].Err == nil {
+		t.Fatalf("expected result error for child index 1")
+	}
+}
+
+func TestParallelRunnerChildModeForcesSingleProcessParallelism(t *testing.T) {
+	opts := childParallelOptions(ParallelOptions{MaxParallel: 32})
+	if opts.MaxParallel != 1 {
+		t.Fatalf("expected child max parallel to be 1, got %d", opts.MaxParallel)
+	}
+}
+
+func withProcessModeFlags(t *testing.T, enabled bool, childIdx int, inputsPath string) {
+	t.Helper()
+
+	oldParallelProcesses := *parallelProcessesFlag
+	oldChildIndex := *parallelChildIndexFlag
+	oldInputsPath := *inputsPathFlag
+	t.Cleanup(func() {
+		*parallelProcessesFlag = oldParallelProcesses
+		*parallelChildIndexFlag = oldChildIndex
+		*inputsPathFlag = oldInputsPath
+	})
+
+	*parallelProcessesFlag = enabled
+	*parallelChildIndexFlag = childIdx
+	*inputsPathFlag = inputsPath
+}
+
+func writeInputNamesFile(t *testing.T, names ...string) string {
+	t.Helper()
+
+	inputs := make([]coverage.Input, 0, len(names))
+	for _, name := range names {
+		inputs = append(inputs, coverage.Input{
+			Name: name,
+			Objects: []*unstructured.Unstructured{
+				{
+					Object: map[string]interface{}{
+						"apiVersion": "v1",
+						"kind":       "ConfigMap",
+						"metadata": map[string]interface{}{
+							"name":      name + "-cm",
+							"namespace": "default",
+						},
+					},
+				},
+			},
+		})
+	}
+
+	path := filepath.Join(t.TempDir(), "inputs.json")
+	data, err := json.Marshal(inputs)
+	if err != nil {
+		t.Fatalf("marshal inputs: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write inputs: %v", err)
+	}
+	return path
 }
