@@ -9,8 +9,23 @@ import (
 // Dump represents the top-level structure of a kamera dump file.
 // It contains all objects referenced by hash and the result states from exploration.
 type Dump struct {
+	Context *DumpContext      `json:"context,omitempty"`
 	Objects []DumpObject      `json:"objects"`
 	States  []DumpResultState `json:"states"`
+}
+
+// DumpContext carries optional metadata describing how the dump was produced.
+type DumpContext struct {
+	Scenario *DumpScenarioContext `json:"scenario,omitempty"`
+}
+
+// DumpScenarioContext describes the scenario/workflow that produced this dump.
+type DumpScenarioContext struct {
+	Name       string            `json:"name,omitempty"`
+	RunIndex   *int              `json:"runIndex,omitempty"`
+	Workflow   string            `json:"workflow,omitempty"`
+	InputRef   string            `json:"inputRef,omitempty"`
+	Attributes map[string]string `json:"attributes,omitempty"`
 }
 
 // DumpObject represents a single object version stored in the dump.
@@ -67,6 +82,7 @@ type DumpReconcileResult struct {
 type DumpChanges struct {
 	ObjectVersions []DumpObjectVersion `json:"objectVersions"`
 	Effects        []tracecheck.Effect `json:"effects"`
+	Observations   []tracecheck.Effect `json:"observations,omitempty"`
 }
 
 // DumpDelta represents a delta (diff) for a specific object key.

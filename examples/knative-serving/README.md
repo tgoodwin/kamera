@@ -14,11 +14,29 @@ The example depends on Knative Serving controllers, so the first `go mod tidy` w
 
 ## Batch inputs
 
+The example ships with an expanded `inputs.json` file in this directory. Each entry in
+that top-level `[]Input` array is treated as a final scenario unit; the harness does not
+perform additional parameter expansion at runtime.
+
+Behavior:
+- `--inputs <path>` enables batch mode, even if `--parallel` is not set.
+- `--parallel` with no `--inputs` loads the default `inputs-example.json`.
+- `--timeout` applies per input/scenario run, not as an overall batch timeout.
+
+```bash
+go run . \
+  --parallel \
+  --dump-output /tmp/knative-dumps \
+  --dump-stats /tmp/knative-stats
+```
+
 To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output:
 
 ```bash
 go run . \
-  --inputs /path/to/inputs.json \
+  --inputs inputs-example.json \
   --dump-output /tmp/knative-dumps \
+  --depth 100 \
+  --timeout 60s \
   --dump-stats /tmp/knative-stats
 ```

@@ -2,6 +2,7 @@ package interactive
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,6 +21,9 @@ import (
 	"github.com/tgoodwin/kamera/pkg/util"
 	"golang.org/x/exp/slices"
 )
+
+// ErrReturnToCatalog indicates the user requested returning to the dump catalog.
+var ErrReturnToCatalog = errors.New("return to catalog")
 
 // openStateDAGGraph builds a DAG from the given states, renders it to DOT format,
 // and opens it as a PDF using the system's default PDF viewer (Preview on macOS).
@@ -81,6 +85,7 @@ const (
 	detailNone detailTableMode = iota
 	detailStateObjects
 	detailStepEffects
+	detailStepObservations
 )
 
 type stateObjectEntry struct {
@@ -155,14 +160,45 @@ type stepCache struct {
 
 // RunStateInspectorTUIView launches a tview-based inspector for converged/aborted states.
 // When allowDump is false, the dump shortcut is disabled (used for trace-hydrated sessions).
+// If allowEscToCatalog is true, pressing Esc at the top level returns ErrReturnToCatalog.
 // If the user requests a restart, the inspector exits and returns a RestartRequest to the caller.
-func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver tracecheck.VersionManager, allowDump bool, cfg tracecheck.ExploreConfig) (*tracecheck.RestartRequest, error) {
+func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver tracecheck.VersionManager, allowDump bool, cfg tracecheck.ExploreConfig, allowEscToCatalog bool) (*tracecheck.RestartRequest, error) {
+	app := tview.NewApplication()
+	root, inspectResult, err := buildStateInspectorRoot(app, states, resolver, allowDump, cfg, allowEscToCatalog, func() {
+		app.Stop()
+	})
+	if err != nil {
+		return nil, err
+	}
+	err = app.SetRoot(root, true).EnableMouse(true).Run()
+	restartRequest, returnToCatalog := inspectResult()
+	if err != nil {
+		return restartRequest, err
+	}
+	if returnToCatalog {
+		return nil, ErrReturnToCatalog
+	}
+	return restartRequest, nil
+}
+
+func buildStateInspectorRoot(
+	app *tview.Application,
+	states []tracecheck.ResultState,
+	resolver tracecheck.VersionManager,
+	allowDump bool,
+	cfg tracecheck.ExploreConfig,
+	allowEscToCatalog bool,
+	onReturnToCatalog func(),
+) (tview.Primitive, func() (*tracecheck.RestartRequest, bool), error) {
+	if app == nil {
+		return nil, nil, fmt.Errorf("application is required")
+	}
 	states = validateResultStates(states)
 	states = tracecheck.TrimStatesForInspection(states)
 	states = dedupeResultStates(states)
 
 	if len(states) == 0 {
-		return nil, fmt.Errorf("no converged states supplied")
+		return nil, nil, fmt.Errorf("no converged states supplied")
 	}
 
 	var resolverCache *objectCache
@@ -171,13 +207,13 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 	}
 	getCache := func() *objectCache { return resolverCache }
 
-	app := tview.NewApplication()
 	pages := tview.NewPages()
 	const comparePageName = "compare"
 
 	mainTable := configureTable("States", true)
 	detailTable := configureTable("Details", true)
 	effectsTable := configureTable("Effects", true)
+	observationsTable := configureTable("Observations", true)
 	pendingReconcilesTable := configureTable("Pending Reconciles", true)
 	detailText := tview.NewTextView()
 	detailText.SetDynamicColors(true)
@@ -198,10 +234,14 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 	}
 	restartHint := " • [yellow]r[-] restart"
 	graphHint := " • [yellow]g[-] graph"
+	topBackHint := ""
+	if allowEscToCatalog {
+		topBackHint = " • [yellow]Esc[-] back"
+	}
 
 	statusBar := tview.NewTextView().
 		SetDynamicColors(true).
-		SetText(`[yellow]<Tab>[-] move • [yellow]Enter[-] select` + graphHint + dumpHint + ` • [yellow]q[-] quit`).
+		SetText(`[yellow]<Tab>[-] move • [yellow]Enter[-] select` + topBackHint + graphHint + dumpHint + ` • [yellow]q[-] quit`).
 		SetTextAlign(tview.AlignCenter)
 
 	root := tview.NewFlex().SetDirection(tview.FlexRow).
@@ -217,11 +257,14 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		currentDetailMode     detailTableMode
 		stateObjects          []stateObjectEntry
 		stepEffects           []effectEntry
+		stepObservations      []effectEntry
 		stepPendingReconciles []tracecheck.PendingReconcile
 		returnFromText        func()
 		stateDetailRow        = 1
 		stepDetailRow         = 1
+		observationDetailRow  = 1
 		pendingDetailRow      = 1
+		returnToCatalog       = false
 	)
 
 	layoutMode := ""
@@ -262,7 +305,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 	}
 
 	baseQuit := " • [yellow]q[-] quit"
-	stateStatusMessage := `[yellow]Enter/d[-] describe object • [yellow]c[-] compare across states • [yellow]Tab[-] swap focus` + graphHint + dumpShortcut + baseQuit
+	stateStatusMessage := `[yellow]Enter/d[-] describe object • [yellow]c[-] compare across states • [yellow]Tab[-] swap focus` + topBackHint + graphHint + dumpShortcut + baseQuit
 	stateDescribeStatus := `[yellow]Esc[-] back` + graphHint + dumpShortcut + baseQuit
 	pathStatusMessage := `[yellow]Enter[-] open steps • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + graphHint + dumpShortcut + baseQuit
 	stepStatusMessage := `[yellow]Enter/d[-] inspect reconcile • [yellow]Esc[-] back • [yellow]Tab[-] swap focus` + restartHint + graphHint + dumpShortcut + baseQuit
@@ -592,6 +635,20 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		}
 	}
 
+	handleEscape := func() bool {
+		if goBack() {
+			return true
+		}
+		if allowEscToCatalog && mode == modeStates && returnFromText == nil {
+			returnToCatalog = true
+			if onReturnToCatalog != nil {
+				onReturnToCatalog()
+			}
+			return true
+		}
+		return false
+	}
+
 	restartFromStep := func() {
 		if selectedState < 0 || selectedState >= len(states) {
 			updateStatus("[yellow]select a state first[-]")
@@ -637,7 +694,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			focusDetail()
 			return nil
 		case tcell.KeyEscape:
-			if goBack() {
+			if handleEscape() {
 				return nil
 			}
 		}
@@ -658,15 +715,18 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		switch event.Key() {
 		case tcell.KeyTab:
 			if mode == modeSteps {
-				currentDetailPrim = effectsTable
-				currentDetailMode = detailStepEffects
-				app.SetFocus(effectsTable)
+				if len(stepPendingReconciles) > 0 {
+					currentDetailPrim = pendingReconcilesTable
+					app.SetFocus(pendingReconcilesTable)
+				} else {
+					app.SetFocus(mainTable)
+				}
 			} else {
 				app.SetFocus(mainTable)
 			}
 			return nil
 		case tcell.KeyEscape:
-			if goBack() {
+			if handleEscape() {
 				return nil
 			}
 		case tcell.KeyEnter:
@@ -697,14 +757,22 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		switch event.Key() {
 		case tcell.KeyTab:
 			if mode == modeSteps {
-				app.SetFocus(mainTable)
+				currentDetailPrim = detailTable
+				currentDetailMode = detailStateObjects
+				app.SetFocus(detailTable)
 			} else if mode == modeReconcile {
-				currentDetailPrim = detailText
-				app.SetFocus(detailText)
+				if len(stepObservations) > 0 {
+					currentDetailPrim = observationsTable
+					currentDetailMode = detailStepObservations
+					app.SetFocus(observationsTable)
+				} else {
+					currentDetailPrim = detailText
+					app.SetFocus(detailText)
+				}
 			}
 			return nil
 		case tcell.KeyEscape:
-			if goBack() {
+			if handleEscape() {
 				return nil
 			}
 		case tcell.KeyEnter:
@@ -726,18 +794,89 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		return event
 	})
 
-	detailText.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+	observationsTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		switch event.Key() {
 		case tcell.KeyTab:
-			if mode == modeReconcile {
-				currentDetailPrim = effectsTable
-				app.SetFocus(effectsTable)
+			if mode == modeSteps {
+				if len(stepEffects) > 0 {
+					currentDetailPrim = effectsTable
+					currentDetailMode = detailStepEffects
+					app.SetFocus(effectsTable)
+				} else {
+					currentDetailPrim = detailTable
+					currentDetailMode = detailStateObjects
+					app.SetFocus(detailTable)
+				}
+			} else if mode == modeReconcile {
+				currentDetailPrim = detailText
+				app.SetFocus(detailText)
 			} else {
 				app.SetFocus(mainTable)
 			}
 			return nil
 		case tcell.KeyEscape:
-			if goBack() {
+			if handleEscape() {
+				return nil
+			}
+		case tcell.KeyEnter:
+			if performDetailAction != nil {
+				performDetailAction()
+			}
+			return nil
+		}
+		switch event.Rune() {
+		case 'q', 'Q':
+			app.Stop()
+			return nil
+		case 'd', 'D':
+			if performDetailAction != nil {
+				performDetailAction()
+			}
+			return nil
+		}
+		return event
+	})
+
+	pendingReconcilesTable.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyTab:
+			app.SetFocus(mainTable)
+			return nil
+		case tcell.KeyEscape:
+			if handleEscape() {
+				return nil
+			}
+		}
+		switch event.Rune() {
+		case 'q', 'Q':
+			app.Stop()
+			return nil
+		}
+		return event
+	})
+
+	detailText.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		switch event.Key() {
+		case tcell.KeyTab:
+			if mode == modeReconcile {
+				switch {
+				case len(stepEffects) > 0:
+					currentDetailPrim = effectsTable
+					currentDetailMode = detailStepEffects
+					app.SetFocus(effectsTable)
+				case len(stepObservations) > 0:
+					currentDetailPrim = observationsTable
+					currentDetailMode = detailStepObservations
+					app.SetFocus(observationsTable)
+				default:
+					app.SetFocus(mainTable)
+				}
+			} else {
+				app.SetFocus(mainTable)
+			}
+			return nil
+		case tcell.KeyEscape:
+			if handleEscape() {
 				return nil
 			}
 		}
@@ -775,6 +914,19 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		stepDetailRow = row
 		if mode == modeReconcile && row-1 < len(stepEffects) {
 			entry := &stepEffects[row-1]
+			title, body := buildEffectDetail(entry)
+			detailText.SetTitle(title)
+			detailText.SetText(body)
+		}
+	})
+
+	observationsTable.SetSelectionChangedFunc(func(row, _ int) {
+		if row <= 0 {
+			return
+		}
+		observationDetailRow = row
+		if mode == modeReconcile && row-1 < len(stepObservations) {
+			entry := &stepObservations[row-1]
 			title, body := buildEffectDetail(entry)
 			detailText.SetTitle(title)
 			detailText.SetText(body)
@@ -1087,15 +1239,15 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			stateDetailRow = row
 			showObjectYAML(stateObjects[row-1])
 		})
-		detailContainer.AddItem(detailTable, 0, 3, false)
 		if stateDetailRow > 0 && len(stateObjects) > 0 {
 			detailTable.Select(stateDetailRow, 0)
 		} else {
 			detailTable.Select(0, 0)
 		}
 
-		// Populate effects bottom panel
+		// Populate effects/observations panels
 		stepEffects = stepEffects[:0]
+		stepObservations = stepObservations[:0]
 		resolverCache := getCache()
 		if step != nil {
 			for idx, eff := range step.Changes.Effects {
@@ -1114,6 +1266,14 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 					entry.delta = string(val)
 				}
 				stepEffects = append(stepEffects, entry)
+			}
+			for _, obs := range step.Changes.Observations {
+				gvk := resolveGVK(resolverCache, obs.Version, obs.Key)
+				stepObservations = append(stepObservations, effectEntry{
+					effect: obs,
+					cache:  resolverCache,
+					gvk:    gvk,
+				})
 			}
 		}
 
@@ -1143,11 +1303,52 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			effectsTable.SetTitle(fmt.Sprintf("Effects • Step %d (%s @ %s)", selectedStep, controller, frame))
 			effectsTable.SetSelectedFunc(nil)
 		}
+		observationsTable.Clear()
+		if len(stepObservations) == 0 {
+			observationsTable.SetTitle("Observations • (none)")
+			observationsTable.SetCell(0, 0, valueCell("(no observations)").SetSelectable(false).SetAlign(tview.AlignCenter))
+			observationsTable.SetSelectedFunc(nil)
+			observationDetailRow = 0
+		} else {
+			headers := []string{"Idx", "Verb", "GVK", "Namespace", "Name"}
+			for col, val := range headers {
+				observationsTable.SetCell(0, col, headerCell(val))
+			}
+			if observationDetailRow <= 0 || observationDetailRow > len(stepObservations) {
+				observationDetailRow = 1
+			}
+			for idx, entry := range stepObservations {
+				key := entry.effect.Key
+				observationsTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
+				observationsTable.SetCell(idx+1, 1, valueCell(string(entry.effect.OpType)))
+				observationsTable.SetCell(idx+1, 2, valueCell(entry.gvk))
+				observationsTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Namespace))
+				observationsTable.SetCell(idx+1, 4, valueCell(key.ResourceKey.Name))
+			}
+			observationsTable.Select(observationDetailRow, 0)
+			observationsTable.SetTitle(fmt.Sprintf("Observations • Step %d (%s @ %s)", selectedStep, controller, frame))
+			observationsTable.SetSelectedFunc(nil)
+		}
+
+		// Layout order: Observations -> Effects -> Resulting State -> Resulting Pending Reconciles
+		detailContainer.AddItem(observationsTable, 0, 2, false)
 		detailContainer.AddItem(effectsTable, 0, 2, false)
+		detailContainer.AddItem(detailTable, 0, 3, false)
 
 		// Populate pending reconciles panel
 		renderPendingReconciles(step, "Pending Reconciles • (none)")
-		currentDetailMode = detailStateObjects
+
+		switch {
+		case len(stepObservations) > 0:
+			currentDetailMode = detailStepObservations
+			currentDetailPrim = observationsTable
+		case len(stepEffects) > 0:
+			currentDetailMode = detailStepEffects
+			currentDetailPrim = effectsTable
+		default:
+			currentDetailMode = detailStateObjects
+			currentDetailPrim = detailTable
+		}
 		reconcileDirty = true
 		updateStatus(stepStatusMessage)
 	}
@@ -1192,8 +1393,12 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			frame = util.Shorter(step.FrameID)
 		}
 
-		// Populate effects
+		detailContainer.Clear()
+		detailContainer.SetDirection(tview.FlexRow)
+
+		// Populate effects and observations
 		stepEffects = stepEffects[:0]
+		stepObservations = stepObservations[:0]
 		resolverCache := getCache()
 		if step != nil {
 			for idx, eff := range step.Changes.Effects {
@@ -1210,14 +1415,22 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 				}
 				stepEffects = append(stepEffects, entry)
 			}
+			for _, obs := range step.Changes.Observations {
+				gvk := resolveGVK(resolverCache, obs.Version, obs.Key)
+				stepObservations = append(stepObservations, effectEntry{
+					effect: obs,
+					cache:  resolverCache,
+					gvk:    gvk,
+				})
+			}
 		}
 
 		effectsTable.Clear()
 		if len(stepEffects) == 0 {
 			effectsTable.SetTitle(fmt.Sprintf("Effects • Step %d (%s @ %s)", selectedStep, controller, frame))
 			effectsTable.SetCell(0, 0, valueCell("(no effects)").SetSelectable(false).SetAlign(tview.AlignCenter))
-			detailText.SetTitle("Effect Detail")
-			detailText.SetText("(no effects to display)")
+			effectsTable.SetSelectedFunc(nil)
+			stepDetailRow = 0
 		} else {
 			headers := []string{"Idx", "Verb", "GVK", "Namespace", "Name"}
 			for col, val := range headers {
@@ -1245,21 +1458,68 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 				detailText.SetTitle(title)
 				detailText.SetText(body)
 			})
-			effectsTable.Select(stepDetailRow, 0)
-			if stepDetailRow > 0 && stepDetailRow <= len(stepEffects) {
-				entry := &stepEffects[stepDetailRow-1]
-				title, body := buildEffectDetail(entry)
-				detailText.SetTitle(title)
-				detailText.SetText(body)
-			}
 		}
 		detailContainer.AddItem(effectsTable, 0, 2, false)
 
-		// Populate pending reconciles
-		renderPendingReconciles(step, fmt.Sprintf("Pending Reconciles • Step %d (none)", selectedStep))
+		observationsTable.Clear()
+		if len(stepObservations) == 0 {
+			observationsTable.SetTitle(fmt.Sprintf("Observations • Step %d (%s @ %s)", selectedStep, controller, frame))
+			observationsTable.SetCell(0, 0, valueCell("(no observations)").SetSelectable(false).SetAlign(tview.AlignCenter))
+			observationsTable.SetSelectedFunc(nil)
+			observationDetailRow = 0
+		} else {
+			headers := []string{"Idx", "Verb", "GVK", "Namespace", "Name"}
+			for col, val := range headers {
+				observationsTable.SetCell(0, col, headerCell(val))
+			}
+			if observationDetailRow <= 0 || observationDetailRow > len(stepObservations) {
+				observationDetailRow = 1
+			}
+			for idx, entry := range stepObservations {
+				key := entry.effect.Key
+				observationsTable.SetCell(idx+1, 0, valueCell(fmt.Sprintf("%d", idx)))
+				observationsTable.SetCell(idx+1, 1, valueCell(string(entry.effect.OpType)))
+				observationsTable.SetCell(idx+1, 2, valueCell(entry.gvk))
+				observationsTable.SetCell(idx+1, 3, valueCell(key.ResourceKey.Namespace))
+				observationsTable.SetCell(idx+1, 4, valueCell(key.ResourceKey.Name))
+			}
+			observationsTable.SetTitle(fmt.Sprintf("Observations • Step %d (%s @ %s)", selectedStep, controller, frame))
+			observationsTable.SetSelectedFunc(func(row, _ int) {
+				if row <= 0 || row-1 >= len(stepObservations) {
+					return
+				}
+				observationDetailRow = row
+				entry := &stepObservations[row-1]
+				title, body := buildEffectDetail(entry)
+				detailText.SetTitle(title)
+				detailText.SetText(body)
+			})
+		}
+		detailContainer.AddItem(observationsTable, 0, 2, false)
 
-		currentDetailMode = detailStepEffects
-		currentDetailPrim = effectsTable
+		switch {
+		case len(stepEffects) > 0:
+			currentDetailMode = detailStepEffects
+			currentDetailPrim = effectsTable
+			effectsTable.Select(stepDetailRow, 0)
+			entry := &stepEffects[stepDetailRow-1]
+			title, body := buildEffectDetail(entry)
+			detailText.SetTitle(title)
+			detailText.SetText(body)
+		case len(stepObservations) > 0:
+			currentDetailMode = detailStepObservations
+			currentDetailPrim = observationsTable
+			observationsTable.Select(observationDetailRow, 0)
+			entry := &stepObservations[observationDetailRow-1]
+			title, body := buildEffectDetail(entry)
+			detailText.SetTitle(title)
+			detailText.SetText(body)
+		default:
+			currentDetailMode = detailNone
+			currentDetailPrim = detailText
+			detailText.SetTitle("Operation Detail")
+			detailText.SetText("(no effects or observations to display)")
+		}
 		updateStatus(reconcileStatusMessage)
 	}
 
@@ -1289,6 +1549,23 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 			} else {
 				applyMode(modeReconcile)
 			}
+		case observationsTable:
+			row, _ := observationsTable.GetSelection()
+			if row <= 0 || row-1 >= len(stepObservations) {
+				return
+			}
+			observationDetailRow = row
+			if mode == modeReconcile {
+				entry := &stepObservations[row-1]
+				title, body := buildEffectDetail(entry)
+				detailText.SetTitle(title)
+				detailText.SetText(body)
+				currentDetailPrim = detailText
+				app.SetFocus(detailText)
+				updateStatus(reconcileStatusMessage)
+			} else {
+				applyMode(modeReconcile)
+			}
 		default:
 			switch currentDetailMode {
 			case detailStateObjects:
@@ -1306,6 +1583,23 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 				stepDetailRow = row
 				if mode == modeReconcile {
 					entry := &stepEffects[row-1]
+					title, body := buildEffectDetail(entry)
+					detailText.SetTitle(title)
+					detailText.SetText(body)
+					currentDetailPrim = detailText
+					app.SetFocus(detailText)
+					updateStatus(reconcileStatusMessage)
+				} else {
+					applyMode(modeReconcile)
+				}
+			case detailStepObservations:
+				row, _ := observationsTable.GetSelection()
+				if row <= 0 || row-1 >= len(stepObservations) {
+					return
+				}
+				observationDetailRow = row
+				if mode == modeReconcile {
+					entry := &stepObservations[row-1]
 					title, body := buildEffectDetail(entry)
 					detailText.SetTitle(title)
 					detailText.SetText(body)
@@ -1350,11 +1644,12 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 				contentFlex.Clear()
 				contentFlex.SetDirection(tview.FlexColumn)
 				detailContainer.Clear()
-				contentFlex.AddItem(effectsTable, 0, 2, true)
+				detailContainer.SetDirection(tview.FlexRow)
+				contentFlex.AddItem(detailContainer, 0, 2, true)
 				contentFlex.AddItem(detailText, 0, 3, false)
 				layoutMode = "reconcile"
 			}
-			currentDetailPrim = effectsTable
+			currentDetailPrim = detailText
 		}
 
 		switch mode {
@@ -1575,7 +1870,7 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 		lastStepState, lastStepPath, lastStepIdx = -1, -1, -1
 		if mode == modeSteps {
 			renderStepDetail()
-			if len(stepEffects) > 0 {
+			if len(stepEffects) > 0 || len(stepObservations) > 0 {
 				applyMode(modeReconcile)
 			}
 		}
@@ -1583,8 +1878,9 @@ func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver traceche
 
 	applyMode(modeStates)
 
-	err := app.SetRoot(pages, true).EnableMouse(true).Run()
-	return restartRequest, err
+	return pages, func() (*tracecheck.RestartRequest, bool) {
+		return restartRequest, returnToCatalog
+	}, nil
 }
 
 func configureTable(title string, selectable bool) *tview.Table {

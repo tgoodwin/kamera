@@ -7,3 +7,15 @@ func TestInputsPathDefault(t *testing.T) {
 		t.Fatalf("expected empty inputs path by default")
 	}
 }
+
+func TestParallelProcessesDefault(t *testing.T) {
+	if ParallelProcessesEnabled() {
+		t.Fatalf("expected parallel-processes to be disabled by default")
+	}
+}
+
+func TestParallelChildIndexDefault(t *testing.T) {
+	if ParallelChildIndex() != -1 {
+		t.Fatalf("expected parallel-child-index default -1, got %d", ParallelChildIndex())
+	}
+}

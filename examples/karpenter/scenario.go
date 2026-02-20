@@ -2,15 +2,23 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
+	"sort"
+	"strings"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/test"
@@ -60,6 +68,544 @@ func buildInitialKarpenterState(builder *tracecheck.ExplorerBuilder) tracecheck.
 	return tracecheck.MergeStateNodes(state, classState)
 }
 
-func scenariosFromInputs(_ *tracecheck.ExplorerBuilder, _ []coverage.Input) ([]explore.Scenario, error) {
-	return nil, fmt.Errorf("input to scenario conversion not implemented")
+func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.Input) ([]explore.Scenario, error) {
+	if builder == nil {
+		return nil, fmt.Errorf("builder is nil")
+	}
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("no inputs supplied")
+	}
+
+	baseCfg := builder.Config()
+	scenarios := make([]explore.Scenario, 0, len(inputs))
+	for idx, input := range inputs {
+		variants, err := expandKarpenterParameterizedInput(input, *fuzzCasesFlag, *fuzzSeedFlag)
+		if err != nil {
+			return nil, fmt.Errorf("expand input %d (%s): %w", idx, input.Name, err)
+		}
+
+		for _, variant := range variants {
+			state, err := buildStateFromCoverageInput(builder, variant)
+			if err != nil {
+				return nil, fmt.Errorf("build start state for %s: %w", variant.Name, err)
+			}
+
+			scenarios = append(scenarios, explore.Scenario{
+				Name:         variant.Name,
+				InitialState: state,
+				Config:       applyInputTuning(baseCfg, variant.Tuning),
+			})
+		}
+	}
+
+	if len(scenarios) == 0 {
+		return nil, fmt.Errorf("no scenarios produced")
+	}
+	return scenarios, nil
+}
+
+type karpenterParamSpec struct {
+	options []karpenterParamOption
+}
+
+type karpenterParamOption struct {
+	name       string
+	isBaseline bool
+	apply      func(*corev1.Pod, *v1.NodePool)
+}
+
+func expandKarpenterParameterizedInput(input coverage.Input, fuzzCases int, fuzzSeed int64) ([]coverage.Input, error) {
+	baseName := strings.TrimSpace(input.Name)
+	if baseName == "" {
+		baseName = "scenario"
+	}
+
+	base := cloneCoverageInput(input)
+	base.Name = baseName + "/base"
+
+	podIdx := findKarpenterPod(base.Objects)
+	nodePoolIdx := findKarpenterNodePool(base.Objects)
+	if podIdx < 0 || nodePoolIdx < 0 {
+		return []coverage.Input{base}, nil
+	}
+
+	templatePod, err := unstructuredToPod(base.Objects[podIdx])
+	if err != nil {
+		return nil, err
+	}
+	templateNodePool, err := unstructuredToNodePool(base.Objects[nodePoolIdx])
+	if err != nil {
+		return nil, err
+	}
+
+	variants := []coverage.Input{base}
+	singleVariants, err := expandKarpenterSingleParamVariants(input, baseName, podIdx, nodePoolIdx, templatePod, templateNodePool)
+	if err != nil {
+		return nil, err
+	}
+	variants = append(variants, singleVariants...)
+
+	sampledVariants, err := expandKarpenterSampledParamVariants(input, baseName, podIdx, nodePoolIdx, templatePod, templateNodePool, fuzzCases, fuzzSeed)
+	if err != nil {
+		return nil, err
+	}
+	variants = append(variants, sampledVariants...)
+
+	return variants, nil
+}
+
+func karpenterParamCatalog() []karpenterParamSpec {
+	return []karpenterParamSpec{
+		{
+			options: []karpenterParamOption{
+				{name: "baseline", isBaseline: true, apply: func(*corev1.Pod, *v1.NodePool) {}},
+				{
+					name: "pod-requests-500m",
+					apply: func(pod *corev1.Pod, _ *v1.NodePool) {
+						container := ensurePrimaryContainer(pod)
+						if container.Resources.Requests == nil {
+							container.Resources.Requests = corev1.ResourceList{}
+						}
+						container.Resources.Requests[corev1.ResourceCPU] = resource.MustParse("500m")
+						container.Resources.Requests[corev1.ResourceMemory] = resource.MustParse("512Mi")
+					},
+				},
+				{
+					name: "pod-selector-arch-arm64",
+					apply: func(pod *corev1.Pod, _ *v1.NodePool) {
+						ensurePodNodeSelector(pod)["kubernetes.io/arch"] = "arm64"
+					},
+				},
+			},
+		},
+		{
+			options: []karpenterParamOption{
+				{name: "baseline", isBaseline: true, apply: func(*corev1.Pod, *v1.NodePool) {}},
+				{
+					name: "no-fit-pod-selector-unmatched",
+					apply: func(pod *corev1.Pod, _ *v1.NodePool) {
+						ensurePodNodeSelector(pod)["karpenter.sh/nonexistent-capability"] = "required"
+					},
+				},
+				{
+					name: "no-fit-nodepool-requirement-unmatched",
+					apply: func(_ *corev1.Pod, nodePool *v1.NodePool) {
+						nodePool.Spec.Template.Spec.Requirements = append(nodePool.Spec.Template.Spec.Requirements, v1.NodeSelectorRequirementWithMinValues{
+							Key:      "karpenter.sh/nonexistent-capability",
+							Operator: corev1.NodeSelectorOpIn,
+							Values:   []string{"required"},
+						})
+					},
+				},
+			},
+		},
+	}
+}
+
+func expandKarpenterSingleParamVariants(input coverage.Input, baseName string, podIdx int, nodePoolIdx int, templatePod *corev1.Pod, templateNodePool *v1.NodePool) ([]coverage.Input, error) {
+	variants := make([]coverage.Input, 0)
+	for _, spec := range karpenterParamCatalog() {
+		for _, option := range spec.options {
+			if option.isBaseline {
+				continue
+			}
+			name := fmt.Sprintf("%s/single/%s", baseName, option.name)
+			updated, err := buildKarpenterVariantInput(input, podIdx, nodePoolIdx, templatePod, templateNodePool, name, []karpenterParamOption{option})
+			if err != nil {
+				return nil, err
+			}
+			variants = append(variants, updated)
+		}
+	}
+	return variants, nil
+}
+
+func expandKarpenterSampledParamVariants(input coverage.Input, baseName string, podIdx int, nodePoolIdx int, templatePod *corev1.Pod, templateNodePool *v1.NodePool, cases int, seed int64) ([]coverage.Input, error) {
+	if cases <= 0 {
+		return nil, nil
+	}
+
+	specs := karpenterParamCatalog()
+	rng := rand.New(rand.NewSource(seed))
+	seenAssignments := map[string]struct{}{}
+	variants := make([]coverage.Input, 0, cases)
+
+	maxAttempts := cases * 20
+	for attempts := 0; attempts < maxAttempts && len(variants) < cases; attempts++ {
+		selection := sampleKarpenterParamSelection(rng, specs)
+		key := karpenterSelectionKey(selection)
+		if key == "" {
+			continue
+		}
+		if _, exists := seenAssignments[key]; exists {
+			continue
+		}
+		seenAssignments[key] = struct{}{}
+
+		choiceOptions := make([]karpenterParamOption, 0, len(selection))
+		choiceNames := make([]string, 0, len(selection))
+		for specIdx, optionIdx := range selection {
+			option := specs[specIdx].options[optionIdx]
+			choiceOptions = append(choiceOptions, option)
+			choiceNames = append(choiceNames, option.name)
+		}
+		sort.Strings(choiceNames)
+		name := fmt.Sprintf("%s/sampled-%03d/%s", baseName, len(variants)+1, strings.Join(choiceNames, "+"))
+
+		updated, err := buildKarpenterVariantInput(input, podIdx, nodePoolIdx, templatePod, templateNodePool, name, choiceOptions)
+		if err != nil {
+			return nil, err
+		}
+		variants = append(variants, updated)
+	}
+
+	return variants, nil
+}
+
+func buildKarpenterVariantInput(input coverage.Input, podIdx int, nodePoolIdx int, templatePod *corev1.Pod, templateNodePool *v1.NodePool, name string, options []karpenterParamOption) (coverage.Input, error) {
+	updated := cloneCoverageInput(input)
+	updated.Name = name
+
+	pod := templatePod.DeepCopy()
+	nodePool := templateNodePool.DeepCopy()
+	for _, option := range options {
+		option.apply(pod, nodePool)
+	}
+
+	podObj, err := podToUnstructured(pod)
+	if err != nil {
+		return coverage.Input{}, fmt.Errorf("convert pod for %q: %w", name, err)
+	}
+	nodePoolObj, err := nodePoolToUnstructured(nodePool)
+	if err != nil {
+		return coverage.Input{}, fmt.Errorf("convert nodepool for %q: %w", name, err)
+	}
+	updated.Objects[podIdx] = podObj
+	updated.Objects[nodePoolIdx] = nodePoolObj
+
+	return updated, nil
+}
+
+func sampleKarpenterParamSelection(rng *rand.Rand, specs []karpenterParamSpec) map[int]int {
+	selection := map[int]int{}
+	if len(specs) == 0 {
+		return selection
+	}
+
+	primaryIdx := rng.Intn(len(specs))
+	selection[primaryIdx] = randomKarpenterNonBaselineOptionIndex(rng, specs[primaryIdx])
+
+	if secondaryIdx, ok := randomKarpenterSpecIndexExcluding(rng, len(specs), selection); ok && rng.Intn(100) < 40 {
+		selection[secondaryIdx] = randomKarpenterNonBaselineOptionIndex(rng, specs[secondaryIdx])
+	}
+
+	return selection
+}
+
+func randomKarpenterSpecIndexExcluding(rng *rand.Rand, total int, excluded map[int]int) (int, bool) {
+	candidates := make([]int, 0, total-len(excluded))
+	for i := 0; i < total; i++ {
+		if _, blocked := excluded[i]; blocked {
+			continue
+		}
+		candidates = append(candidates, i)
+	}
+	if len(candidates) == 0 {
+		return 0, false
+	}
+	return candidates[rng.Intn(len(candidates))], true
+}
+
+func randomKarpenterNonBaselineOptionIndex(rng *rand.Rand, spec karpenterParamSpec) int {
+	choices := make([]int, 0, len(spec.options))
+	for idx, option := range spec.options {
+		if option.isBaseline {
+			continue
+		}
+		choices = append(choices, idx)
+	}
+	if len(choices) == 0 {
+		return 0
+	}
+	return choices[rng.Intn(len(choices))]
+}
+
+func karpenterSelectionKey(selection map[int]int) string {
+	if len(selection) == 0 {
+		return ""
+	}
+	keys := make([]int, 0, len(selection))
+	for k := range selection {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%d=%d", k, selection[k]))
+	}
+	return strings.Join(parts, ",")
+}
+
+func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, error) {
+	if builder == nil {
+		return tracecheck.StateNode{}, fmt.Errorf("builder is nil")
+	}
+
+	objects := make([]client.Object, 0, len(input.Objects))
+	for _, obj := range input.Objects {
+		if obj == nil {
+			continue
+		}
+		objects = append(objects, obj.DeepCopy())
+	}
+	if len(objects) == 0 {
+		return tracecheck.StateNode{}, fmt.Errorf("input has no objects")
+	}
+
+	pending := make([]tracecheck.PendingReconcile, 0, len(input.Pending))
+	for _, p := range input.Pending {
+		pending = append(pending, tracecheck.PendingReconcile{
+			ReconcilerID: tracecheck.ReconcilerID(p.ControllerID),
+			Request: reconcile.Request{
+				NamespacedName: client.ObjectKey{
+					Namespace: p.Key.Namespace,
+					Name:      p.Key.Name,
+				},
+			},
+			Source: tracecheck.SourceStateChange,
+		})
+	}
+	if len(pending) == 0 {
+		pending = defaultKarpenterPending(objects)
+	}
+	if len(pending) == 0 {
+		return tracecheck.StateNode{}, fmt.Errorf("input has no pending reconciles")
+	}
+
+	return builder.BuildStartStateFromObjects(objects, pending)
+}
+
+func defaultKarpenterPending(objects []client.Object) []tracecheck.PendingReconcile {
+	pending := make([]tracecheck.PendingReconcile, 0)
+	hasPod := false
+	for _, obj := range objects {
+		if isKarpenterPod(obj) {
+			hasPod = true
+			pending = append(pending,
+				tracecheck.PendingReconcile{
+					ReconcilerID: "state.pod",
+					Request: reconcile.Request{
+						NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()},
+					},
+					Source: tracecheck.SourceStateChange,
+				},
+				tracecheck.PendingReconcile{
+					ReconcilerID: "provisioner.trigger.pod",
+					Request: reconcile.Request{
+						NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()},
+					},
+					Source: tracecheck.SourceStateChange,
+				},
+			)
+		}
+		if isKarpenterNodePool(obj) {
+			pending = append(pending, tracecheck.PendingReconcile{
+				ReconcilerID: "state.nodepool",
+				Request: reconcile.Request{
+					NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()},
+				},
+				Source: tracecheck.SourceStateChange,
+			})
+		}
+	}
+	if hasPod {
+		pending = append(pending, tracecheck.PendingReconcile{
+			ReconcilerID: "provisioner",
+			Request: reconcile.Request{
+				NamespacedName: client.ObjectKey{Name: "singleton"},
+			},
+			Source: tracecheck.SourceStateChange,
+		})
+	}
+	return pending
+}
+
+func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
+	cfg := base.Clone()
+	if tuning.MaxDepth > 0 {
+		cfg.MaxDepth = tuning.MaxDepth
+	}
+	if len(tuning.PermuteControllers) > 0 {
+		if cfg.Perturbations.PermuteOrder == nil {
+			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+		}
+		for _, controllerID := range tuning.PermuteControllers {
+			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
+		}
+	}
+	return cfg
+}
+
+func cloneCoverageInput(input coverage.Input) coverage.Input {
+	objects := make([]*unstructured.Unstructured, 0, len(input.Objects))
+	for _, obj := range input.Objects {
+		if obj == nil {
+			objects = append(objects, nil)
+			continue
+		}
+		objects = append(objects, obj.DeepCopy())
+	}
+
+	pending := append([]coverage.Pending(nil), input.Pending...)
+	tuning := coverage.InputTuning{
+		MaxDepth:           input.Tuning.MaxDepth,
+		PermuteControllers: append([]string(nil), input.Tuning.PermuteControllers...),
+		StaleReads:         cloneStringSliceMap(input.Tuning.StaleReads),
+		StaleLookback:      cloneIntMap(input.Tuning.StaleLookback),
+	}
+	return coverage.Input{
+		Name:    input.Name,
+		Objects: objects,
+		Pending: pending,
+		Tuning:  tuning,
+	}
+}
+
+func cloneStringSliceMap(in map[string][]string) map[string][]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string][]string, len(in))
+	for k, v := range in {
+		out[k] = append([]string(nil), v...)
+	}
+	return out
+}
+
+func cloneIntMap(in map[string]int) map[string]int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func findKarpenterPod(objects []*unstructured.Unstructured) int {
+	for idx, obj := range objects {
+		if obj == nil {
+			continue
+		}
+		if isKarpenterPod(obj) {
+			return idx
+		}
+	}
+	return -1
+}
+
+func findKarpenterNodePool(objects []*unstructured.Unstructured) int {
+	for idx, obj := range objects {
+		if obj == nil {
+			continue
+		}
+		if isKarpenterNodePool(obj) {
+			return idx
+		}
+	}
+	return -1
+}
+
+func isKarpenterPod(obj client.Object) bool {
+	if obj == nil {
+		return false
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Kind == "Pod" {
+		return gvk.Group == "" || gvk.Group == "core"
+	}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return u.GetKind() == "Pod"
+	}
+	return false
+}
+
+func isKarpenterNodePool(obj client.Object) bool {
+	if obj == nil {
+		return false
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Kind == "NodePool" && gvk.Group == "karpenter.sh" {
+		return true
+	}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return u.GetKind() == "NodePool" && strings.HasPrefix(u.GetAPIVersion(), "karpenter.sh/")
+	}
+	return false
+}
+
+func unstructuredToPod(obj *unstructured.Unstructured) (*corev1.Pod, error) {
+	if obj == nil {
+		return nil, fmt.Errorf("pod object is nil")
+	}
+	var pod corev1.Pod
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &pod); err != nil {
+		return nil, fmt.Errorf("convert pod from unstructured: %w", err)
+	}
+	pod.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Pod"))
+	return &pod, nil
+}
+
+func podToUnstructured(pod *corev1.Pod) (*unstructured.Unstructured, error) {
+	if pod == nil {
+		return nil, fmt.Errorf("pod is nil")
+	}
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(pod)
+	if err != nil {
+		return nil, fmt.Errorf("convert pod to unstructured: %w", err)
+	}
+	u := &unstructured.Unstructured{Object: obj}
+	u.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("Pod"))
+	return u, nil
+}
+
+func unstructuredToNodePool(obj *unstructured.Unstructured) (*v1.NodePool, error) {
+	if obj == nil {
+		return nil, fmt.Errorf("nodepool object is nil")
+	}
+	var nodePool v1.NodePool
+	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(obj.Object, &nodePool); err != nil {
+		return nil, fmt.Errorf("convert nodepool from unstructured: %w", err)
+	}
+	nodePool.SetGroupVersionKind(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}.WithKind("NodePool"))
+	return &nodePool, nil
+}
+
+func nodePoolToUnstructured(nodePool *v1.NodePool) (*unstructured.Unstructured, error) {
+	if nodePool == nil {
+		return nil, fmt.Errorf("nodepool is nil")
+	}
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(nodePool)
+	if err != nil {
+		return nil, fmt.Errorf("convert nodepool to unstructured: %w", err)
+	}
+	u := &unstructured.Unstructured{Object: obj}
+	u.SetGroupVersionKind(schema.GroupVersion{Group: "karpenter.sh", Version: "v1"}.WithKind("NodePool"))
+	return u, nil
+}
+
+func ensurePrimaryContainer(pod *corev1.Pod) *corev1.Container {
+	if len(pod.Spec.Containers) == 0 {
+		pod.Spec.Containers = []corev1.Container{{Name: "c", Image: "pause"}}
+	}
+	return &pod.Spec.Containers[0]
+}
+
+func ensurePodNodeSelector(pod *corev1.Pod) map[string]string {
+	if pod.Spec.NodeSelector == nil {
+		pod.Spec.NodeSelector = map[string]string{}
+	}
+	return pod.Spec.NodeSelector
 }

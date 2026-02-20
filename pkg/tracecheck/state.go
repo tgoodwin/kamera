@@ -77,6 +77,7 @@ const (
 type Changes struct {
 	ObjectVersions ObjectVersions
 	Effects        []Effect
+	Observations   []Effect
 }
 
 type ReconcileResult struct {

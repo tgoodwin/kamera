@@ -2,7 +2,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"math/rand"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +38,22 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
+
+var errInvalidKnativeParams = errors.New("invalid knative service params")
+
+type scenarioPhase string
+
+const (
+	scenarioPhaseStandard  scenarioPhase = ""
+	scenarioPhaseReference scenarioPhase = "reference"
+	scenarioPhaseRerun     scenarioPhase = "rerun"
+)
+
+const (
+	v0CheckpointMinPending = 2
+)
+
+var v0PerturbController = tracecheck.ReconcilerID("EndpointsController")
 
 func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Configure simclock to use 2s steps instead of 1s to speed up scale-to-zero simulation
@@ -196,30 +217,36 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 	if builder == nil {
 		return nil, fmt.Errorf("builder is nil")
 	}
+	return scenariosFromInputsForPhase(builder, inputs, builder.Config(), scenarioPhaseStandard)
+}
+
+func scenariosFromInputsForPhase(
+	builder *tracecheck.ExplorerBuilder,
+	inputs []coverage.Input,
+	baseCfg tracecheck.ExploreConfig,
+	phase scenarioPhase,
+) ([]explore.Scenario, error) {
+	if builder == nil {
+		return nil, fmt.Errorf("builder is nil")
+	}
 	if len(inputs) == 0 {
 		return nil, fmt.Errorf("no inputs supplied")
 	}
 
-	baseCfg := builder.Config()
+	includePerturbations := phase != scenarioPhaseReference
 	scenarios := make([]explore.Scenario, 0, len(inputs))
 	for idx, input := range inputs {
-		variants, err := expandKnativeSingleActionInput(input)
+		state, err := buildStateFromCoverageInput(builder, input)
 		if err != nil {
-			return nil, fmt.Errorf("expand input %d (%s): %w", idx, input.Name, err)
+			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
 		}
 
-		for _, variant := range variants {
-			state, err := buildStateFromCoverageInput(builder, variant)
-			if err != nil {
-				return nil, fmt.Errorf("build start state for %s: %w", variant.Name, err)
-			}
-
-			scenarios = append(scenarios, explore.Scenario{
-				Name:         variant.Name,
-				InitialState: state,
-				Config:       applyInputTuning(baseCfg, variant.Tuning),
-			})
-		}
+		scenarios = append(scenarios, explore.Scenario{
+			Name:         input.Name,
+			InitialState: state,
+			Config:       applyInputTuningForPhase(baseCfg, input.Tuning, includePerturbations),
+			Context:      scenarioContextForInput(input, phase),
+		})
 	}
 
 	if len(scenarios) == 0 {
@@ -228,34 +255,180 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 	return scenarios, nil
 }
 
-func defaultKnativeInputs() ([]coverage.Input, error) {
-	serviceObj, err := serviceToUnstructured(buildBaselineService())
-	if err != nil {
-		return nil, err
+func scenariosFromInputsWithClosedLoop(
+	builder *tracecheck.ExplorerBuilder,
+	inputs []coverage.Input,
+) ([]explore.Scenario, error) {
+	if builder == nil {
+		return nil, fmt.Errorf("builder is nil")
 	}
-	return []coverage.Input{
-		{
-			Name:    "knative-default",
-			Objects: []*unstructured.Unstructured{serviceObj},
-			Pending: []coverage.Pending{
-				{
-					ControllerID: "ServiceReconciler",
-					Key: coverage.NamespacedName{
-						Namespace: "default",
-						Name:      "demo",
-					},
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("no inputs supplied")
+	}
+
+	referenceBase := withoutPerturbations(builder.Config())
+	scenarios := make([]explore.Scenario, 0, len(inputs))
+	for idx, input := range inputs {
+		state, err := buildStateFromCoverageInput(builder, input)
+		if err != nil {
+			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
+		}
+
+		referenceCfg := applyInputTuningForPhase(referenceBase, input.Tuning, false)
+
+		rerunPlanCfg := referenceCfg.Clone()
+		rerunContext := scenarioContextForInput(input, scenarioPhaseRerun)
+		scenarios = append(scenarios, explore.Scenario{
+			Name:         input.Name,
+			InitialState: state,
+			Config:       referenceCfg,
+			Context:      scenarioContextForInput(input, scenarioPhaseReference),
+			ClosedLoop: &explore.ClosedLoopSpec{
+				Plan: func(reference explore.ScenarioPhaseResult) ([]explore.ScenarioPhasePlan, error) {
+					plan, ok, err := buildV0CheckpointRerunPlan(reference, rerunPlanCfg, rerunContext)
+					if err != nil {
+						return nil, err
+					}
+					if ok {
+						return []explore.ScenarioPhasePlan{plan}, nil
+					}
+					return []explore.ScenarioPhasePlan{
+						{
+							Name:    "rerun",
+							Config:  rerunPlanCfg,
+							Context: &rerunContext,
+						},
+					}, nil
 				},
 			},
-		},
-	}, nil
+		})
+	}
+
+	if len(scenarios) == 0 {
+		return nil, fmt.Errorf("no scenarios produced")
+	}
+	return scenarios, nil
 }
 
-type singleActionMutation struct {
-	name  string
-	apply func(*v1.Service)
+func buildV0CheckpointRerunPlan(
+	reference explore.ScenarioPhaseResult,
+	baseCfg tracecheck.ExploreConfig,
+	rerunContext explore.ScenarioContext,
+) (explore.ScenarioPhasePlan, bool, error) {
+	path, ok := firstReferencePath(reference)
+	if !ok {
+		return explore.ScenarioPhasePlan{}, false, nil
+	}
+	checkpointIdx, checkpoint, ok := firstCheckpointWithPendingController(path, v0PerturbController)
+	if !ok {
+		return explore.ScenarioPhasePlan{}, false, nil
+	}
+	if checkpoint == nil || len(checkpoint.StateAfter) == 0 || reference.VersionManager == nil {
+		return explore.ScenarioPhasePlan{}, false, nil
+	}
+
+	seed, err := tracecheck.BuildRestartSeedFromState(checkpoint.StateAfter, reference.VersionManager, checkpoint.PendingReconciles)
+	if err != nil {
+		return explore.ScenarioPhasePlan{}, false, fmt.Errorf("build v0 checkpoint restart seed: %w", err)
+	}
+	seed.Depth = checkpointIdx + 1
+
+	cfg := baseCfg.Clone()
+	if cfg.Perturbations.PermuteOrder == nil {
+		cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+	}
+	cfg.Perturbations.PermuteOrder[v0PerturbController] = true
+
+	prefix := slices.Clone(path[:checkpointIdx+1])
+	plan := explore.ScenarioPhasePlan{
+		Name:    "rerun",
+		Config:  cfg,
+		Seed:    &seed,
+		Prefix:  prefix,
+		Context: &rerunContext,
+	}
+	return plan, true, nil
 }
 
-func expandKnativeSingleActionInput(input coverage.Input) ([]coverage.Input, error) {
+func firstReferencePath(reference explore.ScenarioPhaseResult) (tracecheck.ExecutionHistory, bool) {
+	if reference.Result == nil {
+		return nil, false
+	}
+	for _, state := range reference.Result.ConvergedStates {
+		for _, path := range state.Paths {
+			if len(path) > 0 {
+				return path, true
+			}
+		}
+	}
+	for _, state := range reference.Result.AbortedStates {
+		for _, path := range state.Paths {
+			if len(path) > 0 {
+				return path, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func firstCheckpointWithPendingController(
+	path tracecheck.ExecutionHistory,
+	controller tracecheck.ReconcilerID,
+) (int, *tracecheck.ReconcileResult, bool) {
+	for i, step := range path {
+		if step == nil || len(step.PendingReconciles) < v0CheckpointMinPending {
+			continue
+		}
+		for _, pending := range step.PendingReconciles {
+			if pending.ReconcilerID == controller {
+				return i, step, true
+			}
+		}
+	}
+	return -1, nil, false
+}
+
+func scenarioContextForInput(input coverage.Input, phase scenarioPhase) explore.ScenarioContext {
+	workflow := "batch-input"
+	attributes := map[string]string{}
+	if phase == scenarioPhaseReference || phase == scenarioPhaseRerun {
+		workflow = "closed-loop"
+		attributes["phase"] = string(phase)
+	}
+
+	inputRef := ""
+	inputsPath := strings.TrimSpace(explore.InputsPath())
+	if inputsPath != "" {
+		name := strings.TrimSpace(input.Name)
+		if name == "" {
+			inputRef = inputsPath
+		} else {
+			inputRef = fmt.Sprintf("%s#%s", inputsPath, name)
+		}
+	}
+
+	if len(attributes) == 0 {
+		attributes = nil
+	}
+	return explore.ScenarioContext{
+		Workflow:   workflow,
+		InputRef:   inputRef,
+		Attributes: attributes,
+	}
+}
+
+type knativeParamSpec struct {
+	name    string
+	options []knativeParamOption
+}
+
+type knativeParamOption struct {
+	label      string
+	isBaseline bool
+	apply      func(*v1.Service)
+}
+
+func expandKnativeParameterizedInput(input coverage.Input, fuzzCases int, fuzzSeed int64) ([]coverage.Input, error) {
 	baseName := strings.TrimSpace(input.Name)
 	if baseName == "" {
 		baseName = "scenario"
@@ -274,52 +447,259 @@ func expandKnativeSingleActionInput(input coverage.Input) ([]coverage.Input, err
 	}
 
 	variants := []coverage.Input{base}
-	for _, mutation := range singleActionMutations() {
-		updated := cloneCoverageInput(input)
-		updated.Name = fmt.Sprintf("%s/%s", baseName, mutation.name)
+	singleVariants, err := expandKnativeSingleParamVariants(input, baseName, serviceIdx, templateSvc)
+	if err != nil {
+		return nil, err
+	}
+	variants = append(variants, singleVariants...)
 
-		svc := templateSvc.DeepCopy()
-		mutation.apply(svc)
-		updated.Objects[serviceIdx], err = serviceToUnstructured(svc)
-		if err != nil {
-			return nil, fmt.Errorf("apply mutation %q: %w", mutation.name, err)
+	sampledVariants, err := expandKnativeSampledParamVariants(input, baseName, serviceIdx, templateSvc, fuzzCases, fuzzSeed)
+	if err != nil {
+		return nil, err
+	}
+	variants = append(variants, sampledVariants...)
+
+	return variants, nil
+}
+
+func knativeParamCatalog() []knativeParamSpec {
+	return []knativeParamSpec{
+		{
+			name: "image",
+			options: []knativeParamOption{
+				{label: "baseline", isBaseline: true, apply: func(*v1.Service) {}},
+				{label: "v2", apply: func(svc *v1.Service) { ensurePrimaryContainer(svc).Image = "dev.local/test:v2" }},
+				{label: "v3", apply: func(svc *v1.Service) { ensurePrimaryContainer(svc).Image = "dev.local/test:v3" }},
+			},
+		},
+		{
+			name: "min-scale",
+			options: []knativeParamOption{
+				{label: "baseline", isBaseline: true, apply: func(*v1.Service) {}},
+				{label: "1", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MinScaleAnnotationKey] = "1" }},
+				{label: "2", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MinScaleAnnotationKey] = "2" }},
+			},
+		},
+		{
+			name: "max-scale",
+			options: []knativeParamOption{
+				{label: "baseline", isBaseline: true, apply: func(*v1.Service) {}},
+				{label: "1", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MaxScaleAnnotationKey] = "1" }},
+				{label: "5", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MaxScaleAnnotationKey] = "5" }},
+				{label: "10", apply: func(svc *v1.Service) { ensureTemplateAnnotations(svc)[autoscaling.MaxScaleAnnotationKey] = "10" }},
+			},
+		},
+		{
+			name: "concurrency",
+			options: []knativeParamOption{
+				{label: "baseline", isBaseline: true, apply: func(*v1.Service) {}},
+				{label: "0", apply: func(svc *v1.Service) { zero := int64(0); svc.Spec.Template.Spec.ContainerConcurrency = &zero }},
+				{label: "1", apply: func(svc *v1.Service) { one := int64(1); svc.Spec.Template.Spec.ContainerConcurrency = &one }},
+				{label: "10", apply: func(svc *v1.Service) { ten := int64(10); svc.Spec.Template.Spec.ContainerConcurrency = &ten }},
+				{label: "100", apply: func(svc *v1.Service) { hundred := int64(100); svc.Spec.Template.Spec.ContainerConcurrency = &hundred }},
+			},
+		},
+	}
+}
+
+func expandKnativeSingleParamVariants(input coverage.Input, baseName string, serviceIdx int, templateSvc *v1.Service) ([]coverage.Input, error) {
+	variants := make([]coverage.Input, 0)
+	for _, spec := range knativeParamCatalog() {
+		for _, option := range spec.options {
+			if option.isBaseline {
+				continue
+			}
+			name := fmt.Sprintf("%s/single/%s-%s", baseName, spec.name, option.label)
+			updated, err := buildKnativeVariantInput(input, serviceIdx, templateSvc, name, []knativeParamOption{option})
+			if err != nil {
+				return nil, err
+			}
+			variants = append(variants, updated)
 		}
-
-		variants = append(variants, updated)
 	}
 	return variants, nil
 }
 
-func singleActionMutations() []singleActionMutation {
-	return []singleActionMutation{
-		{
-			name: "set-image-v2",
-			apply: func(svc *v1.Service) {
-				ensurePrimaryContainer(svc).Image = "dev.local/test:v2"
-			},
-		},
-		{
-			name: "set-min-scale-1",
-			apply: func(svc *v1.Service) {
-				anns := ensureTemplateAnnotations(svc)
-				anns[autoscaling.MinScaleAnnotationKey] = "1"
-			},
-		},
-		{
-			name: "set-max-scale-5",
-			apply: func(svc *v1.Service) {
-				anns := ensureTemplateAnnotations(svc)
-				anns[autoscaling.MaxScaleAnnotationKey] = "5"
-			},
-		},
-		{
-			name: "set-concurrency-1",
-			apply: func(svc *v1.Service) {
-				one := int64(1)
-				svc.Spec.Template.Spec.ContainerConcurrency = &one
-			},
-		},
+func expandKnativeSampledParamVariants(input coverage.Input, baseName string, serviceIdx int, templateSvc *v1.Service, cases int, seed int64) ([]coverage.Input, error) {
+	if cases <= 0 {
+		return nil, nil
 	}
+
+	specs := knativeParamCatalog()
+	rng := rand.New(rand.NewSource(seed))
+	seenAssignments := map[string]struct{}{}
+	variants := make([]coverage.Input, 0, cases)
+
+	maxAttempts := cases * 20
+	for attempts := 0; attempts < maxAttempts && len(variants) < cases; attempts++ {
+		selection := sampleKnativeParamSelection(rng, specs)
+		key := knativeSelectionKey(selection)
+		if key == "" {
+			continue
+		}
+		if _, exists := seenAssignments[key]; exists {
+			continue
+		}
+		seenAssignments[key] = struct{}{}
+
+		choiceOptions := make([]knativeParamOption, 0, len(selection))
+		choiceNames := make([]string, 0, len(selection))
+		for specIdx, optionIdx := range selection {
+			spec := specs[specIdx]
+			option := spec.options[optionIdx]
+			choiceOptions = append(choiceOptions, option)
+			choiceNames = append(choiceNames, fmt.Sprintf("%s-%s", spec.name, option.label))
+		}
+		sort.Strings(choiceNames)
+		name := fmt.Sprintf("%s/sampled-%03d/%s", baseName, len(variants)+1, strings.Join(choiceNames, "+"))
+
+		updated, err := buildKnativeVariantInput(input, serviceIdx, templateSvc, name, choiceOptions)
+		if err != nil {
+			if errors.Is(err, errInvalidKnativeParams) {
+				continue
+			}
+			return nil, err
+		}
+		variants = append(variants, updated)
+	}
+
+	return variants, nil
+}
+
+func buildKnativeVariantInput(input coverage.Input, serviceIdx int, templateSvc *v1.Service, name string, options []knativeParamOption) (coverage.Input, error) {
+	updated := cloneCoverageInput(input)
+	updated.Name = name
+
+	svc := templateSvc.DeepCopy()
+	for _, option := range options {
+		option.apply(svc)
+	}
+
+	if err := validateKnativeServiceParams(svc); err != nil {
+		return coverage.Input{}, fmt.Errorf("%w for %q: %v", errInvalidKnativeParams, name, err)
+	}
+
+	serviceObj, err := serviceToUnstructured(svc)
+	if err != nil {
+		return coverage.Input{}, fmt.Errorf("convert parameterized service for %q: %w", name, err)
+	}
+	updated.Objects[serviceIdx] = serviceObj
+	return updated, nil
+}
+
+func sampleKnativeParamSelection(rng *rand.Rand, specs []knativeParamSpec) map[int]int {
+	selection := map[int]int{}
+	if len(specs) == 0 {
+		return selection
+	}
+
+	primaryIdx := rng.Intn(len(specs))
+	selection[primaryIdx] = randomKnativeNonBaselineOptionIndex(rng, specs[primaryIdx])
+
+	secondaryProb := rng.Intn(100)
+	if secondaryProb < 30 {
+		if secondaryIdx, ok := randomKnativeSpecIndexExcluding(rng, len(specs), selection); ok {
+			selection[secondaryIdx] = randomKnativeNonBaselineOptionIndex(rng, specs[secondaryIdx])
+		}
+	}
+
+	thirdProb := rng.Intn(100)
+	if thirdProb < 5 {
+		if thirdIdx, ok := randomKnativeSpecIndexExcluding(rng, len(specs), selection); ok {
+			selection[thirdIdx] = randomKnativeNonBaselineOptionIndex(rng, specs[thirdIdx])
+		}
+	}
+
+	return selection
+}
+
+func randomKnativeSpecIndexExcluding(rng *rand.Rand, total int, excluded map[int]int) (int, bool) {
+	candidates := make([]int, 0, total-len(excluded))
+	for i := 0; i < total; i++ {
+		if _, blocked := excluded[i]; blocked {
+			continue
+		}
+		candidates = append(candidates, i)
+	}
+	if len(candidates) == 0 {
+		return 0, false
+	}
+	return candidates[rng.Intn(len(candidates))], true
+}
+
+func randomKnativeNonBaselineOptionIndex(rng *rand.Rand, spec knativeParamSpec) int {
+	choices := make([]int, 0, len(spec.options))
+	for idx, option := range spec.options {
+		if option.isBaseline {
+			continue
+		}
+		choices = append(choices, idx)
+	}
+	if len(choices) == 0 {
+		return 0
+	}
+	return choices[rng.Intn(len(choices))]
+}
+
+func knativeSelectionKey(selection map[int]int) string {
+	if len(selection) == 0 {
+		return ""
+	}
+	keys := make([]int, 0, len(selection))
+	for k := range selection {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%d=%d", k, selection[k]))
+	}
+	return strings.Join(parts, ",")
+}
+
+func validateKnativeServiceParams(svc *v1.Service) error {
+	if svc == nil {
+		return fmt.Errorf("service is nil")
+	}
+	if len(svc.Spec.Template.Spec.Containers) == 0 {
+		return fmt.Errorf("service template has no containers")
+	}
+
+	minScale, hasMin, err := parseScaleAnnotation(svc, autoscaling.MinScaleAnnotationKey)
+	if err != nil {
+		return err
+	}
+	maxScale, hasMax, err := parseScaleAnnotation(svc, autoscaling.MaxScaleAnnotationKey)
+	if err != nil {
+		return err
+	}
+	if hasMin && hasMax && minScale > maxScale {
+		return fmt.Errorf("min scale %d exceeds max scale %d", minScale, maxScale)
+	}
+	if svc.Spec.Template.Spec.ContainerConcurrency != nil && *svc.Spec.Template.Spec.ContainerConcurrency < 0 {
+		return fmt.Errorf("containerConcurrency must be >= 0")
+	}
+	return nil
+}
+
+func parseScaleAnnotation(svc *v1.Service, key string) (int64, bool, error) {
+	anns := svc.Spec.Template.ObjectMeta.Annotations
+	if len(anns) == 0 {
+		return 0, false, nil
+	}
+	raw := strings.TrimSpace(anns[key])
+	if raw == "" {
+		return 0, false, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, true, fmt.Errorf("parse %s=%q: %w", key, raw, err)
+	}
+	if value < 0 {
+		return 0, true, fmt.Errorf("%s must be >= 0", key)
+	}
+	return value, true, nil
 }
 
 func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, error) {
@@ -374,9 +754,23 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 }
 
 func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
+	return applyInputTuningForPhase(base, tuning, true)
+}
+
+func applyInputTuningForPhase(
+	base tracecheck.ExploreConfig,
+	tuning coverage.InputTuning,
+	includePerturbations bool,
+) tracecheck.ExploreConfig {
 	cfg := base.Clone()
+	if !includePerturbations {
+		cfg = withoutPerturbations(cfg)
+	}
 	if tuning.MaxDepth > 0 {
 		cfg.MaxDepth = tuning.MaxDepth
+	}
+	if !includePerturbations {
+		return cfg
 	}
 	if len(tuning.PermuteControllers) > 0 {
 		if cfg.Perturbations.PermuteOrder == nil {
@@ -386,7 +780,43 @@ func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
 		}
 	}
+	if len(tuning.StaleReads) > 0 {
+		if cfg.Perturbations.Staleness == nil {
+			cfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+		}
+		for controllerID, kinds := range tuning.StaleReads {
+			id := tracecheck.ReconcilerID(controllerID)
+			st := cfg.Perturbations.Staleness[id]
+			if st.StaleReadBounds == nil {
+				st.StaleReadBounds = make(tracecheck.LookbackLimits)
+			}
+			for _, kind := range kinds {
+				trimmed := strings.TrimSpace(kind)
+				if trimmed == "" {
+					continue
+				}
+				lookback := tuning.StaleLookback[trimmed]
+				if lookback <= 0 {
+					lookback = 1
+				}
+				st.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
+			}
+			cfg.Perturbations.Staleness[id] = st
+		}
+	}
 	return cfg
+}
+
+func withoutPerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig {
+	out := cfg.Clone()
+	if out.Perturbations.PermuteOrder == nil {
+		out.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+	}
+	for id := range out.Perturbations.PermuteOrder {
+		out.Perturbations.PermuteOrder[id] = false
+	}
+	out.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+	return out
 }
 
 func cloneCoverageInput(input coverage.Input) coverage.Input {

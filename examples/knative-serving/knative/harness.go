@@ -256,21 +256,25 @@ func wrapMultiScalerTickerProvider(ms *scaling.MultiScaler) {
 	msPtr := unsafe.Pointer(ms)
 	tickProviderPtr := unsafe.Pointer(uintptr(msPtr) + tickProviderField.UnsafeAddr() - msValue.UnsafeAddr())
 
-	// Create a wrapper that tracks the most recent ticker
-	wrappedProvider := func(d time.Duration) *simclock.Ticker {
-		// Create the ticker directly (same as what the original tickProvider does)
-		ticker := simclock.NewTicker(d)
+	// Create a wrapper that tracks a deterministic simclock ticker for callbacks,
+	// while still returning the concrete *time.Ticker type expected by MultiScaler.
+	wrappedProvider := func(d time.Duration) *time.Ticker {
+		// Deterministic ticker used by our synchronous callback path.
+		deterministicTicker := simclock.NewTicker(d)
 
-		// Track the most recent ticker so we can register callbacks when Create is called
+		// Track the deterministic ticker so we can register callbacks when Create is called.
 		mostRecentTickerMu.Lock()
-		mostRecentTicker = ticker
+		mostRecentTicker = deterministicTicker
 		mostRecentTickerMu.Unlock()
 
-		return ticker
+		// MultiScaler.runScalerTicker requires *time.Ticker and defers Stop() on it.
+		// Real ticks are driven via simclock callback registration above; this long-period
+		// ticker only satisfies the concrete type expected by MultiScaler's async loop.
+		return time.NewTicker(24 * time.Hour)
 	}
 
-	// Set the field using unsafe pointer
-	*(*func(time.Duration) *simclock.Ticker)(tickProviderPtr) = wrappedProvider
+	// Set the field using unsafe pointer.
+	*(*func(time.Duration) *time.Ticker)(tickProviderPtr) = wrappedProvider
 
 }
 

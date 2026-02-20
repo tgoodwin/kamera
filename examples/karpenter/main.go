@@ -10,6 +10,9 @@ import (
 	"github.com/tgoodwin/kamera/pkg/explore"
 )
 
+var fuzzCasesFlag = flag.Int("fuzz-cases", 12, "number of sampled parameterized scenarios to generate per input")
+var fuzzSeedFlag = flag.Int64("fuzz-seed", 1337, "seed for deterministic sampled parameterized scenario generation")
+
 func main() {
 	flag.Parse()
 

@@ -12,7 +12,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/tgoodwin/kamera/pkg/analysis"
 	"github.com/tgoodwin/kamera/pkg/analyze"
+	"github.com/tgoodwin/kamera/pkg/interactive"
 )
 
 func TestRunInspectHelp(t *testing.T) {
@@ -43,6 +45,55 @@ func TestRunInspectExplorationArgs(t *testing.T) {
 	code, err := RunInspect([]string{"exploration"})
 	require.NoError(t, err)
 	require.NotEqual(t, 0, code)
+}
+
+func TestRunInspectExplorationDirectoryHeadlessListsDumpSummaries(t *testing.T) {
+	dir := t.TempDir()
+	writeInspectTempDump(t, dir, "workflow_alpha_0.jsonl", "KPA")
+	writeInspectTempDump(t, dir, "workflow_beta_1.jsonl", "RevisionController")
+
+	output := inspectCaptureStdout(t, func() {
+		code, err := RunInspect([]string{"exploration", "--interactive=false", dir})
+		require.NoError(t, err)
+		require.Equal(t, 0, code)
+	})
+
+	require.Contains(t, output, "workflow_alpha_0.jsonl")
+	require.Contains(t, output, "workflow_beta_1.jsonl")
+	require.Contains(t, output, "KPA")
+	require.Contains(t, output, "RevisionController")
+}
+
+func TestRunInspectExplorationDirectoryHeadlessRequiresSingleDumpForDot(t *testing.T) {
+	dir := t.TempDir()
+	writeInspectTempDump(t, dir, "workflow_alpha_0.jsonl", "KPA")
+
+	code, err := RunInspect([]string{"exploration", "--interactive=false", "--dot", filepath.Join(dir, "graph.dot"), dir})
+	require.NoError(t, err)
+	require.NotEqual(t, 0, code)
+}
+
+func TestRunInspectExplorationDirectoryInteractiveUsesIntegratedUI(t *testing.T) {
+	dir := t.TempDir()
+	writeInspectTempDump(t, dir, "workflow_alpha_0.jsonl", "KPA")
+
+	oldDirectoryUI := runDirectoryInspectorUI
+	t.Cleanup(func() {
+		runDirectoryInspectorUI = oldDirectoryUI
+	})
+
+	uiCalls := 0
+	runDirectoryInspectorUI = func(entries []interactive.DumpCatalogEntry) error {
+		uiCalls++
+		require.Len(t, entries, 1)
+		require.Equal(t, "workflow_alpha_0.jsonl", entries[0].File)
+		return nil
+	}
+
+	code, err := RunInspect([]string{"exploration", dir})
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	require.Equal(t, 1, uiCalls)
 }
 
 func TestDependencyGraphDOT(t *testing.T) {
@@ -151,4 +202,30 @@ func inspectReadStringSlice(t *testing.T, value any) []string {
 		out = append(out, str)
 	}
 	return out
+}
+
+func writeInspectTempDump(t *testing.T, dir, filename, controller string) string {
+	t.Helper()
+	path := filepath.Join(dir, filename)
+	dump := analysis.Dump{
+		States: []analysis.DumpResultState{
+			{
+				ID: "state-0",
+				State: analysis.DumpStateNode{
+					Contents: analysis.DumpStateSnapshot{},
+				},
+				Paths: [][]analysis.DumpReconcileResult{
+					{
+						{
+							ControllerID: controller,
+						},
+					},
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(dump)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, data, 0o644))
+	return path
 }

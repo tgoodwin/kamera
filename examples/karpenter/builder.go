@@ -32,6 +32,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	clk := clock.RealClock{}
 	opts := test.Options()
 	switcher := newSwitchingClient()
+	provisionerClient := &nameGeneratingClient{Client: switcher}
 
 	wrapWithOptions := func(c client.Client, inner tracecheck.Reconciler) tracecheck.Reconciler {
 		return reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
@@ -53,9 +54,9 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 
 	var provisionerOnce sync.Once
 	var prov *provisioning.Provisioner
-	getProvisioner := func(c client.Client) *provisioning.Provisioner {
+	getProvisioner := func() *provisioning.Provisioner {
 		provisionerOnce.Do(func() {
-			prov = provisioning.NewProvisioner(c, newNoopRecorder(), cp, getCluster(c), clk)
+			prov = provisioning.NewProvisioner(provisionerClient, newNoopRecorder(), cp, getCluster(provisionerClient), clk)
 		})
 		return prov
 	}
@@ -64,8 +65,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 
 	// Provisioner (singleton-style)
 	b.WithReconciler("provisioner", func(c client.Client) tracecheck.Reconciler {
-		wrapped := &nameGeneratingClient{Client: c}
-		prov := getProvisioner(wrapped)
+		prov := getProvisioner()
 		adapter := provisionerAdapter{
 			reconcileFunc: func(ctx context.Context) (reconciler.Result, error) {
 				return prov.Reconcile(ctx)
@@ -76,7 +76,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 
 	b.WithReconciler("provisioner.trigger.pod", func(c client.Client) tracecheck.Reconciler {
 		wrapped := &nameGeneratingClient{Client: c}
-		pc := provisioning.NewPodController(wrapped, getProvisioner(wrapped), getCluster(wrapped))
+		pc := provisioning.NewPodController(wrapped, getProvisioner(), getCluster(wrapped))
 		return wrapWithOptions(c, reconcile.AsReconciler(wrapped, pc))
 	}).For("Pod")
 

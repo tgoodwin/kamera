@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"time"
 	"unsafe"
@@ -28,7 +30,7 @@ import (
 
 var scheme = knativescheme.Default
 
-var parallelFlag = flag.Bool("parallel", false, "run parallel scenario mode; if --inputs is omitted, use built-in knative baseline inputs")
+var parallelFlag = flag.Bool("parallel", false, "run parallel scenario mode; if --inputs is omitted, load default knative inputs from file")
 
 type digestBypassResolver struct{}
 
@@ -166,20 +168,21 @@ func main() {
 		if explore.InteractiveEnabled() {
 			fmt.Fprintln(os.Stderr, "interactive ignored in batch mode")
 		}
-
-		scenarios, err := scenariosFromInputs(builder, inputs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "convert inputs: %v\n", err)
-			os.Exit(1)
-		}
 		runner, err := explore.NewParallelRunner(builder)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
 			os.Exit(1)
 		}
 		opts := explore.ParallelOptions{DumpDir: explore.DumpPath(), StatsDir: explore.DumpStatsPath()}
+
+		fmt.Fprintln(os.Stderr, "closed-loop scaffold: running per-input reference->rerun pipelines")
+		scenarios, err := scenariosFromInputsWithClosedLoop(builder, inputs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "build closed-loop scenarios: %v\n", err)
+			os.Exit(1)
+		}
 		if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
-			fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "closed-loop batch run error: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -199,17 +202,32 @@ func main() {
 func batchInputsForRun(parallel bool, inputsPath string) ([]coverage.Input, bool, error) {
 	if inputsPath != "" {
 		inputs, err := coverage.LoadInputs(inputsPath)
-		if err != nil {
-			return nil, false, err
-		}
-		return inputs, true, nil
+		return inputs, true, err
 	}
 	if !parallel {
 		return nil, false, nil
 	}
-	inputs, err := defaultKnativeInputs()
+	inputs, err := loadDefaultKnativeInputs()
 	if err != nil {
 		return nil, false, err
 	}
 	return inputs, true, nil
+}
+
+var defaultKnativeInputsSearchPaths = []string{
+	"inputs-example.json",
+	filepath.Join("examples", "knative-serving", "inputs-example.json"),
+}
+
+func loadDefaultKnativeInputs() ([]coverage.Input, error) {
+	for _, path := range defaultKnativeInputsSearchPaths {
+		inputs, err := coverage.LoadInputs(path)
+		if err == nil {
+			return inputs, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("load inputs from %s: %w", path, err)
+		}
+	}
+	return nil, fmt.Errorf("inputs file not found in search paths %v: %w", defaultKnativeInputsSearchPaths, os.ErrNotExist)
 }
