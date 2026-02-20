@@ -325,13 +325,13 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 	}
 
 	if scenario.ClosedLoop == nil {
-		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, scenario.Context)
+		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, nil, scenario.Context)
 		result.Phases = []ScenarioPhaseResult{phase}
 		applyPhaseSummary(&result, phase)
 		return result
 	}
 
-	reference := r.runScenarioPhase(ctx, scenario, opts, idx, "reference", scenario.Config, seed, nil, scenario.Context)
+	reference := r.runScenarioPhase(ctx, scenario, opts, idx, "reference", scenario.Config, seed, nil, nil, scenario.Context)
 	result.Phases = append(result.Phases, reference)
 	applyPhaseSummary(&result, reference)
 	if reference.Err != nil {
@@ -361,7 +361,7 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		if plan.Seed != nil {
 			runSeed = *plan.Seed
 		}
-		phase := r.runScenarioPhase(ctx, scenario, opts, idx, phaseName, plan.Config, runSeed, plan.Prefix, phaseCtx)
+		phase := r.runScenarioPhase(ctx, scenario, opts, idx, phaseName, plan.Config, runSeed, plan.Prefix, reference.VersionManager, phaseCtx)
 		result.Phases = append(result.Phases, phase)
 		applyPhaseSummary(&result, phase)
 		if phase.Err != nil {
@@ -393,6 +393,7 @@ func (r *ParallelRunner) runScenarioPhase(
 	cfg tracecheck.ExploreConfig,
 	seed tracecheck.RestartSeed,
 	prefix tracecheck.ExecutionHistory,
+	prefixResolver tracecheck.VersionManager,
 	phaseCtx ScenarioContext,
 ) ScenarioPhaseResult {
 	phaseLabel := strings.TrimSpace(phaseName)
@@ -407,6 +408,12 @@ func (r *ParallelRunner) runScenarioPhase(
 		return phase
 	}
 	fork.SetConfig(cfg)
+	if len(prefix) > 0 && prefixResolver != nil {
+		if err := fork.PrimeVersionStoreFromHistory(prefix, prefixResolver); err != nil {
+			phase.Err = fmt.Errorf("prime prefix history store: %w", err)
+			return phase
+		}
+	}
 
 	startState, err := tracecheck.SeedToStateNode(seed, fork)
 	if err != nil {

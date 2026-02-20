@@ -79,7 +79,7 @@ type ExploreConfig struct {
 	// if enough paths below that subtree converge to the same state.
 	divergenceCircuitBreakerThreshold int
 
-	// Optimizations configures optional pruning heuristics (opt-in).
+	// Optimizations configures runing heuristics.
 	Optimizations OptimizationConfig
 }
 

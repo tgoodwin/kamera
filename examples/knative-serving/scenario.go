@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -47,6 +48,12 @@ const (
 	scenarioPhaseReference scenarioPhase = "reference"
 	scenarioPhaseRerun     scenarioPhase = "rerun"
 )
+
+const (
+	v0CheckpointMinPending = 2
+)
+
+var v0PerturbController = tracecheck.ReconcilerID("EndpointsController")
 
 func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Configure simclock to use 2s steps instead of 1s to speed up scale-to-zero simulation
@@ -269,8 +276,8 @@ func scenariosFromInputsWithClosedLoop(
 
 		referenceCfg := applyInputTuningForPhase(referenceBase, input.Tuning, false)
 
-		// Stub planner currently re-runs with the same config as reference.
 		rerunPlanCfg := referenceCfg.Clone()
+		rerunContext := scenarioContextForInput(input, scenarioPhaseRerun)
 		scenarios = append(scenarios, explore.Scenario{
 			Name:         input.Name,
 			InitialState: state,
@@ -278,11 +285,18 @@ func scenariosFromInputsWithClosedLoop(
 			Context:      scenarioContextForInput(input, scenarioPhaseReference),
 			ClosedLoop: &explore.ClosedLoopSpec{
 				Plan: func(reference explore.ScenarioPhaseResult) ([]explore.ScenarioPhasePlan, error) {
-					// this is a stub
+					plan, ok, err := buildV0CheckpointRerunPlan(reference, rerunPlanCfg, rerunContext)
+					if err != nil {
+						return nil, err
+					}
+					if ok {
+						return []explore.ScenarioPhasePlan{plan}, nil
+					}
 					return []explore.ScenarioPhasePlan{
 						{
-							Name:   "rerun",
-							Config: rerunPlanCfg,
+							Name:    "rerun",
+							Config:  rerunPlanCfg,
+							Context: &rerunContext,
 						},
 					}, nil
 				},
@@ -294,6 +308,84 @@ func scenariosFromInputsWithClosedLoop(
 		return nil, fmt.Errorf("no scenarios produced")
 	}
 	return scenarios, nil
+}
+
+func buildV0CheckpointRerunPlan(
+	reference explore.ScenarioPhaseResult,
+	baseCfg tracecheck.ExploreConfig,
+	rerunContext explore.ScenarioContext,
+) (explore.ScenarioPhasePlan, bool, error) {
+	path, ok := firstReferencePath(reference)
+	if !ok {
+		return explore.ScenarioPhasePlan{}, false, nil
+	}
+	checkpointIdx, checkpoint, ok := firstCheckpointWithPendingController(path, v0PerturbController)
+	if !ok {
+		return explore.ScenarioPhasePlan{}, false, nil
+	}
+	if checkpoint == nil || len(checkpoint.StateAfter) == 0 || reference.VersionManager == nil {
+		return explore.ScenarioPhasePlan{}, false, nil
+	}
+
+	seed, err := tracecheck.BuildRestartSeedFromState(checkpoint.StateAfter, reference.VersionManager, checkpoint.PendingReconciles)
+	if err != nil {
+		return explore.ScenarioPhasePlan{}, false, fmt.Errorf("build v0 checkpoint restart seed: %w", err)
+	}
+	seed.Depth = checkpointIdx + 1
+
+	cfg := baseCfg.Clone()
+	if cfg.Perturbations.PermuteOrder == nil {
+		cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+	}
+	cfg.Perturbations.PermuteOrder[v0PerturbController] = true
+
+	prefix := slices.Clone(path[:checkpointIdx+1])
+	plan := explore.ScenarioPhasePlan{
+		Name:    "rerun",
+		Config:  cfg,
+		Seed:    &seed,
+		Prefix:  prefix,
+		Context: &rerunContext,
+	}
+	return plan, true, nil
+}
+
+func firstReferencePath(reference explore.ScenarioPhaseResult) (tracecheck.ExecutionHistory, bool) {
+	if reference.Result == nil {
+		return nil, false
+	}
+	for _, state := range reference.Result.ConvergedStates {
+		for _, path := range state.Paths {
+			if len(path) > 0 {
+				return path, true
+			}
+		}
+	}
+	for _, state := range reference.Result.AbortedStates {
+		for _, path := range state.Paths {
+			if len(path) > 0 {
+				return path, true
+			}
+		}
+	}
+	return nil, false
+}
+
+func firstCheckpointWithPendingController(
+	path tracecheck.ExecutionHistory,
+	controller tracecheck.ReconcilerID,
+) (int, *tracecheck.ReconcileResult, bool) {
+	for i, step := range path {
+		if step == nil || len(step.PendingReconciles) < v0CheckpointMinPending {
+			continue
+		}
+		for _, pending := range step.PendingReconciles {
+			if pending.ReconcilerID == controller {
+				return i, step, true
+			}
+		}
+	}
+	return -1, nil, false
 }
 
 func scenarioContextForInput(input coverage.Input, phase scenarioPhase) explore.ScenarioContext {

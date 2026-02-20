@@ -108,9 +108,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			MaxDepth:        *searchDepth,
 			RecordPerfStats: *emitStats,
 			Timeout:         *timeout,
-			Optimizations: OptimizationConfig{
-				OnlyPermuteTriggered: true,
-			},
+			Optimizations:   defaultOptimizationConfig(),
 			Perturbations: PerturbationConfig{
 				PermuteOrder: make(map[ReconcilerID]bool),
 				Staleness:    make(map[ReconcilerID]StalenessConfig),
@@ -170,11 +168,22 @@ func cloneExploreConfig(cfg *ExploreConfig) *ExploreConfig {
 				PermuteOrder: make(map[ReconcilerID]bool),
 				Staleness:    make(map[ReconcilerID]StalenessConfig),
 			},
-			Optimizations: OptimizationConfig{OnlyPermuteTriggered: true},
+			Optimizations: defaultOptimizationConfig(),
 		}
 	}
 	cloned := cfg.Clone()
 	return &cloned
+}
+
+func defaultOptimizationConfig() OptimizationConfig {
+	return OptimizationConfig{
+		EarlyConvergence:     true,
+		CompletedPathDedup:   true,
+		OrderingPruning:      true,
+		OnlyPermuteTriggered: true,
+		CachePrediction:      true,
+		SubtreeCompletion:    true,
+	}
 }
 
 func cloneResourceDeps(input ResourceDeps) ResourceDeps {
@@ -267,9 +276,7 @@ func parseKindString(kind string) schema.GroupKind {
 func (b *ExplorerBuilder) ensurePermuteOrderEntry(id ReconcilerID) {
 	if b.config == nil {
 		b.config = &ExploreConfig{
-			Optimizations: OptimizationConfig{
-				OnlyPermuteTriggered: true,
-			},
+			Optimizations: defaultOptimizationConfig(),
 			Perturbations: PerturbationConfig{
 				PermuteOrder: make(map[ReconcilerID]bool),
 				Staleness:    make(map[ReconcilerID]StalenessConfig),
@@ -348,7 +355,7 @@ func (b *ExplorerBuilder) WithPermuteOrder(id ReconcilerID, enabled bool) *Explo
 // Entries missing for known reconcilers are defaulted to false so the UI can display them.
 func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
+		b.config = &ExploreConfig{Optimizations: defaultOptimizationConfig()}
 	}
 	target := perms
 	if target == nil && b.config.Perturbations.PermuteOrder != nil {
@@ -403,10 +410,10 @@ func (b *ExplorerBuilder) WithDivergenceCircuitBreaker(threshold int) *ExplorerB
 }
 
 // WithOptimizations configures which exploration optimizations to enable.
-// By default, all optimizations are disabled; opt in per-heuristic for ablation studies.
+// Defaults are enabled; call WithoutOptimizations or pass a custom config to tune behavior.
 func (b *ExplorerBuilder) WithOptimizations(opt OptimizationConfig) *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
+		b.config = &ExploreConfig{Optimizations: defaultOptimizationConfig()}
 	}
 	b.config.Optimizations = opt
 	return b
@@ -416,7 +423,7 @@ func (b *ExplorerBuilder) WithOptimizations(opt OptimizationConfig) *ExplorerBui
 // Useful for tests that need deterministic, exhaustive exploration.
 func (b *ExplorerBuilder) WithoutOptimizations() *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
+		b.config = &ExploreConfig{Optimizations: defaultOptimizationConfig()}
 	}
 	b.config.Optimizations = OptimizationConfig{}
 	return b
@@ -440,7 +447,7 @@ func (b *ExplorerBuilder) Config() ExploreConfig {
 				PermuteOrder: make(map[ReconcilerID]bool),
 				Staleness:    make(map[ReconcilerID]StalenessConfig),
 			},
-			Optimizations: OptimizationConfig{OnlyPermuteTriggered: true},
+			Optimizations: defaultOptimizationConfig(),
 		}
 	}
 	return b.config.Clone()
@@ -629,6 +636,75 @@ func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
 	return NewStateClassifier(NewVersionStore(b.snapStore, b.scheme))
 }
 
+// PrimeVersionStoreFromHistory ensures that all object versions referenced by
+// the provided history are materialized in this builder's snapshot store.
+// This is useful when resuming from a restart seed with an execution-history
+// prefix whose hashes were produced by a different resolver/store instance.
+func (b *ExplorerBuilder) PrimeVersionStoreFromHistory(history ExecutionHistory, resolver VersionManager) error {
+	if b == nil {
+		return fmt.Errorf("explorer builder is nil")
+	}
+	if resolver == nil || len(history) == 0 {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	add := func(hash snapshot.VersionHash) error {
+		if hash.Value == "" {
+			return nil
+		}
+		key := string(hash.Strategy) + "|" + hash.Value
+		if _, ok := seen[key]; ok {
+			return nil
+		}
+		seen[key] = struct{}{}
+
+		obj := resolver.Resolve(hash)
+		if obj == nil {
+			return fmt.Errorf("resolve history hash %s (%s)", util.ShortenHash(hash.Value), hash.Strategy)
+		}
+		if err := b.snapStore.StoreObject(obj); err != nil {
+			return fmt.Errorf("store history hash %s (%s): %w", util.ShortenHash(hash.Value), hash.Strategy, err)
+		}
+		return nil
+	}
+
+	collect := func(versions ObjectVersions) error {
+		for _, hash := range versions {
+			if err := add(hash); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	for _, step := range history {
+		if step == nil {
+			continue
+		}
+		if err := collect(step.Changes.ObjectVersions); err != nil {
+			return err
+		}
+		for _, effect := range step.Changes.Effects {
+			if err := add(effect.Version); err != nil {
+				return err
+			}
+		}
+		for _, obs := range step.Changes.Observations {
+			if err := add(obs.Version); err != nil {
+				return err
+			}
+		}
+		if err := collect(step.StateBefore); err != nil {
+			return err
+		}
+		if err := collect(step.StateAfter); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // BuildStartStateFromObjects constructs a starting StateNode from concrete objects and an initial pending list.
 func (b *ExplorerBuilder) BuildStartStateFromObjects(objs []client.Object, pending []PendingReconcile) (StateNode, error) {
 	return buildStartStateFromObjects(b.snapStore, b.scheme, objs, pending)
@@ -663,7 +739,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		mode = modes[0]
 	}
 	if b.config == nil {
-		b.config = &ExploreConfig{Optimizations: OptimizationConfig{OnlyPermuteTriggered: true}}
+		b.config = &ExploreConfig{Optimizations: defaultOptimizationConfig()}
 	}
 	if b.config.MaxDepth == 0 {
 		b.config.MaxDepth = DefaultMaxDepth

@@ -304,6 +304,107 @@ func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 	}
 }
 
+func TestParallelRunnerClosedLoopPrefixHistoryHashesAreDumpable(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	dumpDir := t.TempDir()
+	scenarios := []Scenario{
+		{
+			Name:         "closed-loop-prefix-hashes",
+			InitialState: state.Clone(),
+			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
+			ClosedLoop: &ClosedLoopSpec{
+				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
+					if reference.Result == nil || len(reference.Result.ConvergedStates) == 0 {
+						t.Fatalf("expected converged reference result")
+					}
+					if reference.VersionManager == nil {
+						t.Fatalf("expected reference version manager")
+					}
+					path := reference.Result.ConvergedStates[0].Paths[0]
+					if len(path) == 0 {
+						t.Fatalf("expected reference path entries")
+					}
+					checkpoint := path[len(path)-1]
+					if checkpoint == nil || len(checkpoint.StateAfter) == 0 {
+						t.Fatalf("expected checkpoint with stateAfter")
+					}
+
+					var prefixVersions tracecheck.ObjectVersions
+					chooseOutsideCheckpoint := func(versions tracecheck.ObjectVersions) bool {
+						for key, hash := range versions {
+							if finalHash, ok := checkpoint.StateAfter[key]; !ok || finalHash != hash {
+								prefixVersions = tracecheck.ObjectVersions{key: hash}
+								return true
+							}
+						}
+						return false
+					}
+
+					for _, step := range path {
+						if step == nil {
+							continue
+						}
+						if chooseOutsideCheckpoint(step.StateBefore) || chooseOutsideCheckpoint(step.Changes.ObjectVersions) || chooseOutsideCheckpoint(step.StateAfter) {
+							break
+						}
+					}
+					if len(prefixVersions) == 0 {
+						t.Fatalf("expected at least one historical hash outside checkpoint state")
+					}
+
+					seed, err := tracecheck.BuildRestartSeedFromState(checkpoint.StateAfter, reference.VersionManager, checkpoint.PendingReconciles)
+					if err != nil {
+						t.Fatalf("build checkpoint seed: %v", err)
+					}
+					prefix := tracecheck.ExecutionHistory{
+						{
+							ControllerID: "prefix",
+							StateBefore:  prefixVersions,
+						},
+					}
+					return []ScenarioPhasePlan{
+						{
+							Name:   "rerun",
+							Config: tracecheck.ExploreConfig{MaxDepth: 1},
+							Seed:   &seed,
+							Prefix: prefix,
+						},
+					}, nil
+				},
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{DumpDir: dumpDir, MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Err != nil {
+		t.Fatalf("expected scenario success, got %v", results[0].Err)
+	}
+	if len(results[0].Phases) != 2 {
+		t.Fatalf("expected reference+rerun phases, got %d", len(results[0].Phases))
+	}
+	for _, phase := range results[0].Phases {
+		if strings.TrimSpace(phase.DumpPath) == "" {
+			t.Fatalf("expected dump path for phase %q", phase.Name)
+		}
+		if _, err := os.Stat(phase.DumpPath); err != nil {
+			t.Fatalf("expected dump file for phase %q: %v", phase.Name, err)
+		}
+	}
+}
+
 func TestParallelRunnerProcessModeRequiresInputsFile(t *testing.T) {
 	withProcessModeFlags(t, true, -1, "")
 

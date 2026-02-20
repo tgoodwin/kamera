@@ -6,12 +6,30 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-func TestNewExplorerBuilder_DefaultConfigIsOptIn(t *testing.T) {
+func TestNewExplorerBuilder_DefaultConfigEnablesOptimizations(t *testing.T) {
 	builder := NewExplorerBuilder(runtime.NewScheme())
 	cfg := builder.Config()
 
-	if cfg.OptimizationsEnabled() {
-		t.Fatalf("expected optimizations disabled by default")
+	if !cfg.OptimizationsEnabled() {
+		t.Fatalf("expected optimizations enabled by default")
+	}
+	if !cfg.Optimizations.EarlyConvergence {
+		t.Fatalf("expected EarlyConvergence enabled by default")
+	}
+	if !cfg.Optimizations.CompletedPathDedup {
+		t.Fatalf("expected CompletedPathDedup enabled by default")
+	}
+	if !cfg.Optimizations.OrderingPruning {
+		t.Fatalf("expected OrderingPruning enabled by default")
+	}
+	if !cfg.Optimizations.CachePrediction {
+		t.Fatalf("expected CachePrediction enabled by default")
+	}
+	if !cfg.Optimizations.SubtreeCompletion {
+		t.Fatalf("expected SubtreeCompletion enabled by default")
+	}
+	if !cfg.Optimizations.OnlyPermuteTriggered {
+		t.Fatalf("expected OnlyPermuteTriggered enabled by default")
 	}
 
 	for id, enabled := range cfg.Perturbations.PermuteOrder {
