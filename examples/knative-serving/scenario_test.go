@@ -7,6 +7,7 @@ import (
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/explore"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"knative.dev/serving/pkg/apis/autoscaling"
@@ -126,4 +127,108 @@ func Example_validateKnativeServiceParams() {
 	err := validateKnativeServiceParams(svc)
 	fmt.Println(err != nil)
 	// Output: true
+}
+
+func TestApplyInputTuningAppliesStaleness(t *testing.T) {
+	base := tracecheck.ExploreConfig{
+		Perturbations: tracecheck.PerturbationConfig{
+			Staleness: map[tracecheck.ReconcilerID]tracecheck.StalenessConfig{
+				"ExistingController": {
+					StaleReadBounds: tracecheck.LookbackLimits{
+						"core/ConfigMap": tracecheck.LookbackLimit(2),
+					},
+					MaxRestarts: 1,
+				},
+			},
+		},
+	}
+	tuning := coverage.InputTuning{
+		StaleReads: map[string][]string{
+			"ServiceReconciler": {"core/ConfigMap", "core/Secret"},
+		},
+		StaleLookback: map[string]int{
+			"core/ConfigMap": 3,
+			"core/Secret":    1,
+		},
+	}
+
+	cfg := applyInputTuning(base, tuning)
+	st, ok := cfg.Perturbations.Staleness["ServiceReconciler"]
+	if !ok {
+		t.Fatal("expected ServiceReconciler staleness config")
+	}
+	if st.StaleReadBounds["core/ConfigMap"] != tracecheck.LookbackLimit(3) {
+		t.Fatalf("expected core/ConfigMap lookback=3, got %d", st.StaleReadBounds["core/ConfigMap"])
+	}
+	if st.StaleReadBounds["core/Secret"] != tracecheck.LookbackLimit(1) {
+		t.Fatalf("expected core/Secret lookback=1, got %d", st.StaleReadBounds["core/Secret"])
+	}
+	if existing, ok := cfg.Perturbations.Staleness["ExistingController"]; !ok || existing.MaxRestarts != 1 {
+		t.Fatalf("expected existing staleness config to remain intact")
+	}
+}
+
+func TestScenariosFromInputsWithClosedLoopBuildsReferenceAndRerunPlans(t *testing.T) {
+	builder := newKnativeExplorerBuilder()
+	input := coverage.Input{
+		Name: "knative-a",
+		Objects: []*unstructured.Unstructured{
+			mustServiceAsUnstructured(t),
+		},
+		Pending: []coverage.Pending{
+			{
+				ControllerID: "ServiceReconciler",
+				Key: coverage.NamespacedName{
+					Namespace: "default",
+					Name:      "demo",
+				},
+			},
+		},
+		Tuning: coverage.InputTuning{
+			PermuteControllers: []string{"ServiceReconciler"},
+			StaleReads: map[string][]string{
+				"ServiceReconciler": {"core/ConfigMap"},
+			},
+			StaleLookback: map[string]int{"core/ConfigMap": 2},
+		},
+	}
+
+	scenarios, err := scenariosFromInputsWithClosedLoop(builder, []coverage.Input{input})
+	if err != nil {
+		t.Fatalf("scenariosFromInputsWithClosedLoop error = %v", err)
+	}
+	if len(scenarios) != 1 {
+		t.Fatalf("expected 1 scenario, got %d", len(scenarios))
+	}
+	sc := scenarios[0]
+	if sc.ClosedLoop == nil || sc.ClosedLoop.Plan == nil {
+		t.Fatalf("expected closed-loop planner")
+	}
+	if sc.Config.Perturbations.PermuteOrder["ServiceReconciler"] {
+		t.Fatalf("expected reference phase to disable permutations")
+	}
+	if _, ok := sc.Config.Perturbations.Staleness["ServiceReconciler"]; ok {
+		t.Fatalf("expected reference phase to disable staleness")
+	}
+
+	plans, err := sc.ClosedLoop.Plan(explore.ScenarioPhaseResult{Name: "reference"})
+	if err != nil {
+		t.Fatalf("closed-loop plan error = %v", err)
+	}
+	if len(plans) != 1 {
+		t.Fatalf("expected one rerun plan, got %d", len(plans))
+	}
+	plan := plans[0]
+	if plan.Name != "rerun" {
+		t.Fatalf("expected rerun phase name, got %q", plan.Name)
+	}
+	if plan.Config.MaxDepth != sc.Config.MaxDepth {
+		t.Fatalf("expected rerun to keep same maxDepth as reference")
+	}
+	if plan.Config.Perturbations.PermuteOrder["ServiceReconciler"] {
+		t.Fatalf("expected rerun stub to keep permutations disabled")
+	}
+	if _, ok := plan.Config.Perturbations.Staleness["ServiceReconciler"]; ok {
+		t.Fatalf("expected rerun stub to keep staleness disabled")
+	}
 }

@@ -40,6 +40,14 @@ import (
 
 var errInvalidKnativeParams = errors.New("invalid knative service params")
 
+type scenarioPhase string
+
+const (
+	scenarioPhaseStandard  scenarioPhase = ""
+	scenarioPhaseReference scenarioPhase = "reference"
+	scenarioPhaseRerun     scenarioPhase = "rerun"
+)
+
 func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Configure simclock to use 2s steps instead of 1s to speed up scale-to-zero simulation
 	// (60s stable window + 30s grace period = 90s total, which is 45 steps at 2s/step)
@@ -202,11 +210,23 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 	if builder == nil {
 		return nil, fmt.Errorf("builder is nil")
 	}
+	return scenariosFromInputsForPhase(builder, inputs, builder.Config(), scenarioPhaseStandard)
+}
+
+func scenariosFromInputsForPhase(
+	builder *tracecheck.ExplorerBuilder,
+	inputs []coverage.Input,
+	baseCfg tracecheck.ExploreConfig,
+	phase scenarioPhase,
+) ([]explore.Scenario, error) {
+	if builder == nil {
+		return nil, fmt.Errorf("builder is nil")
+	}
 	if len(inputs) == 0 {
 		return nil, fmt.Errorf("no inputs supplied")
 	}
 
-	baseCfg := builder.Config()
+	includePerturbations := phase != scenarioPhaseReference
 	scenarios := make([]explore.Scenario, 0, len(inputs))
 	for idx, input := range inputs {
 		state, err := buildStateFromCoverageInput(builder, input)
@@ -217,7 +237,8 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 		scenarios = append(scenarios, explore.Scenario{
 			Name:         input.Name,
 			InitialState: state,
-			Config:       applyInputTuning(baseCfg, input.Tuning),
+			Config:       applyInputTuningForPhase(baseCfg, input.Tuning, includePerturbations),
+			Context:      scenarioContextForInput(input, phase),
 		})
 	}
 
@@ -225,6 +246,83 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 		return nil, fmt.Errorf("no scenarios produced")
 	}
 	return scenarios, nil
+}
+
+func scenariosFromInputsWithClosedLoop(
+	builder *tracecheck.ExplorerBuilder,
+	inputs []coverage.Input,
+) ([]explore.Scenario, error) {
+	if builder == nil {
+		return nil, fmt.Errorf("builder is nil")
+	}
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("no inputs supplied")
+	}
+
+	referenceBase := withoutPerturbations(builder.Config())
+	scenarios := make([]explore.Scenario, 0, len(inputs))
+	for idx, input := range inputs {
+		state, err := buildStateFromCoverageInput(builder, input)
+		if err != nil {
+			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
+		}
+
+		referenceCfg := applyInputTuningForPhase(referenceBase, input.Tuning, false)
+
+		// Stub planner currently re-runs with the same config as reference.
+		rerunPlanCfg := referenceCfg.Clone()
+		scenarios = append(scenarios, explore.Scenario{
+			Name:         input.Name,
+			InitialState: state,
+			Config:       referenceCfg,
+			Context:      scenarioContextForInput(input, scenarioPhaseReference),
+			ClosedLoop: &explore.ClosedLoopSpec{
+				Plan: func(reference explore.ScenarioPhaseResult) ([]explore.ScenarioPhasePlan, error) {
+					// this is a stub
+					return []explore.ScenarioPhasePlan{
+						{
+							Name:   "rerun",
+							Config: rerunPlanCfg,
+						},
+					}, nil
+				},
+			},
+		})
+	}
+
+	if len(scenarios) == 0 {
+		return nil, fmt.Errorf("no scenarios produced")
+	}
+	return scenarios, nil
+}
+
+func scenarioContextForInput(input coverage.Input, phase scenarioPhase) explore.ScenarioContext {
+	workflow := "batch-input"
+	attributes := map[string]string{}
+	if phase == scenarioPhaseReference || phase == scenarioPhaseRerun {
+		workflow = "closed-loop"
+		attributes["phase"] = string(phase)
+	}
+
+	inputRef := ""
+	inputsPath := strings.TrimSpace(explore.InputsPath())
+	if inputsPath != "" {
+		name := strings.TrimSpace(input.Name)
+		if name == "" {
+			inputRef = inputsPath
+		} else {
+			inputRef = fmt.Sprintf("%s#%s", inputsPath, name)
+		}
+	}
+
+	if len(attributes) == 0 {
+		attributes = nil
+	}
+	return explore.ScenarioContext{
+		Workflow:   workflow,
+		InputRef:   inputRef,
+		Attributes: attributes,
+	}
 }
 
 type knativeParamSpec struct {
@@ -564,9 +662,23 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 }
 
 func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
+	return applyInputTuningForPhase(base, tuning, true)
+}
+
+func applyInputTuningForPhase(
+	base tracecheck.ExploreConfig,
+	tuning coverage.InputTuning,
+	includePerturbations bool,
+) tracecheck.ExploreConfig {
 	cfg := base.Clone()
+	if !includePerturbations {
+		cfg = withoutPerturbations(cfg)
+	}
 	if tuning.MaxDepth > 0 {
 		cfg.MaxDepth = tuning.MaxDepth
+	}
+	if !includePerturbations {
+		return cfg
 	}
 	if len(tuning.PermuteControllers) > 0 {
 		if cfg.Perturbations.PermuteOrder == nil {
@@ -576,7 +688,43 @@ func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
 		}
 	}
+	if len(tuning.StaleReads) > 0 {
+		if cfg.Perturbations.Staleness == nil {
+			cfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+		}
+		for controllerID, kinds := range tuning.StaleReads {
+			id := tracecheck.ReconcilerID(controllerID)
+			st := cfg.Perturbations.Staleness[id]
+			if st.StaleReadBounds == nil {
+				st.StaleReadBounds = make(tracecheck.LookbackLimits)
+			}
+			for _, kind := range kinds {
+				trimmed := strings.TrimSpace(kind)
+				if trimmed == "" {
+					continue
+				}
+				lookback := tuning.StaleLookback[trimmed]
+				if lookback <= 0 {
+					lookback = 1
+				}
+				st.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
+			}
+			cfg.Perturbations.Staleness[id] = st
+		}
+	}
 	return cfg
+}
+
+func withoutPerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig {
+	out := cfg.Clone()
+	if out.Perturbations.PermuteOrder == nil {
+		out.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+	}
+	for id := range out.Perturbations.PermuteOrder {
+		out.Perturbations.PermuteOrder[id] = false
+	}
+	out.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+	return out
 }
 
 func cloneCoverageInput(input coverage.Input) coverage.Input {

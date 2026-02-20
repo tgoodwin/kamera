@@ -168,20 +168,21 @@ func main() {
 		if explore.InteractiveEnabled() {
 			fmt.Fprintln(os.Stderr, "interactive ignored in batch mode")
 		}
-
-		scenarios, err := scenariosFromInputs(builder, inputs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "convert inputs: %v\n", err)
-			os.Exit(1)
-		}
 		runner, err := explore.NewParallelRunner(builder)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
 			os.Exit(1)
 		}
 		opts := explore.ParallelOptions{DumpDir: explore.DumpPath(), StatsDir: explore.DumpStatsPath()}
+
+		fmt.Fprintln(os.Stderr, "closed-loop scaffold: running per-input reference->rerun pipelines")
+		scenarios, err := scenariosFromInputsWithClosedLoop(builder, inputs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "build closed-loop scenarios: %v\n", err)
+			os.Exit(1)
+		}
 		if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
-			fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "closed-loop batch run error: %v\n", err)
 			os.Exit(1)
 		}
 		return

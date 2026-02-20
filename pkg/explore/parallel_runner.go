@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -323,23 +324,103 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		return result
 	}
 
-	fork := r.builder.Fork()
-	if fork == nil {
-		result.Err = fmt.Errorf("fork builder: nil")
+	if scenario.ClosedLoop == nil {
+		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, scenario.Context)
+		result.Phases = []ScenarioPhaseResult{phase}
+		applyPhaseSummary(&result, phase)
 		return result
 	}
-	fork.SetConfig(scenario.Config)
+
+	reference := r.runScenarioPhase(ctx, scenario, opts, idx, "reference", scenario.Config, seed, nil, scenario.Context)
+	result.Phases = append(result.Phases, reference)
+	applyPhaseSummary(&result, reference)
+	if reference.Err != nil {
+		return result
+	}
+
+	plans := []ScenarioPhasePlan{}
+	if scenario.ClosedLoop.Plan != nil {
+		planned, planErr := scenario.ClosedLoop.Plan(reference)
+		if planErr != nil {
+			result.Err = fmt.Errorf("closed-loop plan for scenario %s: %w", scenario.Name, planErr)
+			return result
+		}
+		plans = planned
+	}
+
+	for i, plan := range plans {
+		phaseName := strings.TrimSpace(plan.Name)
+		if phaseName == "" {
+			phaseName = fmt.Sprintf("phase_%d", i+1)
+		}
+		phaseCtx := scenario.Context
+		if plan.Context != nil {
+			phaseCtx = *plan.Context
+		}
+		runSeed := seed
+		if plan.Seed != nil {
+			runSeed = *plan.Seed
+		}
+		phase := r.runScenarioPhase(ctx, scenario, opts, idx, phaseName, plan.Config, runSeed, plan.Prefix, phaseCtx)
+		result.Phases = append(result.Phases, phase)
+		applyPhaseSummary(&result, phase)
+		if phase.Err != nil {
+			return result
+		}
+	}
+
+	return result
+}
+
+func applyPhaseSummary(result *ScenarioResult, phase ScenarioPhaseResult) {
+	if result == nil {
+		return
+	}
+	result.Result = phase.Result
+	result.VersionManager = phase.VersionManager
+	result.Stats = phase.Stats
+	result.DumpPath = phase.DumpPath
+	result.InvariantError = phase.InvariantError
+	result.Err = phase.Err
+}
+
+func (r *ParallelRunner) runScenarioPhase(
+	ctx context.Context,
+	scenario Scenario,
+	opts ParallelOptions,
+	idx int,
+	phaseName string,
+	cfg tracecheck.ExploreConfig,
+	seed tracecheck.RestartSeed,
+	prefix tracecheck.ExecutionHistory,
+	phaseCtx ScenarioContext,
+) ScenarioPhaseResult {
+	phaseLabel := strings.TrimSpace(phaseName)
+	if phaseLabel == "" {
+		phaseLabel = "run"
+	}
+	phase := ScenarioPhaseResult{Name: phaseLabel}
+
+	fork := r.builder.Fork()
+	if fork == nil {
+		phase.Err = fmt.Errorf("fork builder: nil")
+		return phase
+	}
+	fork.SetConfig(cfg)
 
 	startState, err := tracecheck.SeedToStateNode(seed, fork)
 	if err != nil {
-		result.Err = fmt.Errorf("seed to state: %w", err)
-		return result
+		phase.Err = fmt.Errorf("seed to state: %w", err)
+		return phase
+	}
+	if len(prefix) > 0 {
+		startState.ExecutionHistory = slices.Clone(prefix)
 	}
 
 	explorer, err := fork.Build("standalone")
 	if err != nil {
-		result.Err = fmt.Errorf("build explorer: %w", err)
-		return result
+		phase.Err = fmt.Errorf("build explorer: %w", err)
+		return phase
 	}
 
 	runCtx := ctx
@@ -350,22 +431,28 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 	}
 
 	res := explorer.Explore(runCtx, startState)
-	result.Result = res
-	result.VersionManager = explorer.VersionManager()
-	result.Stats = explorer.Stats()
+	phase.Result = res
+	phase.VersionManager = explorer.VersionManager()
+	phase.Stats = explorer.Stats()
 
 	if scenario.Invariant != nil && res != nil {
 		for _, state := range res.ConvergedStates {
 			if err := scenario.Invariant(state.State); err != nil {
-				result.InvariantError = err
+				phase.InvariantError = err
 				break
 			}
 		}
 	}
 
+	artifactName := scenario.Name
+	if strings.TrimSpace(phaseName) != "" {
+		artifactName = fmt.Sprintf("%s/%s", scenario.Name, phaseLabel)
+	}
+
 	if opts.StatsDir != "" {
-		if err := writeScenarioStats(result.Stats, opts.StatsDir, scenario.Name, idx); err != nil {
-			result.Err = err
+		if err := writeScenarioStats(phase.Stats, opts.StatsDir, artifactName, idx); err != nil {
+			phase.Err = err
+			return phase
 		}
 	}
 
@@ -373,24 +460,31 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		states := append([]tracecheck.ResultState{}, res.ConvergedStates...)
 		states = append(states, res.AbortedStates...)
 		if len(states) > 0 {
-			path := scenarioDumpPath(opts.DumpDir, scenario.Name, idx)
+			path := scenarioDumpPath(opts.DumpDir, artifactName, idx)
 			runIdx := idx
+			attrs := copyAttributes(phaseCtx.Attributes)
+			if strings.TrimSpace(phaseName) != "" {
+				attrs["phase"] = phaseLabel
+			}
+			if len(attrs) == 0 {
+				attrs = nil
+			}
 			dumpContext := &interactive.InspectorDumpContext{
 				ScenarioName:     scenario.Name,
 				ScenarioRunIndex: &runIdx,
-				Workflow:         scenario.Context.Workflow,
-				InputRef:         scenario.Context.InputRef,
-				Attributes:       scenario.Context.Attributes,
+				Workflow:         phaseCtx.Workflow,
+				InputRef:         phaseCtx.InputRef,
+				Attributes:       attrs,
 			}
-			if err := interactive.SaveInspectorDumpWithContext(states, result.VersionManager, path, dumpContext); err != nil {
-				result.Err = fmt.Errorf("dump scenario %s: %w", scenario.Name, err)
-			} else {
-				result.DumpPath = path
+			if err := interactive.SaveInspectorDumpWithContext(states, phase.VersionManager, path, dumpContext); err != nil {
+				phase.Err = fmt.Errorf("dump scenario %s (%s): %w", scenario.Name, phaseLabel, err)
+				return phase
 			}
+			phase.DumpPath = path
 		}
 	}
 
-	return result
+	return phase
 }
 
 func ensureParallelOutputDirs(opts ParallelOptions) error {

@@ -203,6 +203,107 @@ func TestParallelRunnerCapturesInvariantError(t *testing.T) {
 	}
 }
 
+func TestParallelRunnerClosedLoopRunsReferenceThenRerunPerScenario(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	plannerCalls := 0
+	scenarios := []Scenario{
+		{
+			Name:         "closed-loop",
+			InitialState: state.Clone(),
+			Config:       tracecheck.ExploreConfig{MaxDepth: 1},
+			ClosedLoop: &ClosedLoopSpec{
+				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
+					plannerCalls++
+					if reference.Name != "reference" {
+						t.Fatalf("expected reference phase, got %q", reference.Name)
+					}
+					if reference.Result == nil || len(reference.Result.AbortedStates) == 0 {
+						t.Fatalf("expected reference phase to abort due to low depth")
+					}
+					return []ScenarioPhasePlan{
+						{Name: "rerun", Config: tracecheck.ExploreConfig{MaxDepth: 5}},
+					}, nil
+				},
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if plannerCalls != 1 {
+		t.Fatalf("expected planner to be called once, got %d", plannerCalls)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if len(results[0].Phases) != 2 {
+		t.Fatalf("expected 2 phase results, got %d", len(results[0].Phases))
+	}
+	if results[0].Phases[0].Name != "reference" {
+		t.Fatalf("expected first phase to be reference, got %q", results[0].Phases[0].Name)
+	}
+	if results[0].Phases[1].Name != "rerun" {
+		t.Fatalf("expected second phase to be rerun, got %q", results[0].Phases[1].Name)
+	}
+	if results[0].Phases[1].Result == nil || len(results[0].Phases[1].Result.AbortedStates) != 0 {
+		t.Fatalf("expected rerun phase to converge without aborting")
+	}
+}
+
+func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	dumpDir := t.TempDir()
+	scenarios := []Scenario{
+		{
+			Name:         "closed-loop-dump",
+			InitialState: state.Clone(),
+			Config:       tracecheck.ExploreConfig{MaxDepth: 1},
+			ClosedLoop: &ClosedLoopSpec{
+				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
+					return []ScenarioPhasePlan{
+						{Name: "rerun", Config: tracecheck.ExploreConfig{MaxDepth: 5}},
+					}, nil
+				},
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{DumpDir: dumpDir, MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if len(results[0].Phases) != 2 {
+		t.Fatalf("expected 2 phase results, got %d", len(results[0].Phases))
+	}
+	for _, phase := range results[0].Phases {
+		if strings.TrimSpace(phase.DumpPath) == "" {
+			t.Fatalf("expected dump path for phase %q", phase.Name)
+		}
+		if _, err := os.Stat(phase.DumpPath); err != nil {
+			t.Fatalf("expected dump file for phase %q: %v", phase.Name, err)
+		}
+	}
+}
+
 func TestParallelRunnerProcessModeRequiresInputsFile(t *testing.T) {
 	withProcessModeFlags(t, true, -1, "")
 
