@@ -238,6 +238,9 @@ type StateNode struct {
 
 	depth int
 
+	// nextUserActionIdx tracks branch-local progress through ordered user actions.
+	nextUserActionIdx int
+
 	DivergencePoint string // reconcileID of the first divergence
 
 	// tracks what KindSequences a controller may be "stuck" on
@@ -307,6 +310,7 @@ func (sn StateNode) Clone() StateNode {
 		action:            sn.action,
 		ExecutionHistory:  slices.Clone(sn.ExecutionHistory),
 		depth:             sn.depth,
+		nextUserActionIdx: sn.nextUserActionIdx,
 		DivergencePoint:   sn.DivergencePoint, // TODO deprecate
 		divergenceKey:     sn.divergenceKey,
 
@@ -390,6 +394,9 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 		builder.WriteByte('/')
 		builder.WriteString(pr.Request.Name)
 	}
+
+	builder.WriteString("|u:")
+	builder.WriteString(strconv.Itoa(sn.nextUserActionIdx))
 
 	return builder.String()
 }

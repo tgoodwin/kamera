@@ -147,6 +147,7 @@ func (e *Explorer) shouldApplyNextUserAction(state StateNode) bool {
 	if !e.userController.HasActionAt(state.nextUserActionIdx) {
 		return false
 	}
+	// policy here is to apply the next user action after the current state has converged
 	return len(state.PendingReconciles) == 0 || allPendingIgnorableForConvergence(state.PendingReconciles)
 }
 
