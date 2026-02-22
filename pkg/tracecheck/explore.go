@@ -122,6 +122,8 @@ type Explorer struct {
 
 	priorityHandler PriorityHandler // prioritize possible views to explore
 
+	userController *UserController
+
 	Config *ExploreConfig
 
 	stats         *ExploreStats
@@ -136,6 +138,17 @@ func (e *Explorer) VersionManager() VersionManager {
 // Stats returns the stats gathered during exploration.
 func (e *Explorer) Stats() *ExploreStats {
 	return e.stats
+}
+
+func (e *Explorer) shouldApplyNextUserAction(state StateNode) bool {
+	if e == nil || e.userController == nil {
+		return false
+	}
+	if !e.userController.HasActionAt(state.nextUserActionIdx) {
+		return false
+	}
+	// policy here is to apply the next user action after the current state has converged
+	return len(state.PendingReconciles) == 0 || allPendingIgnorableForConvergence(state.PendingReconciles)
 }
 
 // Objects resolves and returns all objects for the provided ResultState, skipping any that cannot be resolved.
@@ -732,6 +745,14 @@ func (e *Explorer) explore(
 			return nil
 		}
 
+		shouldApplyUserAction := e.shouldApplyNextUserAction(currentState)
+		if shouldApplyUserAction && logger.V(2).Enabled() {
+			logger.V(2).WithValues(
+				"Depth", currentState.depth,
+				"NextUserActionIdx", currentState.nextUserActionIdx,
+			).Info("user action scheduler selected next action")
+		}
+
 		// A state is considered converged if:
 		// 1. There are no pending reconciles, OR
 		// 2. All remaining pending reconciles are ignorable for convergence (async enqueues
@@ -976,6 +997,7 @@ func (e *Explorer) explore(
 				divergenceKey:            stateView.divergenceKey,
 				stuckReconcilerPositions: maps.Clone(stateView.stuckReconcilerPositions),
 				ExecutionHistory:         append(currHistory, stepResult),
+				nextUserActionIdx:        stateView.nextUserActionIdx,
 			}
 			newState.ID = string(newState.Hash())
 
@@ -1577,6 +1599,7 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 			parent:            currState.parent,
 			action:            currState.action,
 			ExecutionHistory:  slices.Clone(currState.ExecutionHistory),
+			nextUserActionIdx: currState.nextUserActionIdx,
 
 			divergenceKey: divergenceHash,
 

@@ -48,6 +48,8 @@ type ExplorerBuilder struct {
 	// podCrashProbabilities configures random crash probabilities for the
 	// PodLifecycleController. Maps lifecycle stage to crash probability (0.0 to 1.0).
 	podCrashProbabilities map[controller.PodLifecycleStage]float64
+
+	userActions []UserAction
 }
 
 // ReconcilerBuilder enables chaining reconciler-specific configuration
@@ -158,6 +160,7 @@ func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 		config:                     cloneExploreConfig(b.config),
 		builder:                    b.builder,
 		podCrashProbabilities:      maps.Clone(b.podCrashProbabilities),
+		userActions:                slices.Clone(b.userActions),
 	}
 }
 
@@ -439,6 +442,11 @@ func (b *ExplorerBuilder) WithReplayBuilder(builder *replay.Builder) *ExplorerBu
 	return b
 }
 
+func (b *ExplorerBuilder) WithUserActions(actions []UserAction) *ExplorerBuilder {
+	b.userActions = slices.Clone(actions)
+	return b
+}
+
 // Config returns a copy of the current builder configuration.
 func (b *ExplorerBuilder) Config() ExploreConfig {
 	if b.config == nil {
@@ -592,6 +600,24 @@ func (b *ExplorerBuilder) instantiateReconcilers(mgr *manager) map[ReconcilerID]
 	}
 
 	return containers
+}
+
+func (b *ExplorerBuilder) instantiateUserController(mgr *manager) *UserController {
+	frameManager := replay.NewFrameManager(nil)
+	replayClient := replay.NewClient(
+		string(UserControllerID),
+		b.scheme,
+		frameManager,
+		mgr,
+	)
+
+	reconciler := &userActionReconciler{actions: slices.Clone(b.userActions), client: replayClient}
+	container := Wrap(UserControllerID, reconciler, mgr, frameManager, mgr)
+	return NewUserController(
+		mgr,
+		container,
+		reconciler,
+	)
 }
 
 // instantiateCleanupReconciler adds a reconciler to the system that handles
@@ -784,6 +810,8 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 	reconcilers := b.instantiateReconcilers(mgr)
 	cleanupReconciler := b.instantiateCleanupReconciler(mgr)
 	reconcilers[cleanupReconcilerID] = cleanupReconciler
+	userController := b.instantiateUserController(mgr)
+	reconcilers[UserControllerID] = userController.container
 
 	// Create knowledge manager if using replay builder
 	var knowledgeManager *EventKnowledge
@@ -805,7 +833,6 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		b.watchers,
 		mgr.versionStore,
 	)
-
 	// Construct the Explorer
 	explorer := &Explorer{
 		reconcilers:          reconcilers,
@@ -818,6 +845,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 
 		// for prioritizing 'interesting' (potentially bug-causing) states to explore
 		priorityHandler: b.priorityBuilder.Build(b.snapStore),
+		userController:  userController,
 	}
 
 	return explorer, nil
