@@ -54,7 +54,7 @@ func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er e
 
 func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
 	frameID := replay.FrameIDFromContext(ctx)
-	frameData := s.toFrameData(state)
+	frameData := runtimeObjectsToCacheFrame(state, s.scheme)
 	s.InsertCacheFrame(frameID, frameData)
 	cleanup := func() {}
 	return ctx, cleanup, nil
@@ -82,16 +82,16 @@ func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, name t
 	return s.Reconciler.Reconcile(ctx, req)
 }
 
-// toFrameData converts a slice of runtime objects into a CacheFrame.
-func (s *ControllerRuntimeStrategy) toFrameData(objects []runtime.Object) replay.CacheFrame {
+// runtimeObjectsToCacheFrame converts a slice of runtime objects into a replay cache frame.
+func runtimeObjectsToCacheFrame(objects []runtime.Object, scheme *runtime.Scheme) replay.CacheFrame {
 	out := make(replay.CacheFrame)
 	for _, obj := range objects {
 		if obj == nil {
 			continue
 		}
 
-		if gvk := obj.GetObjectKind().GroupVersionKind(); gvk.Empty() && s.scheme != nil {
-			if gvks, _, err := s.scheme.ObjectKinds(obj); err == nil && len(gvks) > 0 {
+		if gvk := obj.GetObjectKind().GroupVersionKind(); gvk.Empty() && scheme != nil {
+			if gvks, _, err := scheme.ObjectKinds(obj); err == nil && len(gvks) > 0 {
 				obj.GetObjectKind().SetGroupVersionKind(gvks[0])
 			}
 		}

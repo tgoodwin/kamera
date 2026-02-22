@@ -182,6 +182,30 @@ func Test_GetUniquePaths(t *testing.T) {
 	}
 }
 
+func TestStateNodeClone_IsolatesNextUserActionIdxAcrossBranches(t *testing.T) {
+	parent := StateNode{
+		nextUserActionIdx: 2,
+		PendingReconciles: []PendingReconcile{
+			{ReconcilerID: "A", Request: reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "demo"}}},
+		},
+	}
+
+	left := parent.Clone()
+	right := parent.Clone()
+
+	left.nextUserActionIdx++
+
+	if got := parent.nextUserActionIdx; got != 2 {
+		t.Fatalf("expected parent nextUserActionIdx to remain 2, got %d", got)
+	}
+	if got := right.nextUserActionIdx; got != 2 {
+		t.Fatalf("expected sibling branch nextUserActionIdx to remain 2, got %d", got)
+	}
+	if got := left.nextUserActionIdx; got != 3 {
+		t.Fatalf("expected updated branch nextUserActionIdx to be 3, got %d", got)
+	}
+}
+
 // Test_GetUniquePaths_PreservesConvergenceSteps verifies that paths ending in convergence
 // are not deduplicated with non-converged paths, even if they have the same controller sequence.
 // Convergence is tracked via the :converged marker in UniqueKey(), not by preserving no-op steps.
