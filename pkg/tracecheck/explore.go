@@ -148,7 +148,7 @@ func (e *Explorer) shouldApplyNextUserAction(state StateNode) bool {
 		return false
 	}
 	// policy here is to apply the next user action after the current state has converged
-	return len(state.PendingReconciles) == 0 || AllPendingIgnorableForConvergence(state.PendingReconciles)
+	return len(state.PendingReconciles) == 0 || allPendingIgnorableForConvergence(state.PendingReconciles)
 }
 
 // Objects resolves and returns all objects for the provided ResultState, skipping any that cannot be resolved.
@@ -809,7 +809,7 @@ func (e *Explorer) explore(
 		// NOTE: If a state has ANY SourceStateChange pending reconciles, it should NOT be
 		// considered converged. The allPendingIgnorableForConvergence function returns false
 		// if any pending has SourceStateChange.
-		if len(currentState.PendingReconciles) == 0 || AllPendingIgnorableForConvergence(currentState.PendingReconciles) {
+		if len(currentState.PendingReconciles) == 0 || allPendingIgnorableForConvergence(currentState.PendingReconciles) {
 			convergenceKey := currentState.ConvergenceHash()
 			reason := "no pending reconciles"
 			if len(currentState.PendingReconciles) > 0 {

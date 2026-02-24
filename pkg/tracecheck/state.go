@@ -113,7 +113,7 @@ func (eh ExecutionHistory) UniqueKey() string {
 	if len(eh) > 0 {
 		lastStep := eh[len(eh)-1]
 		originalConverged = len(lastStep.PendingReconciles) == 0 ||
-			AllPendingIgnorableForConvergence(lastStep.PendingReconciles)
+			allPendingIgnorableForConvergence(lastStep.PendingReconciles)
 	}
 
 	// Filter out no-ops (steps with no changes and no errors)
@@ -270,7 +270,7 @@ func (sn StateNode) DumpPending() {
 }
 
 func (sn StateNode) IsConverged() bool {
-	return len(sn.PendingReconciles) == 0
+	return len(sn.PendingReconciles) == 0 || allPendingIgnorableForConvergence(sn.PendingReconciles)
 }
 
 func (sn StateNode) Objects() ObjectVersions {
