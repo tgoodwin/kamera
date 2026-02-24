@@ -13,7 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const UserControllerID ReconcilerID = "UserController"
+const UserControllerID ReconcilerID = "External User"
 
 type UserAction struct {
 	ID      string              `json:"id"`

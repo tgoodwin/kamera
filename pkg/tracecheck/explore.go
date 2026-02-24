@@ -1702,21 +1702,14 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	return filtered, nil
 }
 
-func dumpQueue(queue []StateNode) []string {
-	queueStr := lo.Map(queue, func(sn StateNode, _ int) string {
-		return string(sn.OrderHash())
-	})
-	return queueStr
-}
-
 func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state StateNode, consumed *PendingReconcile, result *ReconcileResult) []PendingReconcile {
 	stepLog := log.FromContext(ctx)
 
 	stillPending := slices.Clone(state.PendingReconciles)
-	reconcilerID := "UserController"
+	reconcilerID := UserControllerID
 	// consumed is nil for user action steps, and non-nil for reconcile steps which were once pending.
 	if consumed != nil {
-		reconcilerID = string(consumed.ReconcilerID)
+		reconcilerID = consumed.ReconcilerID
 		// INVARIANT 3: The reconciler taking the step should be present in the previous state's pending reconciles.
 		reconcilerWasPending := false
 		for _, pr := range state.PendingReconciles {
