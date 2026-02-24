@@ -117,7 +117,7 @@ go run .
     }
     ```
 
-    `Runner` honors the standard `-interactive` and `-dump-output` flags (see `pkg/explore/flags.go`) so you can disable the inspector or persist results when scripting.
+    `Runner` honors the standard `-interactive`, `-perturb`, and `-dump-output` flags (see `pkg/explore/flags.go`) so you can disable the inspector, skip closed-loop analysis reruns (`--perturb=false`), or persist results when scripting.
 
 That’s enough to start evaluating how your controllers interact across different interleavings.
 

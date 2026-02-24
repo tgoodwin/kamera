@@ -7,6 +7,7 @@ This example drives Kamera’s `Explorer` against a minimal Knative Serving setu
 - `-timeout <duration>`: abort exploration after this duration. Accepts Go duration strings (e.g., `10s`, `2m`). Set to `0` to disable.
 - `-log-level <level>`: `debug`, `info`, `warn`, or `error` (default: `info`).
 - `-interactive <bool>`: launch the TUI inspector (`true` by default). Set `-interactive=false` for headless runs.
+- `-perturb <bool>`: controls batch input pipeline shape. `true` (default) runs reference+rerun phases for scenarios that define closed-loop plans; `false` forces a single pass.
 - `-dump-output <path>`: write converged + aborted states to a file (works even when `-interactive=false`).
 - `-emit-stats`: record and print reconcile performance stats at the end.
 
