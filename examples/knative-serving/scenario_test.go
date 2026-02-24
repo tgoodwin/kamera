@@ -28,23 +28,18 @@ func TestScenariosFromInputsUsesInputsAsFinalScenarioUnits(t *testing.T) {
 
 	inputA := coverage.Input{
 		Name: "knative-a",
-		Objects: []*unstructured.Unstructured{
-			mustServiceAsUnstructured(t),
-		},
-		Pending: []coverage.Pending{
-			{
-				ControllerID: "ServiceReconciler",
-				Key: coverage.NamespacedName{
-					Namespace: "default",
-					Name:      "demo",
-				},
+		EnvironmentState: coverage.EnvironmentState{
+			Objects: []*unstructured.Unstructured{
+				mustServiceAsUnstructured(t),
 			},
 		},
 	}
 	inputB := coverage.Input{
 		Name: "knative-b",
-		Objects: []*unstructured.Unstructured{
-			mustServiceAsUnstructured(t),
+		EnvironmentState: coverage.EnvironmentState{
+			Objects: []*unstructured.Unstructured{
+				mustServiceAsUnstructured(t),
+			},
 		},
 	}
 
@@ -58,12 +53,10 @@ func TestScenariosFromInputsUsesInputsAsFinalScenarioUnits(t *testing.T) {
 
 	seen := map[string]bool{}
 	for _, sc := range scenarios {
-		if len(sc.InitialState.Objects()) == 0 {
+		if len(sc.EnvironmentState.Objects()) == 0 {
 			t.Fatalf("scenario %q has empty state objects", sc.Name)
 		}
-		if len(sc.InitialState.PendingReconciles) == 0 {
-			t.Fatalf("scenario %q has no pending reconciles", sc.Name)
-		}
+		// scenarios with zero userInputs should remain valid and run as no-op setups
 		seen[sc.Name] = true
 	}
 	if !seen["knative-a"] || !seen["knative-b"] {
@@ -175,16 +168,9 @@ func TestScenariosFromInputsWithClosedLoopBuildsReferenceAndRerunPlans(t *testin
 	builder := newKnativeExplorerBuilder()
 	input := coverage.Input{
 		Name: "knative-a",
-		Objects: []*unstructured.Unstructured{
-			mustServiceAsUnstructured(t),
-		},
-		Pending: []coverage.Pending{
-			{
-				ControllerID: "ServiceReconciler",
-				Key: coverage.NamespacedName{
-					Namespace: "default",
-					Name:      "demo",
-				},
+		EnvironmentState: coverage.EnvironmentState{
+			Objects: []*unstructured.Unstructured{
+				mustServiceAsUnstructured(t),
 			},
 		},
 		Tuning: coverage.InputTuning{

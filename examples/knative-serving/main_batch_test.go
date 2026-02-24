@@ -36,7 +36,7 @@ func TestBatchInputsForRunParallelWithoutInputsUsesDefaults(t *testing.T) {
 	if inputs[0].Name != "knative-default/base" {
 		t.Fatalf("expected first default scenario name, got %#v", inputs[0].Name)
 	}
-	if len(inputs[0].Objects) == 0 {
+	if len(inputs[0].EnvironmentState.Objects) == 0 {
 		t.Fatalf("expected default input objects, got %#v", inputs[0])
 	}
 }
@@ -146,13 +146,15 @@ func validInputs(name string) []coverage.Input {
 	return []coverage.Input{
 		{
 			Name: name,
-			Objects: []*unstructured.Unstructured{
-				{
-					Object: map[string]any{
-						"apiVersion": "v1",
-						"kind":       "ConfigMap",
-						"metadata": map[string]any{
-							"name": "sample",
+			EnvironmentState: coverage.EnvironmentState{
+				Objects: []*unstructured.Unstructured{
+					{
+						Object: map[string]any{
+							"apiVersion": "v1",
+							"kind":       "ConfigMap",
+							"metadata": map[string]any{
+								"name": "sample",
+							},
 						},
 					},
 				},
