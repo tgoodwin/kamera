@@ -77,7 +77,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := runner.Run(ctx, initialState); err != nil {
+	if err := runner.Run(ctx, explore.RunInput{EnvironmentState: initialState}); err != nil {
 		fmt.Fprintf(os.Stderr, "session error: %v\n", err)
 		os.Exit(1)
 	}

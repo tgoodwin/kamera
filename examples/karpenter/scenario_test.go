@@ -39,11 +39,8 @@ func TestScenariosFromInputsGeneratesWorkflowVariants(t *testing.T) {
 	seenNoFitVariant := false
 	seenSampledVariant := false
 	for _, sc := range scenarios {
-		if len(sc.InitialState.Objects()) == 0 {
+		if len(sc.EnvironmentState.Objects()) == 0 {
 			t.Fatalf("scenario %q has empty state objects", sc.Name)
-		}
-		if len(sc.InitialState.PendingReconciles) == 0 {
-			t.Fatalf("scenario %q has no pending reconciles", sc.Name)
 		}
 		if strings.Contains(sc.Name, "/single/pod-") {
 			seenPodVariant = true
@@ -102,11 +99,11 @@ func TestExpandKarpenterParameterizedInputAddsNoFitNodeSelectorVariant(t *testin
 		if variant.Name != target {
 			continue
 		}
-		podIdx := findKarpenterPod(variant.Objects)
+		podIdx := findKarpenterPod(variant.EnvironmentState.Objects)
 		if podIdx < 0 {
 			t.Fatalf("variant %q missing pod object", target)
 		}
-		pod, err := unstructuredToPod(variant.Objects[podIdx])
+		pod, err := unstructuredToPod(variant.EnvironmentState.Objects[podIdx])
 		if err != nil {
 			t.Fatalf("convert pod variant: %v", err)
 		}
@@ -136,35 +133,9 @@ func mustKarpenterInput(t *testing.T, name string) coverage.Input {
 	}
 
 	return coverage.Input{
-		Name:    name,
-		Objects: objects,
-		Pending: []coverage.Pending{
-			{
-				ControllerID: "state.pod",
-				Key: coverage.NamespacedName{
-					Namespace: "default",
-					Name:      "pending",
-				},
-			},
-			{
-				ControllerID: "provisioner.trigger.pod",
-				Key: coverage.NamespacedName{
-					Namespace: "default",
-					Name:      "pending",
-				},
-			},
-			{
-				ControllerID: "provisioner",
-				Key: coverage.NamespacedName{
-					Name: "singleton",
-				},
-			},
-			{
-				ControllerID: "state.nodepool",
-				Key: coverage.NamespacedName{
-					Name: "default",
-				},
-			},
+		Name: name,
+		EnvironmentState: coverage.EnvironmentState{
+			Objects: objects,
 		},
 	}
 }

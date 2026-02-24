@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
@@ -18,7 +19,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/test"
@@ -85,15 +85,20 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 		}
 
 		for _, variant := range variants {
-			state, err := buildStateFromCoverageInput(builder, variant)
+			state, seededObjects, err := buildStateFromCoverageInput(builder, variant)
 			if err != nil {
 				return nil, fmt.Errorf("build start state for %s: %w", variant.Name, err)
 			}
+			userActions, err := buildUserActionsFromCoverageInput(variant, seededObjects)
+			if err != nil {
+				return nil, fmt.Errorf("build user actions for %s: %w", variant.Name, err)
+			}
 
 			scenarios = append(scenarios, explore.Scenario{
-				Name:         variant.Name,
-				InitialState: state,
-				Config:       applyInputTuning(baseCfg, variant.Tuning),
+				Name:             variant.Name,
+				EnvironmentState: state,
+				UserInputs:       userActions,
+				Config:           applyInputTuning(baseCfg, variant.Tuning),
 			})
 		}
 	}
@@ -123,17 +128,17 @@ func expandKarpenterParameterizedInput(input coverage.Input, fuzzCases int, fuzz
 	base := cloneCoverageInput(input)
 	base.Name = baseName + "/base"
 
-	podIdx := findKarpenterPod(base.Objects)
-	nodePoolIdx := findKarpenterNodePool(base.Objects)
+	podIdx := findKarpenterPodInUserInputs(base.UserInputs)
+	nodePoolIdx := findKarpenterNodePoolInUserInputs(base.UserInputs)
 	if podIdx < 0 || nodePoolIdx < 0 {
 		return []coverage.Input{base}, nil
 	}
 
-	templatePod, err := unstructuredToPod(base.Objects[podIdx])
+	templatePod, err := unstructuredToPod(base.UserInputs[podIdx].Object)
 	if err != nil {
 		return nil, err
 	}
-	templateNodePool, err := unstructuredToNodePool(base.Objects[nodePoolIdx])
+	templateNodePool, err := unstructuredToNodePool(base.UserInputs[nodePoolIdx].Object)
 	if err != nil {
 		return nil, err
 	}
@@ -280,8 +285,8 @@ func buildKarpenterVariantInput(input coverage.Input, podIdx int, nodePoolIdx in
 	if err != nil {
 		return coverage.Input{}, fmt.Errorf("convert nodepool for %q: %w", name, err)
 	}
-	updated.Objects[podIdx] = podObj
-	updated.Objects[nodePoolIdx] = nodePoolObj
+	updated.UserInputs[podIdx].Object = podObj
+	updated.UserInputs[nodePoolIdx].Object = nodePoolObj
 
 	return updated, nil
 }
@@ -347,88 +352,35 @@ func karpenterSelectionKey(selection map[int]int) string {
 	return strings.Join(parts, ",")
 }
 
-func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, error) {
+func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, []client.Object, error) {
 	if builder == nil {
-		return tracecheck.StateNode{}, fmt.Errorf("builder is nil")
+		return tracecheck.StateNode{}, nil, fmt.Errorf("builder is nil")
 	}
 
-	objects := make([]client.Object, 0, len(input.Objects))
-	for _, obj := range input.Objects {
+	objects := make([]client.Object, 0, len(input.EnvironmentState.Objects))
+	for _, obj := range input.EnvironmentState.Objects {
 		if obj == nil {
 			continue
 		}
 		objects = append(objects, obj.DeepCopy())
 	}
 	if len(objects) == 0 {
-		return tracecheck.StateNode{}, fmt.Errorf("input has no objects")
+		fallback, err := newScenarioObjects()
+		if err != nil {
+			return tracecheck.StateNode{}, nil, err
+		}
+		objects = append(objects, fallback...)
+	}
+	if len(objects) == 0 {
+		return tracecheck.StateNode{}, nil, fmt.Errorf("input has no objects")
 	}
 
-	pending := make([]tracecheck.PendingReconcile, 0, len(input.Pending))
-	for _, p := range input.Pending {
-		pending = append(pending, tracecheck.PendingReconcile{
-			ReconcilerID: tracecheck.ReconcilerID(p.ControllerID),
-			Request: reconcile.Request{
-				NamespacedName: client.ObjectKey{
-					Namespace: p.Key.Namespace,
-					Name:      p.Key.Name,
-				},
-			},
-			Source: tracecheck.SourceStateChange,
-		})
-	}
-	if len(pending) == 0 {
-		pending = defaultKarpenterPending(objects)
-	}
-	if len(pending) == 0 {
-		return tracecheck.StateNode{}, fmt.Errorf("input has no pending reconciles")
-	}
-
-	return builder.BuildStartStateFromObjects(objects, pending)
-}
-
-func defaultKarpenterPending(objects []client.Object) []tracecheck.PendingReconcile {
 	pending := make([]tracecheck.PendingReconcile, 0)
-	hasPod := false
-	for _, obj := range objects {
-		if isKarpenterPod(obj) {
-			hasPod = true
-			pending = append(pending,
-				tracecheck.PendingReconcile{
-					ReconcilerID: "state.pod",
-					Request: reconcile.Request{
-						NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()},
-					},
-					Source: tracecheck.SourceStateChange,
-				},
-				tracecheck.PendingReconcile{
-					ReconcilerID: "provisioner.trigger.pod",
-					Request: reconcile.Request{
-						NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()},
-					},
-					Source: tracecheck.SourceStateChange,
-				},
-			)
-		}
-		if isKarpenterNodePool(obj) {
-			pending = append(pending, tracecheck.PendingReconcile{
-				ReconcilerID: "state.nodepool",
-				Request: reconcile.Request{
-					NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()},
-				},
-				Source: tracecheck.SourceStateChange,
-			})
-		}
+	state, err := builder.BuildStartStateFromObjects(objects, pending)
+	if err != nil {
+		return tracecheck.StateNode{}, nil, err
 	}
-	if hasPod {
-		pending = append(pending, tracecheck.PendingReconcile{
-			ReconcilerID: "provisioner",
-			Request: reconcile.Request{
-				NamespacedName: client.ObjectKey{Name: "singleton"},
-			},
-			Source: tracecheck.SourceStateChange,
-		})
-	}
-	return pending
+	return state, objects, nil
 }
 
 func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
@@ -448,8 +400,8 @@ func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 }
 
 func cloneCoverageInput(input coverage.Input) coverage.Input {
-	objects := make([]*unstructured.Unstructured, 0, len(input.Objects))
-	for _, obj := range input.Objects {
+	objects := make([]*unstructured.Unstructured, 0, len(input.EnvironmentState.Objects))
+	for _, obj := range input.EnvironmentState.Objects {
 		if obj == nil {
 			objects = append(objects, nil)
 			continue
@@ -457,7 +409,7 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		objects = append(objects, obj.DeepCopy())
 	}
 
-	pending := append([]coverage.Pending(nil), input.Pending...)
+	userInputs := cloneUserInputs(input.UserInputs)
 	tuning := coverage.InputTuning{
 		MaxDepth:           input.Tuning.MaxDepth,
 		PermuteControllers: append([]string(nil), input.Tuning.PermuteControllers...),
@@ -465,11 +417,78 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		StaleLookback:      cloneIntMap(input.Tuning.StaleLookback),
 	}
 	return coverage.Input{
-		Name:    input.Name,
-		Objects: objects,
-		Pending: pending,
-		Tuning:  tuning,
+		Name:             input.Name,
+		EnvironmentState: coverage.EnvironmentState{Objects: objects},
+		UserInputs:       userInputs,
+		Tuning:           tuning,
 	}
+}
+
+func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
+	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
+	for idx, userInput := range input.UserInputs {
+		if userInput.Object == nil {
+			return nil, fmt.Errorf("user input %d (%s) missing object", idx, input.Name)
+		}
+		opType := userInput.Type
+		if opType == event.CREATE && isInputObjectSeeded(userInput.Object, seededObjects) {
+			opType = event.UPDATE
+		}
+		actions = append(actions, tracecheck.UserAction{
+			ID:      strings.TrimSpace(userInput.ID),
+			OpType:  opType,
+			Payload: userInput.Object.DeepCopy(),
+		})
+	}
+	for idx := range actions {
+		if strings.TrimSpace(actions[idx].ID) == "" {
+			actions[idx].ID = fmt.Sprintf("user-input-%d", idx)
+		}
+	}
+	return actions, nil
+}
+
+func isInputObjectSeeded(object client.Object, seededObjects []client.Object) bool {
+	if object == nil {
+		return false
+	}
+	for _, seeded := range seededObjects {
+		if sameObjectIdentity(seeded, object) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameObjectIdentity(a, b client.Object) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	aGVK := a.GetObjectKind().GroupVersionKind()
+	bGVK := b.GetObjectKind().GroupVersionKind()
+	if aGVK.Group != bGVK.Group || aGVK.Kind != bGVK.Kind {
+		return false
+	}
+	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
+}
+
+func cloneUserInputs(inputs []coverage.UserInput) []coverage.UserInput {
+	if len(inputs) == 0 {
+		return nil
+	}
+
+	out := make([]coverage.UserInput, 0, len(inputs))
+	for _, input := range inputs {
+		cloned := coverage.UserInput{
+			ID:   input.ID,
+			Type: input.Type,
+		}
+		if input.Object != nil {
+			cloned.Object = input.Object.DeepCopy()
+		}
+		out = append(out, cloned)
+	}
+	return out
 }
 
 func cloneStringSliceMap(in map[string][]string) map[string][]string {
@@ -500,6 +519,30 @@ func findKarpenterPod(objects []*unstructured.Unstructured) int {
 			continue
 		}
 		if isKarpenterPod(obj) {
+			return idx
+		}
+	}
+	return -1
+}
+
+func findKarpenterPodInUserInputs(userInputs []coverage.UserInput) int {
+	for idx, input := range userInputs {
+		if input.Object == nil {
+			continue
+		}
+		if isKarpenterPod(input.Object) {
+			return idx
+		}
+	}
+	return -1
+}
+
+func findKarpenterNodePoolInUserInputs(userInputs []coverage.UserInput) int {
+	for idx, input := range userInputs {
+		if input.Object == nil {
+			continue
+		}
+		if isKarpenterNodePool(input.Object) {
 			return idx
 		}
 	}
