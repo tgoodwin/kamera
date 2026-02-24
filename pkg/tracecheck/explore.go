@@ -148,7 +148,7 @@ func (e *Explorer) shouldApplyNextUserAction(state StateNode) bool {
 		return false
 	}
 	// policy here is to apply the next user action after the current state has converged
-	return len(state.PendingReconciles) == 0 || allPendingIgnorableForConvergence(state.PendingReconciles)
+	return len(state.PendingReconciles) == 0 || AllPendingIgnorableForConvergence(state.PendingReconciles)
 }
 
 // Objects resolves and returns all objects for the provided ResultState, skipping any that cannot be resolved.
@@ -809,7 +809,7 @@ func (e *Explorer) explore(
 		// NOTE: If a state has ANY SourceStateChange pending reconciles, it should NOT be
 		// considered converged. The allPendingIgnorableForConvergence function returns false
 		// if any pending has SourceStateChange.
-		if len(currentState.PendingReconciles) == 0 || allPendingIgnorableForConvergence(currentState.PendingReconciles) {
+		if len(currentState.PendingReconciles) == 0 || AllPendingIgnorableForConvergence(currentState.PendingReconciles) {
 			convergenceKey := currentState.ConvergenceHash()
 			reason := "no pending reconciles"
 			if len(currentState.PendingReconciles) > 0 {
@@ -1305,7 +1305,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			// Mimic APIServer behavior: set Generation to 1 on CREATE if not already set
 			newObj := e.versionManager.Resolve(changes[effect.Key])
 			if newObj != nil {
-				gen := newObj.GetGeneration()
+				gen := util.GetObjectGeneration(newObj)
 				if gen == 0 {
 					newObj.SetGeneration(1)
 					// Update the version hash after modifying Generation
@@ -1340,7 +1340,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 					specChanged = true
 				}
 				if specChanged {
-					oldGen := oldObj.GetGeneration()
+					oldGen := util.GetObjectGeneration(oldObj)
 					if oldGen == 0 {
 						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
 						// This can happen if the state snapshot has objects with Generation=0
@@ -1361,7 +1361,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				// Apply has upsert semantics; if the object doesn't exist, treat as CREATE.
 				newObj := e.versionManager.Resolve(changes[effect.Key])
 				if newObj != nil {
-					gen := newObj.GetGeneration()
+					gen := util.GetObjectGeneration(newObj)
 					if gen == 0 {
 						newObj.SetGeneration(1)
 						// Update the version hash after modifying Generation
@@ -1392,7 +1392,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 					specChanged = true
 				}
 				if specChanged {
-					oldGen := oldObj.GetGeneration()
+					oldGen := util.GetObjectGeneration(oldObj)
 					if oldGen == 0 {
 						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
 						// This can happen if the state snapshot has objects with Generation=0

@@ -93,7 +93,7 @@ func (pr PendingReconcile) String() string {
 	return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
 }
 
-// allPendingIgnorableForConvergence returns true if all pending reconciles are from
+// AllPendingIgnorableForConvergence returns true if all pending reconciles are from
 // sources that don't indicate state changes (async enqueues from tickers, or requeues
 // from controllers that always re-enqueue). This is used to determine convergence:
 // if the only remaining work is time-based re-enqueues or poll-based requeues,
@@ -101,7 +101,7 @@ func (pr PendingReconcile) String() string {
 //
 // IMPORTANT: Returns false if ANY pending has SourceStateChange, which means
 // the state should NOT be considered converged.
-func allPendingIgnorableForConvergence(pending []PendingReconcile) bool {
+func AllPendingIgnorableForConvergence(pending []PendingReconcile) bool {
 	if len(pending) == 0 {
 		return false // empty list should not be considered "all ignorable"
 	}

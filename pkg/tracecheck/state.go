@@ -113,7 +113,7 @@ func (eh ExecutionHistory) UniqueKey() string {
 	if len(eh) > 0 {
 		lastStep := eh[len(eh)-1]
 		originalConverged = len(lastStep.PendingReconciles) == 0 ||
-			allPendingIgnorableForConvergence(lastStep.PendingReconciles)
+			AllPendingIgnorableForConvergence(lastStep.PendingReconciles)
 	}
 
 	// Filter out no-ops (steps with no changes and no errors)
