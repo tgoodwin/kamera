@@ -1372,12 +1372,13 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				break
 			}
 
+			// Capture the existing version before any key replacement.
+			oldVersion := nextState[existingKey]
 			if exists && existingKey != effect.Key {
 				delete(nextState, existingKey)
 			}
 
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
-			oldVersion := nextState[existingKey]
 			oldObj := e.versionManager.Resolve(oldVersion)
 			newObj := e.versionManager.Resolve(changes[effect.Key])
 			if oldObj != nil && newObj != nil {
