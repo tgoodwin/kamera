@@ -1321,11 +1321,12 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				// going through. If it does go through, we should panic cause something broke.
 				panic("update effect object not found in prev state: " + effect.Key.String())
 			}
+			oldVersion := nextState[existingKey]
 			if exists && existingKey != effect.Key {
 				delete(nextState, existingKey)
 			}
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
-			oldObj := e.versionManager.Resolve(nextState[existingKey])
+			oldObj := e.versionManager.Resolve(oldVersion)
 			newObj := e.versionManager.Resolve(changes[effect.Key])
 			if oldObj != nil && newObj != nil {
 				// Compare specs to determine if Generation should be incremented
@@ -1376,7 +1377,8 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			}
 
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
-			oldObj := e.versionManager.Resolve(nextState[existingKey])
+			oldVersion := nextState[existingKey]
+			oldObj := e.versionManager.Resolve(oldVersion)
 			newObj := e.versionManager.Resolve(changes[effect.Key])
 			if oldObj != nil && newObj != nil {
 				// Compare specs to determine if Generation should be incremented

@@ -51,3 +51,60 @@ func TestApplyEffects_ApplyCreatesObject(t *testing.T) {
 	require.NotNil(t, applied, "expected applied object to resolve")
 	require.Equal(t, int64(1), applied.GetGeneration(), "expected generation to be set on apply create")
 }
+
+func TestApplyEffects_UpdateIncrementsGenerationWhenKeyIdentityChanges(t *testing.T) {
+	store := snapshot.NewStore()
+	vs := NewVersionStore(store, nil)
+	explorer := &Explorer{versionManager: vs}
+
+	oldObj := &unstructured.Unstructured{}
+	oldObj.SetAPIVersion("v1")
+	oldObj.SetKind("ConfigMap")
+	oldObj.SetNamespace("default")
+	oldObj.SetName("example")
+	oldObj.SetGeneration(3)
+	oldObj.Object["spec"] = map[string]any{"message": "old"}
+
+	oldKey := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "example", "obj-old")
+	oldHash := vs.Publish(oldObj)
+
+	newObj := oldObj.DeepCopy()
+	newObj.SetGeneration(0)
+	newObj.Object["spec"] = map[string]any{"message": "new"}
+
+	newKey := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "example", "obj-new")
+	newHash := vs.Publish(newObj)
+
+	stepResult := &ReconcileResult{
+		Changes: Changes{
+			ObjectVersions: ObjectVersions{newKey: newHash},
+			Effects: []Effect{
+				{
+					OpType:  event.UPDATE,
+					Key:     newKey,
+					Version: newHash,
+				},
+			},
+		},
+	}
+
+	state := StateNode{
+		Contents: NewStateSnapshot(
+			ObjectVersions{oldKey: oldHash},
+			KindSequences{oldKey.CanonicalGroupKind(): 1},
+			nil,
+		),
+	}
+
+	nextState, _, _ := explorer.applyEffects(logr.Discard(), state, stepResult)
+
+	_, oldStillPresent := nextState[oldKey]
+	require.False(t, oldStillPresent, "expected old key to be replaced")
+
+	updatedHash, ok := nextState[newKey]
+	require.True(t, ok, "expected updated object to exist under new key")
+	updated := vs.Resolve(updatedHash)
+	require.NotNil(t, updated, "expected updated object to resolve")
+	require.Equal(t, int64(4), updated.GetGeneration(), "expected generation increment from old object")
+	require.Equal(t, "new", updated.Object["spec"].(map[string]any)["message"])
+}
