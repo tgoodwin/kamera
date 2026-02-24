@@ -62,32 +62,33 @@ func DiffConvergedStates(dump *Dump) *ConvergedStateDiff {
 
 	for key := range allKeys {
 		byState := make(map[string]snapshot.VersionHash)
-		var firstHash snapshot.VersionHash
-		firstSet := false
+		var baselineHash snapshot.VersionHash
+		baselineSet := false
 		differs := false
+		presentCount := 0
 
-		for stateID, objMap := range stateObjects {
+		// Iterate states in dump order (not map order) for deterministic behavior.
+		for _, state := range dump.States {
+			stateID := state.ID
+			objMap := stateObjects[stateID]
 			hash, exists := objMap[key]
 			if exists {
 				byState[stateID] = hash
-				if !firstSet {
-					firstHash = hash
-					firstSet = true
-				} else if hash.Value != firstHash.Value {
+				presentCount++
+				if !baselineSet {
+					baselineHash = hash
+					baselineSet = true
+				} else if hash.Value != baselineHash.Value {
 					differs = true
 				}
 			} else {
-				// Object missing in this state - represents a difference
 				byState[stateID] = snapshot.VersionHash{} // empty hash
-				if firstSet {
-					differs = true
-				}
 			}
 		}
 
-		// If we never set firstHash but have entries, that means all states
-		// are missing this key (shouldn't happen, but handle it)
-		if !firstSet && len(byState) > 0 {
+		// A key is differing if it is missing in at least one state.
+		// allKeys is built from a union of state objects, so presentCount will be >0.
+		if presentCount != len(dump.States) {
 			differs = true
 		}
 
