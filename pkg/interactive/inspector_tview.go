@@ -2069,25 +2069,6 @@ func truncateString(s string, max int) string {
 	return string(runes[:max-3]) + "..."
 }
 
-func formatObjectVersions(objects tracecheck.ObjectVersions, indent string) string {
-	if len(objects) == 0 {
-		return indent + "(none)\n"
-	}
-	keys := make([]snapshot.CompositeKey, 0, len(objects))
-	for key := range objects {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i].String() < keys[j].String()
-	})
-
-	var b strings.Builder
-	for _, key := range keys {
-		fmt.Fprintf(&b, "%s%s => %s\n", indent, key.String(), objects[key].Value)
-	}
-	return b.String()
-}
-
 func formatResolverUnavailable(hash snapshot.VersionHash) string {
 	return fmt.Sprintf("object content unavailable; strategy=%s hash=%s (%s)", hash.Strategy, util.ShortenHash(hash.Value), hash.Value)
 }
