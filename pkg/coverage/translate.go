@@ -2,11 +2,11 @@ package coverage
 
 import (
 	"fmt"
-	"log"
 	"sort"
 	"strings"
 
 	"github.com/tgoodwin/kamera/pkg/analyze"
+	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -28,8 +28,7 @@ func TranslateHotspots(graph *analyze.Graph, hotspots []analyze.HotspotInstance,
 		resourceIDs := collectResourceIDs(hotspot)
 		resourceList := sortedNodeIDs(resourceIDs)
 
-		objects := make([]*unstructured.Unstructured, 0, len(resourceList))
-		gvkToObject := make(map[string]*unstructured.Unstructured)
+		userInputs := make([]UserInput, 0, len(resourceList))
 
 		for _, nodeID := range resourceList {
 			node, ok := graph.Nodes[nodeID]
@@ -56,21 +55,18 @@ func TranslateHotspots(graph *analyze.Graph, hotspots []analyze.HotspotInstance,
 			name := normalizedName(hotspot.Type, i, node.Resource.Kind)
 			ns := namespaceForTemplate(templates[0].Object)
 			obj := NormalizeTemplate(templates[0].Object, name, ns)
-			gvkToObject[gvk] = obj
-			objects = append(objects, obj)
-		}
-
-		pending, err := buildPending(graph, hotspot.Controllers, gvkToObject)
-		if err != nil {
-			return nil, err
+			userInputs = append(userInputs, UserInput{
+				ID:     fmt.Sprintf("user-input-%d", len(userInputs)),
+				Type:   event.CREATE,
+				Object: obj,
+			})
 		}
 
 		tuning := buildTuning(hotspot, graph)
 		input := Input{
-			Name:    fmt.Sprintf("hotspot-%s-%d", hotspot.Type, i),
-			Objects: objects,
-			Pending: pending,
-			Tuning:  tuning,
+			Name: fmt.Sprintf("hotspot-%s-%d", hotspot.Type, i),
+			UserInputs: userInputs,
+			Tuning: tuning,
 		}
 		out = append(out, input)
 	}
@@ -137,60 +133,6 @@ func namespaceForTemplate(obj *unstructured.Unstructured) string {
 		return ""
 	}
 	return defaultNamespace
-}
-
-func buildPending(graph *analyze.Graph, controllers []analyze.NodeID, gvkToObject map[string]*unstructured.Unstructured) ([]Pending, error) {
-	pending := make([]Pending, 0, len(controllers))
-	for _, controllerID := range controllers {
-		node, ok := graph.Nodes[controllerID]
-		if !ok {
-			return nil, fmt.Errorf("controller node %s not found in graph", controllerID)
-		}
-		if node.Kind != analyze.NodeController {
-			return nil, fmt.Errorf("node %s is not a controller", controllerID)
-		}
-
-		targets := reconcilesTargets(graph, controllerID)
-		if len(targets) == 0 {
-			return nil, fmt.Errorf("controller %s has no reconciles target", node.Controller.Name)
-		}
-		if len(targets) > 1 {
-			log.Printf("warning: controller %s reconciles multiple kinds; using %s", node.Controller.Name, targets[0])
-		}
-		gvk := targets[0]
-		obj, ok := gvkToObject[gvk]
-		if !ok || obj == nil {
-			return nil, fmt.Errorf("no object for reconciles target %s", gvk)
-		}
-		pending = append(pending, Pending{
-			ControllerID: node.Controller.Name,
-			Key: NamespacedName{
-				Namespace: obj.GetNamespace(),
-				Name:      obj.GetName(),
-			},
-		})
-	}
-	return pending, nil
-}
-
-func reconcilesTargets(graph *analyze.Graph, controllerID analyze.NodeID) []string {
-	set := make(map[string]struct{})
-	for _, edge := range graph.Edges {
-		if edge.Kind != analyze.EdgeReconciles || edge.From != controllerID {
-			continue
-		}
-		node, ok := graph.Nodes[edge.To]
-		if !ok || node.Kind != analyze.NodeResource {
-			continue
-		}
-		set[gvkString(node.Resource)] = struct{}{}
-	}
-	out := make([]string, 0, len(set))
-	for gvk := range set {
-		out = append(out, gvk)
-	}
-	sort.Strings(out)
-	return out
 }
 
 func buildTuning(hotspot analyze.HotspotInstance, graph *analyze.Graph) InputTuning {

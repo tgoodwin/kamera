@@ -384,7 +384,7 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 				stuckReconcilerPositions: tt.stuckReconcilerPositions,
 			}
 
-			actual := e.determineNewPendingReconciles(context.Background(), state, tt.pendingReconcile, tt.result)
+			actual := e.determineNewPendingReconciles(context.Background(), state, &tt.pendingReconcile, tt.result)
 			assert.Equal(t, tt.expected, actual)
 		})
 	}

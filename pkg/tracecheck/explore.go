@@ -752,6 +752,53 @@ func (e *Explorer) explore(
 				"NextUserActionIdx", currentState.nextUserActionIdx,
 			).Info("user action scheduler selected next action")
 		}
+		if shouldApplyUserAction {
+			stateView := currentState
+			stepLogger := logger.WithValues(
+				"Depth", stateView.depth,
+				"# Distinct States", e.stats.UniqueNodeVisits,
+				"Total States", e.stats.TotalNodeVisits,
+				"Resource States", e.stats.UniqueResourceStates,
+			)
+			stepCtx := log.IntoContext(ctx, stepLogger)
+
+			stepLogger.WithValues("ActionIdx", stateView.nextUserActionIdx).Info("Taking user action step")
+			stepResult, err := e.takeUserActionStep(stepCtx, stateView)
+			if err != nil {
+				stepLogger.Error(err, "error taking user action step; abandoning branch")
+				failurePath := stateView.ExecutionHistory
+				if stepResult != nil {
+					failurePath = append(slices.Clone(stateView.ExecutionHistory), stepResult)
+				}
+				if e.emitAbortedState(ctx, abortedStatesCh, stateView, executionPathsToState, failurePath, err) {
+					return nil
+				}
+				continue
+			}
+			if stepResult == nil {
+				stepLogger.Error(nil, "user action step returned nil result")
+				if e.emitAbortedState(ctx, abortedStatesCh, stateView, executionPathsToState, stateView.ExecutionHistory, errors.New("nil user action result")) {
+					return nil
+				}
+				continue
+			}
+			newState, triggeredByStep := e.materializeNextState(stepLogger, stepCtx, stateView, stepResult, nil, stateView.nextUserActionIdx+1)
+			newState.depth = stateView.depth + 1
+			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
+				seenDepths[newState.depth] = true
+			}
+
+			stack = e.enqueueNextStates(
+				stack,
+				newState,
+				triggeredByStep,
+				subtreeTracker,
+				useSubtreeCompletion,
+				logOrderingPrune,
+				orderPruneUseOrderHash,
+			)
+			continue
+		}
 
 		// A state is considered converged if:
 		// 1. There are no pending reconciles, OR
@@ -840,7 +887,7 @@ func (e *Explorer) explore(
 			}
 		}
 
-		// Determine stateView and pendingReconcile based on whether this is a stale view entry
+		// Determine stateView and pendingReconcile for this reconcile step.
 		var stateView StateNode
 		var pendingReconcile PendingReconcile
 
@@ -918,15 +965,9 @@ func (e *Explorer) explore(
 			stateView = possibleViews[0]
 		}
 
-		// Process single stateView (no longer inside a for loop)
+		// Process single stateView
 		reconcilerID := pendingReconcile.ReconcilerID
 		{
-			if logger.V(2).Enabled() {
-				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", stateView.Hash(), "OrderKey", stateView.OrderHash(), "Request", pendingReconcile.Request).Info("BEFORE")
-				stateView.Contents.DumpContents()
-				stateView.DumpPending()
-			}
-
 			stepLogger := logger.WithValues(
 				"Depth", stateView.depth,
 				"# Distinct States", e.stats.UniqueNodeVisits,
@@ -964,42 +1005,14 @@ func (e *Explorer) explore(
 				}
 			}
 
-			stepResult.StateBefore = maps.Clone(stateView.Objects())
-			stepResult.KindSeqBefore = maps.Clone(stateView.Contents.KindSequences)
-
-			// update the state with the new object versions.
-			// note that we are updating the "global state" here,
-			// which may be separate from what the controller saw upon reconciling.
-			newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
-
-			triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes)
-
-			newPendingReconciles := e.determineNewPendingReconciles(ctx, stateView, pendingReconcile, stepResult)
-			stepLogger.V(1).WithValues(
-				"Depth", stateView.depth,
-				"Count", len(newPendingReconciles),
-				"Items", newPendingReconciles,
-			).Info("final pending reconciles after step")
-
-			// make a copy of the current execution history
-			currHistory := slices.Clone(stateView.ExecutionHistory)
-
-			stepResult.StateAfter = newContents
-			stepResult.KindSeqAfter = newSequences
-			stepResult.PendingReconciles = newPendingReconciles
-
-			newState := StateNode{
-				Contents:          NewStateSnapshot(newContents, newSequences, newStateEvents),
-				PendingReconciles: newPendingReconciles,
-				parent:            &stateView,
-				action:            stepResult,
-				// inherit divergence point from the parent
-				divergenceKey:            stateView.divergenceKey,
-				stuckReconcilerPositions: maps.Clone(stateView.stuckReconcilerPositions),
-				ExecutionHistory:         append(currHistory, stepResult),
-				nextUserActionIdx:        stateView.nextUserActionIdx,
-			}
-			newState.ID = string(newState.Hash())
+			newState, triggeredByStep := e.materializeNextState(
+				stepLogger,
+				stepCtx,
+				stateView,
+				stepResult,
+				&pendingReconcile,
+				stateView.nextUserActionIdx,
+			)
 
 			// Track whether this was a no-op (used by ordering optimization)
 			wasNoOp := err == nil && stepResult.wasNoOp()
@@ -1031,11 +1044,6 @@ func (e *Explorer) explore(
 				continue
 			}
 			logger.V(1).WithValues("Depth", currentState.depth, "NewPendingReconciles", newState.PendingReconciles).Info("reconcile step completed")
-			if logger.V(2).Enabled() {
-				logger.V(2).WithValues("Reconciler", reconcilerID, "StateKey", newState.Hash(), "Request", pendingReconcile.Request).Info("AFTER")
-				newState.Contents.DumpContents()
-				newState.DumpPending()
-			}
 
 			newState.depth = currentState.depth + 1
 			if _, seenDepth := seenDepths[newState.depth]; !seenDepth {
@@ -1056,137 +1064,15 @@ func (e *Explorer) explore(
 				continue
 			}
 
-			// Deduplication: Skip exploring paths that reach the same state via equivalent mutations.
-			///Skipped
-			// Key invariant: Same pending list = Same future possibilities = Safe to skip.
-			//
-			// ContentsHash includes both object state AND pending reconciles. Two paths only
-			// match when they have identical pending lists. If the pending lists are identical,
-			// then the future exploration from both paths would be identical - same controllers
-			// to run, same state to observe - so exploring both would be redundant.
-			//
-			// Importantly, by the time we reach this check, we've already queued all ordering
-			// variants for the pending list (via expandStateByReconcileOrder at lines 388-410).
-			// Skipping here doesn't mean "we don't care about orderings" - it means "we've
-			// already scheduled those orderings to be explored, no need to schedule them again."
-			//
-			// At intermediate states, different orderings naturally yield different pending
-			// lists because whichever reconcile just ran gets removed:
-			//
-			//   Path A: ...→ Foo@1 → State X, Pending=[Bar]  (Foo removed)
-			//   Path B: ...→ Bar@1 → State X, Pending=[Foo]  (Bar removed)
-			//
-			// Different pending lists → different ContentsHashes → both fully explored.
-			//
-			// Pruning typically only occurs at convergence (Pending=[]) where all paths
-			// collapse to empty pending lists. The paths that get pruned differ only in
-			// no-op orderings, which by definition cannot produce different outcomes.
-
-			ContentsHash := newState.Hash()
-			// Deduplication based on completion status:
-			// Only skip if we've COMPLETED exploration of this (state, history) pair.
-			// This prevents skipping paths that are still in-flight and might fail,
-			// which would cause us to miss valid convergence paths.
-			normalizedHistory := newState.ExecutionHistory.UniqueKey()
-			if e.optimizations != nil && e.optimizations.pathCompleted(ContentsHash, normalizedHistory) {
-				logger.V(1).WithValues(
-					"ContentsHash", ContentsHash,
-					"PathSignature", normalizedHistory,
-				).Info("skipping - path already completed exploration")
-				e.stats.SkippedPaths++
-				continue
-			}
-
-			if e.optimizations != nil {
-				e.optimizations.markVisited(ContentsHash, normalizedHistory)
-				e.optimizations.markLogicalState(newState.ContentsHash(), newState.PendingReconciles, normalizedHistory, newState.stuckPositionsSignature())
-			}
-
-			// Also track in exploredLogicalStates for cache prediction
-
-			// branch on order of subsequent reconciles that were triggered by this state change step
-			// Use enqueueWithMarker to track subtree completion for all ordering variants together.
-			branchStateKey := newState.Hash()
-			if orderPruneUseOrderHash {
-				branchStateKey = NodeHash(newState.OrderHash())
-			}
-			var statesToEnqueue []StateNode
-
-			if len(newState.PendingReconciles) > 1 {
-				// When ordering pruning is enabled, we only expand once per logical state.
-				alreadyExpanded := e.optimizations != nil && e.optimizations.branchAlreadyExpanded(branchStateKey, triggeredByStep, e.Config.Perturbations.PermuteOrder)
-				if !alreadyExpanded {
-					expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
-
-					// Diagnostic logging for non-determinism investigation:
-					// Log the ordering variants generated to detect if different runs produce different variant orders.
-					if logger.V(2).Enabled() {
-						if len(expandedStates) > 0 {
-							variantFirstReconcilers := lo.Map(expandedStates, func(s StateNode, _ int) string {
-								if len(s.PendingReconciles) > 0 {
-									pr := s.PendingReconciles[0]
-									return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
-								}
-								return "empty"
-							})
-							pendingBefore := lo.Map(newState.PendingReconciles, func(pr PendingReconcile, _ int) string {
-								return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
-							})
-							logger.V(2).Info("ORDERING_VARIANTS_DIAGNOSTIC",
-								"depth", newState.depth,
-								"numVariants", len(expandedStates),
-								"pendingBefore", pendingBefore,
-								"variantFirstReconcilers", variantFirstReconcilers,
-							)
-						}
-					}
-
-					for _, orderVariant := range expandedStates {
-						// skip orderVariants whose first reconcile are known no-ops
-						if e.optimizations != nil && e.optimizations.noOpOrderingSkipEnabled() {
-							fst := orderVariant.PendingReconciles[0]
-							noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.ContentsHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
-							if isNoOp, known := e.optimizations.isKnownNoOp(noOpKey); known && isNoOp {
-								e.stats.SkippedNoOpOrderings++
-								continue
-							}
-						}
-						statesToEnqueue = append(statesToEnqueue, orderVariant)
-					}
-					if e.optimizations != nil {
-						e.optimizations.markBranchExpanded(branchStateKey, triggeredByStep, e.Config.Perturbations.PermuteOrder)
-					}
-				} else if e.optimizations != nil {
-					if logOrderingPrune {
-						pendingIDs := make([]string, len(newState.PendingReconciles))
-						for i, pr := range newState.PendingReconciles {
-							pendingIDs[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
-						}
-						triggeredIDs := make([]string, len(triggeredByStep))
-						for i, pr := range triggeredByStep {
-							triggeredIDs[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
-						}
-						logger.Info("ordering pruning: skip expansion for already-expanded state",
-							"depth", newState.depth,
-							"branchKey", branchStateKey,
-							"nodeHash", newState.Hash(),
-							"orderHash", newState.OrderHash(),
-							"orderSensitiveKey", orderPruneUseOrderHash,
-							"contentsHash", newState.ContentsHash(),
-							"permuteSignature", e.optimizations.permuteSignature(triggeredByStep, e.Config.Perturbations.PermuteOrder),
-							"pending", pendingIDs,
-							"triggeredByStep", triggeredIDs,
-						)
-					}
-					e.stats.SkippedOrderExpansions++
-				}
-			}
-
-			// Always include the base state
-			statesToEnqueue = append(statesToEnqueue, newState)
-
-			// Enqueue all variants together with a single marker for the logical state
-			stack, _ = e.enqueueStates(stack, subtreeTracker, statesToEnqueue, useSubtreeCompletion)
+			stack = e.enqueueNextStates(
+				stack,
+				newState,
+				triggeredByStep,
+				subtreeTracker,
+				useSubtreeCompletion,
+				logOrderingPrune,
+				orderPruneUseOrderHash,
+			)
 		}
 	}
 
@@ -1202,6 +1088,165 @@ func (e *Explorer) explore(
 	}
 
 	return nil
+}
+
+// enqueueNextStates handles post-step deduplication and pending-order expansion.
+func (e *Explorer) enqueueNextStates(
+	stack []stackEntry,
+	newState StateNode,
+	triggeredByStep []PendingReconcile,
+	subtreeTracker *subtreeTracker,
+	useSubtreeCompletion bool,
+	logOrderingPrune bool,
+	orderPruneUseOrderHash bool,
+) []stackEntry {
+	// Deduplication: skip only when this (state, history) has already completed.
+	//
+	// Key invariant: same pending list means same future possibilities.
+	// ContentsHash includes object state + pending reconciles, so two paths only
+	// collide when they have identical pending lists, which implies identical future
+	// exploration from that point.
+	//
+	// This is safe with ordering expansion because we queue ordering variants before
+	// this dedup would hide anything. At intermediate states, different run orders
+	// naturally produce different pending lists (the consumed reconcile differs), so
+	// they remain distinct and continue to be explored.
+	contentsHash := newState.Hash()
+	normalizedHistory := newState.ExecutionHistory.UniqueKey()
+	if e.optimizations != nil && e.optimizations.pathCompleted(contentsHash, normalizedHistory) {
+		logger.V(1).WithValues(
+			"ContentsHash", contentsHash,
+			"PathSignature", normalizedHistory,
+		).Info("skipping - path already completed exploration")
+		e.stats.SkippedPaths++
+		return stack
+	}
+
+	if e.optimizations != nil {
+		e.optimizations.markVisited(contentsHash, normalizedHistory)
+		e.optimizations.markLogicalState(
+			newState.ContentsHash(),
+			newState.PendingReconciles,
+			normalizedHistory,
+			newState.stuckPositionsSignature(),
+		)
+	}
+
+	branchStateKey := newState.Hash()
+	if orderPruneUseOrderHash {
+		branchStateKey = NodeHash(newState.OrderHash())
+	}
+	statesToEnqueue := make([]StateNode, 0, 1)
+
+	if len(newState.PendingReconciles) > 1 {
+		// Order expansion is per logical state branch. If already expanded, we skip
+		// duplicative expansion work for equivalent branches.
+		alreadyExpanded := e.optimizations != nil &&
+			e.optimizations.branchAlreadyExpanded(branchStateKey, triggeredByStep, e.Config.Perturbations.PermuteOrder)
+		if !alreadyExpanded {
+			expandedStates := e.expandStateByReconcileOrder(newState, triggeredByStep)
+
+			if logger.V(2).Enabled() && len(expandedStates) > 0 {
+				variantFirstReconcilers := lo.Map(expandedStates, func(s StateNode, _ int) string {
+					if len(s.PendingReconciles) > 0 {
+						pr := s.PendingReconciles[0]
+						return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+					}
+					return "empty"
+				})
+				pendingBefore := lo.Map(newState.PendingReconciles, func(pr PendingReconcile, _ int) string {
+					return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+				})
+				logger.V(2).Info("ORDERING_VARIANTS_DIAGNOSTIC",
+					"depth", newState.depth,
+					"numVariants", len(expandedStates),
+					"pendingBefore", pendingBefore,
+					"variantFirstReconcilers", variantFirstReconcilers,
+				)
+			}
+
+			for _, orderVariant := range expandedStates {
+				if e.optimizations != nil && e.optimizations.noOpOrderingSkipEnabled() {
+					fst := orderVariant.PendingReconciles[0]
+					noOpKey := fmt.Sprintf("%s:%s:%s", orderVariant.ContentsHash(), fst.ReconcilerID, fst.Request.NamespacedName.String())
+					if isNoOp, known := e.optimizations.isKnownNoOp(noOpKey); known && isNoOp {
+						e.stats.SkippedNoOpOrderings++
+						continue
+					}
+				}
+				statesToEnqueue = append(statesToEnqueue, orderVariant)
+			}
+			if e.optimizations != nil {
+				e.optimizations.markBranchExpanded(branchStateKey, triggeredByStep, e.Config.Perturbations.PermuteOrder)
+			}
+		} else if e.optimizations != nil {
+			if logOrderingPrune {
+				pendingIDs := make([]string, len(newState.PendingReconciles))
+				for i, pr := range newState.PendingReconciles {
+					pendingIDs[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+				}
+				triggeredIDs := make([]string, len(triggeredByStep))
+				for i, pr := range triggeredByStep {
+					triggeredIDs[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+				}
+				logger.Info("ordering pruning: skip expansion for already-expanded state",
+					"depth", newState.depth,
+					"branchKey", branchStateKey,
+					"nodeHash", newState.Hash(),
+					"orderHash", newState.OrderHash(),
+					"orderSensitiveKey", orderPruneUseOrderHash,
+					"contentsHash", newState.ContentsHash(),
+					"permuteSignature", e.optimizations.permuteSignature(triggeredByStep, e.Config.Perturbations.PermuteOrder),
+					"pending", pendingIDs,
+					"triggeredByStep", triggeredIDs,
+				)
+			}
+			e.stats.SkippedOrderExpansions++
+		}
+	}
+
+	statesToEnqueue = append(statesToEnqueue, newState)
+	stack, _ = e.enqueueStates(stack, subtreeTracker, statesToEnqueue, useSubtreeCompletion)
+	return stack
+}
+
+func (e *Explorer) materializeNextState(
+	stepLogger logr.Logger,
+	stepCtx context.Context,
+	stateView StateNode,
+	stepResult *ReconcileResult,
+	consumed *PendingReconcile,
+	nextUserActionIdx int,
+) (StateNode, []PendingReconcile) {
+	stepResult.StateBefore = maps.Clone(stateView.Objects())
+	stepResult.KindSeqBefore = maps.Clone(stateView.Contents.KindSequences)
+
+	newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
+	triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes)
+	newPendingReconciles := e.determineNewPendingReconciles(stepCtx, stateView, consumed, stepResult)
+	stepLogger.V(1).WithValues(
+		"Depth", stateView.depth,
+		"Count", len(newPendingReconciles),
+		"Items", newPendingReconciles,
+	).Info("final pending reconciles after step")
+
+	stepResult.StateAfter = newContents
+	stepResult.KindSeqAfter = newSequences
+	stepResult.PendingReconciles = newPendingReconciles
+
+	newState := StateNode{
+		Contents:                 NewStateSnapshot(newContents, newSequences, newStateEvents),
+		PendingReconciles:        newPendingReconciles,
+		parent:                   &stateView,
+		action:                   stepResult,
+		divergenceKey:            stateView.divergenceKey,
+		stuckReconcilerPositions: maps.Clone(stateView.stuckReconcilerPositions),
+		ExecutionHistory:         append(slices.Clone(stateView.ExecutionHistory), stepResult),
+		nextUserActionIdx:        nextUserActionIdx,
+	}
+	newState.ID = string(newState.Hash())
+
+	return newState, triggeredByStep
 }
 
 // emitAbortedState records an aborted exploration branch and attempts to send it on the channel.
@@ -1468,6 +1513,42 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	return reconcileResult, nil
 }
 
+// takeUserActionStep executes the next user action for this branch directly
+// without routing it through a synthetic pending reconcile.
+func (e *Explorer) takeUserActionStep(ctx context.Context, state StateNode) (*ReconcileResult, error) {
+	stepLog := log.FromContext(ctx)
+	startWall := time.Now()
+	defer func() {
+		if e.stats != nil && e.Config != nil && e.Config.RecordPerfStats {
+			e.stats.RecordStep(UserControllerID, time.Since(startWall))
+		}
+	}()
+
+	if e.userController == nil {
+		return nil, fmt.Errorf("user controller is nil")
+	}
+
+	restoreClock := simclock.SetDepth(state.depth)
+	defer restoreClock()
+
+	stepLog.WithValues("ActionIdx", state.nextUserActionIdx).V(2).Info("about to execute user action")
+
+	result, err := e.userController.ExecuteNextAction(ctx, state.Objects(), state.nextUserActionIdx)
+	if err != nil {
+		if result == nil {
+			result = &ReconcileResult{
+				ControllerID: UserControllerID,
+				FrameType:    FrameTypeExplore,
+				Error:        err.Error(),
+			}
+		}
+		stepLog.WithValues("ActionIdx", state.nextUserActionIdx).Error(err, "error executing user action")
+		return result, err
+	}
+
+	return result, nil
+}
+
 func (e *Explorer) getNewPendingReconciles(currPending, triggered []PendingReconcile) []PendingReconcile {
 	// Ordering: existing pending first, then newly triggered.
 	// This prevents reconcilers that frequently requeue/trigger from starving others.
@@ -1628,30 +1709,36 @@ func dumpQueue(queue []StateNode) []string {
 	return queueStr
 }
 
-func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state StateNode, reconcileInput PendingReconcile, result *ReconcileResult) []PendingReconcile {
+func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state StateNode, consumed *PendingReconcile, result *ReconcileResult) []PendingReconcile {
 	stepLog := log.FromContext(ctx)
 
-	// INVARIANT 3: The reconciler taking the step should be present in the previous state's pending reconciles
-	reconcilerWasPending := false
-	for _, pr := range state.PendingReconciles {
-		if pr.ReconcilerID == reconcileInput.ReconcilerID &&
-			pr.Request.NamespacedName == reconcileInput.Request.NamespacedName {
-			reconcilerWasPending = true
-			break
+	stillPending := slices.Clone(state.PendingReconciles)
+	reconcilerID := "UserController"
+	// consumed is nil for user action steps, and non-nil for reconcile steps which were once pending.
+	if consumed != nil {
+		reconcilerID = string(consumed.ReconcilerID)
+		// INVARIANT 3: The reconciler taking the step should be present in the previous state's pending reconciles.
+		reconcilerWasPending := false
+		for _, pr := range state.PendingReconciles {
+			if pr.ReconcilerID == consumed.ReconcilerID &&
+				pr.Request.NamespacedName == consumed.Request.NamespacedName {
+				reconcilerWasPending = true
+				break
+			}
 		}
-	}
-	if !reconcilerWasPending {
-		stepLog.Error(nil, "INVARIANT VIOLATION: reconciler took step but was not in pending queue",
-			"reconcilerID", reconcileInput.ReconcilerID,
-			"request", reconcileInput.Request.NamespacedName,
-			"pendingCount", len(state.PendingReconciles),
-			"depth", state.depth)
-	}
+		if !reconcilerWasPending {
+			stepLog.Error(nil, "INVARIANT VIOLATION: reconciler took step but was not in pending queue",
+				"reconcilerID", consumed.ReconcilerID,
+				"request", consumed.Request.NamespacedName,
+				"pendingCount", len(state.PendingReconciles),
+				"depth", state.depth)
+		}
 
-	//  remove the current reconcile from the pending reconciles list because it has just been processed
-	stillPending := lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
-		return pending != reconcileInput
-	})
+		// Remove the reconcile that just ran.
+		stillPending = lo.Filter(state.PendingReconciles, func(pending PendingReconcile, _ int) bool {
+			return pending != *consumed
+		})
+	}
 
 	// Read captured enqueues from the global collector (from Watch callbacks during reconcile).
 	// Get() automatically clears the collector after returning, so it's ready for the next step.
@@ -1661,7 +1748,7 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 		stepLog.V(1).Info("captured async enqueues from tickers",
 			"count", len(capturedPending),
 			"depth", state.depth,
-			"reconciler", reconcileInput.ReconcilerID,
+			"ReconcilerID", reconcilerID,
 			"enqueues", capturedPending)
 	}
 
@@ -1675,7 +1762,7 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 			return pr.String()
 		})
 		logger.WithValues(
-			"ReconcilerID", reconcileInput.ReconcilerID,
+			"ReconcilerID", reconcilerID,
 			"TriggeredReconcilers", triggeredIDs,
 			"NumChanges", len(result.Changes.ObjectVersions),
 		).V(1).Info("reconcilers triggered by changes")
@@ -1707,10 +1794,10 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 
 	// if the controller returned a response with Requeue = true,
 	// we need to requeue the original request, no matter what.
-	if result.ctrlRes.Requeue {
+	if consumed != nil && result.ctrlRes.Requeue {
 		requeued := PendingReconcile{
-			ReconcilerID: reconcileInput.ReconcilerID,
-			Request:      reconcileInput.Request,
+			ReconcilerID: consumed.ReconcilerID,
+			Request:      consumed.Request,
 			Source:       SourceRequeue,
 		}
 		triggeredByChanges = append(triggeredByChanges, requeued)
@@ -1721,11 +1808,11 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 
 	// INVARIANT 1: If the step had no writes, no new pending reconciles should have "State Change" source
 	wasNoOp := result.wasNoOp()
-	if wasNoOp {
+	if consumed != nil && wasNoOp {
 		for _, triggered := range triggeredByChanges {
 			if triggered.Source == SourceStateChange {
 				stepLog.Error(nil, "INVARIANT VIOLATION: no-op step triggered State Change reconcile",
-					"reconcilerID", reconcileInput.ReconcilerID,
+					"reconcilerID", consumed.ReconcilerID,
 					"triggeredReconciler", triggered.ReconcilerID,
 					"triggeredRequest", triggered.Request.NamespacedName,
 					"depth", state.depth,
@@ -1737,25 +1824,28 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// INVARIANT 2: Only the reconciler that just took the step should be removed.
 	// Check that all items in stillPending that were in the original pending are still present,
 	// and the only thing removed is the reconcileInput.
-	for _, originalPending := range state.PendingReconciles {
-		if originalPending == reconcileInput {
-			continue // This one should be removed
-		}
-		// Check if it's still pending (either in stillPending or re-added through triggeredByChanges)
-		foundInStillPending := false
-		for _, sp := range stillPending {
-			if sp.ReconcilerID == originalPending.ReconcilerID &&
-				sp.Request.NamespacedName == originalPending.Request.NamespacedName {
-				foundInStillPending = true
-				break
+	// TODO move this out of the hot path and under unit test coverage.
+	if consumed != nil {
+		for _, originalPending := range state.PendingReconciles {
+			if originalPending == *consumed {
+				continue // This one should be removed
 			}
-		}
-		if !foundInStillPending {
-			stepLog.Error(nil, "INVARIANT VIOLATION: pending reconcile mysteriously removed (not the one that took the step)",
-				"removedReconciler", originalPending.ReconcilerID,
-				"removedRequest", originalPending.Request.NamespacedName,
-				"stepTakenBy", reconcileInput.ReconcilerID,
-				"depth", state.depth)
+			// Check if it's still pending (either in stillPending or re-added through triggeredByChanges)
+			foundInStillPending := false
+			for _, sp := range stillPending {
+				if sp.ReconcilerID == originalPending.ReconcilerID &&
+					sp.Request.NamespacedName == originalPending.Request.NamespacedName {
+					foundInStillPending = true
+					break
+				}
+			}
+			if !foundInStillPending {
+				stepLog.Error(nil, "INVARIANT VIOLATION: pending reconcile mysteriously removed (not the one that took the step)",
+					"removedReconciler", originalPending.ReconcilerID,
+					"removedRequest", originalPending.Request.NamespacedName,
+					"stepTakenBy", consumed.ReconcilerID,
+					"depth", state.depth)
+			}
 		}
 	}
 

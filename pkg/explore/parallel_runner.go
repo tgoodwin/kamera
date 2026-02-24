@@ -82,6 +82,8 @@ func (r *ParallelRunner) RunAll(ctx context.Context, scenarios []Scenario, opts 
 	if ParallelChildIndex() >= 0 && !ParallelProcessesEnabled() {
 		return nil, fmt.Errorf("--parallel-child-index requires --parallel-processes")
 	}
+	// the simclock package is not thread-safe, so for use cases that rely on simclock, we support
+	// a process-isolation mode that launches separate executions for each scenario and aggregates results via disk.
 	if ParallelProcessesEnabled() {
 		if strings.TrimSpace(InputsPath()) == "" {
 			return nil, fmt.Errorf("--parallel-processes requires explicit --inputs <file>")
@@ -94,6 +96,8 @@ func (r *ParallelRunner) RunAll(ctx context.Context, scenarios []Scenario, opts 
 	return r.runInProcess(ctx, scenarios, opts)
 }
 
+// runSupervisorMode launches child processes for each scenario and aggregates results.
+// it expects the child processes to write results to disk and does not enforce any ordering guarantees on completion.
 func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scenario, opts ParallelOptions) ([]ScenarioResult, error) {
 	if err := ensureParallelOutputDirs(opts); err != nil {
 		return nil, err
@@ -211,6 +215,7 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 	return results, nil
 }
 
+// runChildMode executes a single scenario based on the child index
 func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario, opts ParallelOptions) ([]ScenarioResult, error) {
 	opts = childParallelOptions(opts)
 	if err := ensureParallelOutputDirs(opts); err != nil {
@@ -262,6 +267,7 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 	return []ScenarioResult{result}, nil
 }
 
+// runInProcess executes all scenarios concurrently within the same process using goroutines.
 func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario, opts ParallelOptions) ([]ScenarioResult, error) {
 	if err := ensureParallelOutputDirs(opts); err != nil {
 		return nil, err
@@ -318,7 +324,7 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		return result
 	}
 
-	seed, err := r.builder.BuildRestartSeed(scenario.InitialState)
+	seed, err := r.builder.BuildRestartSeed(scenario.EnvironmentState)
 	if err != nil {
 		result.Err = fmt.Errorf("build restart seed: %w", err)
 		return result
@@ -407,6 +413,7 @@ func (r *ParallelRunner) runScenarioPhase(
 		phase.Err = fmt.Errorf("fork builder: nil")
 		return phase
 	}
+	fork.WithUserActions(cloneUserActions(scenario.UserInputs))
 	fork.SetConfig(cfg)
 	if len(prefix) > 0 && prefixResolver != nil {
 		if err := fork.PrimeVersionStoreFromHistory(prefix, prefixResolver); err != nil {

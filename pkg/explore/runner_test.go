@@ -32,7 +32,7 @@ func TestRunnerWritesDumpContext(t *testing.T) {
 		t.Fatalf("new runner: %v", err)
 	}
 
-	if err := runner.Run(context.Background(), state); err != nil {
+	if err := runner.Run(context.Background(), RunInput{EnvironmentState: state}); err != nil {
 		t.Fatalf("run runner: %v", err)
 	}
 

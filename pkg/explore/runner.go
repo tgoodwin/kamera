@@ -66,6 +66,15 @@ type Runner struct {
 	builder *tracecheck.ExplorerBuilder
 }
 
+// RunInput defines a single runner invocation.
+//
+// EnvironmentState is the user-provided baseline state.
+// UserActions represent declarative workload actions applied at boundaries during exploration.
+type RunInput struct {
+	EnvironmentState tracecheck.StateNode
+	UserActions     []tracecheck.UserAction
+}
+
 // NewRunner constructs a Runner from a configured ExplorerBuilder.
 func NewRunner(builder *tracecheck.ExplorerBuilder) (*Runner, error) {
 	if builder == nil {
@@ -77,13 +86,14 @@ func NewRunner(builder *tracecheck.ExplorerBuilder) (*Runner, error) {
 }
 
 // Run executes the initial exploration and, if interactive is enabled, loops handling restart requests.
-func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) error {
+func (r *Runner) Run(ctx context.Context, input RunInput) error {
 	if r == nil || r.builder == nil {
 		return fmt.Errorf("explore runner: builder is required")
 	}
 
 	currentConfig := r.builder.Config()
-	baseline := initialState.Clone()
+	baseline := input.EnvironmentState.Clone()
+	userActions := cloneUserActions(input.UserActions)
 
 	mergeStates := func(existing, additions []tracecheck.ResultState) []tracecheck.ResultState {
 		out := make([]tracecheck.ResultState, 0, len(existing)+len(additions))
@@ -108,6 +118,7 @@ func (r *Runner) Run(ctx context.Context, initialState tracecheck.StateNode) err
 
 	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, tracecheck.VersionManager, *tracecheck.ExploreStats, error) {
 		r.builder.SetConfig(currentConfig)
+		r.builder.WithUserActions(cloneUserActions(userActions))
 		// get a fresh explorer for each run
 		explorer, err := r.builder.Build("standalone")
 		if err != nil {

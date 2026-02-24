@@ -60,12 +60,12 @@ func TestParallelRunnerDoesNotLeakConfig(t *testing.T) {
 	scenarios := []Scenario{
 		{
 			Name:         "max-depth-low",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 1},
 		},
 		{
 			Name:         "max-depth-normal",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
 		},
 	}
@@ -108,7 +108,7 @@ func TestParallelRunnerWritesDump(t *testing.T) {
 	scenarios := []Scenario{
 		{
 			Name:         "Foo Scenario",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
 			Context: ScenarioContext{
 				Workflow: "smoke-workflow",
@@ -183,7 +183,7 @@ func TestParallelRunnerCapturesInvariantError(t *testing.T) {
 	scenarios := []Scenario{
 		{
 			Name:         "invariant-fails",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
 			Invariant: func(tracecheck.StateNode) error {
 				return errors.New("invariant failed")
@@ -216,7 +216,7 @@ func TestParallelRunnerClosedLoopRunsReferenceThenRerunPerScenario(t *testing.T)
 	scenarios := []Scenario{
 		{
 			Name:         "closed-loop",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 1},
 			ClosedLoop: &ClosedLoopSpec{
 				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
@@ -272,7 +272,7 @@ func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 	scenarios := []Scenario{
 		{
 			Name:         "closed-loop-dump",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 1},
 			ClosedLoop: &ClosedLoopSpec{
 				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
@@ -317,7 +317,7 @@ func TestParallelRunnerClosedLoopPrefixHistoryHashesAreDumpable(t *testing.T) {
 	scenarios := []Scenario{
 		{
 			Name:         "closed-loop-prefix-hashes",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
 			ClosedLoop: &ClosedLoopSpec{
 				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
@@ -417,7 +417,7 @@ func TestParallelRunnerProcessModeRequiresInputsFile(t *testing.T) {
 	scenarios := []Scenario{
 		{
 			Name:         "x",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
 		},
 	}
@@ -442,17 +442,17 @@ func TestParallelRunnerChildModeFailsWhenSelectedInputMapsToMultipleScenarios(t 
 	scenarios := []Scenario{
 		{
 			Name:         "alpha/base",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
 		},
 		{
 			Name:         "alpha/single/foo",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
 		},
 		{
 			Name:         "beta",
-			InitialState: state.Clone(),
+			EnvironmentState: state.Clone(),
 			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
 		},
 	}
@@ -536,9 +536,9 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 	}
 
 	scenarios := []Scenario{
-		{Name: "a", InitialState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
-		{Name: "b", InitialState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
-		{Name: "c", InitialState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
+		{Name: "a", EnvironmentState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
+		{Name: "b", EnvironmentState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
+		{Name: "c", EnvironmentState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
 	}
 	results, runErr := runner.RunAll(context.Background(), scenarios, ParallelOptions{MaxParallel: 2})
 
@@ -591,14 +591,16 @@ func writeInputNamesFile(t *testing.T, names ...string) string {
 	for _, name := range names {
 		inputs = append(inputs, coverage.Input{
 			Name: name,
-			Objects: []*unstructured.Unstructured{
-				{
-					Object: map[string]interface{}{
-						"apiVersion": "v1",
-						"kind":       "ConfigMap",
-						"metadata": map[string]interface{}{
-							"name":      name + "-cm",
-							"namespace": "default",
+			EnvironmentState: coverage.EnvironmentState{
+				Objects: []*unstructured.Unstructured{
+					{
+						Object: map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "ConfigMap",
+							"metadata": map[string]interface{}{
+								"name":      name + "-cm",
+								"namespace": "default",
+							},
 						},
 					},
 				},
