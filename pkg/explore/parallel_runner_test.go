@@ -259,6 +259,61 @@ func TestParallelRunnerClosedLoopRunsReferenceThenRerunPerScenario(t *testing.T)
 	}
 }
 
+func TestParallelRunnerClosedLoopDisablesRerunWhenPerturbDisabled(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	withPerturbFlag(t, false)
+	plannerCalls := 0
+	scenarios := []Scenario{
+		{
+			Name:             "closed-loop-disabled",
+			EnvironmentState:  state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 1},
+			ClosedLoop: &ClosedLoopSpec{
+				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
+					plannerCalls++
+					return []ScenarioPhasePlan{
+						{Name: "rerun", Config: tracecheck.ExploreConfig{MaxDepth: 5}},
+					}, nil
+				},
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if plannerCalls != 0 {
+		t.Fatalf("expected planner to be skipped when perturb is disabled, got %d calls", plannerCalls)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if len(results[0].Phases) != 1 {
+		t.Fatalf("expected only one phase when perturb disabled, got %d", len(results[0].Phases))
+	}
+	if results[0].Phases[0].Name != "run" {
+		t.Fatalf("expected single phase name to be run, got %q", results[0].Phases[0].Name)
+	}
+}
+
+func withPerturbFlag(t *testing.T, enabled bool) {
+	t.Helper()
+
+	oldValue := *perturbFlag
+	*perturbFlag = enabled
+	t.Cleanup(func() {
+		*perturbFlag = oldValue
+	})
+}
+
 func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 	ctx := context.Background()
 	builder, state := newTestBuilder(t)

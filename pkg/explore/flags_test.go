@@ -8,6 +8,12 @@ func TestInputsPathDefault(t *testing.T) {
 	}
 }
 
+func TestPerturbEnabledDefault(t *testing.T) {
+	if !PerturbEnabled() {
+		t.Fatalf("expected perturb enabled by default")
+	}
+}
+
 func TestParallelProcessesDefault(t *testing.T) {
 	if ParallelProcessesEnabled() {
 		t.Fatalf("expected parallel-processes to be disabled by default")

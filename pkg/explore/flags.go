@@ -8,6 +8,7 @@ var (
 	configPathFlag         = flag.String("explore-config", "", "optional JSON file to configure exploration")
 	dumpStatsPath          = flag.String("dump-stats", "", "optional path to write exploration stats (JSON)")
 	inputsPathFlag         = flag.String("inputs", "", `path to input JSON file`)
+	perturbFlag            = flag.Bool("perturb", true, "enable closed-loop rerun pipeline for batch inputs when supported by scenario generation")
 	parallelProcessesFlag  = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
 	parallelChildIndexFlag = flag.Int(
 		"parallel-child-index",
@@ -39,6 +40,11 @@ func DumpStatsPath() string {
 // InputsPath returns the parsed path to an optional inputs file.
 func InputsPath() string {
 	return *inputsPathFlag
+}
+
+// PerturbEnabled returns the parsed value for the perturb flag.
+func PerturbEnabled() bool {
+	return *perturbFlag
 }
 
 // ParallelProcessesEnabled reports whether process-isolated parallel mode is enabled.

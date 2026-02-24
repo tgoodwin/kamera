@@ -330,7 +330,7 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		return result
 	}
 
-	if scenario.ClosedLoop == nil {
+	if scenario.ClosedLoop == nil || !PerturbEnabled() {
 		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, nil, scenario.Context)
 		result.Phases = []ScenarioPhaseResult{phase}
 		applyPhaseSummary(&result, phase)

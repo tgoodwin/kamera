@@ -178,15 +178,10 @@ func main() {
 		if explore.PerturbEnabled() {
 			fmt.Fprintln(os.Stderr, "closed-loop scaffold: running per-input reference->rerun pipelines")
 		} else {
-			fmt.Fprintln(os.Stderr, "single-pass scaffold: running per-input reference-only simulation")
+			fmt.Fprintln(os.Stderr, "closed-loop scaffold: running per-input reference-only simulation (--perturb=false)")
 		}
 
-		builderFn := scenariosFromInputsWithClosedLoop
-		if !explore.PerturbEnabled() {
-			builderFn = scenariosFromInputs
-		}
-
-		scenarios, err := builderFn(builder, inputs)
+		scenarios, err := scenariosFromInputsWithClosedLoop(builder, inputs)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "build scenarios: %v\n", err)
 			os.Exit(1)
