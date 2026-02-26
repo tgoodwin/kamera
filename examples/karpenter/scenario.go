@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/test/v1alpha1"
 )
 
-func newScenarioObjects() ([]client.Object, error) {
+func newEnvironmentObjects() ([]client.Object, error) {
 	// TestNodeClass (fake cloud provider)
 	nc := test.NodeClass(v1alpha1.TestNodeClass{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: types.UID("testnodeclass-uid")}})
 	tag.AddSleeveObjectID(nc)
@@ -34,6 +34,10 @@ func newScenarioObjects() ([]client.Object, error) {
 	np := test.NodePool(v1.NodePool{ObjectMeta: metav1.ObjectMeta{Name: "default", UID: types.UID("nodepool-uid")}})
 	tag.AddSleeveObjectID(np)
 
+	return []client.Object{nc, np}, nil
+}
+
+func newPendingPod() *corev1.Pod {
 	// Provisionable Pod (PodScheduled=False, Reason=Unschedulable)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default", UID: types.UID("pod-uid")},
@@ -45,27 +49,30 @@ func newScenarioObjects() ([]client.Object, error) {
 		}}},
 	}
 	tag.AddSleeveObjectID(pod)
+	return pod
+}
 
-	return []client.Object{nc, np, pod}, nil
+func newInitialUserActions() []tracecheck.UserAction {
+	return []tracecheck.UserAction{
+		{
+			ID:      "create-pending-pod",
+			OpType:  event.CREATE,
+			Payload: newPendingPod(),
+		},
+	}
 }
 
 func buildInitialKarpenterState(builder *tracecheck.ExplorerBuilder) tracecheck.StateNode {
 	stateBuilder := builder.NewStateEventBuilder()
-	objs, _ := newScenarioObjects()
+	objs, _ := newEnvironmentObjects()
 
 	nc := objs[0]
 	np := objs[1]
-	pod := objs[2]
 
-	// Trigger pod-related controllers at start.
-	// NOTE: We explicitly enqueue the provisioner once to simulate the singleton reconcile loop
-	// firing at least once in the DFS. This approximates the real ticker-driven trigger.
-	podState := stateBuilder.AddTopLevelObject(pod, "state.pod", "provisioner.trigger.pod", "provisioner")
 	poolState := stateBuilder.AddTopLevelObject(np, "state.nodepool")
 	classState := stateBuilder.AddTopLevelObject(nc)
 
-	state := tracecheck.MergeStateNodes(podState, poolState)
-	return tracecheck.MergeStateNodes(state, classState)
+	return tracecheck.MergeStateNodes(poolState, classState)
 }
 
 func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.Input) ([]explore.Scenario, error) {
@@ -129,7 +136,7 @@ func expandKarpenterParameterizedInput(input coverage.Input, fuzzCases int, fuzz
 	base.Name = baseName + "/base"
 
 	podIdx := findKarpenterPodInUserInputs(base.UserInputs)
-	nodePoolIdx := findKarpenterNodePoolInUserInputs(base.UserInputs)
+	nodePoolIdx := findKarpenterNodePool(base.EnvironmentState.Objects)
 	if podIdx < 0 || nodePoolIdx < 0 {
 		return []coverage.Input{base}, nil
 	}
@@ -138,7 +145,8 @@ func expandKarpenterParameterizedInput(input coverage.Input, fuzzCases int, fuzz
 	if err != nil {
 		return nil, err
 	}
-	templateNodePool, err := unstructuredToNodePool(base.UserInputs[nodePoolIdx].Object)
+	nodePoolObject := base.EnvironmentState.Objects[nodePoolIdx]
+	templateNodePool, err := unstructuredToNodePool(nodePoolObject)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +294,10 @@ func buildKarpenterVariantInput(input coverage.Input, podIdx int, nodePoolIdx in
 		return coverage.Input{}, fmt.Errorf("convert nodepool for %q: %w", name, err)
 	}
 	updated.UserInputs[podIdx].Object = podObj
-	updated.UserInputs[nodePoolIdx].Object = nodePoolObj
+	if nodePoolIdx < 0 || nodePoolIdx >= len(updated.EnvironmentState.Objects) {
+		return coverage.Input{}, fmt.Errorf("nodepool environment index %d out of range", nodePoolIdx)
+	}
+	updated.EnvironmentState.Objects[nodePoolIdx] = nodePoolObj
 
 	return updated, nil
 }
@@ -364,8 +375,17 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 		}
 		objects = append(objects, obj.DeepCopy())
 	}
+	for _, userInput := range input.UserInputs {
+		if userInput.Type != event.CREATE || userInput.Object == nil || !isKarpenterPod(userInput.Object) {
+			continue
+		}
+		if isInputObjectSeeded(userInput.Object, objects) {
+			continue
+		}
+		objects = append(objects, userInput.Object.DeepCopy())
+	}
 	if len(objects) == 0 {
-		fallback, err := newScenarioObjects()
+		fallback, err := newEnvironmentObjects()
 		if err != nil {
 			return tracecheck.StateNode{}, nil, err
 		}
@@ -375,12 +395,77 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 		return tracecheck.StateNode{}, nil, fmt.Errorf("input has no objects")
 	}
 
-	pending := make([]tracecheck.PendingReconcile, 0)
-	state, err := builder.BuildStartStateFromObjects(objects, pending)
+	state, err := buildStateFromObjects(builder, objects)
 	if err != nil {
 		return tracecheck.StateNode{}, nil, err
 	}
 	return state, objects, nil
+}
+
+func buildStateFromObjects(builder *tracecheck.ExplorerBuilder, objects []client.Object) (tracecheck.StateNode, error) {
+	if builder == nil {
+		return tracecheck.StateNode{}, fmt.Errorf("builder is nil")
+	}
+	if len(objects) == 0 {
+		return tracecheck.StateNode{}, fmt.Errorf("no objects supplied")
+	}
+
+	stateBuilder := builder.NewStateEventBuilder()
+	ordered := orderInitialStateObjects(objects)
+
+	var (
+		state  tracecheck.StateNode
+		seeded bool
+	)
+	for _, obj := range ordered {
+		if obj == nil {
+			continue
+		}
+		next := stateBuilder.AddTopLevelObject(obj, initialDependentControllers(obj)...)
+		if !seeded {
+			state = next
+			seeded = true
+			continue
+		}
+		state = tracecheck.MergeStateNodes(state, next)
+	}
+	if !seeded {
+		return tracecheck.StateNode{}, fmt.Errorf("no non-nil objects supplied")
+	}
+	return state, nil
+}
+
+func orderInitialStateObjects(objects []client.Object) []client.Object {
+	ordered := make([]client.Object, 0, len(objects))
+
+	appendKind := func(match func(client.Object) bool) {
+		for _, obj := range objects {
+			if obj == nil || !match(obj) {
+				continue
+			}
+			ordered = append(ordered, obj)
+		}
+	}
+
+	appendKind(isKarpenterPod)
+	appendKind(isKarpenterNodePool)
+	appendKind(func(obj client.Object) bool {
+		return !isKarpenterPod(obj) && !isKarpenterNodePool(obj)
+	})
+	return ordered
+}
+
+func initialDependentControllers(obj client.Object) []tracecheck.ReconcilerID {
+	if obj == nil {
+		return nil
+	}
+	if isKarpenterPod(obj) {
+		return []tracecheck.ReconcilerID{"state.pod", "provisioner.trigger.pod", "provisioner"}
+	}
+	if isKarpenterNodePool(obj) {
+		return []tracecheck.ReconcilerID{"state.nodepool"}
+	}
+	return nil
 }
 
 func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
@@ -432,6 +517,10 @@ func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []cli
 		}
 		opType := userInput.Type
 		if opType == event.CREATE && isInputObjectSeeded(userInput.Object, seededObjects) {
+			if isKarpenterPod(userInput.Object) {
+				// Seed pod creates into the initial state so Karpenter provisioning runs before pod lifecycle scheduling.
+				continue
+			}
 			opType = event.UPDATE
 		}
 		actions = append(actions, tracecheck.UserAction{
@@ -513,36 +602,12 @@ func cloneIntMap(in map[string]int) map[string]int {
 	return out
 }
 
-func findKarpenterPod(objects []*unstructured.Unstructured) int {
-	for idx, obj := range objects {
-		if obj == nil {
-			continue
-		}
-		if isKarpenterPod(obj) {
-			return idx
-		}
-	}
-	return -1
-}
-
 func findKarpenterPodInUserInputs(userInputs []coverage.UserInput) int {
 	for idx, input := range userInputs {
 		if input.Object == nil {
 			continue
 		}
 		if isKarpenterPod(input.Object) {
-			return idx
-		}
-	}
-	return -1
-}
-
-func findKarpenterNodePoolInUserInputs(userInputs []coverage.UserInput) int {
-	for idx, input := range userInputs {
-		if input.Object == nil {
-			continue
-		}
-		if isKarpenterNodePool(input.Object) {
 			return idx
 		}
 	}

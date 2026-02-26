@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/explore"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -99,11 +100,11 @@ func TestExpandKarpenterParameterizedInputAddsNoFitNodeSelectorVariant(t *testin
 		if variant.Name != target {
 			continue
 		}
-		podIdx := findKarpenterPod(variant.EnvironmentState.Objects)
+		podIdx := findKarpenterPodInUserInputs(variant.UserInputs)
 		if podIdx < 0 {
-			t.Fatalf("variant %q missing pod object", target)
+			t.Fatalf("variant %q missing pod user input", target)
 		}
-		pod, err := unstructuredToPod(variant.EnvironmentState.Objects[podIdx])
+		pod, err := unstructuredToPod(variant.UserInputs[podIdx].Object)
 		if err != nil {
 			t.Fatalf("convert pod variant: %v", err)
 		}
@@ -116,26 +117,103 @@ func TestExpandKarpenterParameterizedInputAddsNoFitNodeSelectorVariant(t *testin
 	t.Fatalf("expected variant %q, got names=%v", target, coverageInputNames(variants))
 }
 
-func mustKarpenterInput(t *testing.T, name string) coverage.Input {
-	t.Helper()
-	objs, err := newScenarioObjects()
+func TestExpandKarpenterParameterizedInputAddsNoFitNodePoolRequirementVariant(t *testing.T) {
+	input := mustKarpenterInput(t, "karpenter-params")
+	variants, err := expandKarpenterParameterizedInput(input, 0, 99)
 	if err != nil {
-		t.Fatalf("newScenarioObjects: %v", err)
+		t.Fatalf("expandKarpenterParameterizedInput error = %v", err)
 	}
 
-	objects := make([]*unstructured.Unstructured, 0, len(objs))
-	for _, obj := range objs {
+	target := "karpenter-params/single/no-fit-nodepool-requirement-unmatched"
+	for _, variant := range variants {
+		if variant.Name != target {
+			continue
+		}
+		nodePoolIdx := findKarpenterNodePool(variant.EnvironmentState.Objects)
+		if nodePoolIdx < 0 {
+			t.Fatalf("variant %q missing nodepool environment object", target)
+		}
+		nodePool, err := unstructuredToNodePool(variant.EnvironmentState.Objects[nodePoolIdx])
+		if err != nil {
+			t.Fatalf("convert nodepool variant: %v", err)
+		}
+		for _, req := range nodePool.Spec.Template.Spec.Requirements {
+			if req.Key == "karpenter.sh/nonexistent-capability" {
+				return
+			}
+		}
+		t.Fatalf("expected unmatched requirement in %q, got requirements=%v", target, nodePool.Spec.Template.Spec.Requirements)
+	}
+
+	t.Fatalf("expected variant %q, got names=%v", target, coverageInputNames(variants))
+}
+
+func TestBuildStateFromCoverageInputSeedsNodePoolPendingReconcile(t *testing.T) {
+	builder := newKarpenterExplorerBuilder()
+	input := mustKarpenterInput(t, "karpenter-state-seed")
+
+	state, _, err := buildStateFromCoverageInput(builder, input)
+	if err != nil {
+		t.Fatalf("buildStateFromCoverageInput error = %v", err)
+	}
+
+	for _, pending := range state.PendingReconciles {
+		if pending.ReconcilerID == "state.nodepool" && pending.Request.Name == "default" {
+			return
+		}
+	}
+
+	t.Fatalf("expected state.nodepool pending reconcile for default NodePool, got pending=%v", state.PendingReconciles)
+}
+
+func TestBuildUserActionsFromCoverageInputSkipsSeededPodCreate(t *testing.T) {
+	builder := newKarpenterExplorerBuilder()
+	input := mustKarpenterInput(t, "karpenter-user-actions")
+
+	_, seeded, err := buildStateFromCoverageInput(builder, input)
+	if err != nil {
+		t.Fatalf("buildStateFromCoverageInput error = %v", err)
+	}
+	actions, err := buildUserActionsFromCoverageInput(input, seeded)
+	if err != nil {
+		t.Fatalf("buildUserActionsFromCoverageInput error = %v", err)
+	}
+	if len(actions) != 0 {
+		t.Fatalf("expected no user actions after seeding pod create into initial state, got %d actions: %#v", len(actions), actions)
+	}
+}
+
+func mustKarpenterInput(t *testing.T, name string) coverage.Input {
+	t.Helper()
+	envObjs, err := newEnvironmentObjects()
+	if err != nil {
+		t.Fatalf("newEnvironmentObjects: %v", err)
+	}
+
+	objects := make([]*unstructured.Unstructured, 0, len(envObjs))
+	for _, obj := range envObjs {
 		u, err := objectToUnstructured(obj)
 		if err != nil {
 			t.Fatalf("convert object %T: %v", obj, err)
 		}
 		objects = append(objects, u)
 	}
+	podObj, err := objectToUnstructured(newPendingPod())
+	if err != nil {
+		t.Fatalf("convert pod object: %v", err)
+	}
 
 	return coverage.Input{
 		Name: name,
 		EnvironmentState: coverage.EnvironmentState{
 			Objects: objects,
+		},
+		UserInputs: []coverage.UserInput{
+			{
+				ID:     "create-pending-pod",
+				Type:   event.CREATE,
+				Object: podObj,
+			},
 		},
 	}
 }

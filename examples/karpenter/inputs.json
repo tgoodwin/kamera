@@ -2,19 +2,8 @@
   {
     "name": "karpenter-default",
     "environmentState": {
-      "objects": []
-    },
-    "tuning": {
-      "maxDepth": 0,
-      "permuteControllers": null,
-      "staleReads": null,
-      "staleLookback": null
-    },
-    "userInputs": [
-      {
-        "id": "",
-        "type": "CREATE",
-        "object": {
+      "objects": [
+        {
           "apiVersion": "karpenter.test.sh/v1alpha1",
           "kind": "TestNodeClass",
           "metadata": {
@@ -39,12 +28,8 @@
               }
             ]
           }
-        }
-      },
-      {
-        "id": "",
-        "type": "CREATE",
-        "object": {
+        },
+        {
           "apiVersion": "karpenter.sh/v1",
           "kind": "NodePool",
           "metadata": {
@@ -115,9 +100,17 @@
             "nodes": null
           }
         }
-      },
+      ]
+    },
+    "tuning": {
+      "maxDepth": 50,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    },
+    "userInputs": [
       {
-        "id": "",
+        "id": "create pending pod",
         "type": "CREATE",
         "object": {
           "apiVersion": "v1",

@@ -17,11 +17,13 @@ go run . -interactive=false -dump-output /tmp/kamera-karpenter.jsonl
 
 ## Batch inputs
 
-To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output. For example:
+`--inputs` defaults to `input-example.json` in the example directory.
+To run a custom file, pass `--inputs <path>` and set dump directories for per-scenario output.
+For example:
 
 ```bash
 go run . \
-  --inputs inputs.json \
+  --inputs input-example.json \
   --fuzz-cases 12 \
   --fuzz-seed 1337 \
   --dump-output /tmp/karpenter-dumps \
@@ -30,6 +32,36 @@ go run . \
 
 - `--fuzz-cases` controls how many sampled parameterized variants are generated per input.
 - `--fuzz-seed` keeps sampled variants deterministic across runs.
+
+## Input model (`environmentState` vs `userInputs`)
+
+`input-example.json` models this scenario as:
+- **Environment state:** a ready `TestNodeClass` and `NodePool` that represent cluster configuration.
+- **User action:** creating one unschedulable pending `Pod`.
+
+This mirrors typical Karpenter behavior where provisioning starts when unschedulable
+pods appear and Karpenter computes capacity from existing NodePool/NodeClass
+configuration.
+
+## Startup Semantics (Important)
+
+In this harness, `environmentState` means "objects already exist in the API state"
+but does **not** automatically mean every controller-local cache has already been
+hydrated.
+
+Karpenter uses process-local in-memory state (for example, shared `state.Cluster`)
+that is populated by reconcilers such as `state.nodepool`. Because of that:
+
+- A reconcile can be behaviorally required even if it writes no API objects.
+- `state.nodepool` may look like a no-op in trace effects, but it can still be
+  needed so `provisioner` sees NodePools in local cluster state.
+- If startup triggers for environment objects are skipped, `provisioner` can
+  converge early (for example, "no dynamic nodepools found") even though a
+  NodePool object exists in `environmentState`.
+
+Design intent: users should model inputs via `environmentState` + `userInputs`
+without hand-authoring pending reconciles. The harness should derive startup
+pending work from simulation semantics (subscriptions/watches/dependencies).
 
 ## Observed flow (expected)
 
