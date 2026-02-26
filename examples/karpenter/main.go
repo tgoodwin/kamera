@@ -58,7 +58,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
 			os.Exit(1)
 		}
-		opts := explore.ParallelOptions{DumpDir: explore.DumpPath()}
+		opts := batchParallelOptions(explore.ParallelProcessesEnabled(), explore.DumpPath())
 		if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
 			fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
 			os.Exit(1)
@@ -119,6 +119,17 @@ func loadInputsForRun(inputsPath string) ([]coverage.Input, error) {
 		return nil, fmt.Errorf("load inputs from %s: %w", inputsPath, err)
 	}
 	return inputs, nil
+}
+
+func batchParallelOptions(parallelProcessesEnabled bool, dumpDir string) explore.ParallelOptions {
+	opts := explore.ParallelOptions{DumpDir: dumpDir}
+	// Karpenter harness constructors currently capture singleton state
+	// (cluster/provisioner/switcher), which is not scenario-safe under
+	// in-process parallel execution.
+	if !parallelProcessesEnabled {
+		opts.MaxParallel = 1
+	}
+	return opts
 }
 
 func defaultKarpenterInputsPath() (string, error) {
