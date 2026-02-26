@@ -1,0 +1,119 @@
+[
+  {
+    "name": "kratix-default/easyapp-create-then-update-image",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "platform.kratix.io/v1alpha1",
+          "kind": "Promise",
+          "metadata": {
+            "name": "easyapp",
+            "namespace": "default",
+            "labels": {
+              "kratix.io/promise-version": "v1"
+            }
+          },
+          "spec": {
+            "api": {
+              "apiVersion": "apiextensions.k8s.io/v1",
+              "kind": "CustomResourceDefinition",
+              "metadata": {
+                "name": "easyapps.example.promise.syntasso.io"
+              },
+              "spec": {
+                "group": "example.promise.syntasso.io",
+                "names": {
+                  "kind": "EasyApp",
+                  "plural": "easyapps",
+                  "singular": "easyapp"
+                },
+                "scope": "Namespaced",
+                "versions": [
+                  {
+                    "name": "v1",
+                    "served": true,
+                    "storage": true,
+                    "schema": {
+                      "openAPIV3Schema": {
+                        "type": "object",
+                        "properties": {
+                          "spec": {
+                            "type": "object",
+                            "required": [
+                              "name",
+                              "image"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "dbDriver": {
+                                "type": "string",
+                                "enum": [
+                                  "postgres",
+                                  "none"
+                                ]
+                              },
+                              "containsCreditCardData": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": null,
+      "staleReads": null,
+      "staleLookback": null
+    },
+    "userInputs": [
+      {
+        "id": "create easyapp request",
+        "type": "CREATE",
+        "object": {
+          "apiVersion": "example.promise.syntasso.io/v1",
+          "kind": "EasyApp",
+          "metadata": {
+            "name": "example",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "todo",
+            "image": "syntasso/sample-todo-app:v0.1.2",
+            "dbDriver": "postgres"
+          }
+        }
+      },
+      {
+        "id": "update easyapp image",
+        "type": "UPDATE",
+        "object": {
+          "apiVersion": "example.promise.syntasso.io/v1",
+          "kind": "EasyApp",
+          "metadata": {
+            "name": "example",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "todo",
+            "image": "syntasso/sample-todo-app:v0.1.3",
+            "dbDriver": "postgres"
+          }
+        }
+      }
+    ]
+  }
+]
