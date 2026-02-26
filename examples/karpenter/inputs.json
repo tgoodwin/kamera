@@ -10,7 +10,6 @@
             "creationTimestamp": "2026-02-18T04:02:02Z",
             "generation": 1,
             "labels": {
-              "discrete.events/sleeve-object-id": "2cxsqzm7",
               "testing/cluster": "unspecified"
             },
             "name": "default",
@@ -36,7 +35,6 @@
             "creationTimestamp": "2026-02-18T04:02:02Z",
             "generation": 1,
             "labels": {
-              "discrete.events/sleeve-object-id": "1jdj3czp",
               "testing/cluster": "unspecified"
             },
             "name": "default",
@@ -117,7 +115,6 @@
           "kind": "Pod",
           "metadata": {
             "labels": {
-              "discrete.events/sleeve-object-id": "rygyqven"
             },
             "name": "pending",
             "namespace": "default",

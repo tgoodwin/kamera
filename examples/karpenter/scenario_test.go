@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/explore"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -166,7 +168,7 @@ func TestBuildStateFromCoverageInputSeedsNodePoolPendingReconcile(t *testing.T) 
 	t.Fatalf("expected state.nodepool pending reconcile for default NodePool, got pending=%v", state.PendingReconciles)
 }
 
-func TestBuildUserActionsFromCoverageInputSkipsSeededPodCreate(t *testing.T) {
+func TestBuildUserActionsFromCoverageInputConvertsSeededPodCreateToUpdate(t *testing.T) {
 	builder := newKarpenterExplorerBuilder()
 	input := mustKarpenterInput(t, "karpenter-user-actions")
 
@@ -178,8 +180,91 @@ func TestBuildUserActionsFromCoverageInputSkipsSeededPodCreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildUserActionsFromCoverageInput error = %v", err)
 	}
-	if len(actions) != 0 {
-		t.Fatalf("expected no user actions after seeding pod create into initial state, got %d actions: %#v", len(actions), actions)
+	if len(actions) != 1 {
+		t.Fatalf("expected one pod create user action, got %d actions: %#v", len(actions), actions)
+	}
+	if actions[0].OpType != event.UPDATE {
+		t.Fatalf("expected seeded pod user action op type UPDATE, got %q", actions[0].OpType)
+	}
+}
+
+func TestCoverageInputProducesExternalUserStep(t *testing.T) {
+	builder := newKarpenterExplorerBuilder()
+	builder.WithMaxDepth(64)
+	input := mustKarpenterInput(t, "karpenter-external-user")
+
+	state, seeded, err := buildStateFromCoverageInput(builder, input)
+	if err != nil {
+		t.Fatalf("buildStateFromCoverageInput error = %v", err)
+	}
+	actions, err := buildUserActionsFromCoverageInput(input, seeded)
+	if err != nil {
+		t.Fatalf("buildUserActionsFromCoverageInput error = %v", err)
+	}
+
+	builder.WithUserActions(actions)
+	explorer, err := builder.Build("standalone")
+	if err != nil {
+		t.Fatalf("build explorer: %v", err)
+	}
+
+	result := explorer.Explore(context.Background(), state)
+	allStates := append(append([]tracecheck.ResultState(nil), result.ConvergedStates...), result.AbortedStates...)
+	for _, st := range allStates {
+		for _, path := range st.Paths {
+			for _, step := range path {
+				if step.ControllerID == tracecheck.UserControllerID {
+					return
+				}
+			}
+		}
+	}
+	t.Fatalf("expected at least one %q step in execution paths", tracecheck.UserControllerID)
+}
+
+func TestCoverageInputEventuallyCreatesNode(t *testing.T) {
+	builder := newKarpenterExplorerBuilder()
+	builder.WithMaxDepth(64)
+	input := mustKarpenterInput(t, "karpenter-node-created")
+
+	state, seeded, err := buildStateFromCoverageInput(builder, input)
+	if err != nil {
+		t.Fatalf("buildStateFromCoverageInput error = %v", err)
+	}
+	actions, err := buildUserActionsFromCoverageInput(input, seeded)
+	if err != nil {
+		t.Fatalf("buildUserActionsFromCoverageInput error = %v", err)
+	}
+
+	builder.WithUserActions(actions)
+	explorer, err := builder.Build("standalone")
+	if err != nil {
+		t.Fatalf("build explorer: %v", err)
+	}
+
+	result := explorer.Explore(context.Background(), state)
+	if len(result.ConvergedStates) == 0 {
+		t.Fatalf("expected converged states, got 0")
+	}
+
+	for _, st := range result.ConvergedStates {
+		for _, obj := range explorer.Objects(st) {
+			if obj.GetKind() == "Node" {
+				goto checkNoPodLifecycle
+			}
+		}
+	}
+	t.Fatalf("expected at least one converged state to contain a Node object")
+
+checkNoPodLifecycle:
+	for _, st := range result.ConvergedStates {
+		for _, path := range st.Paths {
+			for _, step := range path {
+				if step.ControllerID == "PodLifecycleController" {
+					t.Fatalf("expected PodLifecycleController to be disabled in karpenter harness, but observed it in path")
+				}
+			}
+		}
 	}
 }
 

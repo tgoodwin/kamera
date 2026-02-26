@@ -28,6 +28,16 @@ import (
 
 func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	b := tracecheck.NewExplorerBuilder(newScheme())
+
+	// Disable generic pod lifecycle simulation for this harness.
+	// Karpenter provisioning should reason over unschedulable pods, and Pod lifecycle
+	// progression here can consume that signal before Karpenter-specific controllers run.
+	b.WithReconciler("PodLifecycleController", func(c client.Client) tracecheck.Reconciler {
+		return reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+			return reconcile.Result{}, nil
+		})
+	}).For("disabled/PodLifecycle")
+
 	cp := fake.NewCloudProvider()
 	clk := clock.RealClock{}
 	opts := test.Options()

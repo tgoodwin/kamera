@@ -517,10 +517,6 @@ func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []cli
 		}
 		opType := userInput.Type
 		if opType == event.CREATE && isInputObjectSeeded(userInput.Object, seededObjects) {
-			if isKarpenterPod(userInput.Object) {
-				// Seed pod creates into the initial state so Karpenter provisioning runs before pod lifecycle scheduling.
-				continue
-			}
 			opType = event.UPDATE
 		}
 		actions = append(actions, tracecheck.UserAction{

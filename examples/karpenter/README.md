@@ -17,13 +17,13 @@ go run . -interactive=false -dump-output /tmp/kamera-karpenter.jsonl
 
 ## Batch inputs
 
-`--inputs` defaults to `input-example.json` in the example directory.
+`--inputs` defaults to `inputs.json` in the example directory.
 To run a custom file, pass `--inputs <path>` and set dump directories for per-scenario output.
 For example:
 
 ```bash
 go run . \
-  --inputs input-example.json \
+  --inputs inputs.json \
   --fuzz-cases 12 \
   --fuzz-seed 1337 \
   --dump-output /tmp/karpenter-dumps \
@@ -35,7 +35,7 @@ go run . \
 
 ## Input model (`environmentState` vs `userInputs`)
 
-`input-example.json` models this scenario as:
+`inputs.json` models this scenario as:
 - **Environment state:** a ready `TestNodeClass` and `NodePool` that represent cluster configuration.
 - **User action:** creating one unschedulable pending `Pod`.
 
@@ -59,13 +59,23 @@ that is populated by reconcilers such as `state.nodepool`. Because of that:
   converge early (for example, "no dynamic nodepools found") even though a
   NodePool object exists in `environmentState`.
 
+For the `Pod` user input specifically, the harness currently seeds that object
+into startup state so the initial pending order remains:
+`state.pod` -> `provisioner.trigger.pod` -> `provisioner`.
+Without this, lexicographic pending ordering can run `provisioner` before pod
+state hydration and no NodeClaim/Node gets created.
+
+To keep `External User` visible in traces, the same seeded `CREATE` input is
+retained as a later user-action `UPDATE` step after the initial provisioning
+converges.
+
 Design intent: users should model inputs via `environmentState` + `userInputs`
 without hand-authoring pending reconciles. The harness should derive startup
 pending work from simulation semantics (subscriptions/watches/dependencies).
 
 ## Observed flow (expected)
 
-1. `state.pod` records the pending pod in cluster state.
+1. `state.pod` records the seeded pending pod in cluster state.
 2. `provisioner.trigger.pod` marks the pod for provisioning (batcher trigger).
 3. `provisioner` drains the batch and creates a `NodeClaim`.
 4. `nodeclaim.hydration` and `nodeclaim.lifecycle` launch the claim via the fake cloud provider.
@@ -73,6 +83,7 @@ pending work from simulation semantics (subscriptions/watches/dependencies).
 6. `nodeclaim.lifecycle` registers the nodeclaim to the node and removes startup taints.
 7. `nodeclaim.consistency` validates node/claim shape.
 8. `node.hydration` copies NodeClass labels onto the Node.
+9. `External User` later appears as the replayed user input action.
 
 ## Next scopes
 - **Medium:** add nodepool validation/readiness/registration-health + nodeclaim GC/expiration/disruption.
