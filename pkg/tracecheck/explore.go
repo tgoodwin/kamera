@@ -309,6 +309,15 @@ func (e *Explorer) enqueueWithMarker(
 
 	// Already being explored? (diamond convergence)
 	if tracker.isInProgress(logicalKey) {
+		// If the logical key appears in the ancestry of this state, this is a cycle
+		// back-edge (not a true diamond). Keep exploring so the branch can still
+		// terminate (e.g., max-depth abort) instead of being dropped silently.
+		if hasLogicalKeyInAncestry(states, logicalKey) {
+			for i := range states {
+				stack = append(stack, stackEntry{state: &states[i]})
+			}
+			return stack, true
+		}
 		e.stats.SubtreeDiamondSkips++
 		return stack, false
 	}
@@ -323,6 +332,17 @@ func (e *Explorer) enqueueWithMarker(
 	}
 
 	return stack, true
+}
+
+func hasLogicalKeyInAncestry(states []StateNode, key LogicalStateKey) bool {
+	for i := range states {
+		for parent := states[i].parent; parent != nil; parent = parent.parent {
+			if parent.LogicalKey() == key {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (e *Explorer) subtreeCompletionEnabled() bool {
