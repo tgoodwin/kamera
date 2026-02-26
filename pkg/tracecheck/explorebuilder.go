@@ -10,7 +10,6 @@ import (
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
-	"github.com/tgoodwin/kamera/pkg/tracegen"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
 	appsv1 "k8s.io/api/apps/v1"
@@ -631,18 +630,8 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 		fm,
 		mgr,
 	)
-	wrappedClient := tracegen.New(
-		replayClient,
-		string(cleanupReconcilerID),
-		b.emitter,
-		tracegen.NewContextTracker(
-			string(cleanupReconcilerID),
-			b.emitter,
-			replay.FrameIDFromContext,
-		),
-	)
 	r := &controller.FinalizerReconciler{
-		Client:   wrappedClient,
+		Client:   replayClient,
 		Recorder: mgr,
 	}
 	container := &ReconcilerContainer{

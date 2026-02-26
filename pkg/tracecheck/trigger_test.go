@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -47,6 +48,21 @@ func createTestObject(kind, namespace, name string, ownerRefs []metav1.OwnerRefe
 		obj.SetOwnerReferences(ownerRefs)
 	}
 	return obj
+}
+
+func hasPendingReconcile(
+	reconciles []PendingReconcile,
+	reconcilerID ReconcilerID,
+	namespace, name string,
+) bool {
+	for _, pr := range reconciles {
+		if pr.ReconcilerID == reconcilerID &&
+			pr.Request.Namespace == namespace &&
+			pr.Request.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Helper to sort PendingReconciles for stable comparison
@@ -634,4 +650,81 @@ func TestGetTriggeredWithHashResolutionFailure(t *testing.T) {
 
 	_, err := tm.getTriggered(changes)
 	assert.NotNil(t, err)
+}
+
+func TestGetTriggeredDeleteScopeMutationsQueueCleanupReconciler(t *testing.T) {
+	ops := []event.OperationType{event.UPDATE, event.PATCH, event.APPLY}
+	for _, op := range ops {
+		t.Run(string(op), func(t *testing.T) {
+			podKind := canonical("", "Pod")
+			owners := PrimariesByKind{
+				podKind: util.NewSet[ReconcilerID]("podController"),
+			}
+
+			obj := createTestObject("Pod", "default", "pod-1", nil)
+			deletionTime := metav1.NewTime(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
+			obj.SetDeletionTimestamp(&deletionTime)
+			obj.SetFinalizers([]string{"example.com/finalizer"})
+
+			hash := snapshot.NewDefaultHash("pod-delete-scope-hash-" + string(op))
+			resolver := &mockHashResolver{
+				objects: map[snapshot.VersionHash]*unstructured.Unstructured{
+					hash: obj,
+				},
+			}
+
+			tm := &TriggerManager{
+				owners:   owners,
+				watchers: make(WatchRegistrations),
+				resolver: resolver,
+			}
+
+			triggered, err := tm.getTriggered(Changes{
+				Effects: []Effect{
+					{
+						OpType:  op,
+						Key:     compositeKey("Pod", "default", "pod-1", "pod-1"),
+						Version: hash,
+					},
+				},
+			})
+			assert.NoError(t, err)
+			assert.True(t, hasPendingReconcile(triggered, cleanupReconcilerID, "default", "pod-1"))
+			assert.True(t, hasPendingReconcile(triggered, "podController", "default", "pod-1"))
+		})
+	}
+}
+
+func TestGetTriggeredUpdateWithoutDeletionTimestampDoesNotQueueCleanup(t *testing.T) {
+	podKind := canonical("", "Pod")
+	owners := PrimariesByKind{
+		podKind: util.NewSet[ReconcilerID]("podController"),
+	}
+
+	obj := createTestObject("Pod", "default", "pod-1", nil)
+	hash := snapshot.NewDefaultHash("pod-update-no-delete-ts")
+	resolver := &mockHashResolver{
+		objects: map[snapshot.VersionHash]*unstructured.Unstructured{
+			hash: obj,
+		},
+	}
+
+	tm := &TriggerManager{
+		owners:   owners,
+		watchers: make(WatchRegistrations),
+		resolver: resolver,
+	}
+
+	triggered, err := tm.getTriggered(Changes{
+		Effects: []Effect{
+			{
+				OpType:  event.UPDATE,
+				Key:     compositeKey("Pod", "default", "pod-1", "pod-1"),
+				Version: hash,
+			},
+		},
+	})
+	assert.NoError(t, err)
+	assert.False(t, hasPendingReconcile(triggered, cleanupReconcilerID, "default", "pod-1"))
+	assert.True(t, hasPendingReconcile(triggered, "podController", "default", "pod-1"))
 }

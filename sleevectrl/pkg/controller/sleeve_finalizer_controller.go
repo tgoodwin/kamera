@@ -4,13 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/samber/lo"
-	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/tag"
-	"github.com/tgoodwin/kamera/pkg/tracegen"
+	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -18,8 +16,30 @@ import (
 )
 
 type FinalizerReconciler struct {
-	*tracegen.Client
+	Client   client.Client
 	Recorder replay.EffectRecorder
+}
+
+func cleanupEligibleForRemoval(obj *unstructured.Unstructured) bool {
+	deletionTS := obj.GetDeletionTimestamp()
+	if deletionTS == nil || deletionTS.IsZero() {
+		return false
+	}
+	return len(obj.GetFinalizers()) == 0
+}
+
+func setObjectTypeMetaFromCanonicalKind(obj *unstructured.Unstructured, canonicalKind string) error {
+	gk := util.ParseGroupKind(canonicalKind)
+	if gk.Kind == "" {
+		return fmt.Errorf("canonical kind %q has empty Kind", canonicalKind)
+	}
+	obj.SetKind(gk.Kind)
+	if gk.Group == "" {
+		obj.SetAPIVersion("v1")
+		return nil
+	}
+	obj.SetAPIVersion(gk.Group + "/v1")
+	return nil
 }
 
 // Reconcile handler for tracked objects
@@ -31,14 +51,11 @@ func (r *FinalizerReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 	if !ok {
 		return reconcile.Result{}, errors.New("no kind in context")
 	}
-	// The context stores canonical kind like "core/Pod" or "apps/Deployment".
-	// We need to extract just the Kind part (after the /) for SetKind.
-	kind := canonicalKind
-	if idx := strings.LastIndex(canonicalKind, "/"); idx >= 0 {
-		kind = canonicalKind[idx+1:]
+	if err := setObjectTypeMetaFromCanonicalKind(obj, canonicalKind); err != nil {
+		return reconcile.Result{}, err
 	}
-	obj.SetKind(kind)
-	if err := r.Get(ctx, req.NamespacedName, obj); err != nil {
+	kind := obj.GetKind()
+	if err := r.Client.Get(ctx, req.NamespacedName, obj); err != nil {
 		// If the object is not found, it's already been deleted - nothing to clean up
 		if client.IgnoreNotFound(err) == nil {
 			logger.V(1).Info("object already deleted, nothing to clean up")
@@ -59,14 +76,22 @@ func (r *FinalizerReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 
 		// in simulation/replay, need to remove the object from state
 		if r.Recorder != nil {
+			if !cleanupEligibleForRemoval(obj) {
+				logger.V(1).Info("object still blocked by finalizers, skipping REMOVE")
+				return reconcile.Result{}, nil
+			}
 			// simulation mode
 			logger.V(1).Info("recording REMOVE effect")
-			if err := r.Recorder.RecordEffect(ctx, obj, event.REMOVE, nil); err != nil {
+			remover, ok := r.Client.(interface {
+				Remove(context.Context, client.Object) error
+			})
+			if !ok {
+				return reconcile.Result{}, fmt.Errorf("cleanup client does not support Remove")
+			}
+			if err := remover.Remove(ctx, obj); err != nil {
 				logger.Error(err, "recording effect")
 				return reconcile.Result{}, fmt.Errorf("recording effect: %w", err)
 			}
-			// emit the event
-			r.LogOperation(ctx, obj, event.REMOVE)
 			return reconcile.Result{}, nil
 		}
 
@@ -76,12 +101,10 @@ func (r *FinalizerReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 			// Remove our finalizer to allow actual deletion by the APIServer
 			obj.SetFinalizers(lo.Without(obj.GetFinalizers(), tag.SleeveFinalizer))
 			// Update object to remove finalizer and trigger removal
-			if err := r.Update(ctx, obj); err != nil {
+			if err := r.Client.Update(ctx, obj); err != nil {
 				logger.Error(err, "failed to update object")
 				return reconcile.Result{}, fmt.Errorf("failed to update object: %w", err)
 			}
-			logger.V(2).Info("Emitting REMOVE event")
-			r.Client.LogOperation(ctx, obj, event.REMOVE)
 			logger.V(1).Info("Finalizer removed")
 		}
 	}
