@@ -296,6 +296,7 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 		ContentsHashAfter: contentsHashAfter,
 		FrameID:           step.FrameID,
 		FrameType:         step.FrameType,
+		StepMetadata:      step.StepMetadata,
 		Changes: analysis.DumpChanges{
 			ObjectVersions: toDumpObjectVersions(step.Changes.ObjectVersions, objIndex),
 			Effects:        effects,
@@ -316,6 +317,7 @@ func fromDumpReconcileResult(dump analysis.DumpReconcileResult, resolver *dumpKe
 		ControllerID: tracecheck.ReconcilerID(dump.ControllerID),
 		FrameID:      dump.FrameID,
 		FrameType:    dump.FrameType,
+		StepMetadata: dump.StepMetadata,
 		Changes: tracecheck.Changes{
 			ObjectVersions: fromDumpObjectVersions(dump.Changes.ObjectVersions, resolver),
 			Effects:        fromDumpEffects(dump.Changes.Effects, resolver),

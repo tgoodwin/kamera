@@ -13,7 +13,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const UserControllerID ReconcilerID = "External User"
+const (
+	UserControllerID ReconcilerID = "External User"
+
+	UserActionIDMetadataKey    = "userAction.id"
+	UserActionTypeMetadataKey  = "userAction.type"
+	UserActionIndexMetadataKey = "userAction.index"
+)
 
 type UserAction struct {
 	ID      string              `json:"id"`
@@ -34,6 +40,14 @@ type userActionClient interface {
 type userActionReconciler struct {
 	actions []UserAction
 	client  userActionClient
+}
+
+func userActionStepMetadata(action UserAction, actionIdx int) map[string]string {
+	return map[string]string{
+		UserActionIDMetadataKey:    action.ID,
+		UserActionTypeMetadataKey:  string(action.OpType),
+		UserActionIndexMetadataKey: strconv.Itoa(actionIdx),
+	}
 }
 
 func (r *userActionReconciler) HasActionAt(actionIdx int) bool {
@@ -126,6 +140,8 @@ func (u *UserController) ExecuteNextAction(ctx context.Context, observableState 
 	if u.reconciler == nil {
 		return nil, fmt.Errorf("user controller reconciler is nil")
 	}
+	action := u.reconciler.actions[actionIdx]
+	metadata := userActionStepMetadata(action, actionIdx)
 
 	frameID := util.UUID()
 	stepCtx := replay.WithFrameID(ctx, frameID)
@@ -138,12 +154,17 @@ func (u *UserController) ExecuteNextAction(ctx context.Context, observableState 
 	req.Name = strconv.Itoa(actionIdx)
 	result, err := u.container.doReconcile(stepCtx, observableState, req)
 	if err != nil {
+		if result != nil {
+			result.StepMetadata = metadata
+		}
 		return &ReconcileResult{
 			ControllerID: UserControllerID,
 			FrameID:      frameID,
 			FrameType:    FrameTypeExplore,
 			Error:        err.Error(),
+			StepMetadata: metadata,
 		}, err
 	}
+	result.StepMetadata = metadata
 	return result, nil
 }

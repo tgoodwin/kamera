@@ -380,6 +380,11 @@ func printPathSteps(path tracecheck.ExecutionHistory) {
 			continue
 		}
 		frameID := util.Shorter(step.FrameID)
+		actionID := step.StepMetadata[tracecheck.UserActionIDMetadataKey]
+		if actionID != "" {
+			fmt.Printf("  [%d] controller=%s action=%s frame=%s writes=%d\n", idx, step.ControllerID, actionID, frameID, len(step.Changes.Effects))
+			continue
+		}
 		fmt.Printf("  [%d] controller=%s frame=%s writes=%d\n", idx, step.ControllerID, frameID, len(step.Changes.Effects))
 	}
 	fmt.Println("  Use `step <idx>` to view details.")
@@ -395,6 +400,9 @@ func printPathStepDetail(step *tracecheck.ReconcileResult, idx int) {
 	fmt.Println("Controller:", step.ControllerID)
 	fmt.Println("Frame:", util.Shorter(step.FrameID))
 	fmt.Println("FrameType:", step.FrameType)
+	if len(step.StepMetadata) > 0 {
+		fmt.Println("StepMetadata:", step.StepMetadata)
+	}
 	fmt.Println("Writes:", len(step.Changes.Effects))
 	fmt.Println("Contents:")
 	printObjectVersions(step.Changes.ObjectVersions)

@@ -46,3 +46,39 @@ func TestShouldApplyNextUserAction_NoUserControllerOrActions(t *testing.T) {
 		t.Fatalf("expected false when user controller has no remaining actions")
 	}
 }
+
+func TestIsTerminalConvergedState_RequiresUserActionExhaustion(t *testing.T) {
+	explorer := &Explorer{
+		userController: &UserController{
+			reconciler: &userActionReconciler{
+				actions: []UserAction{{ID: "a1", OpType: event.CREATE}},
+			},
+		},
+	}
+
+	if explorer.isTerminalConvergedState(StateNode{}) {
+		t.Fatalf("expected non-terminal state when user action remains")
+	}
+
+	if !explorer.isTerminalConvergedState(StateNode{nextUserActionIdx: 1}) {
+		t.Fatalf("expected terminal when user actions are exhausted and pending is empty")
+	}
+
+	if !explorer.isTerminalConvergedState(StateNode{
+		nextUserActionIdx: 1,
+		PendingReconciles: []PendingReconcile{
+			{ReconcilerID: "ticker", Source: SourceAsyncEnqueue},
+		},
+	}) {
+		t.Fatalf("expected terminal when only ignorable pending reconciles remain and user actions are exhausted")
+	}
+
+	if explorer.isTerminalConvergedState(StateNode{
+		nextUserActionIdx: 1,
+		PendingReconciles: []PendingReconcile{
+			{ReconcilerID: "svc", Source: SourceStateChange},
+		},
+	}) {
+		t.Fatalf("expected non-terminal state with actionable pending reconciles")
+	}
+}

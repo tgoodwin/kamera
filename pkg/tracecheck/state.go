@@ -87,6 +87,9 @@ type ReconcileResult struct {
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
 	Deltas       map[snapshot.CompositeKey]Delta
 	Error        string
+	// StepMetadata carries optional explainability metadata for special step types
+	// (for example, user action id/index/type on UserController steps).
+	StepMetadata map[string]string
 
 	StateBefore   ObjectVersions
 	StateAfter    ObjectVersions
@@ -125,6 +128,9 @@ func (eh ExecutionHistory) UniqueKey() string {
 		suffix := ""
 		if r.Error != "" {
 			suffix = "!"
+		}
+		if actionID, ok := r.StepMetadata[UserActionIDMetadataKey]; ok {
+			suffix += ":" + actionID
 		}
 		// Include convergence marker on the last step if the original path converged.
 		// This ensures paths ending in convergence are not considered equivalent

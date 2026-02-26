@@ -69,6 +69,7 @@ type DumpReconcileResult struct {
 	ContentsHashAfter string                   `json:"contentsHashAfter,omitempty"`
 	FrameID           string                   `json:"frameId"`
 	FrameType         tracecheck.FrameType     `json:"frameType"`
+	StepMetadata      map[string]string        `json:"stepMetadata,omitempty"`
 	Changes           DumpChanges              `json:"changes"`
 	Error             string                   `json:"error,omitempty"`
 	Deltas            []DumpDelta              `json:"deltas,omitempty"`

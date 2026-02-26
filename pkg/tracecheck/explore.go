@@ -141,14 +141,22 @@ func (e *Explorer) Stats() *ExploreStats {
 }
 
 func (e *Explorer) shouldApplyNextUserAction(state StateNode) bool {
-	if e == nil || e.userController == nil {
-		return false
-	}
-	if !e.userController.HasActionAt(state.nextUserActionIdx) {
+	if !e.hasRemainingUserAction(state) {
 		return false
 	}
 	// policy here is to apply the next user action after the current state has converged
-	return len(state.PendingReconciles) == 0 || allPendingIgnorableForConvergence(state.PendingReconciles)
+	return state.IsConverged()
+}
+
+func (e *Explorer) hasRemainingUserAction(state StateNode) bool {
+	return e != nil && e.userController != nil && e.userController.HasActionAt(state.nextUserActionIdx)
+}
+
+func (e *Explorer) isTerminalConvergedState(state StateNode) bool {
+	if e.hasRemainingUserAction(state) {
+		return false
+	}
+	return state.IsConverged()
 }
 
 // Objects resolves and returns all objects for the provided ResultState, skipping any that cannot be resolved.
@@ -714,7 +722,7 @@ func (e *Explorer) explore(
 		// and we've already found a converged path to this logical state, skip entirely.
 		// The first path runs through the no-ops to reach actual convergence; subsequent
 		// paths can skip since they'd produce the same result.
-		if e.optimizations.checkEarlyConvergence(currentState) {
+		if e.optimizations.checkEarlyConvergence(currentState) && !e.hasRemainingUserAction(currentState) {
 			if _, alreadyConverged := seenConvergedStates[NodeHash(contentsKey)]; alreadyConverged {
 				e.stats.EarlyConvergence++
 				logger.V(1).Info("early convergence: all pending are known no-ops and state already converged",
@@ -829,7 +837,7 @@ func (e *Explorer) explore(
 		// NOTE: If a state has ANY SourceStateChange pending reconciles, it should NOT be
 		// considered converged. The allPendingIgnorableForConvergence function returns false
 		// if any pending has SourceStateChange.
-		if len(currentState.PendingReconciles) == 0 || allPendingIgnorableForConvergence(currentState.PendingReconciles) {
+		if e.isTerminalConvergedState(currentState) {
 			convergenceKey := currentState.ConvergenceHash()
 			reason := "no pending reconciles"
 			if len(currentState.PendingReconciles) > 0 {
