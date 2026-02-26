@@ -173,7 +173,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
 			os.Exit(1)
 		}
-		opts := explore.ParallelOptions{DumpDir: explore.DumpPath(), StatsDir: explore.DumpStatsPath()}
+		opts := explore.ParallelOptions{DumpDir: explore.DumpPath()}
 
 		if explore.PerturbEnabled() {
 			fmt.Fprintln(os.Stderr, "closed-loop scaffold: running per-input reference->rerun pipelines")

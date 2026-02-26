@@ -50,7 +50,6 @@ type ScenarioResult struct {
 type ParallelOptions struct {
     MaxParallel int
     DumpDir     string
-    StatsDir    string
 }
 
 type ParallelRunner struct {
@@ -68,7 +67,7 @@ func (r *ParallelRunner) RunAll(ctx context.Context, scenarios []Scenario, opts 
 3. Apply the scenario config to the fork (clone first to avoid map sharing).
 4. Build an explorer and run `Explore` on the scenario’s `InitialState`.
 5. Evaluate invariant (if non-nil) against converged states; record first error.
-6. Optionally dump results and stats under `DumpDir`/`StatsDir` with safe filenames.
+6. Optionally dump results under `DumpDir` with safe filenames (stats are embedded in dump files when perf stats are enabled).
 
 ## Builder Refactor: Explicit Isolation
 

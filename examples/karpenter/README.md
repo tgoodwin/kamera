@@ -27,7 +27,7 @@ go run . \
   --fuzz-cases 12 \
   --fuzz-seed 1337 \
   --dump-output /tmp/karpenter-dumps \
-  --dump-stats /tmp/karpenter-stats
+  --emit-stats
 ```
 
 - `--fuzz-cases` controls how many sampled parameterized variants are generated per input.

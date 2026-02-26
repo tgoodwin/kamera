@@ -58,7 +58,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
 			os.Exit(1)
 		}
-		opts := explore.ParallelOptions{DumpDir: explore.DumpPath(), StatsDir: explore.DumpStatsPath()}
+		opts := explore.ParallelOptions{DumpDir: explore.DumpPath()}
 		if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
 			fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
 			os.Exit(1)

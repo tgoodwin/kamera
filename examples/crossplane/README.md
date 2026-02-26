@@ -28,11 +28,11 @@ go run . \
 
 ## Batch inputs
 
-To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output:
+To run a generated inputs file, pass `--inputs` and set a dump directory for per-scenario output:
 
 ```bash
 go run . \
   --inputs /path/to/inputs.json \
   --dump-output /tmp/crossplane-dumps \
-  --dump-stats /tmp/crossplane-stats
+  --emit-stats
 ```

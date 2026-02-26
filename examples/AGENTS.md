@@ -8,7 +8,7 @@ This guide documents the common headless workflow for running Kamera examples an
 - `-log-level <level>`: `debug`, `info`, `warn`, or `error` (default: `info`).
 - `-interactive <bool>`: launch the inspector TUI (`true` by default). Set `-interactive=false` for headless runs.
 - `-dump-output <path>`: write converged + aborted states to a dump file (works with `-interactive=false`).
-- `-emit-stats`: record and print reconcile performance stats at the end.
+- `-emit-stats`: record and print reconcile performance stats at the end, and embed them under `stats` in the `-dump-output` file.
 
 ## Determinize + cache notes (when needed)
 Some examples depend on upstream code that introduces nondeterministic values (timestamps, IDs). To reduce noise:

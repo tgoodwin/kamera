@@ -28,7 +28,7 @@ Behavior:
 go run . \
   --parallel \
   --dump-output /tmp/knative-dumps \
-  --dump-stats /tmp/knative-stats
+  --emit-stats
 ```
 
 To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output:
@@ -40,5 +40,5 @@ go run . \
   --depth 100 \
   --timeout 60s \
   --perturb=false \
-  --dump-stats /tmp/knative-stats
+  --emit-stats
 ```

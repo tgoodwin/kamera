@@ -117,7 +117,7 @@ go run .
     }
     ```
 
-    `Runner` honors the standard `-interactive`, `-perturb`, and `-dump-output` flags (see `pkg/explore/flags.go`) so you can disable the inspector, skip closed-loop analysis reruns (`--perturb=false`), or persist results when scripting.
+    `Runner` honors the standard `-interactive`, `-perturb`, `-dump-output`, and `-emit-stats` flags (see `pkg/explore/flags.go`) so you can disable the inspector, skip closed-loop analysis reruns (`--perturb=false`), or persist results when scripting. When `--emit-stats` is enabled, the dump written via `--dump-output` includes a top-level `stats` section.
 
 That’s enough to start evaluating how your controllers interact across different interleavings.
 
@@ -157,7 +157,7 @@ if err := interactive.SaveInspectorDump(states, resolver, "inspector_dump.json")
 }
 ```
 
-Dump files can be reopened at any time via `go run ./cmd/kamera inspect exploration inspector_dump.json`, which restores the same UI. The inspector provides keyboard shortcuts (shown in the status bar) to switch between states, examine individual reconcile steps, and export dumps from within the UI.
+Dump files can be reopened at any time via `go run ./cmd/kamera inspect exploration inspector_dump.jsonl`, which restores the same UI. The inspector provides keyboard shortcuts (shown in the status bar) to switch between states, examine individual reconcile steps, and export dumps from within the UI. If the run used `--emit-stats`, that same dump file also carries top-level exploration stats.
 
 ### Unified CLI entrypoint
 

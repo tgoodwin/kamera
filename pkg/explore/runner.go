@@ -2,35 +2,13 @@ package explore
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 
 	"github.com/tgoodwin/kamera/pkg/interactive"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"golang.org/x/exp/slices"
 )
-
-func dumpStatsIfRequested(stats *tracecheck.ExploreStats, runIdx int) error {
-	if DumpStatsPath() == "" || stats == nil {
-		return nil
-	}
-	stats.Finish()
-
-	data, err := json.MarshalIndent(stats, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal explore stats: %w", err)
-	}
-
-	target := withRunSuffix(DumpStatsPath(), runIdx)
-	if err := os.WriteFile(target, data, 0o644); err != nil {
-		return fmt.Errorf("write stats to %s: %w", target, err)
-	}
-	fmt.Printf("wrote stats to %s\n", target)
-	return nil
-}
 
 func standaloneDumpContext(runIdx int) *interactive.InspectorDumpContext {
 	index := runIdx
@@ -51,13 +29,11 @@ func standaloneDumpContext(runIdx int) *interactive.InspectorDumpContext {
 	}
 }
 
-func withRunSuffix(base string, runIdx int) string {
-	if runIdx == 0 {
-		return base
+func statsForDump(stats *tracecheck.ExploreStats, cfg tracecheck.ExploreConfig) *tracecheck.ExploreStats {
+	if stats == nil || !cfg.RecordPerfStats {
+		return nil
 	}
-	ext := filepath.Ext(base)
-	prefix := strings.TrimSuffix(base, ext)
-	return fmt.Sprintf("%s.run%d%s", prefix, runIdx, ext)
+	return stats
 }
 
 // Runner coordinates exploration runs and the inspector UI, including restart requests.
@@ -72,7 +48,7 @@ type Runner struct {
 // UserActions represent declarative workload actions applied at boundaries during exploration.
 type RunInput struct {
 	EnvironmentState tracecheck.StateNode
-	UserActions     []tracecheck.UserAction
+	UserActions      []tracecheck.UserAction
 }
 
 // NewRunner constructs a Runner from a configured ExplorerBuilder.
@@ -142,10 +118,6 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 	}
 	runIdx := 0
 
-	if err := dumpStatsIfRequested(stats, 0); err != nil {
-		return err
-	}
-
 	states := append([]tracecheck.ResultState{}, res.ConvergedStates...)
 	states = append(states, res.AbortedStates...)
 	if len(states) == 0 {
@@ -154,7 +126,13 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 	}
 
 	if DumpPath() != "" {
-		if err := interactive.SaveInspectorDumpWithContext(states, resolver, DumpPath(), standaloneDumpContext(runIdx)); err != nil {
+		if err := interactive.SaveInspectorDumpWithContextAndStats(
+			states,
+			resolver,
+			DumpPath(),
+			standaloneDumpContext(runIdx),
+			statsForDump(stats, currentConfig),
+		); err != nil {
 			return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)
 		}
 		fmt.Printf("wrote results to %s\n", DumpPath())
@@ -200,9 +178,6 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 		if nextResolver != nil {
 			resolver = nextResolver
 		}
-		if err := dumpStatsIfRequested(nextStats, runIdx); err != nil {
-			return err
-		}
 		newStates := append([]tracecheck.ResultState{}, nextRes.ConvergedStates...)
 		newStates = append(newStates, nextRes.AbortedStates...)
 		if restart.PreserveHistory {
@@ -211,7 +186,13 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 			states = newStates
 		}
 		if DumpPath() != "" {
-			if err := interactive.SaveInspectorDumpWithContext(states, resolver, DumpPath(), standaloneDumpContext(runIdx)); err != nil {
+			if err := interactive.SaveInspectorDumpWithContextAndStats(
+				states,
+				resolver,
+				DumpPath(),
+				standaloneDumpContext(runIdx),
+				statsForDump(nextStats, currentConfig),
+			); err != nil {
 				return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)
 			}
 			fmt.Printf("wrote results to %s\n", DumpPath())
