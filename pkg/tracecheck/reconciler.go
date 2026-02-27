@@ -30,6 +30,10 @@ type frameInserter interface {
 	InsertCacheFrame(id string, data replay.CacheFrame)
 }
 
+type frameReader interface {
+	GetCacheFrame(id string) (replay.CacheFrame, error)
+}
+
 type Strategy interface {
 	PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error)
 	ReconcileAtState(ctx context.Context, name types.NamespacedName) (reconcile.Result, error)
@@ -54,44 +58,56 @@ func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er e
 
 func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
 	frameID := replay.FrameIDFromContext(ctx)
-	frameData := s.toFrameData(state)
+	frameData := runtimeObjectsToCacheFrame(state, s.scheme)
 	s.InsertCacheFrame(frameID, frameData)
 	cleanup := func() {}
 	return ctx, cleanup, nil
 }
 
 func (s *ControllerRuntimeStrategy) ReconcileAtState(ctx context.Context, name types.NamespacedName) (reconcile.Result, error) {
-	// our cleanup reconciler implementation needs to know what kind of object it is reconciling
-	// as reconcile.Request is only namespace/name. so we inject it through the context.
-	// TODO factor this cleanup-specific stuff out into a dedicated strategy
-	if s.name == cleanupReconcilerID {
-		frameID := replay.FrameIDFromContext(ctx)
-		frameData, err := s.frameInserter.(*replay.FrameManager).GetCacheFrame(frameID)
-		if err != nil {
-			return reconcile.Result{}, err
-		}
-		for kind, objs := range frameData {
-			for nn := range objs {
-				if nn.Name == name.Name && nn.Namespace == name.Namespace {
-					ctx = context.WithValue(ctx, tag.CleanupKindKey{}, kind)
-				}
-			}
-		}
-	}
 	req := reconcile.Request{NamespacedName: name}
 	return s.Reconciler.Reconcile(ctx, req)
 }
 
-// toFrameData converts a slice of runtime objects into a CacheFrame.
-func (s *ControllerRuntimeStrategy) toFrameData(objects []runtime.Object) replay.CacheFrame {
+type cleanupRuntimeStrategy struct {
+	*ControllerRuntimeStrategy
+	frameReader frameReader
+}
+
+func newCleanupRuntimeStrategy(base *ControllerRuntimeStrategy, frameReader frameReader) *cleanupRuntimeStrategy {
+	return &cleanupRuntimeStrategy{
+		ControllerRuntimeStrategy: base,
+		frameReader:               frameReader,
+	}
+}
+
+func (s *cleanupRuntimeStrategy) ReconcileAtState(ctx context.Context, name types.NamespacedName) (reconcile.Result, error) {
+	frameID := replay.FrameIDFromContext(ctx)
+	frameData, err := s.frameReader.GetCacheFrame(frameID)
+	if err != nil {
+		return reconcile.Result{}, err
+	}
+
+	for kind, objs := range frameData {
+		if _, ok := objs[name]; ok {
+			ctx = context.WithValue(ctx, tag.CleanupKindKey{}, kind)
+			break
+		}
+	}
+
+	return s.ControllerRuntimeStrategy.ReconcileAtState(ctx, name)
+}
+
+// runtimeObjectsToCacheFrame converts a slice of runtime objects into a replay cache frame.
+func runtimeObjectsToCacheFrame(objects []runtime.Object, scheme *runtime.Scheme) replay.CacheFrame {
 	out := make(replay.CacheFrame)
 	for _, obj := range objects {
 		if obj == nil {
 			continue
 		}
 
-		if gvk := obj.GetObjectKind().GroupVersionKind(); gvk.Empty() && s.scheme != nil {
-			if gvks, _, err := s.scheme.ObjectKinds(obj); err == nil && len(gvks) > 0 {
+		if gvk := obj.GetObjectKind().GroupVersionKind(); gvk.Empty() && scheme != nil {
+			if gvks, _, err := scheme.ObjectKinds(obj); err == nil && len(gvks) > 0 {
 				obj.GetObjectKind().SetGroupVersionKind(gvks[0])
 			}
 		}

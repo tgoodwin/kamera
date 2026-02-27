@@ -87,6 +87,9 @@ type ReconcileResult struct {
 	Changes      Changes // this is just the writeset, not the resulting full state of the world
 	Deltas       map[snapshot.CompositeKey]Delta
 	Error        string
+	// StepMetadata carries optional explainability metadata for special step types
+	// (for example, user action id/index/type on UserController steps).
+	StepMetadata map[string]string
 
 	StateBefore   ObjectVersions
 	StateAfter    ObjectVersions
@@ -125,6 +128,9 @@ func (eh ExecutionHistory) UniqueKey() string {
 		suffix := ""
 		if r.Error != "" {
 			suffix = "!"
+		}
+		if actionID, ok := r.StepMetadata[UserActionIDMetadataKey]; ok {
+			suffix += ":" + actionID
 		}
 		// Include convergence marker on the last step if the original path converged.
 		// This ensures paths ending in convergence are not considered equivalent
@@ -238,6 +244,9 @@ type StateNode struct {
 
 	depth int
 
+	// nextUserActionIdx tracks branch-local progress through ordered user actions.
+	nextUserActionIdx int
+
 	DivergencePoint string // reconcileID of the first divergence
 
 	// tracks what KindSequences a controller may be "stuck" on
@@ -267,7 +276,7 @@ func (sn StateNode) DumpPending() {
 }
 
 func (sn StateNode) IsConverged() bool {
-	return len(sn.PendingReconciles) == 0
+	return len(sn.PendingReconciles) == 0 || allPendingIgnorableForConvergence(sn.PendingReconciles)
 }
 
 func (sn StateNode) Objects() ObjectVersions {
@@ -307,6 +316,7 @@ func (sn StateNode) Clone() StateNode {
 		action:            sn.action,
 		ExecutionHistory:  slices.Clone(sn.ExecutionHistory),
 		depth:             sn.depth,
+		nextUserActionIdx: sn.nextUserActionIdx,
 		DivergencePoint:   sn.DivergencePoint, // TODO deprecate
 		divergenceKey:     sn.divergenceKey,
 
@@ -390,6 +400,9 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 		builder.WriteByte('/')
 		builder.WriteString(pr.Request.Name)
 	}
+
+	builder.WriteString("|u:")
+	builder.WriteString(strconv.Itoa(sn.nextUserActionIdx))
 
 	return builder.String()
 }

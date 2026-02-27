@@ -10,11 +10,12 @@ type ScenarioContext struct {
 
 // Scenario is the unit produced by input generators and consumed by runners.
 type Scenario struct {
-	Name         string
-	InitialState tracecheck.StateNode
-	Config       tracecheck.ExploreConfig
-	Invariant    func(tracecheck.StateNode) error
-	Context      ScenarioContext
+	Name            string
+	EnvironmentState tracecheck.StateNode
+	UserInputs      []tracecheck.UserAction
+	Config          tracecheck.ExploreConfig
+	Invariant       func(tracecheck.StateNode) error
+	Context         ScenarioContext
 	// ClosedLoop enables per-scenario reference->analyze->rerun pipelines.
 	// The scenario's Config is used for the initial reference phase.
 	ClosedLoop *ClosedLoopSpec

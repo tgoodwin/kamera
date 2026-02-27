@@ -1,25 +1,28 @@
 package coverage
 
-import "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+import (
+	"github.com/tgoodwin/kamera/pkg/event"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+)
 
-// Input captures the concrete objects and pending reconciles for a single scenario seed.
+// Input captures the starting cluster state and declarative inputs for a scenario.
 type Input struct {
-	Name    string                       `json:"name"`
+	Name             string           `json:"name"`
+	EnvironmentState EnvironmentState `json:"environmentState"`
+	UserInputs       []UserInput      `json:"userInputs"`
+	Tuning           InputTuning      `json:"tuning"`
+}
+
+// EnvironmentState captures baseline objects present before user actions.
+type EnvironmentState struct {
 	Objects []*unstructured.Unstructured `json:"objects"`
-	Pending []Pending                    `json:"pending"`
-	Tuning  InputTuning                  `json:"tuning"`
 }
 
-// Pending is a controller + namespaced key pair to enqueue for reconciliation.
-type Pending struct {
-	ControllerID string         `json:"controllerId"`
-	Key          NamespacedName `json:"key"`
-}
-
-// NamespacedName is a minimal namespaced object identity.
-type NamespacedName struct {
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
+// UserInput models a declarative state change performed by the user
+type UserInput struct {
+	ID     string                     `json:"id"`
+	Type   event.OperationType        `json:"type"`
+	Object *unstructured.Unstructured `json:"object"`
 }
 
 // InputTuning carries compact hints for later ExploreConfig construction.

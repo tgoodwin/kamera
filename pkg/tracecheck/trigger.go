@@ -146,6 +146,21 @@ type TriggerManager struct {
 	resolver Resolver
 }
 
+// if an object has already been marked for deletion and undergoes a further update,
+// the cleanupReconciler needs to hear about that update.
+func shouldQueueCleanupReconcile(op event.OperationType, obj *unstructured.Unstructured) bool {
+	deletionTS := obj.GetDeletionTimestamp()
+	if deletionTS == nil || deletionTS.IsZero() {
+		return false
+	}
+	switch op {
+	case event.MARK_FOR_DELETION, event.UPDATE, event.PATCH, event.APPLY:
+		return true
+	default:
+		return false
+	}
+}
+
 func canonicalKindKeyFromGroupKind(gk schema.GroupKind) string {
 	return util.CanonicalGroupKind(gk.Group, gk.Kind)
 }
@@ -227,9 +242,14 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 
 		if effect.OpType == event.MARK_FOR_DELETION {
 			deletionTS := objectVal.GetDeletionTimestamp()
-			if deletionTS.IsZero() {
+			if deletionTS == nil || deletionTS.IsZero() {
 				panic("found object marked for deletion but with no deletion timestamp")
 			}
+		}
+
+		// Deletion-scope mutations need to wake the CleanupReconciler so it can
+		// react when finalizer state changes allow actual removal.
+		if shouldQueueCleanupReconcile(effect.OpType, objectVal) {
 			// queue up the CleanupReconciler to handle the actual removal
 			reconcileKey := fmt.Sprintf("%s:%s:%s", cleanupReconcilerID, nsName.Namespace, nsName.Name)
 			uniqueReconciles[reconcileKey] = PendingReconcile{

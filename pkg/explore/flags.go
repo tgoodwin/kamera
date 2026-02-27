@@ -4,10 +4,10 @@ import "flag"
 
 var (
 	interactiveFlag        = flag.Bool("interactive", true, "launch interactive trace inspector")
-	dumpPathFlag           = flag.String("dump-output", "", "optional path to write exploration results (converged + aborted) to disk")
+	dumpPathFlag           = flag.String("dump-output", "", "optional path to write exploration dump to disk (states, plus stats when --emit-stats is enabled)")
 	configPathFlag         = flag.String("explore-config", "", "optional JSON file to configure exploration")
-	dumpStatsPath          = flag.String("dump-stats", "", "optional path to write exploration stats (JSON)")
 	inputsPathFlag         = flag.String("inputs", "", `path to input JSON file`)
+	perturbFlag            = flag.Bool("perturb", true, "enable closed-loop rerun pipeline for batch inputs when supported by scenario generation")
 	parallelProcessesFlag  = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
 	parallelChildIndexFlag = flag.Int(
 		"parallel-child-index",
@@ -31,14 +31,14 @@ func ConfigPath() string {
 	return *configPathFlag
 }
 
-// DumpStatsPath returns the parsed path for dumping exploration stats.
-func DumpStatsPath() string {
-	return *dumpStatsPath
-}
-
 // InputsPath returns the parsed path to an optional inputs file.
 func InputsPath() string {
 	return *inputsPathFlag
+}
+
+// PerturbEnabled returns the parsed value for the perturb flag.
+func PerturbEnabled() bool {
+	return *perturbFlag
 }
 
 // ParallelProcessesEnabled reports whether process-isolated parallel mode is enabled.

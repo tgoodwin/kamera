@@ -22,12 +22,13 @@ Behavior:
 - `--inputs <path>` enables batch mode, even if `--parallel` is not set.
 - `--parallel` with no `--inputs` loads the default `inputs-example.json`.
 - `--timeout` applies per input/scenario run, not as an overall batch timeout.
+- `--perturb=false` runs only the first pass for each input (single-pass simulation).
 
 ```bash
 go run . \
   --parallel \
   --dump-output /tmp/knative-dumps \
-  --dump-stats /tmp/knative-stats
+  --emit-stats
 ```
 
 To run a generated inputs file, pass `--inputs` and set dump directories for per-scenario output:
@@ -38,5 +39,6 @@ go run . \
   --dump-output /tmp/knative-dumps \
   --depth 100 \
   --timeout 60s \
-  --dump-stats /tmp/knative-stats
+  --perturb=false \
+  --emit-stats
 ```

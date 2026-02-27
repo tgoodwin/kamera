@@ -9,9 +9,10 @@ import (
 // Dump represents the top-level structure of a kamera dump file.
 // It contains all objects referenced by hash and the result states from exploration.
 type Dump struct {
-	Context *DumpContext      `json:"context,omitempty"`
-	Objects []DumpObject      `json:"objects"`
-	States  []DumpResultState `json:"states"`
+	Context *DumpContext             `json:"context,omitempty"`
+	Stats   *tracecheck.ExploreStats `json:"stats,omitempty"`
+	Objects []DumpObject             `json:"objects"`
+	States  []DumpResultState        `json:"states"`
 }
 
 // DumpContext carries optional metadata describing how the dump was produced.
@@ -68,6 +69,7 @@ type DumpReconcileResult struct {
 	ContentsHashAfter string                   `json:"contentsHashAfter,omitempty"`
 	FrameID           string                   `json:"frameId"`
 	FrameType         tracecheck.FrameType     `json:"frameType"`
+	StepMetadata      map[string]string        `json:"stepMetadata,omitempty"`
 	Changes           DumpChanges              `json:"changes"`
 	Error             string                   `json:"error,omitempty"`
 	Deltas            []DumpDelta              `json:"deltas,omitempty"`

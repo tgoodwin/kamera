@@ -2041,18 +2041,16 @@ func formatPathSummary(state tracecheck.ResultState, pathIdx int) string {
 		b.WriteString("\nPending Reconciles:\n")
 		for idx, pr := range state.State.PendingReconciles {
 			req := pr.Request.NamespacedName
-			fmt.Fprintf(&b, "  [%d] %s %s/%s\n", idx, pr.ReconcilerID, req.Namespace, req.Name)
+			fmt.Fprintf(&b, "  [%d] %s %s/%s (%s)\n", idx, pr.ReconcilerID, req.Namespace, req.Name, pr.Source)
 		}
 	}
 
 	b.WriteString("\nOutcome:\n")
-	if len(state.State.PendingReconciles) == 0 && state.Error == nil {
+	if state.State.IsConverged() && state.Error == nil {
 		b.WriteString("  Converged\n")
 	} else {
 		b.WriteString("  Aborted\n")
-		if state.Error != nil {
-			fmt.Fprintf(&b, "  Error: %s\n", state.Error.Error())
-		}
+		fmt.Fprintf(&b, "  Error: %s\n", state.Error.Error())
 	}
 	return b.String()
 }
@@ -2069,25 +2067,6 @@ func truncateString(s string, max int) string {
 		return string(runes[:max])
 	}
 	return string(runes[:max-3]) + "..."
-}
-
-func formatObjectVersions(objects tracecheck.ObjectVersions, indent string) string {
-	if len(objects) == 0 {
-		return indent + "(none)\n"
-	}
-	keys := make([]snapshot.CompositeKey, 0, len(objects))
-	for key := range objects {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i].String() < keys[j].String()
-	})
-
-	var b strings.Builder
-	for _, key := range keys {
-		fmt.Fprintf(&b, "%s%s => %s\n", indent, key.String(), objects[key].Value)
-	}
-	return b.String()
 }
 
 func formatResolverUnavailable(hash snapshot.VersionHash) string {

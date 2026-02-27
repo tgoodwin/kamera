@@ -32,7 +32,7 @@ func TestRunnerWritesDumpContext(t *testing.T) {
 		t.Fatalf("new runner: %v", err)
 	}
 
-	if err := runner.Run(context.Background(), state); err != nil {
+	if err := runner.Run(context.Background(), RunInput{EnvironmentState: state}); err != nil {
 		t.Fatalf("run runner: %v", err)
 	}
 
@@ -57,5 +57,71 @@ func TestRunnerWritesDumpContext(t *testing.T) {
 	}
 	if dump.Context.Scenario.Attributes["exploreConfig"] != "/tmp/explore-config.json" {
 		t.Fatalf("expected explore config attribute in dump context")
+	}
+}
+
+func TestRunnerEmbedsStatsInDumpWhenPerfStatsEnabled(t *testing.T) {
+	oldInteractive := *interactiveFlag
+	oldDumpPath := *dumpPathFlag
+	t.Cleanup(func() {
+		*interactiveFlag = oldInteractive
+		*dumpPathFlag = oldDumpPath
+	})
+
+	*interactiveFlag = false
+	dumpPath := filepath.Join(t.TempDir(), "runner-dump.jsonl")
+	*dumpPathFlag = dumpPath
+
+	builder, state := newTestBuilder(t)
+	builder.WithPerfStats()
+	runner, err := NewRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	if err := runner.Run(context.Background(), RunInput{EnvironmentState: state}); err != nil {
+		t.Fatalf("run runner: %v", err)
+	}
+
+	dump, err := analysis.LoadDump(dumpPath)
+	if err != nil {
+		t.Fatalf("load dump: %v", err)
+	}
+	if dump.Stats == nil {
+		t.Fatalf("expected stats embedded in dump")
+	}
+	if dump.Stats.TotalNodeVisits == 0 {
+		t.Fatalf("expected embedded stats to include node visits")
+	}
+}
+
+func TestRunnerOmitsStatsInDumpWhenPerfStatsDisabled(t *testing.T) {
+	oldInteractive := *interactiveFlag
+	oldDumpPath := *dumpPathFlag
+	t.Cleanup(func() {
+		*interactiveFlag = oldInteractive
+		*dumpPathFlag = oldDumpPath
+	})
+
+	*interactiveFlag = false
+	dumpPath := filepath.Join(t.TempDir(), "runner-dump.jsonl")
+	*dumpPathFlag = dumpPath
+
+	builder, state := newTestBuilder(t)
+	runner, err := NewRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	if err := runner.Run(context.Background(), RunInput{EnvironmentState: state}); err != nil {
+		t.Fatalf("run runner: %v", err)
+	}
+
+	dump, err := analysis.LoadDump(dumpPath)
+	if err != nil {
+		t.Fatalf("load dump: %v", err)
+	}
+	if dump.Stats != nil {
+		t.Fatalf("expected stats to be omitted when perf stats are disabled")
 	}
 }

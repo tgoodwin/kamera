@@ -4,7 +4,7 @@
 Define a concrete, deterministic translation from a `HotspotInstance` (from static dependency graphs) to a simple `Input` representation suitable for later conversion into a `Scenario`. This step intentionally excludes “dimensions of variation,” which will be handled later.
 
 ## Scope
-- **In:** Hotspot → Input translation, object materialization from the input map, pending reconcile construction, and tuning fields.
+- **In:** Hotspot → Input translation, object materialization from the input map, and tuning fields.
 - **Out:** Dimension expansion (Input → []Input) and any tracecheck-specific configuration details.
 
 ## Data Types (pkg/coverage)
@@ -12,20 +12,20 @@ Keep the translation layer independent of `tracecheck`.
 
 ```
 type Input struct {
-  Name      string
-  Objects   []*unstructured.Unstructured
-  Pending   []Pending
-  Tuning    InputTuning
+  Name            string
+  EnvironmentState EnvironmentState
+  UserInputs      []UserInput
+  Tuning          InputTuning
 }
 
-type Pending struct {
-  ControllerID string
-  Key          NamespacedName
+type EnvironmentState struct {
+  Objects []*unstructured.Unstructured
 }
 
-type NamespacedName struct {
-  Namespace string
-  Name      string
+type UserInput struct {
+  ID      string
+  Type    string
+  Object  *unstructured.Unstructured
 }
 
 type InputTuning struct {
@@ -48,7 +48,6 @@ type InputTemplate struct {
 ```
 
 Notes:
-- `Pending` is explicit and deterministic; conversion to `tracecheck.PendingReconcile` happens later.
 - `StaleReads` is keyed by controller ID; `StaleLookback` is keyed by canonical GroupKind.
 
 ## Input Map Assumption
@@ -78,10 +77,8 @@ Inputs: `HotspotInstance`, dependency graph lookup, input map.
    - Deduplicate by GVK.
 2. **Resolve objects:**
    - For each GVK, look up a template, deep-copy, normalize, and store.
-3. **Build Pending:**
-   - For each hotspot controller, find its **primary reconciles target** in the graph.
-   - If multiple reconciles targets exist, emit a **warning** and choose deterministically (lexicographic GVK).
-   - Create a `Pending` using the normalized object’s name/namespace for that GVK.
+3. **Build user inputs:**
+   - For each resolved resource, create a `UserInput` with `type=CREATE` and the normalized object.
 4. **Set Tuning (compact hints):**
    - **Multi-writer / Diamond / Feedback cycle:** `PermuteControllers = hotspot.Controllers`.
    - **Missing trigger / Reducer:** `StaleReads[reader] = []groupKind{...}` for referenced inputs.

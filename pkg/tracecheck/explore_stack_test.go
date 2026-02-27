@@ -55,6 +55,35 @@ func TestEnqueueStatesSkipsCompletedLogicalState(t *testing.T) {
 	assert.Equal(t, 1, explorer.stats.SubtreeCompletionSkips)
 }
 
+func TestEnqueueStatesSkipsInProgressDiamondState(t *testing.T) {
+	explorer := &Explorer{stats: NewExploreStats()}
+	tracker := newSubtreeTracker()
+
+	state := testState(testPending("controller-a", "default", "obj-a"))
+	tracker.markInProgress(state.LogicalKey())
+
+	stack, enqueued := explorer.enqueueStates(nil, tracker, []StateNode{state}, true)
+	assert.False(t, enqueued)
+	assert.Empty(t, stack)
+	assert.Equal(t, 1, explorer.stats.SubtreeDiamondSkips)
+}
+
+func TestEnqueueStatesAllowsInProgressCycleState(t *testing.T) {
+	explorer := &Explorer{stats: NewExploreStats()}
+	tracker := newSubtreeTracker()
+
+	ancestor := testState(testPending("controller-a", "default", "obj-a"))
+	cycle := ancestor.Clone()
+	cycle.parent = &ancestor
+	tracker.markInProgress(ancestor.LogicalKey())
+
+	stack, enqueued := explorer.enqueueStates(nil, tracker, []StateNode{cycle}, true)
+	assert.True(t, enqueued)
+	assert.Len(t, stack, 1)
+	assert.False(t, stack[0].isMarker())
+	assert.Equal(t, 0, explorer.stats.SubtreeDiamondSkips)
+}
+
 func TestEnqueueStaleViewsWithSubtreeCompletion(t *testing.T) {
 	explorer := &Explorer{stats: NewExploreStats()}
 	tracker := newStaleViewTracker()

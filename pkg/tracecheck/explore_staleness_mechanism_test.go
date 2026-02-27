@@ -21,6 +21,7 @@ func TestGetPossibleViewsForReconcile_ContainsStrictlyStaleView(t *testing.T) {
 		newTestStateEvent(1, group, kind, "pa-v1"),
 		newTestStateEvent(2, group, kind, "pa-v2"),
 	)
+	state.nextUserActionIdx = 3
 
 	explorer := &Explorer{
 		Config: &ExploreConfig{
@@ -53,6 +54,9 @@ func TestGetPossibleViewsForReconcile_ContainsStrictlyStaleView(t *testing.T) {
 	currentSeq := state.Contents.KindSequences[kindKey]
 	foundStrictlyStale := false
 	for _, v := range views {
+		if v.nextUserActionIdx != state.nextUserActionIdx {
+			t.Fatalf("expected stale view to preserve nextUserActionIdx=%d, got %d", state.nextUserActionIdx, v.nextUserActionIdx)
+		}
 		if v.Contents.KindSequences[kindKey] < currentSeq {
 			foundStrictlyStale = true
 			break

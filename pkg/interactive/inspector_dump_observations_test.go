@@ -31,6 +31,10 @@ func TestDumpReconcileResult_RoundTripsObservations(t *testing.T) {
 		ControllerID: "DeploymentController",
 		FrameID:      "frame-1",
 		FrameType:    tracecheck.FrameTypeExplore,
+		StepMetadata: map[string]string{
+			tracecheck.UserActionIDMetadataKey:    "ua-1",
+			tracecheck.UserActionIndexMetadataKey: "0",
+		},
 		Changes: tracecheck.Changes{
 			ObjectVersions: tracecheck.ObjectVersions{
 				writeKey: writeHash,
@@ -51,6 +55,8 @@ func TestDumpReconcileResult_RoundTripsObservations(t *testing.T) {
 
 	restored := fromDumpReconcileResult(dumped, nil)
 	require.NotNil(t, restored)
+	require.Equal(t, "ua-1", restored.StepMetadata[tracecheck.UserActionIDMetadataKey])
+	require.Equal(t, "0", restored.StepMetadata[tracecheck.UserActionIndexMetadataKey])
 	require.Len(t, restored.Changes.Effects, 1)
 	require.Len(t, restored.Changes.Observations, 1)
 	require.Equal(t, event.GET, restored.Changes.Observations[0].OpType)

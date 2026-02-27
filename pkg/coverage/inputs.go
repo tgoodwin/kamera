@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/tgoodwin/kamera/pkg/event"
 )
 
 // LoadInputs reads a scenarios inputs file from disk.
@@ -40,26 +42,42 @@ func validateInputs(inputs []Input) error {
 		}
 		seenNames[name] = struct{}{}
 
-		if len(input.Objects) == 0 {
-			return fmt.Errorf("input[%d] (%s) must include at least one object", i, name)
+		if len(input.EnvironmentState.Objects) == 0 && len(input.UserInputs) == 0 {
+			return fmt.Errorf("input[%d] (%s) must include either environmentState.objects or userInputs", i, name)
 		}
-		for objIdx, obj := range input.Objects {
+
+		for objIdx, obj := range input.EnvironmentState.Objects {
 			if obj == nil {
-				return fmt.Errorf("input[%d] (%s) object[%d] is nil", i, name, objIdx)
+				return fmt.Errorf("input[%d] (%s) environmentState.objects[%d] is nil", i, name, objIdx)
 			}
 			if strings.TrimSpace(obj.GetAPIVersion()) == "" || strings.TrimSpace(obj.GetKind()) == "" {
-				return fmt.Errorf("input[%d] (%s) object[%d] must set apiVersion and kind", i, name, objIdx)
+				return fmt.Errorf("input[%d] (%s) environmentState.objects[%d] must set apiVersion and kind", i, name, objIdx)
 			}
 		}
 
-		for pendingIdx, pending := range input.Pending {
-			if strings.TrimSpace(pending.ControllerID) == "" {
-				return fmt.Errorf("input[%d] (%s) pending[%d].controllerId must be set", i, name, pendingIdx)
+		for actionIdx, action := range input.UserInputs {
+			if action.Object == nil {
+				return fmt.Errorf("input[%d] (%s) userInputs[%d].object must be set", i, name, actionIdx)
 			}
-			if strings.TrimSpace(pending.Key.Name) == "" {
-				return fmt.Errorf("input[%d] (%s) pending[%d].key.name must be set", i, name, pendingIdx)
+			if strings.TrimSpace(string(action.Type)) == "" {
+				return fmt.Errorf("input[%d] (%s) userInputs[%d].type must be set", i, name, actionIdx)
+			}
+			if !isValidUserActionType(action.Type) {
+				return fmt.Errorf("input[%d] (%s) userInputs[%d].type must be CREATE, UPDATE, or DELETE", i, name, actionIdx)
+			}
+			if strings.TrimSpace(action.Object.GetAPIVersion()) == "" || strings.TrimSpace(action.Object.GetKind()) == "" {
+				return fmt.Errorf("input[%d] (%s) userInputs[%d].object must set apiVersion and kind", i, name, actionIdx)
 			}
 		}
 	}
 	return nil
+}
+
+func isValidUserActionType(op event.OperationType) bool {
+	switch op {
+	case event.CREATE, event.UPDATE, event.MARK_FOR_DELETION:
+		return true
+	default:
+		return false
+	}
 }

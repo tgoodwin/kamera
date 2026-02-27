@@ -44,3 +44,4 @@ testresults/**
 *.txt
 
 .worktrees/
+graph-experiment/

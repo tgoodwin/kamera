@@ -7,8 +7,9 @@ This example drives Kamera’s `Explorer` against a minimal Knative Serving setu
 - `-timeout <duration>`: abort exploration after this duration. Accepts Go duration strings (e.g., `10s`, `2m`). Set to `0` to disable.
 - `-log-level <level>`: `debug`, `info`, `warn`, or `error` (default: `info`).
 - `-interactive <bool>`: launch the TUI inspector (`true` by default). Set `-interactive=false` for headless runs.
+- `-perturb <bool>`: controls batch input pipeline shape. `true` (default) runs reference+rerun phases for scenarios that define closed-loop plans; `false` forces a single pass.
 - `-dump-output <path>`: write converged + aborted states to a file (works even when `-interactive=false`).
-- `-emit-stats`: record and print reconcile performance stats at the end.
+- `-emit-stats`: record and print reconcile performance stats at the end, and embed them under `stats` in the `-dump-output` file.
 
 ## preparing knative code for deterministic simulation testing
 Kamera's `Explorer` simulation searches the reconciliation execution space and identifies possible converged states. Because Knative code modifies Knative resources with nondeterministic values such as timestamps, these timestamp values can cause two semantically equivalent states to appear distinct, which is no good for our deterministic simulation strategy. So, we fix this by preprocessing Knative code + dependencies to be deterministic.

@@ -59,8 +59,10 @@ func TestTranslateHotspots(t *testing.T) {
 	require.Len(t, inputs, len(multi))
 
 	input := inputs[0]
-	require.Len(t, input.Objects, 1)
-	obj := input.Objects[0]
+	require.Len(t, input.UserInputs, 1)
+	inputAction := input.UserInputs[0]
+	require.Equal(t, "CREATE", string(inputAction.Type))
+	obj := inputAction.Object
 	require.Equal(t, "hs-multi_writer-0-service", obj.GetName())
 	require.Equal(t, "default", obj.GetNamespace())
 
@@ -69,9 +71,4 @@ func TestTranslateHotspots(t *testing.T) {
 	require.False(t, found)
 
 	require.ElementsMatch(t, []string{"WriterA", "WriterB"}, input.Tuning.PermuteControllers)
-	require.Len(t, input.Pending, 2)
-	for _, pending := range input.Pending {
-		require.Equal(t, obj.GetName(), pending.Key.Name)
-		require.Equal(t, obj.GetNamespace(), pending.Key.Namespace)
-	}
 }

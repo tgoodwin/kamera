@@ -2,8 +2,9 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
-	"github.com/crossplane/crossplane-runtime/v2/pkg/event"
+	xpevent "github.com/crossplane/crossplane-runtime/v2/pkg/event"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource/fake"
 	ucomposite "github.com/crossplane/crossplane-runtime/v2/pkg/resource/unstructured/composite"
@@ -15,6 +16,7 @@ import (
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/revision"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
@@ -67,7 +69,7 @@ func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
 			composite.WithLogger(log),
 			composite.WithRecorder(recorder),
 		)
-	}).For(xrAPIVersion + "/" + xrKind)
+	}).ForGK(schema.GroupKind{Group: "example.org", Kind: xrKind})
 
 	return builder
 }
@@ -153,11 +155,11 @@ type logRecorder struct {
 	annotations map[string]string
 }
 
-func newLogRecorder(log logging.Logger) event.Recorder {
+func newLogRecorder(log logging.Logger) xpevent.Recorder {
 	return logRecorder{log: log, annotations: map[string]string{}}
 }
 
-func (r logRecorder) Event(obj runtime.Object, e event.Event) {
+func (r logRecorder) Event(obj runtime.Object, e xpevent.Event) {
 	fields := []any{
 		"type", string(e.Type),
 		"reason", string(e.Reason),
@@ -186,7 +188,7 @@ func (r logRecorder) Event(obj runtime.Object, e event.Event) {
 	r.log.Info("Crossplane event", fields...)
 }
 
-func (r logRecorder) WithAnnotations(keysAndValues ...string) event.Recorder {
+func (r logRecorder) WithAnnotations(keysAndValues ...string) xpevent.Recorder {
 	next := logRecorder{
 		log:         r.log,
 		annotations: copyAnnotations(r.annotations),
@@ -221,6 +223,156 @@ func copyAnnotations(in map[string]string) map[string]string {
 	return out
 }
 
-func scenariosFromInputs(_ *tracecheck.ExplorerBuilder, _ []coverage.Input) ([]explore.Scenario, error) {
-	return nil, fmt.Errorf("input to scenario conversion not implemented")
+func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.Input) ([]explore.Scenario, error) {
+	if builder == nil {
+		return nil, fmt.Errorf("builder is nil")
+	}
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("no inputs supplied")
+	}
+
+	baseCfg := builder.Config()
+	scenarios := make([]explore.Scenario, 0, len(inputs))
+	for idx, input := range inputs {
+		state, seededObjects, err := buildStateFromCoverageInput(builder, input)
+		if err != nil {
+			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
+		}
+		userInputs, err := buildUserActionsFromCoverageInput(input, seededObjects)
+		if err != nil {
+			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
+		}
+
+		scenarios = append(scenarios, explore.Scenario{
+			Name:             input.Name,
+			EnvironmentState: state,
+			UserInputs:       userInputs,
+			Config:           applyInputTuning(baseCfg, input.Tuning),
+		})
+	}
+
+	return scenarios, nil
+}
+
+func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, []client.Object, error) {
+	if builder == nil {
+		return tracecheck.StateNode{}, nil, fmt.Errorf("builder is nil")
+	}
+
+	objects := make([]client.Object, 0, len(input.EnvironmentState.Objects))
+	for idx, obj := range input.EnvironmentState.Objects {
+		if obj == nil {
+			return tracecheck.StateNode{}, nil, fmt.Errorf("input environment object %d is nil", idx)
+		}
+		objects = append(objects, obj.DeepCopy())
+	}
+
+	if len(objects) == 0 {
+		for _, action := range input.UserInputs {
+			if action.Type != event.CREATE || action.Object == nil {
+				continue
+			}
+			objects = append(objects, action.Object.DeepCopy())
+		}
+	}
+
+	if len(objects) == 0 {
+		return tracecheck.StateNode{}, nil, fmt.Errorf("input has no seedable objects")
+	}
+
+	state, err := builder.BuildStartStateFromObjects(objects, nil)
+	if err != nil {
+		return tracecheck.StateNode{}, nil, err
+	}
+	return state, objects, nil
+}
+
+func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
+	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
+	for idx, action := range input.UserInputs {
+		if action.Object == nil {
+			return nil, fmt.Errorf("input user input %d has nil object", idx)
+		}
+
+		id := strings.TrimSpace(action.ID)
+		if id == "" {
+			id = fmt.Sprintf("user-input-%d", idx)
+		}
+
+		opType := action.Type
+		if opType == event.CREATE && isInputObjectSeeded(action.Object, seededObjects) {
+			opType = event.UPDATE
+		}
+
+		actions = append(actions, tracecheck.UserAction{
+			ID:      id,
+			OpType:  opType,
+			Payload: action.Object.DeepCopy(),
+		})
+	}
+	return actions, nil
+}
+
+func isInputObjectSeeded(object client.Object, seededObjects []client.Object) bool {
+	if object == nil {
+		return false
+	}
+	for _, seeded := range seededObjects {
+		if sameObjectIdentity(seeded, object) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameObjectIdentity(a, b client.Object) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	aGVK := a.GetObjectKind().GroupVersionKind()
+	bGVK := b.GetObjectKind().GroupVersionKind()
+	if aGVK.Group != bGVK.Group || aGVK.Kind != bGVK.Kind {
+		return false
+	}
+	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
+}
+
+func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
+	cfg := base.Clone()
+	if tuning.MaxDepth > 0 {
+		cfg.MaxDepth = tuning.MaxDepth
+	}
+	if len(tuning.PermuteControllers) > 0 {
+		if cfg.Perturbations.PermuteOrder == nil {
+			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+		}
+		for _, controllerID := range tuning.PermuteControllers {
+			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
+		}
+	}
+	if len(tuning.StaleReads) > 0 {
+		if cfg.Perturbations.Staleness == nil {
+			cfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+		}
+		for controllerID, kinds := range tuning.StaleReads {
+			id := tracecheck.ReconcilerID(controllerID)
+			st := cfg.Perturbations.Staleness[id]
+			if st.StaleReadBounds == nil {
+				st.StaleReadBounds = make(tracecheck.LookbackLimits)
+			}
+			for _, kind := range kinds {
+				trimmed := strings.TrimSpace(kind)
+				if trimmed == "" {
+					continue
+				}
+				lookback := tuning.StaleLookback[trimmed]
+				if lookback <= 0 {
+					lookback = 1
+				}
+				st.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
+			}
+			cfg.Perturbations.Staleness[id] = st
+		}
+	}
+	return cfg
 }

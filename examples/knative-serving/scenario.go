@@ -13,6 +13,7 @@ import (
 
 	knativeharness "github.com/tgoodwin/kamera/examples/knative-serving/knative"
 	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/simclock"
@@ -236,16 +237,21 @@ func scenariosFromInputsForPhase(
 	includePerturbations := phase != scenarioPhaseReference
 	scenarios := make([]explore.Scenario, 0, len(inputs))
 	for idx, input := range inputs {
-		state, err := buildStateFromCoverageInput(builder, input)
+		state, seededObjects, err := buildStateFromCoverageInput(builder, input)
 		if err != nil {
 			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
 		}
+		userInputs, err := buildUserActionsFromCoverageInput(input, seededObjects)
+		if err != nil {
+			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
+		}
 
 		scenarios = append(scenarios, explore.Scenario{
-			Name:         input.Name,
-			InitialState: state,
-			Config:       applyInputTuningForPhase(baseCfg, input.Tuning, includePerturbations),
-			Context:      scenarioContextForInput(input, phase),
+			Name:             input.Name,
+			EnvironmentState: state,
+			UserInputs:       userInputs,
+			Config:           applyInputTuningForPhase(baseCfg, input.Tuning, includePerturbations),
+			Context:          scenarioContextForInput(input, phase),
 		})
 	}
 
@@ -269,9 +275,13 @@ func scenariosFromInputsWithClosedLoop(
 	referenceBase := withoutPerturbations(builder.Config())
 	scenarios := make([]explore.Scenario, 0, len(inputs))
 	for idx, input := range inputs {
-		state, err := buildStateFromCoverageInput(builder, input)
+		state, seededObjects, err := buildStateFromCoverageInput(builder, input)
 		if err != nil {
 			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
+		}
+		userInputs, err := buildUserActionsFromCoverageInput(input, seededObjects)
+		if err != nil {
+			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
 		}
 
 		referenceCfg := applyInputTuningForPhase(referenceBase, input.Tuning, false)
@@ -279,10 +289,11 @@ func scenariosFromInputsWithClosedLoop(
 		rerunPlanCfg := referenceCfg.Clone()
 		rerunContext := scenarioContextForInput(input, scenarioPhaseRerun)
 		scenarios = append(scenarios, explore.Scenario{
-			Name:         input.Name,
-			InitialState: state,
-			Config:       referenceCfg,
-			Context:      scenarioContextForInput(input, scenarioPhaseReference),
+			Name:             input.Name,
+			EnvironmentState: state,
+			UserInputs:       userInputs,
+			Config:           referenceCfg,
+			Context:          scenarioContextForInput(input, scenarioPhaseReference),
 			ClosedLoop: &explore.ClosedLoopSpec{
 				Plan: func(reference explore.ScenarioPhaseResult) ([]explore.ScenarioPhasePlan, error) {
 					plan, ok, err := buildV0CheckpointRerunPlan(reference, rerunPlanCfg, rerunContext)
@@ -436,12 +447,12 @@ func expandKnativeParameterizedInput(input coverage.Input, fuzzCases int, fuzzSe
 
 	base := cloneCoverageInput(input)
 	base.Name = baseName + "/base"
-	serviceIdx := findKnativeService(base.Objects)
+	serviceIdx := findKnativeServiceInUserInputs(base.UserInputs)
 	if serviceIdx < 0 {
 		return []coverage.Input{base}, nil
 	}
 
-	templateSvc, err := unstructuredToService(base.Objects[serviceIdx])
+	templateSvc, err := unstructuredToService(base.UserInputs[serviceIdx].Object)
 	if err != nil {
 		return nil, err
 	}
@@ -502,7 +513,12 @@ func knativeParamCatalog() []knativeParamSpec {
 	}
 }
 
-func expandKnativeSingleParamVariants(input coverage.Input, baseName string, serviceIdx int, templateSvc *v1.Service) ([]coverage.Input, error) {
+func expandKnativeSingleParamVariants(
+	input coverage.Input,
+	baseName string,
+	serviceIdx int,
+	templateSvc *v1.Service,
+) ([]coverage.Input, error) {
 	variants := make([]coverage.Input, 0)
 	for _, spec := range knativeParamCatalog() {
 		for _, option := range spec.options {
@@ -520,7 +536,14 @@ func expandKnativeSingleParamVariants(input coverage.Input, baseName string, ser
 	return variants, nil
 }
 
-func expandKnativeSampledParamVariants(input coverage.Input, baseName string, serviceIdx int, templateSvc *v1.Service, cases int, seed int64) ([]coverage.Input, error) {
+func expandKnativeSampledParamVariants(
+	input coverage.Input,
+	baseName string,
+	serviceIdx int,
+	templateSvc *v1.Service,
+	cases int,
+	seed int64,
+) ([]coverage.Input, error) {
 	if cases <= 0 {
 		return nil, nil
 	}
@@ -566,7 +589,13 @@ func expandKnativeSampledParamVariants(input coverage.Input, baseName string, se
 	return variants, nil
 }
 
-func buildKnativeVariantInput(input coverage.Input, serviceIdx int, templateSvc *v1.Service, name string, options []knativeParamOption) (coverage.Input, error) {
+func buildKnativeVariantInput(
+	input coverage.Input,
+	serviceIdx int,
+	templateSvc *v1.Service,
+	name string,
+	options []knativeParamOption,
+) (coverage.Input, error) {
 	updated := cloneCoverageInput(input)
 	updated.Name = name
 
@@ -583,7 +612,10 @@ func buildKnativeVariantInput(input coverage.Input, serviceIdx int, templateSvc 
 	if err != nil {
 		return coverage.Input{}, fmt.Errorf("convert parameterized service for %q: %w", name, err)
 	}
-	updated.Objects[serviceIdx] = serviceObj
+	if serviceIdx >= len(updated.UserInputs) || updated.UserInputs[serviceIdx].Object == nil {
+		return coverage.Input{}, fmt.Errorf("service user input missing for %q", name)
+	}
+	updated.UserInputs[serviceIdx].Object = serviceObj
 	return updated, nil
 }
 
@@ -702,55 +734,29 @@ func parseScaleAnnotation(svc *v1.Service, key string) (int64, bool, error) {
 	return value, true, nil
 }
 
-func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, error) {
-	if len(input.Objects) == 0 {
-		return tracecheck.StateNode{}, fmt.Errorf("input has no objects")
-	}
-
-	objects := make([]client.Object, 0, len(input.Objects))
-	for idx, obj := range input.Objects {
+func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, []client.Object, error) {
+	objects := make([]client.Object, 0, len(input.EnvironmentState.Objects))
+	for _, obj := range input.EnvironmentState.Objects {
 		if obj == nil {
-			return tracecheck.StateNode{}, fmt.Errorf("input object %d is nil", idx)
+			continue
 		}
 		clone := obj.DeepCopy()
-		tag.AddSleeveObjectID(clone)
 		objects = append(objects, clone)
 	}
-
-	pending := make([]tracecheck.PendingReconcile, 0, len(input.Pending))
-	for _, p := range input.Pending {
-		pending = append(pending, tracecheck.PendingReconcile{
-			ReconcilerID: tracecheck.ReconcilerID(p.ControllerID),
-			Request: reconcile.Request{
-				NamespacedName: client.ObjectKey{
-					Namespace: p.Key.Namespace,
-					Name:      p.Key.Name,
-				},
-			},
-			Source: tracecheck.SourceStateChange,
-		})
+	if len(objects) == 0 {
+		baseSvc := buildBaselineService()
+		objects = append(objects, baseSvc)
 	}
-	if len(pending) == 0 {
-		for _, obj := range objects {
-			if isKnativeService(obj) {
-				pending = append(pending, tracecheck.PendingReconcile{
-					ReconcilerID: "ServiceReconciler",
-					Request: reconcile.Request{
-						NamespacedName: client.ObjectKey{
-							Namespace: obj.GetNamespace(),
-							Name:      obj.GetName(),
-						},
-					},
-					Source: tracecheck.SourceStateChange,
-				})
-			}
-		}
-	}
-	if len(pending) == 0 {
-		return tracecheck.StateNode{}, fmt.Errorf("input has no pending reconciles")
+	if len(objects) == 0 {
+		return tracecheck.StateNode{}, nil, fmt.Errorf("input has no objects")
 	}
 
-	return builder.BuildStartStateFromObjects(objects, pending)
+	pending := make([]tracecheck.PendingReconcile, 0)
+	state, err := builder.BuildStartStateFromObjects(objects, pending)
+	if err != nil {
+		return tracecheck.StateNode{}, nil, err
+	}
+	return state, objects, nil
 }
 
 func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
@@ -820,16 +826,16 @@ func withoutPerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig
 }
 
 func cloneCoverageInput(input coverage.Input) coverage.Input {
-	objects := make([]*unstructured.Unstructured, 0, len(input.Objects))
-	for _, obj := range input.Objects {
+	objects := make([]*unstructured.Unstructured, 0, len(input.EnvironmentState.Objects))
+	for _, obj := range input.EnvironmentState.Objects {
 		if obj == nil {
 			objects = append(objects, nil)
 			continue
 		}
 		objects = append(objects, obj.DeepCopy())
 	}
+	userInputs := cloneUserInputs(input.UserInputs)
 
-	pending := append([]coverage.Pending(nil), input.Pending...)
 	tuning := coverage.InputTuning{
 		MaxDepth:           input.Tuning.MaxDepth,
 		PermuteControllers: append([]string(nil), input.Tuning.PermuteControllers...),
@@ -837,11 +843,79 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		StaleLookback:      cloneIntMap(input.Tuning.StaleLookback),
 	}
 	return coverage.Input{
-		Name:    input.Name,
-		Objects: objects,
-		Pending: pending,
-		Tuning:  tuning,
+		Name: input.Name,
+		EnvironmentState: coverage.EnvironmentState{
+			Objects: objects,
+		},
+		UserInputs: userInputs,
+		Tuning:     tuning,
 	}
+}
+
+func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
+	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
+	for idx, action := range input.UserInputs {
+		if action.Object == nil {
+			return nil, fmt.Errorf("input user input %d has nil object", idx)
+		}
+		id := strings.TrimSpace(action.ID)
+		if id == "" {
+			id = fmt.Sprintf("user-input-%d", idx)
+		}
+		opType := action.Type
+		if opType == event.CREATE && isInputObjectSeeded(action.Object, seededObjects) {
+			opType = event.UPDATE
+		}
+		actions = append(actions, tracecheck.UserAction{
+			ID:      id,
+			OpType:  opType,
+			Payload: action.Object.DeepCopy(),
+		})
+	}
+	return actions, nil
+}
+
+func isInputObjectSeeded(object client.Object, seededObjects []client.Object) bool {
+	if object == nil {
+		return false
+	}
+	for _, seeded := range seededObjects {
+		if sameObjectIdentity(seeded, object) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameObjectIdentity(a, b client.Object) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	aGVK := a.GetObjectKind().GroupVersionKind()
+	bGVK := b.GetObjectKind().GroupVersionKind()
+	if aGVK.Group != bGVK.Group || aGVK.Kind != bGVK.Kind {
+		return false
+	}
+	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
+}
+
+func cloneUserInputs(inputs []coverage.UserInput) []coverage.UserInput {
+	if len(inputs) == 0 {
+		return nil
+	}
+	out := make([]coverage.UserInput, 0, len(inputs))
+	for _, input := range inputs {
+		clone := coverage.UserInput{
+			ID:     input.ID,
+			Type:   input.Type,
+			Object: nil,
+		}
+		if input.Object != nil {
+			clone.Object = input.Object.DeepCopy()
+		}
+		out = append(out, clone)
+	}
+	return out
 }
 
 func cloneStringSliceMap(in map[string][]string) map[string][]string {
@@ -872,6 +946,18 @@ func findKnativeService(objects []*unstructured.Unstructured) int {
 			continue
 		}
 		if isKnativeService(obj) {
+			return idx
+		}
+	}
+	return -1
+}
+
+func findKnativeServiceInUserInputs(userInputs []coverage.UserInput) int {
+	for idx, input := range userInputs {
+		if input.Object == nil {
+			continue
+		}
+		if isKnativeService(input.Object) {
 			return idx
 		}
 	}

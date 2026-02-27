@@ -167,7 +167,7 @@ if inputsPath := explore.InputsPath(); inputsPath != "" {
 		fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
 		os.Exit(1)
 	}
-	opts := explore.ParallelOptions{DumpDir: explore.DumpPath(), StatsDir: explore.DumpStatsPath()}
+	opts := explore.ParallelOptions{DumpDir: explore.DumpPath()}
 	if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
 		fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
 		os.Exit(1)
@@ -281,7 +281,7 @@ Not applicable; doc-only change.
 **Step 2: Make the change**
 
 Add a short "Batch inputs" snippet showing `--inputs`, `--dump-output`, and
-`--dump-stats` usage.
+`--emit-stats` usage.
 
 **Step 3: Commit**
 

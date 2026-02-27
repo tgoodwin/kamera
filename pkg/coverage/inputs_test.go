@@ -13,7 +13,10 @@ import (
 )
 
 func TestLoadInputsOK(t *testing.T) {
-	inputs := []Input{{Name: "case-1", Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}}}
+	inputs := []Input{{
+		Name:             "case-1",
+		EnvironmentState: EnvironmentState{Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}},
+	}}
 	path := writeInputsFile(t, inputs)
 
 	got, err := LoadInputs(path)
@@ -23,7 +26,10 @@ func TestLoadInputsOK(t *testing.T) {
 }
 
 func TestLoadInputsTopLevelArrayContract(t *testing.T) {
-	inputs := []Input{{Name: "case-1", Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}}}
+	inputs := []Input{{
+		Name:             "case-1",
+		EnvironmentState: EnvironmentState{Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}},
+	}}
 	path := writeInputsFile(t, inputs)
 
 	got, err := LoadInputs(path)
@@ -46,8 +52,8 @@ func TestLoadInputsEmpty(t *testing.T) {
 
 func TestLoadInputsDuplicateScenarioName(t *testing.T) {
 	path := writeInputsFile(t, []Input{
-		{Name: "case-1", Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}},
-		{Name: "case-1", Objects: []*unstructured.Unstructured{inputObject("v1", "Secret")}},
+		{Name: "case-1", EnvironmentState: EnvironmentState{Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}}},
+		{Name: "case-1", EnvironmentState: EnvironmentState{Objects: []*unstructured.Unstructured{inputObject("v1", "Secret")}}},
 	})
 
 	_, err := LoadInputs(path)
@@ -57,7 +63,10 @@ func TestLoadInputsDuplicateScenarioName(t *testing.T) {
 
 func TestLoadInputsMissingScenarioName(t *testing.T) {
 	path := writeInputsFile(t, []Input{
-		{Name: "   ", Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}},
+		{
+			Name:             "   ",
+			EnvironmentState: EnvironmentState{Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}},
+		},
 	})
 
 	_, err := LoadInputs(path)
@@ -66,65 +75,37 @@ func TestLoadInputsMissingScenarioName(t *testing.T) {
 }
 
 func TestLoadInputsMissingObjects(t *testing.T) {
-	path := writeInputsFile(t, []Input{
-		{Name: "case-1"},
-	})
+	path := writeInputsFile(t, []Input{{Name: "case-1"}})
 
 	_, err := LoadInputs(path)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must include at least one object")
+	assert.Contains(t, err.Error(), "must include either environmentState.objects or userInputs")
 }
 
-func TestLoadInputsInvalidPendingKey(t *testing.T) {
+func TestLoadInputsInvalidUserInputsType(t *testing.T) {
 	path := writeInputsFile(t, []Input{
 		{
-			Name:    "case-1",
-			Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")},
-			Pending: []Pending{
-				{
-					ControllerID: "controller-a",
-					Key: NamespacedName{
-						Namespace: "default",
-						Name:      "   ",
-					},
-				},
-			},
+			Name:             "case-1",
+			EnvironmentState: EnvironmentState{Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}},
+			UserInputs: []UserInput{{
+				Type:   "NOPE",
+				Object: inputObject("v1", "ConfigMap"),
+			}},
 		},
 	})
 
 	_, err := LoadInputs(path)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "pending[0].key.name must be set")
+	assert.Contains(t, err.Error(), "userInputs[0].type must be CREATE, UPDATE, or DELETE")
 }
 
 func TestLoadInputsInvalidObjectGVK(t *testing.T) {
 	path := writeInputsFile(t, []Input{
 		{
 			Name: "case-1",
-			Objects: []*unstructured.Unstructured{
-				{Object: map[string]any{"kind": "ConfigMap"}},
-			},
-		},
-	})
-
-	_, err := LoadInputs(path)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "object[0]")
-	assert.True(t, strings.Contains(err.Error(), "apiVersion") || strings.Contains(err.Error(), "kind"))
-}
-
-func TestLoadInputsInvalidPendingControllerID(t *testing.T) {
-	path := writeInputsFile(t, []Input{
-		{
-			Name:    "case-1",
-			Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")},
-			Pending: []Pending{
-				{
-					ControllerID: "   ",
-					Key: NamespacedName{
-						Namespace: "default",
-						Name:      "obj",
-					},
+			EnvironmentState: EnvironmentState{
+				Objects: []*unstructured.Unstructured{
+					{Object: map[string]any{"kind": "ConfigMap"}},
 				},
 			},
 		},
@@ -132,7 +113,8 @@ func TestLoadInputsInvalidPendingControllerID(t *testing.T) {
 
 	_, err := LoadInputs(path)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "pending[0].controllerId must be set")
+	assert.Contains(t, err.Error(), "environmentState.objects[0]")
+	assert.True(t, strings.Contains(err.Error(), "apiVersion") || strings.Contains(err.Error(), "kind"))
 }
 
 func writeInputsFile(t *testing.T, inputs []Input) string {

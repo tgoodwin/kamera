@@ -3,7 +3,6 @@ package explore
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,7 +22,6 @@ import (
 type ParallelOptions struct {
 	MaxParallel int
 	DumpDir     string
-	StatsDir    string
 }
 
 type childProcessRequest struct {
@@ -82,6 +80,8 @@ func (r *ParallelRunner) RunAll(ctx context.Context, scenarios []Scenario, opts 
 	if ParallelChildIndex() >= 0 && !ParallelProcessesEnabled() {
 		return nil, fmt.Errorf("--parallel-child-index requires --parallel-processes")
 	}
+	// the simclock package is not thread-safe, so for use cases that rely on simclock, we support
+	// a process-isolation mode that launches separate executions for each scenario and aggregates results via disk.
 	if ParallelProcessesEnabled() {
 		if strings.TrimSpace(InputsPath()) == "" {
 			return nil, fmt.Errorf("--parallel-processes requires explicit --inputs <file>")
@@ -94,6 +94,8 @@ func (r *ParallelRunner) RunAll(ctx context.Context, scenarios []Scenario, opts 
 	return r.runInProcess(ctx, scenarios, opts)
 }
 
+// runSupervisorMode launches child processes for each scenario and aggregates results.
+// it expects the child processes to write results to disk and does not enforce any ordering guarantees on completion.
 func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scenario, opts ParallelOptions) ([]ScenarioResult, error) {
 	if err := ensureParallelOutputDirs(opts); err != nil {
 		return nil, err
@@ -211,6 +213,7 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 	return results, nil
 }
 
+// runChildMode executes a single scenario based on the child index
 func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario, opts ParallelOptions) ([]ScenarioResult, error) {
 	opts = childParallelOptions(opts)
 	if err := ensureParallelOutputDirs(opts); err != nil {
@@ -262,6 +265,7 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 	return []ScenarioResult{result}, nil
 }
 
+// runInProcess executes all scenarios concurrently within the same process using goroutines.
 func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario, opts ParallelOptions) ([]ScenarioResult, error) {
 	if err := ensureParallelOutputDirs(opts); err != nil {
 		return nil, err
@@ -318,13 +322,13 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		return result
 	}
 
-	seed, err := r.builder.BuildRestartSeed(scenario.InitialState)
+	seed, err := r.builder.BuildRestartSeed(scenario.EnvironmentState)
 	if err != nil {
 		result.Err = fmt.Errorf("build restart seed: %w", err)
 		return result
 	}
 
-	if scenario.ClosedLoop == nil {
+	if scenario.ClosedLoop == nil || !PerturbEnabled() {
 		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, nil, scenario.Context)
 		result.Phases = []ScenarioPhaseResult{phase}
 		applyPhaseSummary(&result, phase)
@@ -407,6 +411,7 @@ func (r *ParallelRunner) runScenarioPhase(
 		phase.Err = fmt.Errorf("fork builder: nil")
 		return phase
 	}
+	fork.WithUserActions(cloneUserActions(scenario.UserInputs))
 	fork.SetConfig(cfg)
 	if len(prefix) > 0 && prefixResolver != nil {
 		if err := fork.PrimeVersionStoreFromHistory(prefix, prefixResolver); err != nil {
@@ -456,13 +461,6 @@ func (r *ParallelRunner) runScenarioPhase(
 		artifactName = fmt.Sprintf("%s/%s", scenario.Name, phaseLabel)
 	}
 
-	if opts.StatsDir != "" {
-		if err := writeScenarioStats(phase.Stats, opts.StatsDir, artifactName, idx); err != nil {
-			phase.Err = err
-			return phase
-		}
-	}
-
 	if opts.DumpDir != "" && res != nil {
 		states := append([]tracecheck.ResultState{}, res.ConvergedStates...)
 		states = append(states, res.AbortedStates...)
@@ -476,6 +474,10 @@ func (r *ParallelRunner) runScenarioPhase(
 			if len(attrs) == 0 {
 				attrs = nil
 			}
+			var dumpStats *tracecheck.ExploreStats
+			if cfg.RecordPerfStats {
+				dumpStats = phase.Stats
+			}
 			dumpContext := &interactive.InspectorDumpContext{
 				ScenarioName:     scenario.Name,
 				ScenarioRunIndex: &runIdx,
@@ -483,7 +485,7 @@ func (r *ParallelRunner) runScenarioPhase(
 				InputRef:         phaseCtx.InputRef,
 				Attributes:       attrs,
 			}
-			if err := interactive.SaveInspectorDumpWithContext(states, phase.VersionManager, path, dumpContext); err != nil {
+			if err := interactive.SaveInspectorDumpWithContextAndStats(states, phase.VersionManager, path, dumpContext, dumpStats); err != nil {
 				phase.Err = fmt.Errorf("dump scenario %s (%s): %w", scenario.Name, phaseLabel, err)
 				return phase
 			}
@@ -498,11 +500,6 @@ func ensureParallelOutputDirs(opts ParallelOptions) error {
 	if opts.DumpDir != "" {
 		if err := os.MkdirAll(opts.DumpDir, 0o755); err != nil {
 			return fmt.Errorf("create dump dir: %w", err)
-		}
-	}
-	if opts.StatsDir != "" {
-		if err := os.MkdirAll(opts.StatsDir, 0o755); err != nil {
-			return fmt.Errorf("create stats dir: %w", err)
 		}
 	}
 	return nil
@@ -782,30 +779,9 @@ func joinIntList(values []int) string {
 	return strings.Join(parts, ",")
 }
 
-func writeScenarioStats(stats *tracecheck.ExploreStats, dir string, name string, idx int) error {
-	if stats == nil {
-		return nil
-	}
-	stats.Finish()
-	data, err := json.MarshalIndent(stats, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal explore stats: %w", err)
-	}
-	path := scenarioStatsPath(dir, name, idx)
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write stats to %s: %w", path, err)
-	}
-	return nil
-}
-
 func scenarioDumpPath(dir, name string, idx int) string {
 	base := scenarioFileBase(name, idx)
 	return filepath.Join(dir, base+".jsonl")
-}
-
-func scenarioStatsPath(dir, name string, idx int) string {
-	base := scenarioFileBase(name, idx)
-	return filepath.Join(dir, base+".json")
 }
 
 func scenarioFileBase(name string, idx int) string {

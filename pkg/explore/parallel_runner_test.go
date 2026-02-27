@@ -59,14 +59,14 @@ func TestParallelRunnerDoesNotLeakConfig(t *testing.T) {
 
 	scenarios := []Scenario{
 		{
-			Name:         "max-depth-low",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 1},
+			Name:             "max-depth-low",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 1},
 		},
 		{
-			Name:         "max-depth-normal",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
+			Name:             "max-depth-normal",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 5},
 		},
 	}
 
@@ -107,9 +107,9 @@ func TestParallelRunnerWritesDump(t *testing.T) {
 
 	scenarios := []Scenario{
 		{
-			Name:         "Foo Scenario",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
+			Name:             "Foo Scenario",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 5},
 			Context: ScenarioContext{
 				Workflow: "smoke-workflow",
 				InputRef: "inputs.json#foo-scenario",
@@ -171,6 +171,51 @@ func TestParallelRunnerWritesDump(t *testing.T) {
 	}
 }
 
+func TestParallelRunnerEmbedsStatsInDumpWhenPerfStatsEnabled(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	dumpDir := t.TempDir()
+
+	scenarios := []Scenario{
+		{
+			Name:             "with-perf-stats",
+			EnvironmentState: state.Clone(),
+			Config: tracecheck.ExploreConfig{
+				MaxDepth:        5,
+				RecordPerfStats: true,
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{DumpDir: dumpDir})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].DumpPath == "" {
+		t.Fatalf("expected dump path")
+	}
+
+	dump, err := analysis.LoadDump(results[0].DumpPath)
+	if err != nil {
+		t.Fatalf("load dump: %v", err)
+	}
+	if dump.Stats == nil {
+		t.Fatalf("expected stats embedded in dump")
+	}
+	if dump.Stats.TotalNodeVisits == 0 {
+		t.Fatalf("expected embedded stats to include node visits")
+	}
+}
+
 func TestParallelRunnerCapturesInvariantError(t *testing.T) {
 	ctx := context.Background()
 	builder, state := newTestBuilder(t)
@@ -182,9 +227,9 @@ func TestParallelRunnerCapturesInvariantError(t *testing.T) {
 
 	scenarios := []Scenario{
 		{
-			Name:         "invariant-fails",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
+			Name:             "invariant-fails",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 5},
 			Invariant: func(tracecheck.StateNode) error {
 				return errors.New("invariant failed")
 			},
@@ -215,9 +260,9 @@ func TestParallelRunnerClosedLoopRunsReferenceThenRerunPerScenario(t *testing.T)
 	plannerCalls := 0
 	scenarios := []Scenario{
 		{
-			Name:         "closed-loop",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 1},
+			Name:             "closed-loop",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 1},
 			ClosedLoop: &ClosedLoopSpec{
 				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
 					plannerCalls++
@@ -259,6 +304,61 @@ func TestParallelRunnerClosedLoopRunsReferenceThenRerunPerScenario(t *testing.T)
 	}
 }
 
+func TestParallelRunnerClosedLoopDisablesRerunWhenPerturbDisabled(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	withPerturbFlag(t, false)
+	plannerCalls := 0
+	scenarios := []Scenario{
+		{
+			Name:             "closed-loop-disabled",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 1},
+			ClosedLoop: &ClosedLoopSpec{
+				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
+					plannerCalls++
+					return []ScenarioPhasePlan{
+						{Name: "rerun", Config: tracecheck.ExploreConfig{MaxDepth: 5}},
+					}, nil
+				},
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if plannerCalls != 0 {
+		t.Fatalf("expected planner to be skipped when perturb is disabled, got %d calls", plannerCalls)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if len(results[0].Phases) != 1 {
+		t.Fatalf("expected only one phase when perturb disabled, got %d", len(results[0].Phases))
+	}
+	if results[0].Phases[0].Name != "run" {
+		t.Fatalf("expected single phase name to be run, got %q", results[0].Phases[0].Name)
+	}
+}
+
+func withPerturbFlag(t *testing.T, enabled bool) {
+	t.Helper()
+
+	oldValue := *perturbFlag
+	*perturbFlag = enabled
+	t.Cleanup(func() {
+		*perturbFlag = oldValue
+	})
+}
+
 func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 	ctx := context.Background()
 	builder, state := newTestBuilder(t)
@@ -271,9 +371,9 @@ func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 	dumpDir := t.TempDir()
 	scenarios := []Scenario{
 		{
-			Name:         "closed-loop-dump",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 1},
+			Name:             "closed-loop-dump",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 1},
 			ClosedLoop: &ClosedLoopSpec{
 				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
 					return []ScenarioPhasePlan{
@@ -316,9 +416,9 @@ func TestParallelRunnerClosedLoopPrefixHistoryHashesAreDumpable(t *testing.T) {
 	dumpDir := t.TempDir()
 	scenarios := []Scenario{
 		{
-			Name:         "closed-loop-prefix-hashes",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 5},
+			Name:             "closed-loop-prefix-hashes",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 5},
 			ClosedLoop: &ClosedLoopSpec{
 				Plan: func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
 					if reference.Result == nil || len(reference.Result.ConvergedStates) == 0 {
@@ -416,9 +516,9 @@ func TestParallelRunnerProcessModeRequiresInputsFile(t *testing.T) {
 
 	scenarios := []Scenario{
 		{
-			Name:         "x",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
+			Name:             "x",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 3},
 		},
 	}
 
@@ -441,19 +541,19 @@ func TestParallelRunnerChildModeFailsWhenSelectedInputMapsToMultipleScenarios(t 
 
 	scenarios := []Scenario{
 		{
-			Name:         "alpha/base",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
+			Name:             "alpha/base",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 3},
 		},
 		{
-			Name:         "alpha/single/foo",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
+			Name:             "alpha/single/foo",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 3},
 		},
 		{
-			Name:         "beta",
-			InitialState: state.Clone(),
-			Config:       tracecheck.ExploreConfig{MaxDepth: 3},
+			Name:             "beta",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 3},
 		},
 	}
 
@@ -536,9 +636,9 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 	}
 
 	scenarios := []Scenario{
-		{Name: "a", InitialState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
-		{Name: "b", InitialState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
-		{Name: "c", InitialState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
+		{Name: "a", EnvironmentState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
+		{Name: "b", EnvironmentState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
+		{Name: "c", EnvironmentState: state.Clone(), Config: tracecheck.ExploreConfig{MaxDepth: 1}},
 	}
 	results, runErr := runner.RunAll(context.Background(), scenarios, ParallelOptions{MaxParallel: 2})
 
@@ -591,14 +691,16 @@ func writeInputNamesFile(t *testing.T, names ...string) string {
 	for _, name := range names {
 		inputs = append(inputs, coverage.Input{
 			Name: name,
-			Objects: []*unstructured.Unstructured{
-				{
-					Object: map[string]interface{}{
-						"apiVersion": "v1",
-						"kind":       "ConfigMap",
-						"metadata": map[string]interface{}{
-							"name":      name + "-cm",
-							"namespace": "default",
+			EnvironmentState: coverage.EnvironmentState{
+				Objects: []*unstructured.Unstructured{
+					{
+						Object: map[string]interface{}{
+							"apiVersion": "v1",
+							"kind":       "ConfigMap",
+							"metadata": map[string]interface{}{
+								"name":      name + "-cm",
+								"namespace": "default",
+							},
 						},
 					},
 				},

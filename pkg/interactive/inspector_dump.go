@@ -34,7 +34,19 @@ func SaveInspectorDump(states []tracecheck.ResultState, resolver tracecheck.Vers
 
 // SaveInspectorDumpWithContext serializes inspector states and includes optional scenario metadata.
 func SaveInspectorDumpWithContext(states []tracecheck.ResultState, resolver tracecheck.VersionManager, path string, ctx *InspectorDumpContext) error {
-	dump, err := buildInspectorDump(states, resolver, ctx)
+	return SaveInspectorDumpWithContextAndStats(states, resolver, path, ctx, nil)
+}
+
+// SaveInspectorDumpWithContextAndStats serializes inspector states, optional scenario metadata,
+// and optional exploration stats.
+func SaveInspectorDumpWithContextAndStats(
+	states []tracecheck.ResultState,
+	resolver tracecheck.VersionManager,
+	path string,
+	ctx *InspectorDumpContext,
+	stats *tracecheck.ExploreStats,
+) error {
+	dump, err := buildInspectorDump(states, resolver, ctx, stats)
 	if err != nil {
 		return err
 	}
@@ -60,9 +72,17 @@ func LoadInspectorDump(path string) ([]tracecheck.ResultState, tracecheck.Versio
 	return dumpToResultStates(dump)
 }
 
-func buildInspectorDump(states []tracecheck.ResultState, resolver tracecheck.VersionManager, context *InspectorDumpContext) (*analysis.Dump, error) {
+func buildInspectorDump(
+	states []tracecheck.ResultState,
+	resolver tracecheck.VersionManager,
+	context *InspectorDumpContext,
+	stats *tracecheck.ExploreStats,
+) (*analysis.Dump, error) {
 	if len(states) == 0 {
-		return &analysis.Dump{Context: buildAnalysisDumpContext(context)}, nil
+		return &analysis.Dump{
+			Context: buildAnalysisDumpContext(context),
+			Stats:   stats,
+		}, nil
 	}
 
 	if resolver == nil {
@@ -152,6 +172,7 @@ func buildInspectorDump(states []tracecheck.ResultState, resolver tracecheck.Ver
 
 	return &analysis.Dump{
 		Context: buildAnalysisDumpContext(context),
+		Stats:   stats,
 		Objects: objects,
 		States:  resultStates,
 	}, nil
@@ -275,6 +296,7 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 		ContentsHashAfter: contentsHashAfter,
 		FrameID:           step.FrameID,
 		FrameType:         step.FrameType,
+		StepMetadata:      step.StepMetadata,
 		Changes: analysis.DumpChanges{
 			ObjectVersions: toDumpObjectVersions(step.Changes.ObjectVersions, objIndex),
 			Effects:        effects,
@@ -295,6 +317,7 @@ func fromDumpReconcileResult(dump analysis.DumpReconcileResult, resolver *dumpKe
 		ControllerID: tracecheck.ReconcilerID(dump.ControllerID),
 		FrameID:      dump.FrameID,
 		FrameType:    dump.FrameType,
+		StepMetadata: dump.StepMetadata,
 		Changes: tracecheck.Changes{
 			ObjectVersions: fromDumpObjectVersions(dump.Changes.ObjectVersions, resolver),
 			Effects:        fromDumpEffects(dump.Changes.Effects, resolver),

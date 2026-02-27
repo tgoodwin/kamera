@@ -173,16 +173,21 @@ func main() {
 			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
 			os.Exit(1)
 		}
-		opts := explore.ParallelOptions{DumpDir: explore.DumpPath(), StatsDir: explore.DumpStatsPath()}
+		opts := explore.ParallelOptions{DumpDir: explore.DumpPath()}
 
-		fmt.Fprintln(os.Stderr, "closed-loop scaffold: running per-input reference->rerun pipelines")
+		if explore.PerturbEnabled() {
+			fmt.Fprintln(os.Stderr, "closed-loop scaffold: running per-input reference->rerun pipelines")
+		} else {
+			fmt.Fprintln(os.Stderr, "closed-loop scaffold: running per-input reference-only simulation (--perturb=false)")
+		}
+
 		scenarios, err := scenariosFromInputsWithClosedLoop(builder, inputs)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "build closed-loop scenarios: %v\n", err)
+			fmt.Fprintf(os.Stderr, "build scenarios: %v\n", err)
 			os.Exit(1)
 		}
 		if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
-			fmt.Fprintf(os.Stderr, "closed-loop batch run error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
 			os.Exit(1)
 		}
 		return
@@ -193,7 +198,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
 		os.Exit(1)
 	}
-	if err := runner.Run(ctx, initialState); err != nil {
+	if err := runner.Run(ctx, explore.RunInput{EnvironmentState: initialState}); err != nil {
 		fmt.Fprintf(os.Stderr, "session error: %v\n", err)
 		os.Exit(1)
 	}
