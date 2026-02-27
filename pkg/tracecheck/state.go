@@ -275,8 +275,23 @@ func (sn StateNode) DumpPending() {
 	}
 }
 
+func (sn StateNode) EligiblePendingReconciles() []PendingReconcile {
+	if len(sn.PendingReconciles) == 0 {
+		return nil
+	}
+	eligible := make([]PendingReconcile, 0, len(sn.PendingReconciles))
+	for _, pr := range sn.PendingReconciles {
+		if pr.NotBeforeDepth > sn.depth {
+			continue
+		}
+		eligible = append(eligible, pr)
+	}
+	return eligible
+}
+
 func (sn StateNode) IsConverged() bool {
-	return len(sn.PendingReconciles) == 0 || allPendingIgnorableForConvergence(sn.PendingReconciles)
+	eligible := sn.EligiblePendingReconciles()
+	return len(eligible) == 0 || allPendingIgnorableForConvergence(eligible)
 }
 
 func (sn StateNode) Objects() ObjectVersions {
@@ -367,7 +382,10 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 			if pi.Request.Namespace != pj.Request.Namespace {
 				return pi.Request.Namespace < pj.Request.Namespace
 			}
-			return pi.Request.Name < pj.Request.Name
+			if pi.Request.Name != pj.Request.Name {
+				return pi.Request.Name < pj.Request.Name
+			}
+			return pi.NotBeforeDepth < pj.NotBeforeDepth
 		})
 	}
 
@@ -399,6 +417,10 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 		builder.WriteString(pr.Request.Namespace)
 		builder.WriteByte('/')
 		builder.WriteString(pr.Request.Name)
+		if pr.NotBeforeDepth > 0 {
+			builder.WriteByte('@')
+			builder.WriteString(strconv.Itoa(pr.NotBeforeDepth))
+		}
 	}
 
 	builder.WriteString("|u:")
@@ -503,6 +525,10 @@ func (sn StateNode) orderedPendingSignature() string {
 	}
 	keys := make([]string, len(sn.PendingReconciles))
 	for i, pr := range sn.PendingReconciles {
+		if pr.NotBeforeDepth > 0 {
+			keys[i] = fmt.Sprintf("%s:%s/%s@%d", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name, pr.NotBeforeDepth)
+			continue
+		}
 		keys[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
 	}
 	return strings.Join(keys, "|")

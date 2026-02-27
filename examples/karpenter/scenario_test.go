@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/explore"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,6 +23,14 @@ func TestScenariosFromInputsRequiresBuilder(t *testing.T) {
 	_, err := scenariosFromInputs(nil, []coverage.Input{{Name: "x"}})
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestKarpenterBuilderConfiguresSimclockStepSize(t *testing.T) {
+	simclock.Configure(time.Unix(0, 0), 2*time.Second)
+	newKarpenterExplorerBuilder()
+	if got := simclock.StepDuration(); got != time.Second {
+		t.Fatalf("expected karpenter builder to configure simclock step to 1s, got %v", got)
 	}
 }
 

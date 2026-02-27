@@ -1,5 +1,7 @@
 package tracecheck
 
+import "strconv"
+
 // MergeStateNodes merges objects, pending reconciles, and kind sequences from the
 // supplied state nodes into a single StateNode rooted at primary.
 func MergeStateNodes(primary StateNode, others ...StateNode) StateNode {
@@ -10,6 +12,9 @@ func MergeStateNodes(primary StateNode, others ...StateNode) StateNode {
 	appendPending := func(items []PendingReconcile) {
 		for _, pr := range items {
 			key := pr.String()
+			if pr.NotBeforeDepth > 0 {
+				key = key + "@" + strconv.Itoa(pr.NotBeforeDepth)
+			}
 			if _, exists := pendingSeen[key]; exists {
 				continue
 			}

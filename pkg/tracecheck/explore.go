@@ -889,21 +889,22 @@ func (e *Explorer) explore(
 		// if any pending has SourceStateChange.
 		if e.isTerminalConvergedState(currentState) {
 			convergenceKey := currentState.ConvergenceHash()
-			reason := "no pending reconciles"
-			if len(currentState.PendingReconciles) > 0 {
-				reason = "only async enqueues/requeues remaining"
+			eligiblePending := currentState.EligiblePendingReconciles()
+			reason := "no eligible pending reconciles"
+			if len(eligiblePending) > 0 {
+				reason = "only ignorable pending reconciles remaining"
 			}
 
 			// INVARIANT CHECK: No SourceStateChange pending reconciles should be present
 			// when marking a state as converged. If this fires, there's a bug.
-			for _, pr := range currentState.PendingReconciles {
+			for _, pr := range eligiblePending {
 				if pr.Source == SourceStateChange {
 					logger.Error(nil, "BUG: state marked as converged has SourceStateChange pending reconcile",
 						"ReconcilerID", pr.ReconcilerID,
 						"Request", pr.Request.NamespacedName,
 						"Depth", currentState.depth,
-						"TotalPending", len(currentState.PendingReconciles),
-						"PendingSources", pendingSourcesSummary(currentState.PendingReconciles),
+						"TotalPending", len(eligiblePending),
+						"PendingSources", pendingSourcesSummary(eligiblePending),
 					)
 				}
 			}
@@ -913,8 +914,8 @@ func (e *Explorer) explore(
 					"Depth", currentState.depth,
 					"StateKey", convergenceKey,
 					"Reason", reason,
-					"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
-					"PendingSources", pendingSourcesSummary(currentState.PendingReconciles),
+					"RemainingIgnorable", countIgnorableForConvergence(eligiblePending),
+					"PendingSources", pendingSourcesSummary(eligiblePending),
 				).Info("arrived at converged state")
 			}
 			if logger.V(2).Enabled() {
@@ -974,8 +975,17 @@ func (e *Explorer) explore(
 			stateView = currentState
 			pendingReconcile = *entry.staleViewReconcile
 		} else {
-			// Normal entry - get first pending and possible views
-			pendingReconcile = currentState.PendingReconciles[0]
+			// Normal entry - get first depth-eligible pending and possible views
+			eligiblePending := currentState.EligiblePendingReconciles()
+			if len(eligiblePending) == 0 {
+				logger.WithValues(
+					"StateKey", stateKey,
+					"Depth", currentState.depth,
+					"PendingCount", len(currentState.PendingReconciles),
+				).V(1).Info("no depth-eligible pending reconciles at current depth; skipping")
+				continue
+			}
+			pendingReconcile = eligiblePending[0]
 
 			// Log all pending reconciles for diagnostic purposes
 			if logger.V(2).Enabled() {
@@ -1870,13 +1880,17 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	// RequeueAfter is treated as actionable follow-up work.
 	if consumed != nil && (result.ctrlRes.Requeue || result.ctrlRes.RequeueAfter > 0) {
 		source := SourceRequeue
+		notBeforeDepth := 0
 		if result.ctrlRes.RequeueAfter > 0 {
 			source = SourceRequeueAfter
+			delaySteps := simclock.StepsForDuration(result.ctrlRes.RequeueAfter)
+			notBeforeDepth = state.depth + 1 + delaySteps
 		}
 		requeued := PendingReconcile{
-			ReconcilerID: consumed.ReconcilerID,
-			Request:      consumed.Request,
-			Source:       source,
+			ReconcilerID:   consumed.ReconcilerID,
+			Request:        consumed.Request,
+			Source:         source,
+			NotBeforeDepth: notBeforeDepth,
 		}
 		triggeredByChanges = append(triggeredByChanges, requeued)
 	}

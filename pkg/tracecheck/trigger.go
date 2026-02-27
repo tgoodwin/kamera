@@ -90,6 +90,9 @@ type PendingReconcile struct {
 	ReconcilerID ReconcilerID
 	Request      reconcile.Request
 	Source       PendingReconcileSource
+	// NotBeforeDepth "suppresses" a pendingReconcile until the explorer reaches this depth.
+	// this is in support of RequeueAfter semantics in which elapsed time is a function of depth (pkg simclock)
+	NotBeforeDepth int
 }
 
 func (pr PendingReconcile) String() string {

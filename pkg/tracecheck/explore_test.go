@@ -7,6 +7,7 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -223,6 +224,7 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 		reconcilerKindDeps       map[ReconcilerID][]string
 		stuckReconcilerPositions map[ReconcilerID]KindSequences
 		result                   *ReconcileResult
+		stateDepth               int
 		expected                 []PendingReconcile
 	}{
 		{
@@ -343,13 +345,15 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 				ctrlRes: reconcile.Result{RequeueAfter: 5 * time.Second},
 				Changes: Changes{},
 			},
+			stateDepth: 3,
 			expected: []PendingReconcile{
 				{
 					ReconcilerID: "controllerA",
 					Request: reconcile.Request{
 						NamespacedName: types.NamespacedName{Namespace: "namespace1", Name: "name1"},
 					},
-					Source: SourceRequeueAfter,
+					Source:         SourceRequeueAfter,
+					NotBeforeDepth: 9, // depth=3 + 1 current step + 5 simulated seconds
 				},
 			},
 		},
@@ -390,6 +394,8 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			simclock.Configure(time.Unix(0, 0), time.Second)
+
 			ctrl := gomock.NewController(t)
 			defer ctrl.Finish()
 
@@ -410,10 +416,57 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			state := StateNode{
 				PendingReconciles:        tt.curr,
 				stuckReconcilerPositions: tt.stuckReconcilerPositions,
+				depth:                    tt.stateDepth,
 			}
 
 			actual := e.determineNewPendingReconciles(context.Background(), state, &tt.pendingReconcile, tt.result)
 			assert.Equal(t, tt.expected, actual)
 		})
 	}
+}
+
+func Test_determineNewPendingReconciles_RequeueAfterUsesSimclockStepSize(t *testing.T) {
+	simclock.Configure(time.Unix(0, 0), 2*time.Second)
+	t.Cleanup(func() {
+		simclock.Configure(time.Unix(0, 0), time.Second)
+	})
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockTriggered := NewMockTriggerHandler(ctrl)
+	mockTriggered.EXPECT().GetTriggered(Changes{}).Return(nil, nil).Times(1)
+
+	e := &Explorer{
+		triggerManager: mockTriggered,
+		Config:         &ExploreConfig{},
+	}
+
+	consumed := PendingReconcile{
+		ReconcilerID: "controllerA",
+		Request: reconcile.Request{
+			NamespacedName: types.NamespacedName{Namespace: "namespace1", Name: "name1"},
+		},
+	}
+	state := StateNode{
+		PendingReconciles: []PendingReconcile{consumed},
+		depth:             4,
+	}
+	result := &ReconcileResult{
+		ctrlRes: reconcile.Result{RequeueAfter: 5 * time.Second}, // ceil(5/2)=3 steps
+		Changes: Changes{},
+	}
+
+	actual := e.determineNewPendingReconciles(context.Background(), state, &consumed, result)
+	expected := []PendingReconcile{
+		{
+			ReconcilerID: "controllerA",
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: "namespace1", Name: "name1"},
+			},
+			Source:         SourceRequeueAfter,
+			NotBeforeDepth: 8, // depth=4 + 1 current step + 3 delay steps
+		},
+	}
+	assert.Equal(t, expected, actual)
 }

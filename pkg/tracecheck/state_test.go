@@ -206,6 +206,23 @@ func TestStateNodeClone_IsolatesNextUserActionIdxAcrossBranches(t *testing.T) {
 	}
 }
 
+func TestStateNodeEligiblePendingReconciles(t *testing.T) {
+	state := StateNode{
+		depth: 3,
+		PendingReconciles: []PendingReconcile{
+			{
+				ReconcilerID:   "B",
+				Request:        reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "b"}},
+				NotBeforeDepth: 4,
+			},
+		},
+	}
+
+	eligible := state.EligiblePendingReconciles()
+	assert.Empty(t, eligible)
+	assert.True(t, state.IsConverged(), "delayed pending should not block convergence at current depth when no pending is eligible")
+}
+
 // Test_GetUniquePaths_PreservesConvergenceSteps verifies that paths ending in convergence
 // are not deduplicated with non-converged paths, even if they have the same controller sequence.
 // Convergence is tracked via the :converged marker in UniqueKey(), not by preserving no-op steps.

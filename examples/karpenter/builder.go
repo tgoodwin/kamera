@@ -28,6 +28,7 @@ import (
 
 func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	b := tracecheck.NewExplorerBuilder(newScheme())
+	simclock.Configure(time.Unix(0, 0), time.Second)
 
 	// Disable generic pod lifecycle simulation for this harness.
 	// Karpenter provisioning should reason over unschedulable pods, and Pod lifecycle
