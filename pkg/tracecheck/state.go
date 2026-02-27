@@ -466,7 +466,7 @@ func (sn StateNode) ContentsHash() ContentsHash {
 }
 
 // ConvergenceHash returns a hash normalized for convergence by dropping pending reconciles
-// that are ignorable for convergence (async enqueues / requeues).
+// that are ignorable for convergence (async enqueues / poll-style requeues).
 func (sn StateNode) ConvergenceHash() NodeHash {
 	filtered := lo.Filter(sn.PendingReconciles, func(pr PendingReconcile, _ int) bool {
 		return pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue

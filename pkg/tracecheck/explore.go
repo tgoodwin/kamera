@@ -1866,13 +1866,17 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 		triggeredByChanges = filtered
 	}
 
-	// if the controller returned a response with Requeue = true,
-	// we need to requeue the original request, no matter what.
-	if consumed != nil && result.ctrlRes.Requeue {
+	// If the controller returned Requeue or RequeueAfter, re-enqueue the original request.
+	// RequeueAfter is treated as actionable follow-up work.
+	if consumed != nil && (result.ctrlRes.Requeue || result.ctrlRes.RequeueAfter > 0) {
+		source := SourceRequeue
+		if result.ctrlRes.RequeueAfter > 0 {
+			source = SourceRequeueAfter
+		}
 		requeued := PendingReconcile{
 			ReconcilerID: consumed.ReconcilerID,
 			Request:      consumed.Request,
-			Source:       SourceRequeue,
+			Source:       source,
 		}
 		triggeredByChanges = append(triggeredByChanges, requeued)
 	}

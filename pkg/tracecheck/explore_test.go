@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
@@ -322,6 +323,33 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 						NamespacedName: types.NamespacedName{Namespace: "namespace1", Name: "name1"},
 					},
 					Source: SourceRequeue,
+				},
+			},
+		},
+		{
+			name: "requeue-after current reconcile",
+			curr: []PendingReconcile{
+				newPr("controllerA", "namespace1", "name1"),
+			},
+			pendingReconcile: newPr("controllerA", "namespace1", "name1"),
+			triggered:        nil,
+			reconcilerKindDeps: map[ReconcilerID][]string{
+				"controllerA": {"Kind1", "Kind2"},
+				"controllerB": {"Kind1", "Kind2"},
+				"controllerC": {"Kind1", "Kind2"},
+			},
+			stuckReconcilerPositions: nil,
+			result: &ReconcileResult{
+				ctrlRes: reconcile.Result{RequeueAfter: 5 * time.Second},
+				Changes: Changes{},
+			},
+			expected: []PendingReconcile{
+				{
+					ReconcilerID: "controllerA",
+					Request: reconcile.Request{
+						NamespacedName: types.NamespacedName{Namespace: "namespace1", Name: "name1"},
+					},
+					Source: SourceRequeueAfter,
 				},
 			},
 		},
