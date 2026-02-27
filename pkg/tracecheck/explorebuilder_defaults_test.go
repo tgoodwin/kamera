@@ -41,6 +41,13 @@ func TestNewExplorerBuilder_DefaultConfigEnablesOptimizations(t *testing.T) {
 	if len(cfg.Perturbations.Staleness) != 0 {
 		t.Fatalf("expected no perturbation config by default, found %d entries", len(cfg.Perturbations.Staleness))
 	}
+
+	if cfg.SearchMode != SearchModeDFS {
+		t.Fatalf("expected default search mode dfs, got %q", cfg.SearchMode)
+	}
+	if cfg.MonteCarlo != (MonteCarloConfig{}) {
+		t.Fatalf("expected monte carlo config to remain zero-value in dfs mode, got %+v", cfg.MonteCarlo)
+	}
 }
 
 func TestOptimizationConfigAnyEnabled_OnlyPermuteTriggeredDoesNotEnableOptimizations(t *testing.T) {

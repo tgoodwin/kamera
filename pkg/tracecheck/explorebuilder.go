@@ -109,6 +109,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			MaxDepth:        *searchDepth,
 			RecordPerfStats: *emitStats,
 			Timeout:         *timeout,
+			SearchMode:      SearchModeDFS,
 			Optimizations:   defaultOptimizationConfig(),
 			Perturbations: PerturbationConfig{
 				PermuteOrder: make(map[ReconcilerID]bool),
@@ -165,15 +166,18 @@ func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 
 func cloneExploreConfig(cfg *ExploreConfig) *ExploreConfig {
 	if cfg == nil {
-		return &ExploreConfig{
+		fallback := &ExploreConfig{
+			SearchMode: SearchModeDFS,
 			Perturbations: PerturbationConfig{
 				PermuteOrder: make(map[ReconcilerID]bool),
 				Staleness:    make(map[ReconcilerID]StalenessConfig),
 			},
 			Optimizations: defaultOptimizationConfig(),
 		}
+		return fallback
 	}
 	cloned := cfg.Clone()
+	applyExploreConfigDefaults(&cloned)
 	return &cloned
 }
 
@@ -185,6 +189,15 @@ func defaultOptimizationConfig() OptimizationConfig {
 		OnlyPermuteTriggered: true,
 		CachePrediction:      true,
 		SubtreeCompletion:    true,
+	}
+}
+
+func applyExploreConfigDefaults(cfg *ExploreConfig) {
+	if cfg == nil {
+		return
+	}
+	if cfg.SearchMode == "" {
+		cfg.SearchMode = SearchModeDFS
 	}
 }
 
@@ -278,6 +291,7 @@ func parseKindString(kind string) schema.GroupKind {
 func (b *ExplorerBuilder) ensurePermuteOrderEntry(id ReconcilerID) {
 	if b.config == nil {
 		b.config = &ExploreConfig{
+			SearchMode:    SearchModeDFS,
 			Optimizations: defaultOptimizationConfig(),
 			Perturbations: PerturbationConfig{
 				PermuteOrder: make(map[ReconcilerID]bool),
@@ -357,8 +371,12 @@ func (b *ExplorerBuilder) WithPermuteOrder(id ReconcilerID, enabled bool) *Explo
 // Entries missing for known reconcilers are defaulted to false so the UI can display them.
 func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{Optimizations: defaultOptimizationConfig()}
+		b.config = &ExploreConfig{
+			SearchMode:    SearchModeDFS,
+			Optimizations: defaultOptimizationConfig(),
+		}
 	}
+	applyExploreConfigDefaults(b.config)
 	target := perms
 	if target == nil && b.config.Perturbations.PermuteOrder != nil {
 		target = b.config.Perturbations.PermuteOrder
@@ -385,6 +403,7 @@ func (b *ExplorerBuilder) WithPermuteOrders(perms map[ReconcilerID]bool) *Explor
 // Maps are cloned and missing permute entries are defaulted for known reconcilers.
 func (b *ExplorerBuilder) SetConfig(cfg ExploreConfig) *ExplorerBuilder {
 	cloned := cfg.Clone()
+	applyExploreConfigDefaults(&cloned)
 	if cloned.Perturbations.PermuteOrder == nil {
 		cloned.Perturbations.PermuteOrder = make(map[ReconcilerID]bool)
 	}
@@ -415,8 +434,12 @@ func (b *ExplorerBuilder) WithDivergenceCircuitBreaker(threshold int) *ExplorerB
 // Defaults are enabled; call WithoutOptimizations or pass a custom config to tune behavior.
 func (b *ExplorerBuilder) WithOptimizations(opt OptimizationConfig) *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{Optimizations: defaultOptimizationConfig()}
+		b.config = &ExploreConfig{
+			SearchMode:    SearchModeDFS,
+			Optimizations: defaultOptimizationConfig(),
+		}
 	}
+	applyExploreConfigDefaults(b.config)
 	b.config.Optimizations = opt
 	return b
 }
@@ -425,8 +448,12 @@ func (b *ExplorerBuilder) WithOptimizations(opt OptimizationConfig) *ExplorerBui
 // Useful for tests that need deterministic, exhaustive exploration.
 func (b *ExplorerBuilder) WithoutOptimizations() *ExplorerBuilder {
 	if b.config == nil {
-		b.config = &ExploreConfig{Optimizations: defaultOptimizationConfig()}
+		b.config = &ExploreConfig{
+			SearchMode:    SearchModeDFS,
+			Optimizations: defaultOptimizationConfig(),
+		}
 	}
+	applyExploreConfigDefaults(b.config)
 	b.config.Optimizations = OptimizationConfig{}
 	return b
 }
@@ -449,15 +476,19 @@ func (b *ExplorerBuilder) WithUserActions(actions []UserAction) *ExplorerBuilder
 // Config returns a copy of the current builder configuration.
 func (b *ExplorerBuilder) Config() ExploreConfig {
 	if b.config == nil {
-		return ExploreConfig{
+		cfg := ExploreConfig{
+			SearchMode: SearchModeDFS,
 			Perturbations: PerturbationConfig{
 				PermuteOrder: make(map[ReconcilerID]bool),
 				Staleness:    make(map[ReconcilerID]StalenessConfig),
 			},
 			Optimizations: defaultOptimizationConfig(),
 		}
+		return cfg
 	}
-	return b.config.Clone()
+	cfg := b.config.Clone()
+	applyExploreConfigDefaults(&cfg)
+	return cfg
 }
 
 // AssignReconcilerToKind configures which resource a reconciler "owns"
@@ -757,8 +788,12 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		mode = modes[0]
 	}
 	if b.config == nil {
-		b.config = &ExploreConfig{Optimizations: defaultOptimizationConfig()}
+		b.config = &ExploreConfig{
+			SearchMode:    SearchModeDFS,
+			Optimizations: defaultOptimizationConfig(),
+		}
 	}
+	applyExploreConfigDefaults(b.config)
 	if b.config.MaxDepth == 0 {
 		b.config.MaxDepth = DefaultMaxDepth
 	}

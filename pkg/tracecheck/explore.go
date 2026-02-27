@@ -3,10 +3,12 @@ package tracecheck
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"maps"
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -46,6 +48,52 @@ type StalenessConfig struct {
 	MaxRestarts     int
 }
 
+type SearchMode string
+
+const (
+	SearchModeDFS        SearchMode = "dfs"
+	SearchModeMonteCarlo SearchMode = "monte_carlo"
+)
+
+func ParseSearchMode(raw string) (SearchMode, error) {
+	mode := SearchMode(strings.TrimSpace(strings.ToLower(raw)))
+	switch mode {
+	case "", SearchModeDFS:
+		return SearchModeDFS, nil
+	case SearchModeMonteCarlo:
+		return SearchModeMonteCarlo, nil
+	default:
+		return "", fmt.Errorf("invalid search mode %q", raw)
+	}
+}
+
+type MonteCarloConfig struct {
+	Seed int64
+	// Trials controls total single-path runs for a scenario in Monte Carlo mode.
+	// It is consumed by runner orchestration.
+	Trials int
+	// TrialIndex identifies the current run in a scenario trial group.
+	TrialIndex int
+	// ScenarioGroup is a stable scenario/input grouping key used for seed derivation.
+	ScenarioGroup string
+}
+
+func (cfg MonteCarloConfig) DerivedSeed() int64 {
+	return DeriveMonteCarloSeed(cfg.Seed, cfg.ScenarioGroup, cfg.TrialIndex)
+}
+
+func DeriveMonteCarloSeed(baseSeed int64, scenarioGroup string, trialIndex int) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(strconv.FormatInt(baseSeed, 10)))
+	_, _ = h.Write([]byte("|"))
+	_, _ = h.Write([]byte(scenarioGroup))
+	_, _ = h.Write([]byte("|"))
+	_, _ = h.Write([]byte(strconv.Itoa(trialIndex)))
+
+	// Keep the value non-negative to simplify formatting/interop in attributes.
+	return int64(h.Sum64() & 0x7fffffffffffffff)
+}
+
 type OptimizationConfig struct {
 	EarlyConvergence   bool
 	CompletedPathDedup bool
@@ -70,6 +118,8 @@ type ExploreConfig struct {
 	MaxDepth        int
 	RecordPerfStats bool
 	Timeout         time.Duration
+	SearchMode      SearchMode
+	MonteCarlo      MonteCarloConfig
 
 	// Perturbations configures optional behavioral perturbations (opt-in), such as
 	// reconcile ordering permutations and stale-read view injection.

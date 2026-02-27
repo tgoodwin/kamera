@@ -20,11 +20,24 @@ type fileOptimizationConfig struct {
 	OnlyPermuteTriggered    *bool `json:"onlyPermuteTriggered,omitempty"`
 }
 
+type fileMonteCarloConfig struct {
+	Seed          *int64  `json:"seed,omitempty"`
+	Trials        *int    `json:"trials,omitempty"`
+	TrialIndex    *int    `json:"trialIndex,omitempty"`
+	ScenarioGroup *string `json:"scenarioGroup,omitempty"`
+}
+
+type fileSearchConfig struct {
+	Mode       *string              `json:"mode,omitempty"`
+	MonteCarlo fileMonteCarloConfig `json:"monteCarlo,omitempty"`
+}
+
 // fileExploreConfig is the JSON-friendly representation for ExploreConfig.
 type fileExploreConfig struct {
 	MaxDepth        *int                   `json:"maxDepth,omitempty"`
 	RecordPerfStats *bool                  `json:"recordPerfStats,omitempty"`
 	Timeout         string                 `json:"timeout,omitempty"`
+	Search          fileSearchConfig       `json:"search,omitempty"`
 	Optimizations   fileOptimizationConfig `json:"optimizations,omitempty"`
 }
 
@@ -45,9 +58,44 @@ func (f fileExploreConfig) apply(base tracecheck.ExploreConfig) (tracecheck.Expl
 		}
 		cfg.Timeout = dur
 	}
+	if err := f.applySearch(&cfg); err != nil {
+		return cfg, err
+	}
 	cfg.Optimizations = f.applyOptimizations(cfg.Optimizations)
 
 	return cfg, nil
+}
+
+func (f fileExploreConfig) applySearch(cfg *tracecheck.ExploreConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	if f.Search.Mode != nil {
+		mode, err := tracecheck.ParseSearchMode(*f.Search.Mode)
+		if err != nil {
+			return fmt.Errorf("parse search.mode: %w", err)
+		}
+		cfg.SearchMode = mode
+	}
+	if f.Search.MonteCarlo.Seed != nil {
+		cfg.MonteCarlo.Seed = *f.Search.MonteCarlo.Seed
+	}
+	if f.Search.MonteCarlo.Trials != nil {
+		if *f.Search.MonteCarlo.Trials <= 0 {
+			return fmt.Errorf("search.monteCarlo.trials must be >= 1")
+		}
+		cfg.MonteCarlo.Trials = *f.Search.MonteCarlo.Trials
+	}
+	if f.Search.MonteCarlo.TrialIndex != nil {
+		if *f.Search.MonteCarlo.TrialIndex < 0 {
+			return fmt.Errorf("search.monteCarlo.trialIndex must be >= 0")
+		}
+		cfg.MonteCarlo.TrialIndex = *f.Search.MonteCarlo.TrialIndex
+	}
+	if f.Search.MonteCarlo.ScenarioGroup != nil {
+		cfg.MonteCarlo.ScenarioGroup = *f.Search.MonteCarlo.ScenarioGroup
+	}
+	return nil
 }
 
 func (f fileExploreConfig) applyOptimizations(base tracecheck.OptimizationConfig) tracecheck.OptimizationConfig {
