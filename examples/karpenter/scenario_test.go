@@ -91,6 +91,39 @@ func TestScenariosFromInputsUsesFuzzCasesBudget(t *testing.T) {
 	}
 }
 
+func TestScenariosFromInputsAppliesMonteCarloSearchFromInputTuning(t *testing.T) {
+	builder := newKarpenterExplorerBuilder()
+	input := mustKarpenterInput(t, "karpenter-mc")
+	seed := int64(4242)
+	trials := 5
+	input.Tuning.Search.Mode = "monte_carlo"
+	input.Tuning.Search.MonteCarlo.Seed = &seed
+	input.Tuning.Search.MonteCarlo.Trials = &trials
+
+	restore := setFuzzSamplingForTest(t, 0, 1337)
+	defer restore()
+
+	scenarios, err := scenariosFromInputs(builder, []coverage.Input{input})
+	if err != nil {
+		t.Fatalf("scenariosFromInputs error = %v", err)
+	}
+	if len(scenarios) == 0 {
+		t.Fatalf("expected at least one scenario")
+	}
+
+	for _, sc := range scenarios {
+		if sc.Config.SearchMode != tracecheck.SearchModeMonteCarlo {
+			t.Fatalf("scenario %q expected search mode monte_carlo, got %q", sc.Name, sc.Config.SearchMode)
+		}
+		if sc.Config.MonteCarlo.Seed != 4242 {
+			t.Fatalf("scenario %q expected monte carlo seed 4242, got %d", sc.Name, sc.Config.MonteCarlo.Seed)
+		}
+		if sc.Config.MonteCarlo.Trials != 5 {
+			t.Fatalf("scenario %q expected monte carlo trials 5, got %d", sc.Name, sc.Config.MonteCarlo.Trials)
+		}
+	}
+}
+
 func TestExpandKarpenterParameterizedInputAddsNoFitNodeSelectorVariant(t *testing.T) {
 	input := mustKarpenterInput(t, "karpenter-params")
 	variants, err := expandKarpenterParameterizedInput(input, 0, 99)
@@ -271,12 +304,12 @@ checkNoPodLifecycle:
 
 func TestSingleExecution_OrderSensitivityByInitialPendingOrder(t *testing.T) {
 	type runMetrics struct {
-		hasNode                         bool
-		firstThree                      []tracecheck.ReconcilerID
-		pathLen                         int
+		hasNode                          bool
+		firstThree                       []tracecheck.ReconcilerID
+		pathLen                          int
 		firstProvisionerCreatesNodeClaim bool
-		contentsHash                    tracecheck.ContentsHash
-		kindCounts                      map[string]int
+		contentsHash                     tracecheck.ContentsHash
+		kindCounts                       map[string]int
 	}
 
 	runSingle := func(t *testing.T, desired []tracecheck.ReconcilerID) runMetrics {
@@ -297,12 +330,12 @@ func TestSingleExecution_OrderSensitivityByInitialPendingOrder(t *testing.T) {
 
 		state.PendingReconciles = reorderPendingByControllers(state.PendingReconciles, desired)
 
-			cfg := builder.Config()
-			// Use an explicit empty map (not nil) so initial-state order expansion
-			// produces zero variants instead of cloning the original state.
-			cfg.Perturbations.PermuteOrder = map[tracecheck.ReconcilerID]bool{}
-			cfg.Perturbations.Staleness = nil
-			builder.SetConfig(cfg)
+		cfg := builder.Config()
+		// Use an explicit empty map (not nil) so initial-state order expansion
+		// produces zero variants instead of cloning the original state.
+		cfg.Perturbations.PermuteOrder = map[tracecheck.ReconcilerID]bool{}
+		cfg.Perturbations.Staleness = nil
+		builder.SetConfig(cfg)
 		builder.WithUserActions(actions)
 
 		explorer, err := builder.Build("standalone")

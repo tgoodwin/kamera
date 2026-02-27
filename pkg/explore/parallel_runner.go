@@ -24,14 +24,25 @@ type ParallelOptions struct {
 	DumpDir     string
 }
 
+type processJob struct {
+	JobIndex     int
+	InputIndex   int
+	TrialIndex   int
+	ScenarioName string
+}
+
 type childProcessRequest struct {
-	ChildIndex int
+	JobIndex   int
+	InputIndex int
+	TrialIndex int
 	CWD        string
 	Args       []string
 }
 
 type childProcessResult struct {
-	ChildIndex int
+	JobIndex   int
+	InputIndex int
+	TrialIndex int
 	Stdout     string
 	Stderr     string
 	Err        error
@@ -80,6 +91,12 @@ func (r *ParallelRunner) RunAll(ctx context.Context, scenarios []Scenario, opts 
 	if ParallelChildIndex() >= 0 && !ParallelProcessesEnabled() {
 		return nil, fmt.Errorf("--parallel-child-index requires --parallel-processes")
 	}
+	if ParallelChildTrialIndex() != 0 && !ParallelProcessesEnabled() {
+		return nil, fmt.Errorf("--parallel-child-trial-index requires --parallel-processes")
+	}
+	if ParallelChildJobIndex() >= 0 && !ParallelProcessesEnabled() {
+		return nil, fmt.Errorf("--parallel-child-job-index requires --parallel-processes")
+	}
 	// the simclock package is not thread-safe, so for use cases that rely on simclock, we support
 	// a process-isolation mode that launches separate executions for each scenario and aggregates results via disk.
 	if ParallelProcessesEnabled() {
@@ -122,7 +139,15 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 		return nil, err
 	}
 
-	total := len(inputs)
+	jobs, err := buildProcessJobs(inputs, scenarios, InputsPath())
+	if err != nil {
+		return nil, fmt.Errorf("build process jobs: %w", err)
+	}
+
+	total := len(jobs)
+	if total == 0 {
+		return []ScenarioResult{}, nil
+	}
 	results := make([]ScenarioResult, total)
 
 	maxParallel := opts.MaxParallel
@@ -135,17 +160,21 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 
 	fmt.Printf("parallel-processes supervisor: starting %d child process(es) (max_parallel=%d)\n", total, maxParallel)
 
-	jobs := make(chan int)
+	jobCh := make(chan processJob)
 	resCh := make(chan childProcessResult, total)
 
 	var wg sync.WaitGroup
 	worker := func() {
 		defer wg.Done()
-		for idx := range jobs {
+		for job := range jobCh {
 			args := append([]string{}, childArgsBase...)
-			args = append(args, fmt.Sprintf("--parallel-child-index=%d", idx))
+			args = append(args, fmt.Sprintf("--parallel-child-index=%d", job.InputIndex))
+			args = append(args, fmt.Sprintf("--parallel-child-trial-index=%d", job.TrialIndex))
+			args = append(args, fmt.Sprintf("--parallel-child-job-index=%d", job.JobIndex))
 			resCh <- r.spawnChildFn(ctx, childProcessRequest{
-				ChildIndex: idx,
+				JobIndex:   job.JobIndex,
+				InputIndex: job.InputIndex,
+				TrialIndex: job.TrialIndex,
 				CWD:        cwd,
 				Args:       args,
 			})
@@ -159,12 +188,19 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 
 	go func() {
 		started := 0
-		for idx := range inputs {
+		for _, job := range jobs {
 			started++
-			fmt.Printf("parallel-processes supervisor: start child input=%d (%d/%d)\n", idx, started, total)
-			jobs <- idx
+			fmt.Printf(
+				"parallel-processes supervisor: start child job=%d input=%d trial=%d (%d/%d)\n",
+				job.JobIndex,
+				job.InputIndex,
+				job.TrialIndex,
+				started,
+				total,
+			)
+			jobCh <- job
 		}
-		close(jobs)
+		close(jobCh)
 	}()
 
 	go func() {
@@ -177,25 +213,49 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 	failedIdx := make([]int, 0)
 	for item := range resCh {
 		completed++
+		if item.JobIndex < 0 || item.JobIndex >= len(jobs) {
+			failed++
+			failedIdx = append(failedIdx, item.JobIndex)
+			fmt.Printf("parallel-processes supervisor: child job=%d returned invalid job index (%d/%d)\n", item.JobIndex, completed, total)
+			continue
+		}
+		job := jobs[item.JobIndex]
+		name := strings.TrimSpace(job.ScenarioName)
+		if name == "" {
+			name = fallbackInputName(inputs, job.InputIndex)
+		}
+		if job.TrialIndex > 0 {
+			name = fmt.Sprintf("%s#trial-%d", name, job.TrialIndex)
+		}
 		result := ScenarioResult{
-			Name: strings.TrimSpace(inputs[item.ChildIndex].Name),
+			Name: name,
 			Err:  item.Err,
 		}
-		if result.Name == "" {
-			result.Name = fmt.Sprintf("input_%d", item.ChildIndex)
-		}
-		results[item.ChildIndex] = result
+		results[item.JobIndex] = result
 
 		if item.Err != nil {
 			failed++
-			failedIdx = append(failedIdx, item.ChildIndex)
-			fmt.Printf("parallel-processes supervisor: child input=%d failed (%d/%d): %s\n",
-				item.ChildIndex, completed, total, summarizeChildFailure(item))
+			failedIdx = append(failedIdx, item.JobIndex)
+			fmt.Printf(
+				"parallel-processes supervisor: child job=%d input=%d trial=%d failed (%d/%d): %s\n",
+				item.JobIndex,
+				job.InputIndex,
+				job.TrialIndex,
+				completed,
+				total,
+				summarizeChildFailure(item),
+			)
 			continue
 		}
 
-		fmt.Printf("parallel-processes supervisor: child input=%d completed (%d/%d)\n",
-			item.ChildIndex, completed, total)
+		fmt.Printf(
+			"parallel-processes supervisor: child job=%d input=%d trial=%d completed (%d/%d)\n",
+			item.JobIndex,
+			job.InputIndex,
+			job.TrialIndex,
+			completed,
+			total,
+		)
 	}
 
 	if failed > 0 {
@@ -226,6 +286,11 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 	}
 
 	childIdx := ParallelChildIndex()
+	trialIdx := ParallelChildTrialIndex()
+	jobIdx := ParallelChildJobIndex()
+	if trialIdx < 0 {
+		return nil, fmt.Errorf("parallel child trial index must be >= 0, got %d", trialIdx)
+	}
 	_, selected, err := selectScenarioForChild(inputs, scenarios, InputsPath(), childIdx)
 	if err != nil {
 		result := ScenarioResult{
@@ -239,7 +304,7 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 				Workflow: "parallel-process-child",
 				InputRef: inputRefForIndex(InputsPath(), childIdx),
 			},
-			childIdx,
+			jobIdxOrInput(jobIdx, childIdx),
 			"select_scenario",
 			err,
 		)
@@ -250,17 +315,19 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 		return []ScenarioResult{result}, result.Err
 	}
 
-	fmt.Printf("parallel-processes child: running input index %d as scenario %q\n", childIdx, selected.Name)
-	result := r.runScenario(ctx, selected, opts, childIdx)
+	selected = applyMonteCarloTrialConfig(selected, childIdx, trialIdx)
+
+	fmt.Printf("parallel-processes child: running input index %d trial %d as scenario %q\n", childIdx, trialIdx, selected.Name)
+	result := r.runScenario(ctx, selected, opts, jobIdxOrInput(jobIdx, childIdx))
 	if result.Err != nil {
 		if result.DumpPath == "" {
-			dumpPath, dumpErr := writeChildFailureDump(opts, selected.Name, selected.Context, childIdx, "run_scenario", result.Err)
+			dumpPath, dumpErr := writeChildFailureDump(opts, selected.Name, selected.Context, jobIdxOrInput(jobIdx, childIdx), "run_scenario", result.Err)
 			if dumpErr != nil {
 				result.Err = fmt.Errorf("%w (and failed to write failure dump: %v)", result.Err, dumpErr)
 			}
 			result.DumpPath = dumpPath
 		}
-		return []ScenarioResult{result}, fmt.Errorf("parallel child index %d failed: %w", childIdx, result.Err)
+		return []ScenarioResult{result}, fmt.Errorf("parallel child index %d trial %d failed: %w", childIdx, trialIdx, result.Err)
 	}
 	return []ScenarioResult{result}, nil
 }
@@ -471,6 +538,7 @@ func (r *ParallelRunner) runScenarioPhase(
 			if strings.TrimSpace(phaseName) != "" {
 				attrs["phase"] = phaseLabel
 			}
+			addMonteCarloDumpAttributes(attrs, cfg)
 			if len(attrs) == 0 {
 				attrs = nil
 			}
@@ -508,6 +576,88 @@ func ensureParallelOutputDirs(opts ParallelOptions) error {
 func childParallelOptions(opts ParallelOptions) ParallelOptions {
 	opts.MaxParallel = 1
 	return opts
+}
+
+func buildProcessJobs(inputs []coverage.Input, scenarios []Scenario, inputsPath string) ([]processJob, error) {
+	jobs := make([]processJob, 0, len(inputs))
+	for inputIdx := range inputs {
+		_, scenario, err := selectScenarioForChild(inputs, scenarios, inputsPath, inputIdx)
+		if err != nil {
+			return nil, err
+		}
+		trials := scenarioTrialCount(scenario.Config)
+		for trialIdx := 0; trialIdx < trials; trialIdx++ {
+			jobs = append(jobs, processJob{
+				JobIndex:     len(jobs),
+				InputIndex:   inputIdx,
+				TrialIndex:   trialIdx,
+				ScenarioName: scenario.Name,
+			})
+		}
+	}
+	return jobs, nil
+}
+
+func scenarioTrialCount(cfg tracecheck.ExploreConfig) int {
+	if cfg.SearchMode != tracecheck.SearchModeMonteCarlo {
+		return 1
+	}
+	if cfg.MonteCarlo.Trials <= 0 {
+		return 1
+	}
+	return cfg.MonteCarlo.Trials
+}
+
+func applyMonteCarloTrialConfig(scenario Scenario, inputIdx int, trialIdx int) Scenario {
+	cfg := scenario.Config
+	if cfg.SearchMode != tracecheck.SearchModeMonteCarlo {
+		return scenario
+	}
+
+	cfg.MonteCarlo.TrialIndex = trialIdx
+	if cfg.MonteCarlo.Trials <= 0 {
+		cfg.MonteCarlo.Trials = 1
+	}
+	if strings.TrimSpace(cfg.MonteCarlo.ScenarioGroup) == "" {
+		cfg.MonteCarlo.ScenarioGroup = monteCarloScenarioGroup(scenario, inputIdx)
+	}
+	scenario.Config = cfg
+	return scenario
+}
+
+func monteCarloScenarioGroup(scenario Scenario, inputIdx int) string {
+	if fromInputRef := strings.TrimSpace(scenario.Context.InputRef); fromInputRef != "" {
+		return fromInputRef
+	}
+	return fmt.Sprintf("%s#%d", strings.TrimSpace(scenario.Name), inputIdx)
+}
+
+func jobIdxOrInput(jobIdx int, inputIdx int) int {
+	if jobIdx >= 0 {
+		return jobIdx
+	}
+	return inputIdx
+}
+
+func addMonteCarloDumpAttributes(attrs map[string]string, cfg tracecheck.ExploreConfig) {
+	if cfg.SearchMode != tracecheck.SearchModeMonteCarlo {
+		return
+	}
+	if attrs == nil {
+		return
+	}
+	attrs["search_mode"] = string(tracecheck.SearchModeMonteCarlo)
+	if group := strings.TrimSpace(cfg.MonteCarlo.ScenarioGroup); group != "" {
+		attrs["mc_group_id"] = group
+	}
+	attrs["mc_trial_index"] = strconv.Itoa(cfg.MonteCarlo.TrialIndex)
+	if cfg.MonteCarlo.Trials > 0 {
+		attrs["mc_trial_count"] = strconv.Itoa(cfg.MonteCarlo.Trials)
+	}
+	attrs["mc_seed"] = strconv.FormatInt(cfg.MonteCarlo.DerivedSeed(), 10)
+	if strings.TrimSpace(attrs["mc_role"]) == "" {
+		attrs["mc_role"] = "trial"
+	}
 }
 
 func selectScenarioForChild(inputs []coverage.Input, scenarios []Scenario, inputsPath string, childIdx int) (int, Scenario, error) {
@@ -711,6 +861,24 @@ func stripChildIndexArgs(args []string) []string {
 			}
 			continue
 		}
+		if strings.HasPrefix(arg, "--parallel-child-trial-index=") {
+			continue
+		}
+		if arg == "--parallel-child-trial-index" {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "--parallel-child-job-index=") {
+			continue
+		}
+		if arg == "--parallel-child-job-index" {
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+			}
+			continue
+		}
 		out = append(out, arg)
 	}
 	return out
@@ -737,7 +905,9 @@ func spawnGoRunChild(ctx context.Context, req childProcessRequest) childProcessR
 
 	err := cmd.Run()
 	return childProcessResult{
-		ChildIndex: req.ChildIndex,
+		JobIndex:   req.JobIndex,
+		InputIndex: req.InputIndex,
+		TrialIndex: req.TrialIndex,
 		Stdout:     stdout.String(),
 		Stderr:     stderr.String(),
 		Err:        err,

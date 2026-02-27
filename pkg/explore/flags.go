@@ -14,6 +14,16 @@ var (
 		-1,
 		"internal input index selector used by --parallel-processes supervisor",
 	)
+	parallelChildTrialIndexFlag = flag.Int(
+		"parallel-child-trial-index",
+		0,
+		"internal trial index selector used by --parallel-processes supervisor",
+	)
+	parallelChildJobIndexFlag = flag.Int(
+		"parallel-child-job-index",
+		-1,
+		"internal job index selector used by --parallel-processes supervisor",
+	)
 )
 
 // InteractiveEnabled returns the parsed value for the interactive flag.
@@ -49,4 +59,14 @@ func ParallelProcessesEnabled() bool {
 // ParallelChildIndex returns the selected child index for process-isolated mode.
 func ParallelChildIndex() int {
 	return *parallelChildIndexFlag
+}
+
+// ParallelChildTrialIndex returns the selected trial index for process-isolated mode.
+func ParallelChildTrialIndex() int {
+	return *parallelChildTrialIndexFlag
+}
+
+// ParallelChildJobIndex returns the selected job index for process-isolated mode.
+func ParallelChildJobIndex() int {
+	return *parallelChildJobIndexFlag
 }

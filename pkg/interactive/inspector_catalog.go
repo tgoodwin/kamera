@@ -13,30 +13,32 @@ import (
 	"time"
 
 	"github.com/tgoodwin/kamera/pkg/analysis"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
 )
 
 var errNotInspectorDump = errors.New("not an inspector dump")
 
 // DumpCatalogEntry captures summary metadata for one exploration dump file.
 type DumpCatalogEntry struct {
-	Path               string
-	File               string
-	Scenario           string
-	ScenarioLabel      string
-	RunIndex           int
-	ScenarioWorkflow   string
-	ScenarioInputRef   string
-	ScenarioAttributes map[string]string
-	ModifiedAt         time.Time
-	SizeBytes          int64
-	States             int
-	ConvergedStates    int
-	AbortedStates      int
-	Paths              int
-	Steps              int
-	Controllers        []string
-	InitialController  string
-	InitialObjects     int
+	Path                 string
+	AggregateMemberPaths []string
+	File                 string
+	Scenario             string
+	ScenarioLabel        string
+	RunIndex             int
+	ScenarioWorkflow     string
+	ScenarioInputRef     string
+	ScenarioAttributes   map[string]string
+	ModifiedAt           time.Time
+	SizeBytes            int64
+	States               int
+	ConvergedStates      int
+	AbortedStates        int
+	Paths                int
+	Steps                int
+	Controllers          []string
+	InitialController    string
+	InitialObjects       int
 }
 
 // LoadDumpCatalogEntries discovers inspector dump files in dir and returns sorted summaries.
@@ -76,6 +78,10 @@ func LoadDumpCatalogEntries(dir string) ([]DumpCatalogEntry, error) {
 	if len(out) == 0 {
 		return nil, fmt.Errorf("no inspector dumps found in %s", dir)
 	}
+	out, err = collapseMonteCarloEntries(out)
+	if err != nil {
+		return nil, err
+	}
 
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Scenario != out[j].Scenario {
@@ -87,6 +93,123 @@ func LoadDumpCatalogEntries(dir string) ([]DumpCatalogEntry, error) {
 		return out[i].File < out[j].File
 	})
 	return out, nil
+}
+
+func collapseMonteCarloEntries(entries []DumpCatalogEntry) ([]DumpCatalogEntry, error) {
+	if len(entries) == 0 {
+		return entries, nil
+	}
+
+	type groupInfo struct {
+		trials     []int
+		aggregates []int
+	}
+	groups := make(map[string]*groupInfo)
+	for idx, entry := range entries {
+		group, role, ok := monteCarloCatalogMetadata(entry)
+		if !ok {
+			continue
+		}
+		if _, exists := groups[group]; !exists {
+			groups[group] = &groupInfo{}
+		}
+		if role == "aggregate" {
+			groups[group].aggregates = append(groups[group].aggregates, idx)
+			continue
+		}
+		groups[group].trials = append(groups[group].trials, idx)
+	}
+
+	keep := make([]bool, len(entries))
+	for i := range keep {
+		keep[i] = true
+	}
+	virtualAggs := make([]DumpCatalogEntry, 0)
+	for groupID, info := range groups {
+		if len(info.aggregates) > 0 {
+			for _, trialIdx := range info.trials {
+				keep[trialIdx] = false
+			}
+			continue
+		}
+		if len(info.trials) <= 1 {
+			continue
+		}
+
+		memberPaths := make([]string, 0, len(info.trials))
+		newest := time.Time{}
+		totalSize := int64(0)
+		for _, trialIdx := range info.trials {
+			entry := entries[trialIdx]
+			memberPaths = append(memberPaths, entry.Path)
+			if entry.ModifiedAt.After(newest) {
+				newest = entry.ModifiedAt
+			}
+			totalSize += entry.SizeBytes
+			keep[trialIdx] = false
+		}
+		aggDump, err := aggregateMonteCarloDumpFiles(memberPaths)
+		if err != nil {
+			return nil, fmt.Errorf("aggregate monte-carlo group %q: %w", groupID, err)
+		}
+
+		base := entries[info.trials[0]]
+		base.Path = memberPaths[0]
+		base.AggregateMemberPaths = memberPaths
+		base.File = fmt.Sprintf("mc-aggregate:%s", groupID)
+		base.RunIndex = -1
+		base.ModifiedAt = newest
+		base.SizeBytes = totalSize
+		if base.ScenarioAttributes == nil {
+			base.ScenarioAttributes = map[string]string{}
+		}
+		base.ScenarioAttributes = cloneStringMap(base.ScenarioAttributes)
+		base.ScenarioAttributes["search_mode"] = "monte_carlo"
+		base.ScenarioAttributes["mc_group_id"] = groupID
+		base.ScenarioAttributes["mc_role"] = "aggregate"
+		base.ScenarioAttributes["mc_trials_aggregated"] = strconv.Itoa(len(memberPaths))
+
+		applyDumpMetricsToCatalogEntry(&base, aggDump)
+		virtualAggs = append(virtualAggs, base)
+	}
+
+	filtered := make([]DumpCatalogEntry, 0, len(entries))
+	for i, entry := range entries {
+		if keep[i] {
+			filtered = append(filtered, entry)
+		}
+	}
+	filtered = append(filtered, virtualAggs...)
+	return filtered, nil
+}
+
+func monteCarloCatalogMetadata(entry DumpCatalogEntry) (group string, role string, ok bool) {
+	if len(entry.ScenarioAttributes) == 0 {
+		return "", "", false
+	}
+	if strings.TrimSpace(entry.ScenarioAttributes["search_mode"]) != "monte_carlo" {
+		return "", "", false
+	}
+	group = strings.TrimSpace(entry.ScenarioAttributes["mc_group_id"])
+	if group == "" {
+		return "", "", false
+	}
+	role = strings.TrimSpace(entry.ScenarioAttributes["mc_role"])
+	if role == "" {
+		role = "trial"
+	}
+	return group, role, true
+}
+
+func LoadInspectorDumpForCatalogEntry(entry DumpCatalogEntry) ([]tracecheck.ResultState, tracecheck.VersionManager, error) {
+	if len(entry.AggregateMemberPaths) == 0 {
+		return LoadInspectorDump(entry.Path)
+	}
+	dump, err := aggregateMonteCarloDumpFiles(entry.AggregateMemberPaths)
+	if err != nil {
+		return nil, nil, fmt.Errorf("aggregate monte-carlo entry %q: %w", entry.ScenarioLabel, err)
+	}
+	return dumpToResultStates(dump)
 }
 
 // RenderDumpCatalogTable renders catalog summaries for headless CLI output.
@@ -171,6 +294,31 @@ func summarizeDumpCatalogEntry(path, file string, info os.FileInfo, dump *analys
 		}
 	}
 
+	label := strings.ReplaceAll(scenario, "_", " ")
+	if label == "" {
+		label = file
+	}
+
+	entry := DumpCatalogEntry{
+		Path:               path,
+		File:               file,
+		Scenario:           scenario,
+		ScenarioLabel:      label,
+		RunIndex:           runIdx,
+		ScenarioWorkflow:   contextWorkflow,
+		ScenarioInputRef:   contextInputRef,
+		ScenarioAttributes: contextAttributes,
+		ModifiedAt:         info.ModTime(),
+		SizeBytes:          info.Size(),
+	}
+	applyDumpMetricsToCatalogEntry(&entry, dump)
+	return entry
+}
+
+func applyDumpMetricsToCatalogEntry(entry *DumpCatalogEntry, dump *analysis.Dump) {
+	if entry == nil || dump == nil {
+		return
+	}
 	stateCount := len(dump.States)
 	convergedCount := 0
 	abortedCount := 0
@@ -202,42 +350,31 @@ func summarizeDumpCatalogEntry(path, file string, info os.FileInfo, dump *analys
 			}
 		}
 	}
-
 	if initialObjects == 0 && len(dump.States) > 0 {
 		initialObjects = len(dump.States[0].State.Contents.Objects)
 	}
-
 	controllers := make([]string, 0, len(controllerSet))
 	for controller := range controllerSet {
 		controllers = append(controllers, controller)
 	}
 	sort.Strings(controllers)
 
-	label := strings.ReplaceAll(scenario, "_", " ")
-	if label == "" {
-		label = file
-	}
+	entry.States = stateCount
+	entry.ConvergedStates = convergedCount
+	entry.AbortedStates = abortedCount
+	entry.Paths = pathCount
+	entry.Steps = stepCount
+	entry.Controllers = controllers
+	entry.InitialController = initialController
+	entry.InitialObjects = initialObjects
+}
 
-	return DumpCatalogEntry{
-		Path:               path,
-		File:               file,
-		Scenario:           scenario,
-		ScenarioLabel:      label,
-		RunIndex:           runIdx,
-		ScenarioWorkflow:   contextWorkflow,
-		ScenarioInputRef:   contextInputRef,
-		ScenarioAttributes: contextAttributes,
-		ModifiedAt:         info.ModTime(),
-		SizeBytes:          info.Size(),
-		States:             stateCount,
-		ConvergedStates:    convergedCount,
-		AbortedStates:      abortedCount,
-		Paths:              pathCount,
-		Steps:              stepCount,
-		Controllers:        controllers,
-		InitialController:  initialController,
-		InitialObjects:     initialObjects,
+func cloneStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
 	}
+	return out
 }
 
 func inferScenarioFromFileName(fileName string) (string, int) {

@@ -129,7 +129,7 @@ func RunDirectoryInspectorTUIView(entries []DumpCatalogEntry) error {
 	}
 
 	openInspector := func(entry DumpCatalogEntry) {
-		states, resolver, err := LoadInspectorDump(entry.Path)
+		states, resolver, err := LoadInspectorDumpForCatalogEntry(entry)
 		if err != nil {
 			statusBar.SetText(fmt.Sprintf("[red]load dump failed: %v[-]", err))
 			return

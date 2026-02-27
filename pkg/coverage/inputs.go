@@ -69,6 +69,26 @@ func validateInputs(inputs []Input) error {
 				return fmt.Errorf("input[%d] (%s) userInputs[%d].object must set apiVersion and kind", i, name, actionIdx)
 			}
 		}
+
+		if err := validateSearchTuning(i, name, input.Tuning.Search); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateSearchTuning(inputIdx int, inputName string, search InputSearchTuning) error {
+	mode := strings.TrimSpace(search.Mode)
+	switch mode {
+	case "", "dfs", "monte_carlo":
+	default:
+		return fmt.Errorf("input[%d] (%s) tuning.search.mode must be one of: dfs, monte_carlo", inputIdx, inputName)
+	}
+	if search.MonteCarlo.Trials != nil && *search.MonteCarlo.Trials <= 0 {
+		return fmt.Errorf("input[%d] (%s) tuning.search.monteCarlo.trials must be >= 1", inputIdx, inputName)
+	}
+	if search.MonteCarlo.TrialIndex != nil && *search.MonteCarlo.TrialIndex < 0 {
+		return fmt.Errorf("input[%d] (%s) tuning.search.monteCarlo.trialIndex must be >= 0", inputIdx, inputName)
 	}
 	return nil
 }
