@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"maps"
+	"math/rand"
 	"os"
 	"os/signal"
 	"slices"
@@ -178,6 +179,7 @@ type Explorer struct {
 
 	stats         *ExploreStats
 	optimizations *optimizations
+	randomSource  *rand.Rand
 }
 
 // VersionManager returns the shared version manager used during exploration.
@@ -626,6 +628,8 @@ func (e *Explorer) explore(
 	}
 
 	e.optimizations = newOptimizations(e.Config.Optimizations)
+	// Reset selection RNG for each explore run to keep Monte Carlo sampling deterministic per run.
+	e.randomSource = nil
 
 	seenDepths := make(map[int]bool)
 
@@ -975,7 +979,15 @@ func (e *Explorer) explore(
 			pendingReconcile = *entry.staleViewReconcile
 		} else {
 			// Normal entry - get first pending and possible views
-			pendingReconcile = currentState.PendingReconciles[0]
+			selected, selErr := e.selectPendingReconcile(currentState)
+			if selErr != nil {
+				abortErr := errors.Wrap(selErr, "select pending reconcile")
+				if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
+					return nil
+				}
+				continue
+			}
+			pendingReconcile = selected
 
 			// Log all pending reconciles for diagnostic purposes
 			if logger.V(2).Enabled() {
@@ -1693,6 +1705,33 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 	return result, nil
 }
 
+func (e *Explorer) monteCarloEnabled() bool {
+	return e != nil && e.Config != nil && e.Config.SearchMode == SearchModeMonteCarlo
+}
+
+func (e *Explorer) selectionRNG() *rand.Rand {
+	if e.randomSource != nil {
+		return e.randomSource
+	}
+	seed := time.Now().UnixNano()
+	if e.monteCarloEnabled() {
+		seed = e.Config.MonteCarlo.DerivedSeed()
+	}
+	e.randomSource = rand.New(rand.NewSource(seed))
+	return e.randomSource
+}
+
+func (e *Explorer) selectPendingReconcile(state StateNode) (PendingReconcile, error) {
+	if len(state.PendingReconciles) == 0 {
+		return PendingReconcile{}, fmt.Errorf("state has no pending reconciles")
+	}
+	if !e.monteCarloEnabled() || len(state.PendingReconciles) == 1 {
+		return state.PendingReconciles[0], nil
+	}
+	idx := e.selectionRNG().Intn(len(state.PendingReconciles))
+	return state.PendingReconciles[idx], nil
+}
+
 func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 	res, err := e.triggerManager.GetTriggered(changes)
 	if err != nil {
@@ -1779,6 +1818,13 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	filtered := lo.Filter(asStateNodes, func(sn StateNode, _ int) bool {
 		return sn.Contents.Priority != Skip
 	})
+
+	// TODO revisit how we apply randomness here.
+	// might be better to put it under `getAllViewsForController`
+	if e.monteCarloEnabled() && len(filtered) > 1 {
+		idx := e.selectionRNG().Intn(len(filtered))
+		return []StateNode{filtered[idx]}, nil
+	}
 
 	return filtered, nil
 }
