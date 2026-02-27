@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -268,6 +269,132 @@ checkNoPodLifecycle:
 	}
 }
 
+func TestSingleExecution_OrderSensitivityByInitialPendingOrder(t *testing.T) {
+	type runMetrics struct {
+		hasNode                         bool
+		firstThree                      []tracecheck.ReconcilerID
+		pathLen                         int
+		firstProvisionerCreatesNodeClaim bool
+		contentsHash                    tracecheck.ContentsHash
+		kindCounts                      map[string]int
+	}
+
+	runSingle := func(t *testing.T, desired []tracecheck.ReconcilerID) runMetrics {
+		t.Helper()
+
+		builder := newKarpenterExplorerBuilder()
+		builder.WithMaxDepth(64)
+
+		input := mustKarpenterInput(t, "karpenter-single-order")
+		state, seeded, err := buildStateFromCoverageInput(builder, input)
+		if err != nil {
+			t.Fatalf("buildStateFromCoverageInput error = %v", err)
+		}
+		actions, err := buildUserActionsFromCoverageInput(input, seeded)
+		if err != nil {
+			t.Fatalf("buildUserActionsFromCoverageInput error = %v", err)
+		}
+
+		state.PendingReconciles = reorderPendingByControllers(state.PendingReconciles, desired)
+
+			cfg := builder.Config()
+			// Use an explicit empty map (not nil) so initial-state order expansion
+			// produces zero variants instead of cloning the original state.
+			cfg.Perturbations.PermuteOrder = map[tracecheck.ReconcilerID]bool{}
+			cfg.Perturbations.Staleness = nil
+			builder.SetConfig(cfg)
+		builder.WithUserActions(actions)
+
+		explorer, err := builder.Build("standalone")
+		if err != nil {
+			t.Fatalf("build explorer: %v", err)
+		}
+
+		result := explorer.Explore(context.Background(), state)
+		if len(result.AbortedStates) > 0 {
+			t.Fatalf("expected no aborted states, got %d", len(result.AbortedStates))
+		}
+		if len(result.ConvergedStates) != 1 {
+			t.Fatalf("expected one converged state, got %d", len(result.ConvergedStates))
+		}
+		if len(result.ConvergedStates[0].Paths) != 1 {
+			t.Fatalf("expected one execution path, got %d", len(result.ConvergedStates[0].Paths))
+		}
+
+		path := result.ConvergedStates[0].Paths[0]
+		first := make([]tracecheck.ReconcilerID, 0, 3)
+		for i := 0; i < len(path) && i < 3; i++ {
+			first = append(first, path[i].ControllerID)
+		}
+
+		hasNode := false
+		kindCounts := make(map[string]int)
+		for _, obj := range explorer.Objects(result.ConvergedStates[0]) {
+			kindCounts[obj.GetKind()]++
+			if obj.GetKind() == "Node" {
+				hasNode = true
+			}
+		}
+
+		firstProvisionerCreatesNodeClaim := false
+		seenFirstProvisioner := false
+		for _, step := range path {
+			if step.ControllerID != "provisioner" {
+				continue
+			}
+			if seenFirstProvisioner {
+				continue
+			}
+			seenFirstProvisioner = true
+			for _, effect := range step.Changes.Effects {
+				if effect.OpType == event.CREATE && effect.Key.ResourceKey.Kind == "NodeClaim" {
+					firstProvisionerCreatesNodeClaim = true
+					break
+				}
+			}
+		}
+
+		return runMetrics{
+			hasNode:                          hasNode,
+			firstThree:                       first,
+			pathLen:                          len(path),
+			firstProvisionerCreatesNodeClaim: firstProvisionerCreatesNodeClaim,
+			contentsHash:                     result.ConvergedStates[0].State.ContentsHash(),
+			kindCounts:                       kindCounts,
+		}
+	}
+
+	defaultRun := runSingle(t, []tracecheck.ReconcilerID{
+		"state.pod",
+		"provisioner.trigger.pod",
+		"provisioner",
+	})
+	if !defaultRun.hasNode {
+		t.Fatalf("expected default order to produce Node; first=%v", defaultRun.firstThree)
+	}
+	if !defaultRun.firstProvisionerCreatesNodeClaim {
+		t.Fatalf("expected first provisioner step in default run to create NodeClaim; first=%v", defaultRun.firstThree)
+	}
+
+	provisionerFirstRun := runSingle(t, []tracecheck.ReconcilerID{
+		"provisioner",
+		"provisioner.trigger.pod",
+		"state.pod",
+	})
+	if !provisionerFirstRun.hasNode {
+		t.Fatalf("expected provisioner-first run to eventually produce Node; first=%v", provisionerFirstRun.firstThree)
+	}
+	if provisionerFirstRun.firstProvisionerCreatesNodeClaim {
+		t.Fatalf("expected first provisioner step in provisioner-first run to be a no-op for NodeClaim creation; first=%v", provisionerFirstRun.firstThree)
+	}
+	if provisionerFirstRun.pathLen <= defaultRun.pathLen {
+		t.Fatalf("expected provisioner-first run to take longer path; defaultLen=%d provisionerFirstLen=%d", defaultRun.pathLen, provisionerFirstRun.pathLen)
+	}
+
+	t.Logf("final contents hash (default)=%s (provisioner-first)=%s", defaultRun.contentsHash, provisionerFirstRun.contentsHash)
+	t.Logf("final kind counts (default)=%v (provisioner-first)=%v", defaultRun.kindCounts, provisionerFirstRun.kindCounts)
+}
+
 func mustKarpenterInput(t *testing.T, name string) coverage.Input {
 	t.Helper()
 	envObjs, err := newEnvironmentObjects()
@@ -352,4 +479,35 @@ func setFuzzSamplingForTest(t *testing.T, cases int, seed int64) func() {
 		*fuzzCasesFlag = oldCases
 		*fuzzSeedFlag = oldSeed
 	}
+}
+
+func reorderPendingByControllers(
+	pending []tracecheck.PendingReconcile,
+	desired []tracecheck.ReconcilerID,
+) []tracecheck.PendingReconcile {
+	used := make([]bool, len(pending))
+	ordered := make([]tracecheck.PendingReconcile, 0, len(pending))
+
+	for _, id := range desired {
+		for i := range pending {
+			if used[i] || pending[i].ReconcilerID != id {
+				continue
+			}
+			ordered = append(ordered, pending[i])
+			used[i] = true
+			break
+		}
+	}
+
+	for i := range pending {
+		if used[i] {
+			continue
+		}
+		ordered = append(ordered, pending[i])
+	}
+
+	if len(ordered) != len(pending) {
+		panic(fmt.Sprintf("reordered pending length mismatch: got=%d want=%d", len(ordered), len(pending)))
+	}
+	return ordered
 }
