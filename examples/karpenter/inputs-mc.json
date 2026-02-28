@@ -139,7 +139,7 @@
         "mode": "monte_carlo",
         "monteCarlo": {
           "seed": 4242,
-          "trials": 6
+          "trials": 60
         }
       }
     },
