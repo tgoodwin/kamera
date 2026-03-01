@@ -223,6 +223,40 @@ func TestStateNodeEligiblePendingReconciles(t *testing.T) {
 	assert.True(t, state.IsConverged(), "delayed pending should not block convergence at current depth when no pending is eligible")
 }
 
+func TestStateNodeConvergenceHashIgnoresIneligiblePending(t *testing.T) {
+	base := StateNode{depth: 3}
+	delayed := StateNode{
+		depth: 3,
+		PendingReconciles: []PendingReconcile{
+			{
+				ReconcilerID:   "A",
+				Request:        reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "a"}},
+				Source:         SourceRequeueAfter,
+				NotBeforeDepth: 4,
+			},
+		},
+	}
+
+	assert.Equal(t, base.ConvergenceHash(), delayed.ConvergenceHash(), "ineligible delayed pending should not split convergence states")
+}
+
+func TestStateNodeConvergenceHashRetainsEligibleRequeueAfter(t *testing.T) {
+	base := StateNode{depth: 3}
+	eligible := StateNode{
+		depth: 3,
+		PendingReconciles: []PendingReconcile{
+			{
+				ReconcilerID:   "A",
+				Request:        reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "a"}},
+				Source:         SourceRequeueAfter,
+				NotBeforeDepth: 3,
+			},
+		},
+	}
+
+	assert.NotEqual(t, base.ConvergenceHash(), eligible.ConvergenceHash(), "eligible delayed pending remains actionable and must affect convergence hash")
+}
+
 // Test_GetUniquePaths_PreservesConvergenceSteps verifies that paths ending in convergence
 // are not deduplicated with non-converged paths, even if they have the same controller sequence.
 // Convergence is tracked via the :converged marker in UniqueKey(), not by preserving no-op steps.
