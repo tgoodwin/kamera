@@ -395,28 +395,43 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		return result
 	}
 
-	if scenario.ClosedLoop == nil || !PerturbEnabled() {
+	if !PerturbEnabled() {
 		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, nil, scenario.Context)
 		result.Phases = []ScenarioPhaseResult{phase}
 		applyPhaseSummary(&result, phase)
 		return result
 	}
 
-	reference := r.runScenarioPhase(ctx, scenario, opts, idx, "reference", scenario.Config, seed, nil, nil, scenario.Context)
+	referenceConfig := scenario.Config
+	planFn := func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
+		return nil, nil
+	}
+	if scenario.ClosedLoop == nil {
+		// Naive v1 auto-closed-loop policy:
+		// 1) run an unperturbed reference phase
+		// 2) run one broad rerun phase derived from the reference trace
+		//
+		// This intentionally favors "get end-to-end scaffolding running" over
+		// precision/attribution. Harnesses can still override with ClosedLoop.Plan.
+		referenceConfig = disablePerturbations(scenario.Config)
+		planFn = func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
+			return buildDefaultScenarioRerunPlans(reference, scenario.Config, scenario.Context), nil
+		}
+	} else if scenario.ClosedLoop.Plan != nil {
+		planFn = scenario.ClosedLoop.Plan
+	}
+
+	reference := r.runScenarioPhase(ctx, scenario, opts, idx, "reference", referenceConfig, seed, nil, nil, scenario.Context)
 	result.Phases = append(result.Phases, reference)
 	applyPhaseSummary(&result, reference)
 	if reference.Err != nil {
 		return result
 	}
 
-	plans := []ScenarioPhasePlan{}
-	if scenario.ClosedLoop.Plan != nil {
-		planned, planErr := scenario.ClosedLoop.Plan(reference)
-		if planErr != nil {
-			result.Err = fmt.Errorf("closed-loop plan for scenario %s: %w", scenario.Name, planErr)
-			return result
-		}
-		plans = planned
+	plans, planErr := planFn(reference)
+	if planErr != nil {
+		result.Err = fmt.Errorf("closed-loop plan for scenario %s: %w", scenario.Name, planErr)
+		return result
 	}
 
 	for i, plan := range plans {
@@ -441,6 +456,81 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 	}
 
 	return result
+}
+
+func disablePerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig {
+	// Naive baseline utility used by v1 auto closed-loop:
+	// treat reference runs as "control" by clearing all perturbation knobs.
+	out := cfg.Clone()
+	if out.Perturbations.PermuteOrder == nil {
+		out.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+	}
+	for id := range out.Perturbations.PermuteOrder {
+		out.Perturbations.PermuteOrder[id] = false
+	}
+	out.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+	return out
+}
+
+func buildDefaultScenarioRerunPlans(
+	reference ScenarioPhaseResult,
+	base tracecheck.ExploreConfig,
+	scenarioCtx ScenarioContext,
+) []ScenarioPhasePlan {
+	// Naive v1 rerun strategy:
+	// - exactly one rerun phase
+	// - enable ordering permutation for all controllers observed in reference
+	// This is intentionally generic and high-recall; it is not a precise
+	// root-cause perturbation plan yet.
+	rerunCfg := disablePerturbations(base)
+	seenControllers := observedControllersInReference(reference)
+	for _, controllerID := range seenControllers {
+		if controllerID == "" || controllerID == tracecheck.UserControllerID {
+			continue
+		}
+		rerunCfg.Perturbations.PermuteOrder[controllerID] = true
+	}
+
+	rerunContext := scenarioCtx
+	return []ScenarioPhasePlan{
+		{
+			Name:    "rerun",
+			Config:  rerunCfg,
+			Context: &rerunContext,
+		},
+	}
+}
+
+func observedControllersInReference(reference ScenarioPhaseResult) []tracecheck.ReconcilerID {
+	// Naive signal extraction for v1 planner:
+	// derive candidate controllers from observed execution history only.
+	if reference.Result == nil {
+		return nil
+	}
+	seen := make(map[tracecheck.ReconcilerID]struct{})
+	collect := func(paths []tracecheck.ResultState) {
+		for _, state := range paths {
+			for _, path := range state.Paths {
+				for _, step := range path {
+					if step == nil {
+						continue
+					}
+					seen[step.ControllerID] = struct{}{}
+				}
+			}
+		}
+	}
+	collect(reference.Result.ConvergedStates)
+	collect(reference.Result.AbortedStates)
+
+	out := make([]tracecheck.ReconcilerID, 0, len(seen))
+	for id := range seen {
+		out = append(out, id)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i] < out[j]
+	})
+	return out
 }
 
 func applyPhaseSummary(result *ScenarioResult, phase ScenarioPhaseResult) {

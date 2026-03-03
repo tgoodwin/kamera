@@ -98,6 +98,7 @@ func TestParallelRunnerDoesNotLeakConfig(t *testing.T) {
 func TestParallelRunnerWritesDump(t *testing.T) {
 	ctx := context.Background()
 	builder, state := newTestBuilder(t)
+	withPerturbFlag(t, false)
 
 	runner, err := NewParallelRunner(builder)
 	if err != nil {
@@ -347,6 +348,41 @@ func TestParallelRunnerClosedLoopDisablesRerunWhenPerturbDisabled(t *testing.T) 
 	}
 	if results[0].Phases[0].Name != "run" {
 		t.Fatalf("expected single phase name to be run, got %q", results[0].Phases[0].Name)
+	}
+}
+
+func TestParallelRunnerAutoClosedLoopRunsReferenceThenRerunWhenScenarioHasNoPlanner(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	scenarios := []Scenario{
+		{
+			Name:             "auto-closed-loop",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 1},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if len(results[0].Phases) != 2 {
+		t.Fatalf("expected 2 phase results, got %d", len(results[0].Phases))
+	}
+	if results[0].Phases[0].Name != "reference" {
+		t.Fatalf("expected first phase to be reference, got %q", results[0].Phases[0].Name)
+	}
+	if results[0].Phases[1].Name != "rerun" {
+		t.Fatalf("expected second phase to be rerun, got %q", results[0].Phases[1].Name)
 	}
 }
 
