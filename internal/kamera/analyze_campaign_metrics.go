@@ -19,6 +19,9 @@ type campaignInvocationAggregate struct {
 	TotalNodeVisits      int64
 	UniqueResourceStates int64
 	DurationNS           int64
+	ErrorDumps           int
+	AbortedStates        int
+	MaxDepthAborted      int
 }
 
 func runCampaignMetrics(stdout, stderr io.Writer, targetPath string) error {
@@ -45,10 +48,6 @@ func runCampaignMetrics(stdout, stderr io.Writer, targetPath string) error {
 			skippedMissingInvocation++
 			continue
 		}
-		if dump.CampaignMetrics == nil {
-			skippedMissingMetrics++
-			continue
-		}
 
 		agg, ok := byInvocation[invocationID]
 		if !ok {
@@ -56,6 +55,18 @@ func runCampaignMetrics(stdout, stderr io.Writer, targetPath string) error {
 			byInvocation[invocationID] = agg
 		}
 		agg.Dumps++
+		if isErrorDump(dump) {
+			agg.ErrorDumps++
+		}
+		aborted, maxDepth := countAbortedStates(dump)
+		agg.AbortedStates += aborted
+		agg.MaxDepthAborted += maxDepth
+
+		if dump.CampaignMetrics == nil {
+			skippedMissingMetrics++
+			continue
+		}
+
 		agg.UniqueNodeVisits += int64(dump.CampaignMetrics.UniqueNodeVisits)
 		agg.TotalNodeVisits += int64(dump.CampaignMetrics.TotalNodeVisits)
 		agg.UniqueResourceStates += int64(dump.CampaignMetrics.UniqueResourceStates)
@@ -63,7 +74,7 @@ func runCampaignMetrics(stdout, stderr io.Writer, targetPath string) error {
 	}
 
 	if len(byInvocation) == 0 {
-		return fmt.Errorf("no dumps with both invocation_id and campaignMetrics in %s", targetPath)
+		return fmt.Errorf("no dumps with invocation_id in %s", targetPath)
 	}
 
 	keys := make([]string, 0, len(byInvocation))
@@ -73,18 +84,21 @@ func runCampaignMetrics(stdout, stderr io.Writer, targetPath string) error {
 	sort.Strings(keys)
 
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "invocation_id\tdumps\tunique_node_visits\ttotal_node_visits\tunique_resource_states\tduration_ns")
+	fmt.Fprintln(tw, "invocation_id\tdumps\tunique_node_visits\ttotal_node_visits\tunique_resource_states\tduration_ns\terror_dumps\taborted_states\tmax_depth_aborted_states")
 	for _, key := range keys {
 		agg := byInvocation[key]
 		fmt.Fprintf(
 			tw,
-			"%s\t%d\t%d\t%d\t%d\t%d\n",
+			"%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
 			agg.InvocationID,
 			agg.Dumps,
 			agg.UniqueNodeVisits,
 			agg.TotalNodeVisits,
 			agg.UniqueResourceStates,
 			agg.DurationNS,
+			agg.ErrorDumps,
+			agg.AbortedStates,
+			agg.MaxDepthAborted,
 		)
 	}
 	_ = tw.Flush()
@@ -93,10 +107,34 @@ func runCampaignMetrics(stdout, stderr io.Writer, targetPath string) error {
 		fmt.Fprintf(stderr, "skipped %d dump(s) without invocation_id\n", skippedMissingInvocation)
 	}
 	if skippedMissingMetrics > 0 {
-		fmt.Fprintf(stderr, "skipped %d dump(s) without campaignMetrics\n", skippedMissingMetrics)
+		fmt.Fprintf(stderr, "found %d dump(s) without campaignMetrics (metric totals unchanged for those dumps)\n", skippedMissingMetrics)
 	}
 
 	return nil
+}
+
+func isErrorDump(dump *analysis.Dump) bool {
+	if dump == nil || dump.Context == nil || dump.Context.Scenario == nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(dump.Context.Scenario.Attributes["status"]), "error")
+}
+
+func countAbortedStates(dump *analysis.Dump) (aborted int, maxDepth int) {
+	if dump == nil {
+		return 0, 0
+	}
+	for _, state := range dump.States {
+		errMsg := strings.TrimSpace(state.Error)
+		if errMsg == "" {
+			continue
+		}
+		aborted++
+		if strings.Contains(strings.ToLower(errMsg), "max depth") {
+			maxDepth++
+		}
+	}
+	return aborted, maxDepth
 }
 
 func discoverDumpPaths(targetPath string) ([]string, error) {
@@ -133,4 +171,3 @@ func dumpInvocationID(dump *analysis.Dump) string {
 	}
 	return strings.TrimSpace(dump.Context.Scenario.Attributes["invocation_id"])
 }
-
