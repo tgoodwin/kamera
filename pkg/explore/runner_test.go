@@ -58,6 +58,9 @@ func TestRunnerWritesDumpContext(t *testing.T) {
 	if dump.Context.Scenario.Attributes["exploreConfig"] != "/tmp/explore-config.json" {
 		t.Fatalf("expected explore config attribute in dump context")
 	}
+	if got := dump.Context.Scenario.Attributes["invocation_id"]; got == "" {
+		t.Fatalf("expected invocation_id in dump context attributes")
+	}
 }
 
 func TestRunnerEmbedsStatsInDumpWhenPerfStatsEnabled(t *testing.T) {

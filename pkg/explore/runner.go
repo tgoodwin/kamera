@@ -4,17 +4,21 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/tgoodwin/kamera/pkg/interactive"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"golang.org/x/exp/slices"
 )
 
-func standaloneDumpContext(runIdx int) *interactive.InspectorDumpContext {
+func standaloneDumpContext(runIdx int, invocationID string) *interactive.InspectorDumpContext {
 	index := runIdx
 	attributes := map[string]string{}
 	if config := ConfigPath(); config != "" {
 		attributes["exploreConfig"] = config
+	}
+	if strings.TrimSpace(invocationID) != "" {
+		attributes[invocationIDAttributeKey] = invocationID
 	}
 	if len(attributes) == 0 {
 		attributes = nil
@@ -66,6 +70,7 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 	if r == nil || r.builder == nil {
 		return fmt.Errorf("explore runner: builder is required")
 	}
+	invocationID := resolveInvocationID()
 
 	currentConfig := r.builder.Config()
 	baseline := input.EnvironmentState.Clone()
@@ -130,7 +135,7 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 			states,
 			resolver,
 			DumpPath(),
-			standaloneDumpContext(runIdx),
+			standaloneDumpContext(runIdx, invocationID),
 			statsForDump(stats, currentConfig),
 		); err != nil {
 			return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)
@@ -190,7 +195,7 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 				states,
 				resolver,
 				DumpPath(),
-				standaloneDumpContext(runIdx),
+				standaloneDumpContext(runIdx, invocationID),
 				statsForDump(nextStats, currentConfig),
 			); err != nil {
 				return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)

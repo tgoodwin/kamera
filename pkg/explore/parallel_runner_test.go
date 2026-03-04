@@ -431,6 +431,7 @@ func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 	if len(results[0].Phases) != 2 {
 		t.Fatalf("expected 2 phase results, got %d", len(results[0].Phases))
 	}
+	invocationIDs := make(map[string]struct{})
 	for _, phase := range results[0].Phases {
 		if strings.TrimSpace(phase.DumpPath) == "" {
 			t.Fatalf("expected dump path for phase %q", phase.Name)
@@ -438,6 +439,24 @@ func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 		if _, err := os.Stat(phase.DumpPath); err != nil {
 			t.Fatalf("expected dump file for phase %q: %v", phase.Name, err)
 		}
+		dump, err := analysis.LoadDump(phase.DumpPath)
+		if err != nil {
+			t.Fatalf("load dump for phase %q: %v", phase.Name, err)
+		}
+		if dump.Context == nil || dump.Context.Scenario == nil {
+			t.Fatalf("expected context for phase %q dump", phase.Name)
+		}
+		if dump.Context.Scenario.Attributes == nil {
+			t.Fatalf("expected attributes for phase %q dump", phase.Name)
+		}
+		invocationID := strings.TrimSpace(dump.Context.Scenario.Attributes["invocation_id"])
+		if invocationID == "" {
+			t.Fatalf("expected non-empty invocation_id for phase %q dump", phase.Name)
+		}
+		invocationIDs[invocationID] = struct{}{}
+	}
+	if len(invocationIDs) != 1 {
+		t.Fatalf("expected all phase dumps to share one invocation_id, got %d unique ids", len(invocationIDs))
 	}
 }
 
@@ -638,6 +657,7 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 
 	var mu sync.Mutex
 	var seen []int
+	invocationIDs := map[string]struct{}{}
 	var calls atomic.Int32
 
 	runner.loadInputsFn = func(path string) ([]coverage.Input, error) {
@@ -661,6 +681,7 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 		calls.Add(1)
 		mu.Lock()
 		seen = append(seen, req.JobIndex)
+		invocationIDs[strings.TrimSpace(req.InvocationID)] = struct{}{}
 		mu.Unlock()
 		if req.JobIndex == 1 {
 			return childProcessResult{
@@ -691,6 +712,12 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 	slices.Sort(seen)
 	if !slices.Equal(seen, []int{0, 1, 2}) {
 		t.Fatalf("expected job indices [0 1 2], got %v", seen)
+	}
+	if len(invocationIDs) != 1 {
+		t.Fatalf("expected one invocation id for all child jobs, got %d", len(invocationIDs))
+	}
+	if _, ok := invocationIDs[""]; ok {
+		t.Fatalf("expected non-empty invocation id for child jobs")
 	}
 	if runErr == nil || !strings.Contains(runErr.Error(), "failed child indices: 1") {
 		t.Fatalf("expected aggregate failure with index 1, got %v", runErr)

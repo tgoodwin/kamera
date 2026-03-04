@@ -35,6 +35,7 @@ type childProcessRequest struct {
 	JobIndex   int
 	InputIndex int
 	TrialIndex int
+	InvocationID string
 	CWD        string
 	Args       []string
 }
@@ -88,6 +89,7 @@ func (r *ParallelRunner) RunAll(ctx context.Context, scenarios []Scenario, opts 
 	if r == nil || r.builder == nil {
 		return nil, fmt.Errorf("parallel runner: builder is required")
 	}
+	invocationID := resolveInvocationID()
 	if ParallelChildIndex() >= 0 && !ParallelProcessesEnabled() {
 		return nil, fmt.Errorf("--parallel-child-index requires --parallel-processes")
 	}
@@ -104,16 +106,16 @@ func (r *ParallelRunner) RunAll(ctx context.Context, scenarios []Scenario, opts 
 			return nil, fmt.Errorf("--parallel-processes requires explicit --inputs <file>")
 		}
 		if ParallelChildIndex() >= 0 {
-			return r.runChildMode(ctx, scenarios, opts)
+			return r.runChildMode(ctx, scenarios, opts, invocationID)
 		}
-		return r.runSupervisorMode(ctx, scenarios, opts)
+		return r.runSupervisorMode(ctx, scenarios, opts, invocationID)
 	}
-	return r.runInProcess(ctx, scenarios, opts)
+	return r.runInProcess(ctx, scenarios, opts, invocationID)
 }
 
 // runSupervisorMode launches child processes for each scenario and aggregates results.
 // it expects the child processes to write results to disk and does not enforce any ordering guarantees on completion.
-func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scenario, opts ParallelOptions) ([]ScenarioResult, error) {
+func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scenario, opts ParallelOptions, invocationID string) ([]ScenarioResult, error) {
 	if err := ensureParallelOutputDirs(opts); err != nil {
 		return nil, err
 	}
@@ -175,6 +177,7 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 				JobIndex:   job.JobIndex,
 				InputIndex: job.InputIndex,
 				TrialIndex: job.TrialIndex,
+				InvocationID: invocationID,
 				CWD:        cwd,
 				Args:       args,
 			})
@@ -274,7 +277,7 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 }
 
 // runChildMode executes a single scenario based on the child index
-func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario, opts ParallelOptions) ([]ScenarioResult, error) {
+func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario, opts ParallelOptions, invocationID string) ([]ScenarioResult, error) {
 	opts = childParallelOptions(opts)
 	if err := ensureParallelOutputDirs(opts); err != nil {
 		return nil, err
@@ -307,6 +310,7 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 			jobIdxOrInput(jobIdx, childIdx),
 			"select_scenario",
 			err,
+			invocationID,
 		)
 		if dumpErr != nil {
 			result.Err = fmt.Errorf("%w (and failed to write failure dump: %v)", result.Err, dumpErr)
@@ -318,10 +322,10 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 	selected = applyMonteCarloTrialConfig(selected, childIdx, trialIdx)
 
 	fmt.Printf("parallel-processes child: running input index %d trial %d as scenario %q\n", childIdx, trialIdx, selected.Name)
-	result := r.runScenario(ctx, selected, opts, jobIdxOrInput(jobIdx, childIdx))
+	result := r.runScenario(ctx, selected, opts, jobIdxOrInput(jobIdx, childIdx), invocationID)
 	if result.Err != nil {
 		if result.DumpPath == "" {
-			dumpPath, dumpErr := writeChildFailureDump(opts, selected.Name, selected.Context, jobIdxOrInput(jobIdx, childIdx), "run_scenario", result.Err)
+			dumpPath, dumpErr := writeChildFailureDump(opts, selected.Name, selected.Context, jobIdxOrInput(jobIdx, childIdx), "run_scenario", result.Err, invocationID)
 			if dumpErr != nil {
 				result.Err = fmt.Errorf("%w (and failed to write failure dump: %v)", result.Err, dumpErr)
 			}
@@ -333,7 +337,7 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 }
 
 // runInProcess executes all scenarios concurrently within the same process using goroutines.
-func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario, opts ParallelOptions) ([]ScenarioResult, error) {
+func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario, opts ParallelOptions, invocationID string) ([]ScenarioResult, error) {
 	if err := ensureParallelOutputDirs(opts); err != nil {
 		return nil, err
 	}
@@ -355,7 +359,7 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 	worker := func() {
 		defer wg.Done()
 		for job := range jobs {
-			res := r.runScenario(ctx, job.scenario, opts, job.idx)
+			res := r.runScenario(ctx, job.scenario, opts, job.idx, invocationID)
 			resCh <- scenarioResult{idx: job.idx, result: res}
 		}
 	}
@@ -382,7 +386,7 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 	return results, nil
 }
 
-func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opts ParallelOptions, idx int) ScenarioResult {
+func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opts ParallelOptions, idx int, invocationID string) ScenarioResult {
 	result := ScenarioResult{Name: scenario.Name}
 	if ctx.Err() != nil {
 		result.Err = ctx.Err()
@@ -396,7 +400,7 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 	}
 
 	if !PerturbEnabled() {
-		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, nil, scenario.Context)
+		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, nil, scenario.Context, invocationID)
 		result.Phases = []ScenarioPhaseResult{phase}
 		applyPhaseSummary(&result, phase)
 		return result
@@ -421,7 +425,7 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		planFn = scenario.ClosedLoop.Plan
 	}
 
-	reference := r.runScenarioPhase(ctx, scenario, opts, idx, "reference", referenceConfig, seed, nil, nil, scenario.Context)
+	reference := r.runScenarioPhase(ctx, scenario, opts, idx, "reference", referenceConfig, seed, nil, nil, scenario.Context, invocationID)
 	result.Phases = append(result.Phases, reference)
 	applyPhaseSummary(&result, reference)
 	if reference.Err != nil {
@@ -447,7 +451,7 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		if plan.Seed != nil {
 			runSeed = *plan.Seed
 		}
-		phase := r.runScenarioPhase(ctx, scenario, opts, idx, phaseName, plan.Config, runSeed, plan.Prefix, reference.VersionManager, phaseCtx)
+		phase := r.runScenarioPhase(ctx, scenario, opts, idx, phaseName, plan.Config, runSeed, plan.Prefix, reference.VersionManager, phaseCtx, invocationID)
 		result.Phases = append(result.Phases, phase)
 		applyPhaseSummary(&result, phase)
 		if phase.Err != nil {
@@ -556,6 +560,7 @@ func (r *ParallelRunner) runScenarioPhase(
 	prefix tracecheck.ExecutionHistory,
 	prefixResolver tracecheck.VersionManager,
 	phaseCtx ScenarioContext,
+	invocationID string,
 ) ScenarioPhaseResult {
 	phaseLabel := strings.TrimSpace(phaseName)
 	if phaseLabel == "" {
@@ -625,6 +630,9 @@ func (r *ParallelRunner) runScenarioPhase(
 			path := scenarioDumpPath(opts.DumpDir, artifactName, idx)
 			runIdx := idx
 			attrs := copyAttributes(phaseCtx.Attributes)
+			if strings.TrimSpace(invocationID) != "" {
+				attrs[invocationIDAttributeKey] = invocationID
+			}
 			if strings.TrimSpace(phaseName) != "" {
 				attrs["phase"] = phaseLabel
 			}
@@ -844,6 +852,7 @@ func writeChildFailureDump(
 	childIdx int,
 	phase string,
 	runErr error,
+	invocationID string,
 ) (string, error) {
 	if strings.TrimSpace(opts.DumpDir) == "" {
 		return "", nil
@@ -857,6 +866,9 @@ func writeChildFailureDump(
 	runIdx := childIdx
 
 	attrs := copyAttributes(scenarioCtx.Attributes)
+	if strings.TrimSpace(invocationID) != "" {
+		attrs[invocationIDAttributeKey] = invocationID
+	}
 	attrs["status"] = "error"
 	attrs["error_phase"] = strings.TrimSpace(phase)
 	attrs["error_message"] = trimErrorMessage(runErr, 512)
@@ -987,6 +999,10 @@ func spawnGoRunChild(ctx context.Context, req childProcessRequest) childProcessR
 	goArgs := append([]string{"run", "."}, req.Args...)
 	cmd := exec.CommandContext(ctx, "go", goArgs...)
 	cmd.Dir = req.CWD
+	cmd.Env = os.Environ()
+	if strings.TrimSpace(req.InvocationID) != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", invocationIDEnvVar, strings.TrimSpace(req.InvocationID)))
+	}
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
