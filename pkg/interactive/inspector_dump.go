@@ -34,7 +34,7 @@ func SaveInspectorDump(states []tracecheck.ResultState, resolver tracecheck.Vers
 
 // SaveInspectorDumpWithContext serializes inspector states and includes optional scenario metadata.
 func SaveInspectorDumpWithContext(states []tracecheck.ResultState, resolver tracecheck.VersionManager, path string, ctx *InspectorDumpContext) error {
-	return SaveInspectorDumpWithContextAndStats(states, resolver, path, ctx, nil)
+	return SaveInspectorDumpWithContextAndStatsAndCampaignMetrics(states, resolver, path, ctx, nil, nil)
 }
 
 // SaveInspectorDumpWithContextAndStats serializes inspector states, optional scenario metadata,
@@ -46,7 +46,20 @@ func SaveInspectorDumpWithContextAndStats(
 	ctx *InspectorDumpContext,
 	stats *tracecheck.ExploreStats,
 ) error {
-	dump, err := buildInspectorDump(states, resolver, ctx, stats)
+	return SaveInspectorDumpWithContextAndStatsAndCampaignMetrics(states, resolver, path, ctx, stats, nil)
+}
+
+// SaveInspectorDumpWithContextAndStatsAndCampaignMetrics serializes inspector states,
+// optional scenario metadata, optional exploration stats, and optional campaign metrics.
+func SaveInspectorDumpWithContextAndStatsAndCampaignMetrics(
+	states []tracecheck.ResultState,
+	resolver tracecheck.VersionManager,
+	path string,
+	ctx *InspectorDumpContext,
+	stats *tracecheck.ExploreStats,
+	campaignMetrics *analysis.CampaignMetrics,
+) error {
+	dump, err := buildInspectorDump(states, resolver, ctx, stats, campaignMetrics)
 	if err != nil {
 		return err
 	}
@@ -77,11 +90,13 @@ func buildInspectorDump(
 	resolver tracecheck.VersionManager,
 	context *InspectorDumpContext,
 	stats *tracecheck.ExploreStats,
+	campaignMetrics *analysis.CampaignMetrics,
 ) (*analysis.Dump, error) {
 	if len(states) == 0 {
 		return &analysis.Dump{
-			Context: buildAnalysisDumpContext(context),
-			Stats:   stats,
+			Context:         buildAnalysisDumpContext(context),
+			Stats:           stats,
+			CampaignMetrics: campaignMetrics,
 		}, nil
 	}
 
@@ -171,10 +186,11 @@ func buildInspectorDump(
 	})
 
 	return &analysis.Dump{
-		Context: buildAnalysisDumpContext(context),
-		Stats:   stats,
-		Objects: objects,
-		States:  resultStates,
+		Context:         buildAnalysisDumpContext(context),
+		Stats:           stats,
+		CampaignMetrics: campaignMetrics,
+		Objects:         objects,
+		States:          resultStates,
 	}, nil
 }
 
