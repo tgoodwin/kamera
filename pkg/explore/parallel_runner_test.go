@@ -454,6 +454,21 @@ func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 			t.Fatalf("expected non-empty invocation_id for phase %q dump", phase.Name)
 		}
 		invocationIDs[invocationID] = struct{}{}
+		if dump.CampaignMetrics == nil {
+			t.Fatalf("expected campaignMetrics for phase %q dump", phase.Name)
+		}
+		if dump.CampaignMetrics.TotalNodeVisits <= 0 {
+			t.Fatalf("expected totalNodeVisits > 0 for phase %q dump", phase.Name)
+		}
+		if dump.CampaignMetrics.UniqueNodeVisits <= 0 {
+			t.Fatalf("expected uniqueNodeVisits > 0 for phase %q dump", phase.Name)
+		}
+		if dump.CampaignMetrics.UniqueResourceStates <= 0 {
+			t.Fatalf("expected uniqueResourceStates > 0 for phase %q dump", phase.Name)
+		}
+		if dump.CampaignMetrics.DurationNS <= 0 {
+			t.Fatalf("expected durationNs > 0 for phase %q dump", phase.Name)
+		}
 	}
 	if len(invocationIDs) != 1 {
 		t.Fatalf("expected all phase dumps to share one invocation_id, got %d unique ids", len(invocationIDs))

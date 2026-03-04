@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/tgoodwin/kamera/pkg/interactive"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
@@ -97,13 +98,13 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 		return out
 	}
 
-	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, tracecheck.VersionManager, *tracecheck.ExploreStats, error) {
+	runOnce := func(ctx context.Context, state tracecheck.StateNode) (*tracecheck.Result, tracecheck.VersionManager, *tracecheck.ExploreStats, time.Duration, error) {
 		r.builder.SetConfig(currentConfig)
 		r.builder.WithUserActions(cloneUserActions(userActions))
 		// get a fresh explorer for each run
 		explorer, err := r.builder.Build("standalone")
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("build explorer: %w", err)
+			return nil, nil, nil, 0, fmt.Errorf("build explorer: %w", err)
 		}
 
 		runCtx := ctx
@@ -113,11 +114,13 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 			defer cancel()
 		}
 
-		return explorer.Explore(runCtx, state), explorer.VersionManager(), explorer.Stats(), nil
+		start := time.Now()
+		result := explorer.Explore(runCtx, state)
+		return result, explorer.VersionManager(), explorer.Stats(), time.Since(start), nil
 	}
 
 	resolver := tracecheck.VersionManager(nil)
-	res, resolver, stats, err := runOnce(ctx, baseline.Clone())
+	res, resolver, stats, duration, err := runOnce(ctx, baseline.Clone())
 	if err != nil {
 		return err
 	}
@@ -131,12 +134,13 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 	}
 
 	if DumpPath() != "" {
-		if err := interactive.SaveInspectorDumpWithContextAndStats(
+		if err := interactive.SaveInspectorDumpWithContextAndStatsAndCampaignMetrics(
 			states,
 			resolver,
 			DumpPath(),
 			standaloneDumpContext(runIdx, invocationID),
 			statsForDump(stats, currentConfig),
+			campaignMetricsForDump(stats, duration),
 		); err != nil {
 			return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)
 		}
@@ -175,7 +179,7 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 			nextState.ExecutionHistory = slices.Clone(restart.Prefix)
 		}
 
-		nextRes, nextResolver, nextStats, err := runOnce(ctx, nextState)
+		nextRes, nextResolver, nextStats, nextDuration, err := runOnce(ctx, nextState)
 		if err != nil {
 			return fmt.Errorf("restart explore error: %w", err)
 		}
@@ -191,12 +195,13 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 			states = newStates
 		}
 		if DumpPath() != "" {
-			if err := interactive.SaveInspectorDumpWithContextAndStats(
+			if err := interactive.SaveInspectorDumpWithContextAndStatsAndCampaignMetrics(
 				states,
 				resolver,
 				DumpPath(),
 				standaloneDumpContext(runIdx, invocationID),
 				statsForDump(nextStats, currentConfig),
+				campaignMetricsForDump(nextStats, nextDuration),
 			); err != nil {
 				return fmt.Errorf("failed to dump results to %s: %w", DumpPath(), err)
 			}

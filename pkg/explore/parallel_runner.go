@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/interactive"
@@ -604,7 +605,9 @@ func (r *ParallelRunner) runScenarioPhase(
 		defer cancel()
 	}
 
+	start := time.Now()
 	res := explorer.Explore(runCtx, startState)
+	duration := time.Since(start)
 	phase.Result = res
 	phase.VersionManager = explorer.VersionManager()
 	phase.Stats = explorer.Stats()
@@ -651,7 +654,8 @@ func (r *ParallelRunner) runScenarioPhase(
 				InputRef:         phaseCtx.InputRef,
 				Attributes:       attrs,
 			}
-			if err := interactive.SaveInspectorDumpWithContextAndStats(states, phase.VersionManager, path, dumpContext, dumpStats); err != nil {
+			metrics := campaignMetricsForDump(phase.Stats, duration)
+			if err := interactive.SaveInspectorDumpWithContextAndStatsAndCampaignMetrics(states, phase.VersionManager, path, dumpContext, dumpStats, metrics); err != nil {
 				phase.Err = fmt.Errorf("dump scenario %s (%s): %w", scenario.Name, phaseLabel, err)
 				return phase
 			}
