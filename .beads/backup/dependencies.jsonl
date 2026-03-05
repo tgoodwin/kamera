@@ -53,6 +53,7 @@
 {"created_at":"2026-02-21T00:34:15Z","created_by":"Tim Goodwin","depends_on_id":"kamera-9gz.5","issue_id":"kamera-9gz.8","type":"blocks"}
 {"created_at":"2026-02-21T00:34:25Z","created_by":"Tim Goodwin","depends_on_id":"kamera-9gz.6","issue_id":"kamera-9gz.8","type":"blocks"}
 {"created_at":"2026-02-21T00:34:35Z","created_by":"Tim Goodwin","depends_on_id":"kamera-9gz.7","issue_id":"kamera-9gz.8","type":"blocks"}
+{"created_at":"2026-03-04T16:54:46Z","created_by":"Tim Goodwin","depends_on_id":"kamera-fh7","issue_id":"kamera-9nw","type":"discovered-from"}
 {"created_at":"2026-02-27T02:01:38Z","created_by":"Tim Goodwin","depends_on_id":"kamera-e9r","issue_id":"kamera-9q4","type":"blocks"}
 {"created_at":"2026-02-27T03:13:56Z","created_by":"Tim Goodwin","depends_on_id":"kamera-opc","issue_id":"kamera-e9r","type":"relates-to"}
 {"created_at":"2026-01-14T22:08:15Z","created_by":"Tim Goodwin","depends_on_id":"kamera-189","issue_id":"kamera-eja","type":"blocks"}
