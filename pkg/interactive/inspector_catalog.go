@@ -127,8 +127,19 @@ func collapseMonteCarloEntries(entries []DumpCatalogEntry) ([]DumpCatalogEntry, 
 	virtualAggs := make([]DumpCatalogEntry, 0)
 	for groupID, info := range groups {
 		if len(info.aggregates) > 0 {
+			bestAggIdx := info.aggregates[0]
+			for _, aggIdx := range info.aggregates[1:] {
+				if entries[aggIdx].ModifiedAt.After(entries[bestAggIdx].ModifiedAt) {
+					bestAggIdx = aggIdx
+				}
+			}
 			for _, trialIdx := range info.trials {
 				keep[trialIdx] = false
+			}
+			for _, aggIdx := range info.aggregates {
+				if aggIdx != bestAggIdx {
+					keep[aggIdx] = false
+				}
 			}
 			continue
 		}

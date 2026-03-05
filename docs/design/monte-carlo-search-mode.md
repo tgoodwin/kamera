@@ -25,27 +25,24 @@ Add a search mode to `tracecheck.ExploreConfig`:
 Add Monte Carlo settings:
 
 - `Seed` (deterministic base seed)
+- `Trials` (number of trial runs for the scenario)
 - `TrialIndex` (set per run/trial)
-- `EnableRandomPendingSelection` (v1: always true when `mode=monte_carlo`)
-- `EnableRandomStaleViewSelection` (v1: true when `mode=monte_carlo`)
+- `ScenarioGroup` (stable scenario/input grouping key)
 
 Selection RNG seed is deterministic per trial from `(Seed, scenario-group-id, TrialIndex)`.
 
-### 2. Selection strategy hooks in `explore.go`
+### 2. Selection strategy in `explore.go`
 
-Introduce two internal strategy helpers:
-
-- `selectPendingReconcile(state StateNode) (PendingReconcile, error)`
-- `selectStateView(currState StateNode, pending PendingReconcile) (StateNode, bool, error)`
+Use existing explorer helpers:
 
 Behavior:
 
 - DFS mode:
   - pending: first item (current behavior)
-  - view: existing stale-view branching behavior
+  - view: existing stale-view branching behavior in `getPossibleViewsForReconcile`
 - Monte Carlo mode:
   - pending: uniformly random from full `PendingReconciles`
-  - view: if staleness candidates exist under existing `Perturbations.Staleness` bounds, sample one uniformly; else use current state view
+  - view: `getPossibleViewsForReconcile` samples one stale candidate uniformly when multiple are available; otherwise uses current state view
 
 Notes:
 
@@ -88,18 +85,19 @@ In `context.scenario.attributes`, add:
 - `mc_seed=<derived seed>`
 - `mc_role=trial|aggregate`
 
-### 6. Built-in aggregation for DFS-like TUI UX
+### 6. Catalog aggregation for DFS-like TUI UX
 
-The runner/supervisor performs aggregation automatically after all trials finish.
+Aggregation is performed by inspector catalog loading, not by the runner writing aggregate dump files.
 
-For each `mc_group_id`, merge all trial dumps into one aggregate dump:
+For each `mc_group_id`:
 
-- merge converged states by `State.Hash()`
-- append paths per converged state, then apply existing path dedupe (`dedupePathsByUniqueKey`)
-- merge aborted states similarly
-- preserve scenario/workflow context and set `mc_role=aggregate`
+- if explicit on-disk aggregates exist, keep one aggregate entry (newest `ModifiedAt`) and hide trials/older aggregates
+- otherwise, merge trial dumps in-memory into one virtual aggregate entry
+- merged state keying uses catalog aggregation logic (`aggregateStateKey`), and paths are deduped via existing path dedupe
 
-TUI catalog should present aggregate entries as the primary view for Monte Carlo workflows so UX matches DFS: one scenario row with all converged states/paths represented.
+Catalog/TUI presents aggregate entries as the primary view for Monte Carlo workflows so UX matches DFS: one scenario row with all converged states/paths represented.
+
+Current behavior is intentionally eager during catalog load. Performance optimizations (for large trial sets) are deferred to follow-up work.
 
 ## Non-Goals (v1)
 
@@ -142,9 +140,8 @@ Extend `pkg/explore/configuration.go` with a `search` block, for example:
 - `pkg/explore/parallel_runner.go`
   - generate `scenario x trial` job matrix
   - pass deterministic trial seeds
-  - aggregate per-group trial dumps
 - `pkg/interactive/inspector_catalog.go` and `pkg/interactive/inspector_catalog_tview.go`
-  - prefer/display Monte Carlo aggregate entries for DFS-like UX
+  - aggregate/group Monte Carlo entries for DFS-like UX
 - `pkg/interactive/inspector_dump.go`
   - no schema break; ensure attributes are preserved in write/read paths
 - example harness scenario builders (`examples/*/scenario.go`)
@@ -167,7 +164,6 @@ Extend `pkg/explore/configuration.go` with a `search` block, for example:
 
 - `scenario x trial` expansion count is correct
 - deterministic seed derivation reproducibility
-- aggregate dump contains merged states/paths for same `mc_group_id`
 - dedupe behavior preserved (equivalent paths collapse)
 
 ### Catalog/TUI tests
@@ -195,7 +191,7 @@ Extend `pkg/explore/configuration.go` with a `search` block, for example:
 ### Phase 2: Monte Carlo execution semantics in explorer
 
 1. Add `selectPendingReconcile` and replace direct `PendingReconciles[0]` usage.
-2. Add `selectStateView` and replace stale-view fanout path for Monte Carlo mode.
+2. Add Monte Carlo-aware stale-view sampling in `getPossibleViewsForReconcile`.
 3. Disable order/stale/initial fanout when `mode=monte_carlo`.
 4. Keep DFS behavior unchanged when `mode=dfs`.
 
@@ -206,19 +202,19 @@ Extend `pkg/explore/configuration.go` with a `search` block, for example:
 3. Pass trial index and derived seed into child executions.
 4. Emit trial dump attributes (`mc_*`, role=trial).
 
-### Phase 4: Built-in aggregation and catalog behavior
+### Phase 4: Catalog aggregation and grouping behavior
 
-1. Add supervisor aggregation pass per `mc_group_id`.
-2. Emit aggregate dumps (`mc_role=aggregate`).
+1. Add/keep catalog aggregation per `mc_group_id`.
+2. Prefer explicit aggregate entries when present.
 3. Update catalog listing behavior to prioritize aggregate entries for Monte Carlo workflows.
 
 ### Phase 5: Validation
 
 1. Add unit tests for selection determinism and single-path semantics.
-2. Add runner integration tests for `scenario x trial` and aggregate dump correctness.
+2. Add runner integration tests for `scenario x trial`.
 3. Add catalog tests for grouped Monte Carlo UX.
 
 ## Open Questions
 
 - Should non-Monte Carlo workflows ignore `mc_*` attributes entirely in catalog rendering (likely yes)?
-- Should aggregate dumps include merged stats or only state/path data (v1 can keep stats optional)?
+- When should eager catalog aggregation move to lazy/on-demand aggregation for large trial sets?

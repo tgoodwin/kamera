@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -125,6 +126,62 @@ func TestLoadDumpCatalogEntriesPrefersMonteCarloAggregateEntries(t *testing.T) {
 	require.Contains(t, files, "aggregate.jsonl")
 	require.Contains(t, files, "regular.jsonl")
 	require.NotContains(t, files, "trial.jsonl")
+}
+
+func TestLoadDumpCatalogEntriesKeepsNewestExplicitMonteCarloAggregate(t *testing.T) {
+	dir := t.TempDir()
+
+	trialPath := filepath.Join(dir, "trial.jsonl")
+	oldAggPath := filepath.Join(dir, "aggregate_old.jsonl")
+	newAggPath := filepath.Join(dir, "aggregate_new.jsonl")
+
+	writeCatalogDumpWithContextAndAttrs(
+		t,
+		trialPath,
+		"Scenario Alpha",
+		1,
+		map[string]string{
+			"search_mode": "monte_carlo",
+			"mc_group_id": "inputs.json#alpha",
+			"mc_role":     "trial",
+		},
+		"KPA",
+	)
+	writeCatalogDumpWithContextAndAttrs(
+		t,
+		oldAggPath,
+		"Scenario Alpha",
+		2,
+		map[string]string{
+			"search_mode": "monte_carlo",
+			"mc_group_id": "inputs.json#alpha",
+			"mc_role":     "aggregate",
+		},
+		"KPA",
+	)
+	writeCatalogDumpWithContextAndAttrs(
+		t,
+		newAggPath,
+		"Scenario Alpha",
+		3,
+		map[string]string{
+			"search_mode": "monte_carlo",
+			"mc_group_id": "inputs.json#alpha",
+			"mc_role":     "aggregate",
+		},
+		"KPA",
+	)
+
+	oldTime := time.Now().Add(-1 * time.Hour)
+	newTime := time.Now()
+	require.NoError(t, os.Chtimes(oldAggPath, oldTime, oldTime))
+	require.NoError(t, os.Chtimes(newAggPath, newTime, newTime))
+
+	entries, err := LoadDumpCatalogEntries(dir)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, "aggregate_new.jsonl", entries[0].File)
+	require.Equal(t, "aggregate", entries[0].ScenarioAttributes["mc_role"])
 }
 
 func TestLoadDumpCatalogEntriesSynthesizesMonteCarloAggregateWhenNoAggregateFile(t *testing.T) {

@@ -734,7 +734,7 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 	if _, ok := invocationIDs[""]; ok {
 		t.Fatalf("expected non-empty invocation id for child jobs")
 	}
-	if runErr == nil || !strings.Contains(runErr.Error(), "failed child indices: 1") {
+	if runErr == nil || !strings.Contains(runErr.Error(), "failed job indices: 1") {
 		t.Fatalf("expected aggregate failure with index 1, got %v", runErr)
 	}
 	if len(results) != 3 {

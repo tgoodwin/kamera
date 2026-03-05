@@ -265,7 +265,7 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 	if failed > 0 {
 		sort.Ints(failedIdx)
 		return results, fmt.Errorf(
-			"parallel-processes supervisor: %d/%d child runs failed; failed child indices: %s",
+			"parallel-processes supervisor: %d/%d child runs failed; failed job indices: %s",
 			failed,
 			total,
 			joinIntList(failedIdx),

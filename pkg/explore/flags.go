@@ -4,7 +4,7 @@ import "flag"
 
 var (
 	interactiveFlag       = flag.Bool("interactive", true, "launch interactive trace inspector")
-	dumpPathFlag          = flag.String("dump-output", "", "optional path to write exploration dump to disk (states, plus stats when --emit-stats is enabled)")
+	dumpPathFlag          = flag.String("output", "", "optional path to write exploration dump to disk (states, plus stats when --emit-stats is enabled)")
 	configPathFlag        = flag.String("explore-config", "", "optional JSON file to configure exploration")
 	inputsPathFlag        = flag.String("inputs", "", `path to input JSON file`)
 	perturbFlag           = flag.Bool("perturb", true, "enable closed-loop rerun pipeline for batch inputs when supported by scenario generation")
