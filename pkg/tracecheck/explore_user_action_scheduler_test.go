@@ -47,6 +47,49 @@ func TestShouldApplyNextUserAction_NoUserControllerOrActions(t *testing.T) {
 	}
 }
 
+func TestShouldApplyNextUserAction_TargetDepthScheduling(t *testing.T) {
+	explorer := &Explorer{
+		Config: &ExploreConfig{
+			Perturbations: PerturbationConfig{
+				UserActionTargetDepth: map[int]int{1: 5},
+			},
+		},
+		userController: &UserController{
+			reconciler: &userActionReconciler{
+				actions: []UserAction{
+					{ID: "a0", OpType: event.CREATE},
+					{ID: "a1", OpType: event.UPDATE},
+				},
+			},
+		},
+	}
+
+	beforeTargetNonConverged := StateNode{
+		depth:             4,
+		nextUserActionIdx: 1,
+		PendingReconciles: []PendingReconcile{
+			{ReconcilerID: "svc", Source: SourceStateChange},
+		},
+	}
+	if explorer.shouldApplyNextUserAction(beforeTargetNonConverged) {
+		t.Fatalf("expected false before target depth when state is non-converged")
+	}
+
+	atTargetNonConverged := beforeTargetNonConverged
+	atTargetNonConverged.depth = 5
+	if !explorer.shouldApplyNextUserAction(atTargetNonConverged) {
+		t.Fatalf("expected true at target depth even when state is non-converged")
+	}
+
+	earlyConverged := StateNode{
+		depth:             3,
+		nextUserActionIdx: 1,
+	}
+	if !explorer.shouldApplyNextUserAction(earlyConverged) {
+		t.Fatalf("expected true for converged state below target depth")
+	}
+}
+
 func TestIsTerminalConvergedState_RequiresUserActionExhaustion(t *testing.T) {
 	explorer := &Explorer{
 		userController: &UserController{

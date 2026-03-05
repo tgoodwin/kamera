@@ -40,8 +40,9 @@ type EffectContextManager interface {
 }
 
 type PerturbationConfig struct {
-	PermuteOrder map[ReconcilerID]bool
-	Staleness    map[ReconcilerID]StalenessConfig
+	PermuteOrder          map[ReconcilerID]bool
+	Staleness             map[ReconcilerID]StalenessConfig
+	UserActionTargetDepth map[int]int
 }
 
 type StalenessConfig struct {
@@ -147,6 +148,7 @@ type ExploreConfig struct {
 func (cfg ExploreConfig) Clone() ExploreConfig {
 	out := cfg
 	out.Perturbations.PermuteOrder = maps.Clone(cfg.Perturbations.PermuteOrder)
+	out.Perturbations.UserActionTargetDepth = maps.Clone(cfg.Perturbations.UserActionTargetDepth)
 	out.Perturbations.Staleness = make(map[ReconcilerID]StalenessConfig, len(cfg.Perturbations.Staleness))
 	for id, st := range cfg.Perturbations.Staleness {
 		copied := st
@@ -205,8 +207,24 @@ func (e *Explorer) shouldApplyNextUserAction(state StateNode) bool {
 	if !e.hasRemainingUserAction(state) {
 		return false
 	}
+	if targetDepth, ok := e.userActionTargetDepth(state.nextUserActionIdx); ok {
+		if state.depth >= targetDepth {
+			return true
+		}
+		// If a branch converges before a scheduled depth, apply at convergence so
+		// the run can continue without synthetic no-op depth padding.
+		return state.IsConverged()
+	}
 	// policy here is to apply the next user action after the current state has converged
 	return state.IsConverged()
+}
+
+func (e *Explorer) userActionTargetDepth(actionIdx int) (int, bool) {
+	if e == nil || e.Config == nil || e.Config.Perturbations.UserActionTargetDepth == nil {
+		return 0, false
+	}
+	targetDepth, ok := e.Config.Perturbations.UserActionTargetDepth[actionIdx]
+	return targetDepth, ok
 }
 
 func (e *Explorer) hasRemainingUserAction(state StateNode) bool {
