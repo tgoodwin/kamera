@@ -886,21 +886,22 @@ func (e *Explorer) explore(
 		// if any pending has SourceStateChange.
 		if e.isTerminalConvergedState(currentState) {
 			convergenceKey := currentState.ConvergenceHash()
-			reason := "no pending reconciles"
-			if len(currentState.PendingReconciles) > 0 {
-				reason = "only async enqueues/requeues remaining"
+			eligiblePending := currentState.EligiblePendingReconciles()
+			reason := "no eligible pending reconciles"
+			if len(eligiblePending) > 0 {
+				reason = "only ignorable pending reconciles remaining"
 			}
 
 			// INVARIANT CHECK: No SourceStateChange pending reconciles should be present
 			// when marking a state as converged. If this fires, there's a bug.
-			for _, pr := range currentState.PendingReconciles {
+			for _, pr := range eligiblePending {
 				if pr.Source == SourceStateChange {
 					logger.Error(nil, "BUG: state marked as converged has SourceStateChange pending reconcile",
 						"ReconcilerID", pr.ReconcilerID,
 						"Request", pr.Request.NamespacedName,
 						"Depth", currentState.depth,
-						"TotalPending", len(currentState.PendingReconciles),
-						"PendingSources", pendingSourcesSummary(currentState.PendingReconciles),
+						"TotalPending", len(eligiblePending),
+						"PendingSources", pendingSourcesSummary(eligiblePending),
 					)
 				}
 			}
@@ -910,8 +911,8 @@ func (e *Explorer) explore(
 					"Depth", currentState.depth,
 					"StateKey", convergenceKey,
 					"Reason", reason,
-					"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
-					"PendingSources", pendingSourcesSummary(currentState.PendingReconciles),
+					"RemainingIgnorable", countIgnorableForConvergence(eligiblePending),
+					"PendingSources", pendingSourcesSummary(eligiblePending),
 				).Info("arrived at converged state")
 			}
 			if logger.V(2).Enabled() {
@@ -966,21 +967,21 @@ func (e *Explorer) explore(
 		var stateView StateNode
 		var pendingReconcile PendingReconcile
 
-		if entry.isStaleViewEntry() {
-			// This is a stale view entry - use currentState directly as the view
-			stateView = currentState
-			pendingReconcile = *entry.staleViewReconcile
-		} else {
-			// Normal entry - get first pending and possible views
-			selected, selErr := e.selectPendingReconcile(currentState)
-			if selErr != nil {
-				abortErr := errors.Wrap(selErr, "select pending reconcile")
-				if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
-					return nil
+			if entry.isStaleViewEntry() {
+				// This is a stale view entry - use currentState directly as the view
+				stateView = currentState
+				pendingReconcile = *entry.staleViewReconcile
+			} else {
+				// Normal entry - get first pending and possible views
+				selected, selErr := e.selectPendingReconcile(currentState)
+				if selErr != nil {
+					abortErr := errors.Wrap(selErr, "select pending reconcile")
+					if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
+						return nil
+					}
+					continue
 				}
-				continue
-			}
-			pendingReconcile = selected
+				pendingReconcile = selected
 
 			// Log all pending reconciles for diagnostic purposes
 			if logger.V(2).Enabled() {
@@ -1728,14 +1729,15 @@ func (e *Explorer) selectionRNG() *rand.Rand {
 }
 
 func (e *Explorer) selectPendingReconcile(state StateNode) (PendingReconcile, error) {
-	if len(state.PendingReconciles) == 0 {
-		return PendingReconcile{}, fmt.Errorf("state has no pending reconciles")
+	eligible := state.EligiblePendingReconciles()
+	if len(eligible) == 0 {
+		return PendingReconcile{}, fmt.Errorf("state has no depth-eligible pending reconciles")
 	}
-	if !e.monteCarloEnabled() || len(state.PendingReconciles) == 1 {
-		return state.PendingReconciles[0], nil
+	if !e.monteCarloEnabled() || len(eligible) == 1 {
+		return eligible[0], nil
 	}
-	idx := e.selectionRNG().Intn(len(state.PendingReconciles))
-	return state.PendingReconciles[idx], nil
+	idx := e.selectionRNG().Intn(len(eligible))
+	return eligible[idx], nil
 }
 
 func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
@@ -1918,13 +1920,21 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 		triggeredByChanges = filtered
 	}
 
-	// if the controller returned a response with Requeue = true,
-	// we need to requeue the original request, no matter what.
-	if consumed != nil && result.ctrlRes.Requeue {
+	// If the controller returned Requeue or RequeueAfter, re-enqueue the original request.
+	// RequeueAfter is treated as actionable follow-up work.
+	if consumed != nil && (result.ctrlRes.Requeue || result.ctrlRes.RequeueAfter > 0) {
+		source := SourceRequeue
+		notBeforeDepth := 0
+		if result.ctrlRes.RequeueAfter > 0 {
+			source = SourceRequeueAfter
+			delaySteps := simclock.StepsForDuration(result.ctrlRes.RequeueAfter)
+			notBeforeDepth = state.depth + 1 + delaySteps
+		}
 		requeued := PendingReconcile{
-			ReconcilerID: consumed.ReconcilerID,
-			Request:      consumed.Request,
-			Source:       SourceRequeue,
+			ReconcilerID:   consumed.ReconcilerID,
+			Request:        consumed.Request,
+			Source:         source,
+			NotBeforeDepth: notBeforeDepth,
 		}
 		triggeredByChanges = append(triggeredByChanges, requeued)
 	}

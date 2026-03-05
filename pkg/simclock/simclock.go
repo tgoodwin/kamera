@@ -43,3 +43,25 @@ func Configure(b time.Time, s time.Duration) {
 	base = b
 	step = s
 }
+
+// StepDuration returns the configured simulated time increment per depth step.
+func StepDuration() time.Duration {
+	return step
+}
+
+// StepsForDuration converts a duration to simulated depth steps using ceiling semantics.
+// Durations <= 0 return 0.
+func StepsForDuration(d time.Duration) int {
+	if d <= 0 {
+		return 0
+	}
+	s := StepDuration()
+	if s <= 0 {
+		return 0
+	}
+	steps := d / s
+	if d%s != 0 {
+		steps++
+	}
+	return int(steps)
+}
