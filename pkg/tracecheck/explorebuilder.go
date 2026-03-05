@@ -114,7 +114,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			Perturbations: PerturbationConfig{
 				PermuteOrder:          make(map[ReconcilerID]bool),
 				Staleness:             make(map[ReconcilerID]StalenessConfig),
-				UserActionTargetDepth: make(map[int]int),
+				UserActionReadyDepths: make(map[int]int),
 			},
 		},
 	}
@@ -412,8 +412,8 @@ func (b *ExplorerBuilder) SetConfig(cfg ExploreConfig) *ExplorerBuilder {
 	if cloned.Perturbations.Staleness == nil {
 		cloned.Perturbations.Staleness = make(map[ReconcilerID]StalenessConfig)
 	}
-	if cloned.Perturbations.UserActionTargetDepth == nil {
-		cloned.Perturbations.UserActionTargetDepth = make(map[int]int)
+	if cloned.Perturbations.UserActionReadyDepths == nil {
+		cloned.Perturbations.UserActionReadyDepths = make(map[int]int)
 	}
 	b.config = &cloned
 	for id := range b.reconcilers {

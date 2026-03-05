@@ -30,8 +30,8 @@ func TestExplorerBuilderForkIsolatesStoresAndConfig(t *testing.T) {
 		t.Fatalf("expected permute map to be cloned")
 	}
 
-	fork.config.Perturbations.UserActionTargetDepth[1] = 10
-	if _, ok := b.config.Perturbations.UserActionTargetDepth[1]; ok {
-		t.Fatalf("expected user action depth target map to be cloned")
+	fork.config.Perturbations.UserActionReadyDepths[1] = 10
+	if _, ok := b.config.Perturbations.UserActionReadyDepths[1]; ok {
+		t.Fatalf("expected user action ready depth map to be cloned")
 	}
 }

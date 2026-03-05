@@ -12,8 +12,8 @@ func MergeStateNodes(primary StateNode, others ...StateNode) StateNode {
 	appendPending := func(items []PendingReconcile) {
 		for _, pr := range items {
 			key := pr.String()
-			if pr.NotBeforeDepth > 0 {
-				key = key + "@" + strconv.Itoa(pr.NotBeforeDepth)
+			if pr.ReadyAtDepth > 0 {
+				key = key + "@" + strconv.Itoa(pr.ReadyAtDepth)
 			}
 			if _, exists := pendingSeen[key]; exists {
 				continue

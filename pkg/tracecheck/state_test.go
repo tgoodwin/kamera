@@ -206,55 +206,55 @@ func TestStateNodeClone_IsolatesNextUserActionIdxAcrossBranches(t *testing.T) {
 	}
 }
 
-func TestStateNodeEligiblePendingReconciles(t *testing.T) {
+func TestStateNodeReadyPendingReconciles(t *testing.T) {
 	state := StateNode{
 		depth: 3,
 		PendingReconciles: []PendingReconcile{
 			{
-				ReconcilerID:   "B",
-				Request:        reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "b"}},
-				NotBeforeDepth: 4,
+				ReconcilerID: "B",
+				Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "b"}},
+				ReadyAtDepth: 4,
 			},
 		},
 	}
 
-	eligible := state.EligiblePendingReconciles()
-	assert.Empty(t, eligible)
-	assert.True(t, state.IsConverged(), "delayed pending should not block convergence at current depth when no pending is eligible")
+	ready := state.ReadyPendingReconciles()
+	assert.Empty(t, ready)
+	assert.False(t, state.IsConverged(), "delayed actionable work should keep the branch non-converged until its scheduled depth is reached")
 }
 
-func TestStateNodeConvergenceHashIgnoresIneligiblePending(t *testing.T) {
+func TestStateNodeConvergenceHashIgnoresDeferredPending(t *testing.T) {
 	base := StateNode{depth: 3}
 	delayed := StateNode{
 		depth: 3,
 		PendingReconciles: []PendingReconcile{
 			{
-				ReconcilerID:   "A",
-				Request:        reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "a"}},
-				Source:         SourceRequeueAfter,
-				NotBeforeDepth: 4,
+				ReconcilerID: "A",
+				Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "a"}},
+				Source:       SourceRequeueAfter,
+				ReadyAtDepth: 4,
 			},
 		},
 	}
 
-	assert.Equal(t, base.ConvergenceHash(), delayed.ConvergenceHash(), "ineligible delayed pending should not split convergence states")
+	assert.Equal(t, base.ConvergenceHash(), delayed.ConvergenceHash(), "deferred delayed pending should not split convergence states")
 }
 
-func TestStateNodeConvergenceHashRetainsEligibleRequeueAfter(t *testing.T) {
+func TestStateNodeConvergenceHashRetainsReadyRequeueAfter(t *testing.T) {
 	base := StateNode{depth: 3}
-	eligible := StateNode{
+	ready := StateNode{
 		depth: 3,
 		PendingReconciles: []PendingReconcile{
 			{
-				ReconcilerID:   "A",
-				Request:        reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "a"}},
-				Source:         SourceRequeueAfter,
-				NotBeforeDepth: 3,
+				ReconcilerID: "A",
+				Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "a"}},
+				Source:       SourceRequeueAfter,
+				ReadyAtDepth: 3,
 			},
 		},
 	}
 
-	assert.NotEqual(t, base.ConvergenceHash(), eligible.ConvergenceHash(), "eligible delayed pending remains actionable and must affect convergence hash")
+	assert.NotEqual(t, base.ConvergenceHash(), ready.ConvergenceHash(), "ready delayed pending remains actionable and must affect convergence hash")
 }
 
 // Test_GetUniquePaths_PreservesConvergenceSteps verifies that paths ending in convergence

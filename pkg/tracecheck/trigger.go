@@ -94,13 +94,30 @@ type PendingReconcile struct {
 	ReconcilerID ReconcilerID
 	Request      reconcile.Request
 	Source       PendingReconcileSource
-	// NotBeforeDepth "suppresses" a pendingReconcile until the explorer reaches this depth.
-	// this is in support of RequeueAfter semantics in which elapsed time is a function of depth (pkg simclock)
-	NotBeforeDepth int
+	// ReadyAtDepth is an exploration-only scheduling escape hatch layered on top of
+	// the otherwise reactive PendingReconcile model.
+	//
+	// PendingReconcile normally represents work that became runnable because some
+	// prior event enqueued it. ReadyAtDepth exists primarily to support user action
+	// interleaving, where the explorer needs to inject non-reactive work at an
+	// arbitrary point in a branch. RequeueAfter reuses the same mechanism so the
+	// explorer has a single depth-based readiness gate for all deferred work.
+	//
+	// Zero means "ready immediately". Positive values mean "deferred until this
+	// exploration depth".
+	ReadyAtDepth int
 }
 
 func (pr PendingReconcile) String() string {
 	return fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)
+}
+
+func (pr PendingReconcile) IsDeferredAtDepth(depth int) bool {
+	return pr.ReadyAtDepth > depth
+}
+
+func (pr PendingReconcile) IsReadyAtDepth(depth int) bool {
+	return !pr.IsDeferredAtDepth(depth)
 }
 
 // allPendingIgnorableForConvergence returns true if all pending reconciles are from

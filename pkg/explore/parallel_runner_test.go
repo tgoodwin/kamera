@@ -430,12 +430,12 @@ func TestBuildUserActionInterleavingPlans_StrictlyBetweenDepths(t *testing.T) {
 		if plan.Name != expectedName {
 			t.Fatalf("expected plan name %q, got %q", expectedName, plan.Name)
 		}
-		gotDepth, ok := plan.Config.Perturbations.UserActionTargetDepth[1]
+		gotReadyDepth, ok := plan.Config.Perturbations.UserActionReadyDepths[1]
 		if !ok {
-			t.Fatalf("expected action depth target for action 1")
+			t.Fatalf("expected action ready depth for action 1")
 		}
-		if gotDepth != expectedDepth {
-			t.Fatalf("expected target depth %d, got %d", expectedDepth, gotDepth)
+		if gotReadyDepth != expectedDepth {
+			t.Fatalf("expected ready depth %d, got %d", expectedDepth, gotReadyDepth)
 		}
 	}
 }
@@ -473,9 +473,9 @@ func TestBuildUserActionInterleavingPlans_EmptyWindowFallsBackToReferenceDepth(t
 	if len(plans) != 1 {
 		t.Fatalf("expected fallback to one plan, got %d", len(plans))
 	}
-	gotDepth := plans[0].Config.Perturbations.UserActionTargetDepth[1]
-	if gotDepth != 1 {
-		t.Fatalf("expected fallback depth 1, got %d", gotDepth)
+	gotReadyDepth := plans[0].Config.Perturbations.UserActionReadyDepths[1]
+	if gotReadyDepth != 1 {
+		t.Fatalf("expected fallback ready depth 1, got %d", gotReadyDepth)
 	}
 }
 
@@ -985,6 +985,40 @@ func TestBuildProcessJobsExpandsMonteCarloTrials(t *testing.T) {
 		if jobs[i].JobIndex != i {
 			t.Fatalf("job %d expected job index %d, got %d", i, i, jobs[i].JobIndex)
 		}
+	}
+}
+
+func TestParallelRunnerInProcessExpandsMonteCarloTrials(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+	withPerturbFlag(t, false)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	scenarios := []Scenario{
+		{
+			Name:             "alpha",
+			EnvironmentState: state.Clone(),
+			Config: tracecheck.ExploreConfig{
+				MaxDepth:   5,
+				SearchMode: tracecheck.SearchModeMonteCarlo,
+				MonteCarlo: tracecheck.MonteCarloConfig{
+					Seed:   1337,
+					Trials: 3,
+				},
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected one result per Monte Carlo trial, got %d", len(results))
 	}
 }
 
