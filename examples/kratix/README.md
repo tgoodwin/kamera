@@ -55,7 +55,7 @@ To run a generated inputs file, pass `--inputs` and set a dump directory for per
 ```bash
 go run . \
   --inputs /path/to/inputs.json \
-  --dump-output /tmp/kratix-dumps \
+  --output /tmp/kratix-dumps \
   --emit-stats
 ```
 

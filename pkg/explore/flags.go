@@ -3,12 +3,14 @@ package explore
 import "flag"
 
 var (
-	interactiveFlag        = flag.Bool("interactive", true, "launch interactive trace inspector")
-	dumpPathFlag           = flag.String("dump-output", "", "optional path to write exploration dump to disk (states, plus stats when --emit-stats is enabled)")
-	configPathFlag         = flag.String("explore-config", "", "optional JSON file to configure exploration")
-	inputsPathFlag         = flag.String("inputs", "", `path to input JSON file`)
-	perturbFlag            = flag.Bool("perturb", true, "enable closed-loop rerun pipeline for batch inputs when supported by scenario generation")
-	parallelProcessesFlag  = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
+	interactiveFlag       = flag.Bool("interactive", true, "launch interactive trace inspector")
+	dumpPathFlag          = flag.String("dump-output", "", "optional path to write exploration dump to disk (states, plus stats when --emit-stats is enabled)")
+	configPathFlag        = flag.String("explore-config", "", "optional JSON file to configure exploration")
+	inputsPathFlag        = flag.String("inputs", "", `path to input JSON file`)
+	perturbFlag           = flag.Bool("perturb", true, "enable closed-loop rerun pipeline for batch inputs when supported by scenario generation")
+	parallelProcessesFlag = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
+	// these ones are internal flags used by child processes in --parallel-processes mode,
+	// not intended for manual setting
 	parallelChildIndexFlag = flag.Int(
 		"parallel-child-index",
 		-1,

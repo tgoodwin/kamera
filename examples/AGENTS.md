@@ -7,8 +7,8 @@ This guide documents the common headless workflow for running Kamera examples an
 - `-timeout <duration>`: abort exploration after this duration (e.g., `10s`, `2m`). Set `0` to disable.
 - `-log-level <level>`: `debug`, `info`, `warn`, or `error` (default: `info`).
 - `-interactive <bool>`: launch the inspector TUI (`true` by default). Set `-interactive=false` for headless runs.
-- `-dump-output <path>`: write converged + aborted states to a dump file (works with `-interactive=false`).
-- `-emit-stats`: record and print reconcile performance stats at the end, and embed them under `stats` in the `-dump-output` file.
+- `-output <path>`: write converged + aborted states to a dump file (works with `-interactive=false`).
+- `-emit-stats`: record and print reconcile performance stats at the end, and embed them under `stats` in the `-output` file.
 
 ## Determinize + cache notes (when needed)
 Some examples depend on upstream code that introduces nondeterministic values (timestamps, IDs). To reduce noise:
@@ -25,7 +25,7 @@ go run . \
   -depth 25 \
   -timeout 60s \
   -interactive=false \
-  -dump-output /tmp/kamera-results.jsonl \
+  -output /tmp/kamera-results.jsonl \
   -log-level info \
   -emit-stats
 ```
@@ -39,7 +39,7 @@ go run . \
   -depth 25 \
   -timeout 60s \
   -interactive=false \
-  -dump-output /tmp/kamera-results.jsonl \
+  -output /tmp/kamera-results.jsonl \
   -log-level info \
   -emit-stats
 ```

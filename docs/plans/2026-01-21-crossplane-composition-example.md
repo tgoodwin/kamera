@@ -151,7 +151,7 @@ Include bullets for:
 - Real function runtime (uses stubbed FunctionRunner)
 
 **Step 2: Add usage instructions**
-Add example commands showing `-interactive=false` and `-dump-output`.
+Add example commands showing `-interactive=false` and `-output`.
 
 ---
 

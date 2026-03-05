@@ -134,7 +134,7 @@ Pending Pod → Provisioner → NodeClaim → Node registration.
 ## Usage
 
 ```bash
-go run . -interactive=false -dump-output /tmp/kamera-karpenter.jsonl
+go run . -interactive=false -output /tmp/kamera-karpenter.jsonl
 ```
 
 ## Next scopes
@@ -722,7 +722,7 @@ git commit -m "test name generation shim"
 
 **Step 1: Run the example headless**
 
-Run: `go run . -interactive=false -dump-output /tmp/kamera-karpenter.jsonl`
+Run: `go run . -interactive=false -output /tmp/kamera-karpenter.jsonl`
 Expected: A dump file is created, no errors printed.
 
 **Step 2: Update README with run notes**

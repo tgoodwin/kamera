@@ -30,7 +30,7 @@ future parameterized flow strategy.
 
 - Single binary entrypoint with `-flow=works|promises`.
 - Supports Kamera’s config file loading.
-- Supports `-dump-output` to write inspector dumps instead of running the
+- Supports `-output` to write inspector dumps instead of running the
   interactive inspector.
 
 ## Future Direction
