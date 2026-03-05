@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"maps"
+	"math/rand"
 	"os"
 	"os/signal"
 	"slices"
@@ -178,6 +179,7 @@ type Explorer struct {
 
 	stats         *ExploreStats
 	optimizations *optimizations
+	randomSource  *rand.Rand
 }
 
 // VersionManager returns the shared version manager used during exploration.
@@ -626,6 +628,8 @@ func (e *Explorer) explore(
 	}
 
 	e.optimizations = newOptimizations(e.Config.Optimizations)
+	// Reset selection RNG for each explore run to keep Monte Carlo sampling deterministic per run.
+	e.randomSource = nil
 
 	seenDepths := make(map[int]bool)
 
@@ -693,15 +697,8 @@ func (e *Explorer) explore(
 	// var currentState StateNode
 	var currentState StateNode
 
-	// permute the order of the initial state pending reconciles (assume they were all triggered by the initial state)
-	// Use enqueueWithMarker to set up proper subtree completion tracking from the start.
-	if len(initialState.PendingReconciles) > 1 {
-		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
-		allVariants := append(initialStateVariants, initialState)
-		stack, _ = e.enqueueStates(stack, subtreeTracker, allVariants, useSubtreeCompletion)
-	} else {
-		stack, _ = e.enqueueStates(stack, subtreeTracker, []StateNode{initialState}, useSubtreeCompletion)
-	}
+	// DFS may fan out on initial pending order; Monte Carlo remains single-path.
+	stack, _ = e.enqueueStates(stack, subtreeTracker, e.initialStatesToEnqueue(initialState), useSubtreeCompletion)
 
 	initialHash := initialState.Hash()
 	initialSignature := initialState.ExecutionHistory.UniqueKey()
@@ -970,22 +967,21 @@ func (e *Explorer) explore(
 		var stateView StateNode
 		var pendingReconcile PendingReconcile
 
-		if entry.isStaleViewEntry() {
-			// This is a stale view entry - use currentState directly as the view
-			stateView = currentState
-			pendingReconcile = *entry.staleViewReconcile
-		} else {
-			// Normal entry - get first depth-eligible pending and possible views
-			eligiblePending := currentState.EligiblePendingReconciles()
-			if len(eligiblePending) == 0 {
-				logger.WithValues(
-					"StateKey", stateKey,
-					"Depth", currentState.depth,
-					"PendingCount", len(currentState.PendingReconciles),
-				).V(1).Info("no depth-eligible pending reconciles at current depth; skipping")
-				continue
-			}
-			pendingReconcile = eligiblePending[0]
+			if entry.isStaleViewEntry() {
+				// This is a stale view entry - use currentState directly as the view
+				stateView = currentState
+				pendingReconcile = *entry.staleViewReconcile
+			} else {
+				// Normal entry - get first pending and possible views
+				selected, selErr := e.selectPendingReconcile(currentState)
+				if selErr != nil {
+					abortErr := errors.Wrap(selErr, "select pending reconcile")
+					if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
+						return nil
+					}
+					continue
+				}
+				pendingReconcile = selected
 
 			// Log all pending reconciles for diagnostic purposes
 			if logger.V(2).Enabled() {
@@ -1037,7 +1033,8 @@ func (e *Explorer) explore(
 				continue
 			}
 
-			// If multiple stale views, push all onto stack with marker (stack-based branching)
+			// In Monte Carlo mode, getPossibleViewsForReconcile samples to one view, so
+			// this branch naturally only fans out in DFS mode.
 			if len(possibleViews) > 1 {
 				var didEnqueue bool
 				stack, didEnqueue = e.enqueueStaleViewStates(
@@ -1226,7 +1223,7 @@ func (e *Explorer) enqueueNextStates(
 	}
 	statesToEnqueue := make([]StateNode, 0, 1)
 
-	if len(newState.PendingReconciles) > 1 {
+	if e.shouldExpandPendingOrder(newState) {
 		// Order expansion is per logical state branch. If already expanded, we skip
 		// duplicative expansion work for equivalent branches.
 		alreadyExpanded := e.optimizations != nil &&
@@ -1703,6 +1700,46 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 	return result, nil
 }
 
+func (e *Explorer) monteCarloEnabled() bool {
+	return e != nil && e.Config != nil && e.Config.SearchMode == SearchModeMonteCarlo
+}
+
+func (e *Explorer) initialStatesToEnqueue(initialState StateNode) []StateNode {
+	if len(initialState.PendingReconciles) > 1 && !e.monteCarloEnabled() {
+		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
+		return append(initialStateVariants, initialState)
+	}
+	return []StateNode{initialState}
+}
+
+func (e *Explorer) shouldExpandPendingOrder(state StateNode) bool {
+	return !e.monteCarloEnabled() && len(state.PendingReconciles) > 1
+}
+
+func (e *Explorer) selectionRNG() *rand.Rand {
+	if e.randomSource != nil {
+		return e.randomSource
+	}
+	seed := time.Now().UnixNano()
+	if e.monteCarloEnabled() {
+		seed = e.Config.MonteCarlo.DerivedSeed()
+	}
+	e.randomSource = rand.New(rand.NewSource(seed))
+	return e.randomSource
+}
+
+func (e *Explorer) selectPendingReconcile(state StateNode) (PendingReconcile, error) {
+	eligible := state.EligiblePendingReconciles()
+	if len(eligible) == 0 {
+		return PendingReconcile{}, fmt.Errorf("state has no depth-eligible pending reconciles")
+	}
+	if !e.monteCarloEnabled() || len(eligible) == 1 {
+		return eligible[0], nil
+	}
+	idx := e.selectionRNG().Intn(len(eligible))
+	return eligible[idx], nil
+}
+
 func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 	res, err := e.triggerManager.GetTriggered(changes)
 	if err != nil {
@@ -1789,6 +1826,13 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	filtered := lo.Filter(asStateNodes, func(sn StateNode, _ int) bool {
 		return sn.Contents.Priority != Skip
 	})
+
+	// TODO revisit how we apply randomness here.
+	// might be better to put it under `getAllViewsForController`
+	if e.monteCarloEnabled() && len(filtered) > 1 {
+		idx := e.selectionRNG().Intn(len(filtered))
+		return []StateNode{filtered[idx]}, nil
+	}
 
 	return filtered, nil
 }

@@ -101,6 +101,39 @@ func TestScenariosFromInputsUsesFuzzCasesBudget(t *testing.T) {
 	}
 }
 
+func TestScenariosFromInputsAppliesMonteCarloSearchFromInputTuning(t *testing.T) {
+	builder := newKarpenterExplorerBuilder()
+	input := mustKarpenterInput(t, "karpenter-mc")
+	seed := int64(4242)
+	trials := 5
+	input.Tuning.Search.Mode = "monte_carlo"
+	input.Tuning.Search.MonteCarlo.Seed = &seed
+	input.Tuning.Search.MonteCarlo.Trials = &trials
+
+	restore := setFuzzSamplingForTest(t, 0, 1337)
+	defer restore()
+
+	scenarios, err := scenariosFromInputs(builder, []coverage.Input{input})
+	if err != nil {
+		t.Fatalf("scenariosFromInputs error = %v", err)
+	}
+	if len(scenarios) == 0 {
+		t.Fatalf("expected at least one scenario")
+	}
+
+	for _, sc := range scenarios {
+		if sc.Config.SearchMode != tracecheck.SearchModeMonteCarlo {
+			t.Fatalf("scenario %q expected search mode monte_carlo, got %q", sc.Name, sc.Config.SearchMode)
+		}
+		if sc.Config.MonteCarlo.Seed != 4242 {
+			t.Fatalf("scenario %q expected monte carlo seed 4242, got %d", sc.Name, sc.Config.MonteCarlo.Seed)
+		}
+		if sc.Config.MonteCarlo.Trials != 5 {
+			t.Fatalf("scenario %q expected monte carlo trials 5, got %d", sc.Name, sc.Config.MonteCarlo.Trials)
+		}
+	}
+}
+
 func TestExpandKarpenterParameterizedInputAddsNoFitNodeSelectorVariant(t *testing.T) {
 	input := mustKarpenterInput(t, "karpenter-params")
 	variants, err := expandKarpenterParameterizedInput(input, 0, 99)

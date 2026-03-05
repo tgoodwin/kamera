@@ -31,6 +31,21 @@ type InputTuning struct {
 	PermuteControllers []string            `json:"permuteControllers"`
 	StaleReads         map[string][]string `json:"staleReads"`
 	StaleLookback      map[string]int      `json:"staleLookback"`
+	Search             InputSearchTuning   `json:"search"`
+}
+
+// InputSearchTuning carries optional per-input search-mode overrides.
+type InputSearchTuning struct {
+	Mode       string                `json:"mode"`
+	MonteCarlo InputMonteCarloTuning `json:"monteCarlo"`
+}
+
+// InputMonteCarloTuning carries optional per-input monte-carlo settings.
+type InputMonteCarloTuning struct {
+	Seed          *int64  `json:"seed,omitempty"`
+	Trials        *int    `json:"trials,omitempty"`
+	TrialIndex    *int    `json:"trialIndex,omitempty"`
+	ScenarioGroup *string `json:"scenarioGroup,omitempty"`
 }
 
 // InputMap is the on-disk schema seed mapping from GVK to a single template object.

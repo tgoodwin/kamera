@@ -841,6 +841,7 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		PermuteControllers: append([]string(nil), input.Tuning.PermuteControllers...),
 		StaleReads:         cloneStringSliceMap(input.Tuning.StaleReads),
 		StaleLookback:      cloneIntMap(input.Tuning.StaleLookback),
+		Search:             cloneInputSearchTuning(input.Tuning.Search),
 	}
 	return coverage.Input{
 		Name: input.Name,
@@ -850,6 +851,29 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		UserInputs: userInputs,
 		Tuning:     tuning,
 	}
+}
+
+func cloneInputSearchTuning(search coverage.InputSearchTuning) coverage.InputSearchTuning {
+	out := coverage.InputSearchTuning{
+		Mode: strings.TrimSpace(search.Mode),
+	}
+	if search.MonteCarlo.Seed != nil {
+		seed := *search.MonteCarlo.Seed
+		out.MonteCarlo.Seed = &seed
+	}
+	if search.MonteCarlo.Trials != nil {
+		trials := *search.MonteCarlo.Trials
+		out.MonteCarlo.Trials = &trials
+	}
+	if search.MonteCarlo.TrialIndex != nil {
+		trialIdx := *search.MonteCarlo.TrialIndex
+		out.MonteCarlo.TrialIndex = &trialIdx
+	}
+	if search.MonteCarlo.ScenarioGroup != nil {
+		group := *search.MonteCarlo.ScenarioGroup
+		out.MonteCarlo.ScenarioGroup = &group
+	}
+	return out
 }
 
 func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
