@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/tgoodwin/kamera/pkg/analysis"
 )
@@ -83,25 +85,24 @@ func runCampaignMetrics(stdout, stderr io.Writer, targetPath string) error {
 	}
 	sort.Strings(keys)
 
-	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "invocation_id\tdumps\tunique_node_visits\ttotal_node_visits\tunique_resource_states\tduration_ns\terror_dumps\taborted_states\tmax_depth_aborted_states")
-	for _, key := range keys {
+	color := newCampaignOutputColor(stdout)
+	fmt.Fprintf(stdout, "%sCampaign metrics by invocation%s\n", color.Header, color.Reset)
+	fmt.Fprintln(stdout)
+	for idx, key := range keys {
 		agg := byInvocation[key]
-		fmt.Fprintf(
-			tw,
-			"%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\n",
-			agg.InvocationID,
-			agg.Dumps,
-			agg.UniqueNodeVisits,
-			agg.TotalNodeVisits,
-			agg.UniqueResourceStates,
-			agg.DurationNS,
-			agg.ErrorDumps,
-			agg.AbortedStates,
-			agg.MaxDepthAborted,
-		)
+		fmt.Fprintf(stdout, "%sinvocation:%s %s%s%s\n", color.Key, color.Reset, color.InvocationID, agg.InvocationID, color.Reset)
+		tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "  unique node visits:\t%s\n", formatIntWithCommas(agg.UniqueNodeVisits))
+		fmt.Fprintf(tw, "  total node visits:\t%s\n", formatIntWithCommas(agg.TotalNodeVisits))
+		fmt.Fprintf(tw, "  unique resource states:\t%s\n", formatIntWithCommas(agg.UniqueResourceStates))
+		fmt.Fprintf(tw, "  duration:\t%s\n", formatDurationCompact(agg.DurationNS))
+		fmt.Fprintf(tw, "  aborted states:\t%s\n", colorizeAbortedCount(formatIntWithCommas(int64(agg.AbortedStates)), color))
+		fmt.Fprintf(tw, "  max-depth aborted states:\t%s\n", colorizeAbortedCount(formatIntWithCommas(int64(agg.MaxDepthAborted)), color))
+		_ = tw.Flush()
+		if idx < len(keys)-1 {
+			fmt.Fprintln(stdout)
+		}
 	}
-	_ = tw.Flush()
 
 	if skippedMissingInvocation > 0 {
 		fmt.Fprintf(stderr, "skipped %d dump(s) without invocation_id\n", skippedMissingInvocation)
@@ -170,4 +171,90 @@ func dumpInvocationID(dump *analysis.Dump) string {
 		return ""
 	}
 	return strings.TrimSpace(dump.Context.Scenario.Attributes["invocation_id"])
+}
+
+func formatIntWithCommas(v int64) string {
+	if v == 0 {
+		return "0"
+	}
+	negative := v < 0
+	if negative {
+		v = -v
+	}
+	raw := strconv.FormatInt(v, 10)
+	if len(raw) <= 3 {
+		if negative {
+			return "-" + raw
+		}
+		return raw
+	}
+
+	var b strings.Builder
+	if negative {
+		b.WriteByte('-')
+	}
+	for idx := 0; idx < len(raw); idx++ {
+		if idx > 0 && (len(raw)-idx)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteByte(raw[idx])
+	}
+	return b.String()
+}
+
+func formatDurationCompact(v int64) string {
+	if v <= 0 {
+		return "0s"
+	}
+	d := time.Duration(v).Round(time.Second)
+	if d <= 0 {
+		return "0s"
+	}
+	return d.String()
+}
+
+type campaignOutputColor struct {
+	Header       string
+	Key          string
+	InvocationID string
+	Aborted      string
+	Reset        string
+}
+
+func newCampaignOutputColor(w io.Writer) campaignOutputColor {
+	if !supportsANSIColor(w) {
+		return campaignOutputColor{}
+	}
+	return campaignOutputColor{
+		Header:       "\033[1;36m",
+		Key:          "\033[1;34m",
+		InvocationID: "\033[33m",
+		Aborted:      "\033[31m",
+		Reset:        "\033[0m",
+	}
+}
+
+func supportsANSIColor(w io.Writer) bool {
+	if strings.TrimSpace(os.Getenv("NO_COLOR")) != "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb") {
+		return false
+	}
+	f, ok := w.(*os.File)
+	if !ok {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+func colorizeAbortedCount(count string, color campaignOutputColor) string {
+	if color.Aborted == "" || color.Reset == "" {
+		return count
+	}
+	return color.Aborted + count + color.Reset
 }

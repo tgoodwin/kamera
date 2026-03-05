@@ -46,21 +46,21 @@ func TestRunAnalyzeCampaignMetricsGroupsByInvocation(t *testing.T) {
 	require.Equal(t, 0, code)
 
 	out := stdout.String()
-	require.Contains(t, out, "invocation_id")
-	require.Contains(t, out, "inv-a")
-	require.Contains(t, out, "inv-b")
+	require.Contains(t, out, "Campaign metrics by invocation")
+	require.Contains(t, out, "invocation: inv-a")
+	require.Contains(t, out, "invocation: inv-b")
 
-	parsed := parseCampaignMetricsOutputByHeader(t, out)
-	require.Equal(t, "2", parsed["inv-a"]["dumps"])
-	require.Equal(t, "5", parsed["inv-a"]["unique_node_visits"])
-	require.Equal(t, "7", parsed["inv-a"]["total_node_visits"])
-	require.Equal(t, "9", parsed["inv-a"]["unique_resource_states"])
-	require.Equal(t, "30", parsed["inv-a"]["duration_ns"])
-	require.Equal(t, "1", parsed["inv-b"]["dumps"])
-	require.Equal(t, "7", parsed["inv-b"]["unique_node_visits"])
-	require.Equal(t, "8", parsed["inv-b"]["total_node_visits"])
-	require.Equal(t, "9", parsed["inv-b"]["unique_resource_states"])
-	require.Equal(t, "30", parsed["inv-b"]["duration_ns"])
+	parsed := parseCampaignMetricsBlockOutput(t, out)
+	require.Equal(t, "5", parsed["inv-a"]["unique node visits"])
+	require.Equal(t, "7", parsed["inv-a"]["total node visits"])
+	require.Equal(t, "9", parsed["inv-a"]["unique resource states"])
+	require.Equal(t, "0s", parsed["inv-a"]["duration"])
+	require.Equal(t, "7", parsed["inv-b"]["unique node visits"])
+	require.Equal(t, "8", parsed["inv-b"]["total node visits"])
+	require.Equal(t, "9", parsed["inv-b"]["unique resource states"])
+	require.Equal(t, "0s", parsed["inv-b"]["duration"])
+	require.NotContains(t, out, "\n  dumps:")
+	require.NotContains(t, out, "error dumps:")
 	require.Contains(t, stderr.String(), "skipped 1 dump(s) without invocation_id")
 }
 
@@ -98,11 +98,10 @@ func TestRunAnalyzeCampaignMetricsReportsErrorAndAbortContext(t *testing.T) {
 	code := RunAnalyze([]string{"campaign-metrics", dir}, &stdout, &stderr)
 	require.Equal(t, 0, code)
 
-	parsed := parseCampaignMetricsOutputByHeader(t, stdout.String())
-	require.Equal(t, "2", parsed["inv-a"]["dumps"])
-	require.Equal(t, "1", parsed["inv-a"]["error_dumps"])
-	require.Equal(t, "2", parsed["inv-a"]["aborted_states"])
-	require.Equal(t, "1", parsed["inv-a"]["max_depth_aborted_states"])
+	parsed := parseCampaignMetricsBlockOutput(t, stdout.String())
+	require.Equal(t, "2", parsed["inv-a"]["aborted states"])
+	require.Equal(t, "1", parsed["inv-a"]["max-depth aborted states"])
+	require.Equal(t, "0s", parsed["inv-a"]["duration"])
 }
 
 func writeCampaignMetricsDump(t *testing.T, path, invocationID string, metrics *analysis.CampaignMetrics) error {
@@ -160,28 +159,33 @@ func intPtr(v int) *int {
 	return &v
 }
 
-func parseCampaignMetricsOutputByHeader(t *testing.T, output string) map[string]map[string]string {
+func parseCampaignMetricsBlockOutput(t *testing.T, output string) map[string]map[string]string {
 	t.Helper()
 
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	require.NotEmpty(t, lines)
-	headers := strings.Fields(lines[0])
-	require.GreaterOrEqual(t, len(headers), 2)
-
+	lines := strings.Split(output, "\n")
 	out := map[string]map[string]string{}
-	for idx, line := range lines {
-		if idx == 0 {
-			continue // header
-		}
-		fields := strings.Fields(line)
-		if len(fields) != len(headers) {
+	currentInvocation := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
 			continue
 		}
-		row := map[string]string{}
-		for i := 1; i < len(headers); i++ {
-			row[headers[i]] = fields[i]
+		if strings.HasPrefix(trimmed, "invocation: ") {
+			currentInvocation = strings.TrimPrefix(trimmed, "invocation: ")
+			if _, ok := out[currentInvocation]; !ok {
+				out[currentInvocation] = map[string]string{}
+			}
+			continue
 		}
-		out[fields[0]] = row
+		if currentInvocation == "" {
+			continue
+		}
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		out[currentInvocation][strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
 	}
+	require.NotEmpty(t, out)
 	return out
 }
