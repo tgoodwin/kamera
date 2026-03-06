@@ -1,6 +1,5 @@
 SLEEVECTRL_IMG ?= docker.io/tlg2132/sleeve-controller-manager:latest
 GOBIN := $(shell pwd)/bin
-EXAMPLE_MODULE_DIRS := $(patsubst %/,%,$(sort $(dir $(wildcard examples/*/go.mod))))
 
 # ensure that GOBIN is in PATH when running
 export PATH := $(GOBIN):$(PATH)
@@ -19,7 +18,12 @@ binaries: kamera
 test:
 	@echo "🧪 Running tests..."
 	go test ./...
-	@for dir in $(EXAMPLE_MODULE_DIRS); do \
+	@skipped_dirs="$$(go run ./cmd/examplemodules --mode skipped)"; \
+	if [ -n "$$skipped_dirs" ]; then \
+		echo "⚠️  Skipping example modules with unresolved local replace targets:"; \
+		printf '%s\n' "$$skipped_dirs"; \
+	fi; \
+	for dir in $$(go run ./cmd/examplemodules --mode portable); do \
 		echo "🧪 Running tests in $$dir..."; \
 		( cd $$dir && go test ./... ); \
 	done
