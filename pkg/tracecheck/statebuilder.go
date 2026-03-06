@@ -41,6 +41,7 @@ func NewStateEventBuilder(store *snapshot.Store, scheme *runtime.Scheme) *StateE
 // AddStateEvent records a per-object delta that will later be replayed to synthesize the cluster state.
 func (b *StateEventBuilder) AddStateEvent(kind, sleeveObjectID string, obj *unstructured.Unstructured,
 	opType event.OperationType, controllerID string) {
+	tag.EnsureDeterministicIdentity(obj)
 	// Set unique reconcileID
 	reconcileNum, ok := b.reconcileIDs[controllerID]
 	if !ok {
@@ -139,6 +140,7 @@ func ensureObjectGVK(obj client.Object, scheme *runtime.Scheme) schema.GroupVers
 }
 
 func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
+	tag.EnsureDeterministicIdentity(obj)
 	gvk := ensureObjectGVK(obj, b.scheme)
 
 	r, err := snapshot.AsRecord(obj, "start")

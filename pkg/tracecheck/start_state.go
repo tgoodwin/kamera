@@ -29,6 +29,7 @@ func buildStartStateFromObjects(store *snapshot.Store, scheme *runtime.Scheme, o
 		if obj == nil {
 			return StateNode{}, fmt.Errorf("object %d is nil", idx)
 		}
+		tag.EnsureDeterministicIdentity(obj)
 
 		gvk := ensureObjectGVK(obj, scheme)
 		u, err := util.ConvertToUnstructured(obj)

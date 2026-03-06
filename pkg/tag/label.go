@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/samber/lo"
 	"github.com/tgoodwin/kamera/pkg/util"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -62,6 +63,21 @@ func AddSleeveObjectID(obj client.Object) {
 	}
 	labels[TraceyObjectID] = deterministicSleeveObjectID(obj)
 	obj.SetLabels(labels)
+}
+
+// EnsureDeterministicIdentity makes the synthetic object identity explicit for
+// replay/exploration. Real API servers assign metadata.uid on create, but the
+// harness needs a stable UID earlier so controller-runtime ownership logic
+// remains deterministic.
+func EnsureDeterministicIdentity(obj client.Object) {
+	if obj == nil {
+		return
+	}
+	AddSleeveObjectID(obj)
+	if obj.GetUID() != "" {
+		return
+	}
+	obj.SetUID(types.UID(GetSleeveObjectID(obj)))
 }
 
 func AddLabel(obj client.Object, key, value string) {
