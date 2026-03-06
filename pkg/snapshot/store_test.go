@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -41,6 +42,12 @@ func createTestObject(namespace, name string, labels map[string]string) *unstruc
 	return obj
 }
 
+func normalizedStoredObject(obj *unstructured.Unstructured) *unstructured.Unstructured {
+	copy := obj.DeepCopy()
+	tag.EnsureDeterministicIdentity(copy)
+	return copy
+}
+
 func TestNewObjectStore(t *testing.T) {
 	store := NewStore()
 
@@ -73,6 +80,7 @@ func TestStoreObject(t *testing.T) {
 
 	// Create a test object
 	obj := createTestObject("test-ns", "test-obj", map[string]string{"app": "test"})
+	expectedObj := normalizedStoredObject(obj)
 
 	// Store the object
 	err := store.StoreObject(obj)
@@ -85,11 +93,11 @@ func TestStoreObject(t *testing.T) {
 	// Check that the object is stored in both indices
 	storedObj, found := store.indices[DefaultHash][expectedDefaultHash]
 	assert.True(t, found)
-	assert.Equal(t, obj, storedObj)
+	assert.Equal(t, expectedObj, storedObj)
 
 	storedObj, found = store.indices[AnonymizedHash][expectedAnonHash]
 	assert.True(t, found)
-	assert.Equal(t, obj, storedObj)
+	assert.Equal(t, expectedObj, storedObj)
 
 }
 
@@ -117,22 +125,24 @@ func TestGetByHash(t *testing.T) {
 
 	// Create and store a test object
 	obj1 := createTestObject("test-ns", "test-obj1", nil)
+	expectedObj1 := normalizedStoredObject(obj1)
 	err := store.StoreObject(obj1)
 	require.NoError(t, err)
 
 	// Create and store another test object
 	obj2 := createTestObject("another-ns", "test-obj2", nil)
+	expectedObj2 := normalizedStoredObject(obj2)
 	err = store.StoreObject(obj2)
 	require.NoError(t, err)
 
 	// Test getting objects by their hashes
 	retrievedObj, found := store.GetByHash(NewDefaultHash("default-test-ns-test-obj1"), DefaultHash)
 	assert.True(t, found)
-	assert.Equal(t, obj1, retrievedObj)
+	assert.Equal(t, expectedObj1, retrievedObj)
 
 	retrievedObj, found = store.GetByHash(NewDefaultHash("anon-test-obj2"), AnonymizedHash)
 	assert.True(t, found)
-	assert.Equal(t, obj2, retrievedObj)
+	assert.Equal(t, expectedObj2, retrievedObj)
 
 	// Test getting with non-existent hash
 	retrievedObj, found = store.GetByHash(NewDefaultHash("non-existent"), DefaultHash)
@@ -158,6 +168,8 @@ func TestGetByHashWithMultipleObjects(t *testing.T) {
 	// Create and store two test objects that will have the same anonymized hash
 	obj1 := createTestObject("ns1", "obj-common", nil)
 	obj2 := createTestObject("ns2", "obj-common", nil)
+	expectedObj1 := normalizedStoredObject(obj1)
+	expectedObj2 := normalizedStoredObject(obj2)
 
 	err := store.StoreObject(obj1)
 	require.NoError(t, err)
@@ -169,16 +181,16 @@ func TestGetByHashWithMultipleObjects(t *testing.T) {
 	// since they'd have the same anonymized hash
 	retrievedObj, found := store.GetByHash(NewDefaultHash("anon-obj-common"), AnonymizedHash)
 	assert.True(t, found)
-	assert.Equal(t, obj2, retrievedObj) // Last one wins
+	assert.Equal(t, expectedObj2, retrievedObj) // Last one wins
 
 	// But they should still be separate in the default index
 	obj1ByDefault, found := store.GetByHash(NewDefaultHash("default-ns1-obj-common"), DefaultHash)
 	assert.True(t, found)
-	assert.Equal(t, obj1, obj1ByDefault)
+	assert.Equal(t, expectedObj1, obj1ByDefault)
 
 	obj2ByDefault, found := store.GetByHash(NewDefaultHash("default-ns2-obj-common"), DefaultHash)
 	assert.True(t, found)
-	assert.Equal(t, obj2, obj2ByDefault)
+	assert.Equal(t, expectedObj2, obj2ByDefault)
 }
 
 func TestConvertHash(t *testing.T) {
@@ -190,13 +202,14 @@ func TestConvertHash(t *testing.T) {
 
 	// Create and store a test object
 	obj := createTestObject("test-ns", "test-obj", nil)
+	expectedObj := normalizedStoredObject(obj)
 	err := store.StoreObject(obj)
 	require.NoError(t, err)
 
 	// Convert from default to anonymized hash
 	anonHash, found := store.ConvertHash(NewDefaultHash("default-test-ns-test-obj"), DefaultHash, AnonymizedHash)
 	assert.True(t, found)
-	assert.Equal(t, NewDefaultHash("anon-test-obj"), anonHash)
+	assert.Equal(t, NewDefaultHash("anon-"+expectedObj.GetName()), anonHash)
 
 	// Convert from anonymized to default hash
 	defaultHash, found := store.ConvertHash(NewDefaultHash("anon-test-obj"), AnonymizedHash, DefaultHash)
@@ -226,6 +239,8 @@ func TestConcurrentHashClash(t *testing.T) {
 	// Create and store two objects that will clash in the anonymized index
 	obj1 := createTestObject("ns1", "clash-1", nil)
 	obj2 := createTestObject("ns2", "clash-2", nil)
+	expectedObj1 := normalizedStoredObject(obj1)
+	expectedObj2 := normalizedStoredObject(obj2)
 
 	err := store.StoreObject(obj1)
 	require.NoError(t, err)
@@ -236,16 +251,16 @@ func TestConcurrentHashClash(t *testing.T) {
 	// Both should be retrievable by their default hashes
 	retrieved1, found := store.GetByHash(NewDefaultHash("default-ns1-clash-1"), DefaultHash)
 	assert.True(t, found)
-	assert.Equal(t, obj1, retrieved1)
+	assert.Equal(t, expectedObj1, retrieved1)
 
 	retrieved2, found := store.GetByHash(NewDefaultHash("default-ns2-clash-2"), DefaultHash)
 	assert.True(t, found)
-	assert.Equal(t, obj2, retrieved2)
+	assert.Equal(t, expectedObj2, retrieved2)
 
 	// The last stored object should win in the anonymized index
 	retrievedAnon, found := store.GetByHash(NewDefaultHash("anon-clash-2"), AnonymizedHash)
 	assert.True(t, found)
-	assert.Equal(t, obj2, retrievedAnon)
+	assert.Equal(t, expectedObj2, retrievedAnon)
 
 	// Convert from default-1 to anonymized (should succeed, but might point to obj2!)
 	anonHash, found := store.ConvertHash(NewDefaultHash("default-ns1-clash-1"), DefaultHash, AnonymizedHash)
@@ -257,7 +272,7 @@ func TestConcurrentHashClash(t *testing.T) {
 
 	// This might be obj2, not obj1, because of the hash collision in the anonymized strategy
 	if retrievedObj.GetNamespace() == "ns2" {
-		assert.Equal(t, obj2, retrievedObj, "Collision detected - anonymized hash for obj1 points to obj2")
+		assert.Equal(t, expectedObj2, retrievedObj, "Collision detected - anonymized hash for obj1 points to obj2")
 	}
 }
 
@@ -272,7 +287,8 @@ func TestLookup(t *testing.T) {
 	store.RegisterHashGenerator(AnonymizedHash, aHasher)
 
 	obj := createTestObject("test-ns", "test-obj", map[string]string{"app": "test"})
-	anonHash, err := aHasher.Hash(obj)
+	expectedObj := normalizedStoredObject(obj)
+	anonHash, err := aHasher.Hash(expectedObj)
 	assert.NoError(t, err)
 
 	// redundant, but want to get the hash
@@ -287,7 +303,8 @@ func TestLookup(t *testing.T) {
 
 	// now update the object at the same namespace/name
 	objv2 := createTestObject("test-ns", "test-obj", map[string]string{"app": "test2"})
-	anonHashv2, err := aHasher.Hash(objv2)
+	expectedObjV2 := normalizedStoredObject(objv2)
+	anonHashv2, err := aHasher.Hash(expectedObjV2)
 	assert.NoError(t, err)
 
 	// publish this version

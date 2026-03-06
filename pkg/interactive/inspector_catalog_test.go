@@ -12,6 +12,7 @@ import (
 
 	"github.com/tgoodwin/kamera/pkg/analysis"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -374,7 +375,6 @@ type syntheticTrialSpec struct {
 func writeSyntheticTrialDump(t *testing.T, path string, spec syntheticTrialSpec) {
 	t.Helper()
 
-	compositeKey := snapshot.NewCompositeKeyWithGroup("example.dev", "Thing", "default", "sample", "obj-1")
 	obj := &unstructured.Unstructured{
 		Object: map[string]interface{}{
 			"apiVersion": "v1",
@@ -386,6 +386,8 @@ func writeSyntheticTrialDump(t *testing.T, path string, spec syntheticTrialSpec)
 			},
 		},
 	}
+	tag.EnsureDeterministicIdentity(obj)
+	compositeKey := snapshot.NewCompositeKeyWithGroup("example.dev", "Thing", "default", "sample", tag.GetSleeveObjectID(obj))
 	versionHash, err := snapshot.NewDefaultHasher().Hash(obj)
 	require.NoError(t, err)
 	object := analysis.DumpObject{
