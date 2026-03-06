@@ -120,6 +120,12 @@ func (pr PendingReconcile) IsReadyAtDepth(depth int) bool {
 	return !pr.IsDeferredAtDepth(depth)
 }
 
+func isIgnorableForConvergence(pr PendingReconcile) bool {
+	return pr.Source == SourceAsyncEnqueue ||
+		pr.Source == SourceRequeue ||
+		pr.Source == SourceStableRequeueAfter
+}
+
 // allPendingIgnorableForConvergence returns true if all pending reconciles are from
 // sources that don't indicate actionable progress (async enqueues from tickers, or requeues
 // from controllers that always re-enqueue). This is used to determine convergence:
@@ -133,7 +139,7 @@ func allPendingIgnorableForConvergence(pending []PendingReconcile) bool {
 		return false // empty list should not be considered "all ignorable"
 	}
 	for _, pr := range pending {
-		if pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue && pr.Source != SourceStableRequeueAfter {
+		if !isIgnorableForConvergence(pr) {
 			return false
 		}
 	}
@@ -145,7 +151,7 @@ func allPendingIgnorableForConvergence(pending []PendingReconcile) bool {
 func countIgnorableForConvergence(pending []PendingReconcile) int {
 	count := 0
 	for _, pr := range pending {
-		if pr.Source == SourceAsyncEnqueue || pr.Source == SourceRequeue || pr.Source == SourceStableRequeueAfter {
+		if isIgnorableForConvergence(pr) {
 			count++
 		}
 	}

@@ -289,9 +289,9 @@ func (sn StateNode) ReadyPendingReconciles() []PendingReconcile {
 	return ready
 }
 
-func (sn StateNode) HasDeferredPendingReconciles() bool {
+func (sn StateNode) HasDeferredActionablePendingReconciles() bool {
 	for _, pr := range sn.PendingReconciles {
-		if pr.IsDeferredAtDepth(sn.depth) {
+		if pr.IsDeferredAtDepth(sn.depth) && !isIgnorableForConvergence(pr) {
 			return true
 		}
 	}
@@ -299,7 +299,7 @@ func (sn StateNode) HasDeferredPendingReconciles() bool {
 }
 
 func (sn StateNode) IsConverged() bool {
-	if sn.HasDeferredPendingReconciles() {
+	if sn.HasDeferredActionablePendingReconciles() {
 		return false
 	}
 	ready := sn.ReadyPendingReconciles()

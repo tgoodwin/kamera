@@ -223,6 +223,22 @@ func TestStateNodeReadyPendingReconciles(t *testing.T) {
 	assert.False(t, state.IsConverged(), "delayed actionable work should keep the branch non-converged until its scheduled depth is reached")
 }
 
+func TestStateNodeIsConverged_IgnoresDeferredStableRequeueAfter(t *testing.T) {
+	state := StateNode{
+		depth: 3,
+		PendingReconciles: []PendingReconcile{
+			{
+				ReconcilerID: "B",
+				Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "b"}},
+				Source:       SourceStableRequeueAfter,
+				ReadyAtDepth: 4,
+			},
+		},
+	}
+
+	assert.True(t, state.IsConverged(), "deferred stable pollers should not block convergence")
+}
+
 func TestStateNodeConvergenceHashIgnoresDeferredPending(t *testing.T) {
 	base := StateNode{depth: 3}
 	delayed := StateNode{
