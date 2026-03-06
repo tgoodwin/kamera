@@ -490,13 +490,16 @@ func (sn StateNode) ContentsHash() ContentsHash {
 // ConvergenceHash returns a hash normalized for convergence by dropping pending reconciles
 // that are irrelevant at the current depth:
 // - async enqueues / poll-style requeues
+// - stable RequeueAfter pollers
 // - delayed reconciles that are not yet depth-eligible
 func (sn StateNode) ConvergenceHash() NodeHash {
 	filtered := lo.Filter(sn.PendingReconciles, func(pr PendingReconcile, _ int) bool {
 		if pr.NotBeforeDepth > sn.depth {
 			return false
 		}
-		return pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue
+		return pr.Source != SourceAsyncEnqueue &&
+			pr.Source != SourceRequeue &&
+			pr.Source != SourceStableRequeueAfter
 	})
 	clone := sn
 	clone.PendingReconciles = filtered

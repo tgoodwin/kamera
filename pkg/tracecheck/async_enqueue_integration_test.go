@@ -72,6 +72,21 @@ func (s *AlwaysRequeueStrategy) ReconcileAtState(ctx context.Context, name types
 	return reconcile.Result{Requeue: true}, nil
 }
 
+// AlwaysRequeueAfterStrategy simulates a poller that unconditionally wakes up
+// after a delay but never changes state.
+type AlwaysRequeueAfterStrategy struct {
+	recorder     replay.EffectRecorder
+	requeueAfter time.Duration
+}
+
+func (s *AlwaysRequeueAfterStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
+	return ctx, func() {}, nil
+}
+
+func (s *AlwaysRequeueAfterStrategy) ReconcileAtState(ctx context.Context, name types.NamespacedName) (reconcile.Result, error) {
+	return reconcile.Result{RequeueAfter: s.requeueAfter}, nil
+}
+
 // TickerBasedStrategy is a strategy that sets up a ticker to enqueue reconciles
 type TickerBasedStrategy struct {
 	recorder    replay.EffectRecorder
@@ -331,4 +346,43 @@ func TestAsyncEnqueueCollector_IntegrationWithTicker(t *testing.T) {
 		require.Equalf(t, expectedSteps, len(stepResults), "Depth progression mismatch: took %d steps but depth went from %d to %d (expected %d steps)", len(stepResults), firstDepth, lastDepth, expectedSteps)
 		t.Logf("✓ Depth progression verified: %d steps, depth 0 -> %d", len(stepResults), lastDepth)
 	}
+}
+
+func TestExplore_StableRequeueAfterPollingConverges(t *testing.T) {
+	restore := simclock.SetDepth(0)
+	defer restore()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	builder := NewExplorerBuilder(scheme)
+	builder.WithMaxDepth(10)
+	builder.WithCustomStrategy("AlwaysRequeueAfterA", func(r replay.EffectRecorder) Strategy {
+		return &AlwaysRequeueAfterStrategy{
+			recorder:     r,
+			requeueAfter: time.Second,
+		}
+	}).For("core/Pod")
+	builder.WithCustomStrategy("AlwaysRequeueAfterB", func(r replay.EffectRecorder) Strategy {
+		return &AlwaysRequeueAfterStrategy{
+			recorder:     r,
+			requeueAfter: time.Second,
+		}
+	}).For("core/Pod")
+
+	explorer, err := builder.Build("test")
+	require.NoError(t, err, "failed to build explorer")
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "polling-pod",
+			Namespace: "default",
+		},
+	}
+	initialState := builder.GetStartStateFromObject(pod, "AlwaysRequeueAfterA", "AlwaysRequeueAfterB")
+
+	result := explorer.Explore(context.Background(), initialState)
+
+	require.Len(t, result.AbortedStates, 0, "stable RequeueAfter poller should not hit max depth")
+	require.Len(t, result.ConvergedStates, 1, "stable RequeueAfter poller should be treated as converged")
 }

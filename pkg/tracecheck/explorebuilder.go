@@ -183,12 +183,13 @@ func cloneExploreConfig(cfg *ExploreConfig) *ExploreConfig {
 
 func defaultOptimizationConfig() OptimizationConfig {
 	return OptimizationConfig{
-		EarlyConvergence:     true,
-		CompletedPathDedup:   true,
-		OrderingPruning:      true,
-		OnlyPermuteTriggered: true,
-		CachePrediction:      true,
-		SubtreeCompletion:    true,
+		EarlyConvergence:            true,
+		CompletedPathDedup:          true,
+		OrderingPruning:             true,
+		OnlyPermuteTriggered:        true,
+		CachePrediction:             true,
+		SubtreeCompletion:           true,
+		StableRequeueAfterThreshold: 3,
 	}
 }
 

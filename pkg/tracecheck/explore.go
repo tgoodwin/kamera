@@ -107,12 +107,21 @@ type OptimizationConfig struct {
 	DisableNoOpOrderingSkip bool
 	CachePrediction         bool
 	SubtreeCompletion       bool
+	// StableRequeueAfterThreshold promotes repeated no-op RequeueAfter wakeups on
+	// the same object state into ignorable polling after N observations. Zero
+	// disables the heuristic.
+	StableRequeueAfterThreshold int
 }
 
 func (opt OptimizationConfig) AnyEnabled() bool {
 	// OnlyPermuteTriggered scopes permutation behavior; it does not independently
 	// turn on any optimization heuristic.
-	return opt.EarlyConvergence || opt.CompletedPathDedup || opt.OrderingPruning || opt.CachePrediction || opt.SubtreeCompletion
+	return opt.EarlyConvergence ||
+		opt.CompletedPathDedup ||
+		opt.OrderingPruning ||
+		opt.CachePrediction ||
+		opt.SubtreeCompletion ||
+		opt.StableRequeueAfterThreshold > 0
 }
 
 type ExploreConfig struct {
@@ -967,21 +976,21 @@ func (e *Explorer) explore(
 		var stateView StateNode
 		var pendingReconcile PendingReconcile
 
-			if entry.isStaleViewEntry() {
-				// This is a stale view entry - use currentState directly as the view
-				stateView = currentState
-				pendingReconcile = *entry.staleViewReconcile
-			} else {
-				// Normal entry - get first pending and possible views
-				selected, selErr := e.selectPendingReconcile(currentState)
-				if selErr != nil {
-					abortErr := errors.Wrap(selErr, "select pending reconcile")
-					if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
-						return nil
-					}
-					continue
+		if entry.isStaleViewEntry() {
+			// This is a stale view entry - use currentState directly as the view
+			stateView = currentState
+			pendingReconcile = *entry.staleViewReconcile
+		} else {
+			// Normal entry - get first pending and possible views
+			selected, selErr := e.selectPendingReconcile(currentState)
+			if selErr != nil {
+				abortErr := errors.Wrap(selErr, "select pending reconcile")
+				if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
+					return nil
 				}
-				pendingReconcile = selected
+				continue
+			}
+			pendingReconcile = selected
 
 			// Log all pending reconciles for diagnostic purposes
 			if logger.V(2).Enabled() {
@@ -1309,6 +1318,7 @@ func (e *Explorer) materializeNextState(
 	newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
 	triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes)
 	newPendingReconciles := e.determineNewPendingReconciles(stepCtx, stateView, consumed, stepResult)
+	e.maybePromoteStableRequeueAfter(stateView, consumed, stepResult, newPendingReconciles)
 	stepLogger.V(1).WithValues(
 		"Depth", stateView.depth,
 		"Count", len(newPendingReconciles),
@@ -1332,6 +1342,42 @@ func (e *Explorer) materializeNextState(
 	newState.ID = string(newState.Hash())
 
 	return newState, triggeredByStep
+}
+
+func (e *Explorer) maybePromoteStableRequeueAfter(
+	stateView StateNode,
+	consumed *PendingReconcile,
+	stepResult *ReconcileResult,
+	pending []PendingReconcile,
+) {
+	if e == nil || e.optimizations == nil || consumed == nil || stepResult == nil {
+		return
+	}
+	if stepResult.ctrlRes.RequeueAfter <= 0 || !stepResult.wasNoOp() {
+		return
+	}
+
+	streak := e.optimizations.recordStableRequeueAfterNoOp(
+		stateView.ContentsHash(),
+		consumed.ReconcilerID,
+		consumed.Request,
+	)
+	if streak < e.optimizations.stableRequeueAfterThreshold() {
+		return
+	}
+
+	for i := range pending {
+		if pending[i].ReconcilerID != consumed.ReconcilerID {
+			continue
+		}
+		if pending[i].Request.NamespacedName != consumed.Request.NamespacedName {
+			continue
+		}
+		if pending[i].Source != SourceRequeueAfter {
+			continue
+		}
+		pending[i].Source = SourceStableRequeueAfter
+	}
 }
 
 // emitAbortedState records an aborted exploration branch and attempts to send it on the channel.

@@ -82,6 +82,10 @@ const (
 	// SourceRequeueAfter indicates the reconcile was triggered by reconcile.Result.RequeueAfter.
 	// This is actionable delayed work and should block convergence.
 	SourceRequeueAfter PendingReconcileSource = "Requeue After"
+	// SourceStableRequeueAfter indicates a RequeueAfter that has repeatedly
+	// re-fired on the same object state without producing writes. It is treated as
+	// ignorable polling for convergence purposes.
+	SourceStableRequeueAfter PendingReconcileSource = "Stable Requeue After"
 
 	SourceRequeue PendingReconcileSource = "Requeue"
 )
@@ -112,7 +116,7 @@ func allPendingIgnorableForConvergence(pending []PendingReconcile) bool {
 		return false // empty list should not be considered "all ignorable"
 	}
 	for _, pr := range pending {
-		if pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue {
+		if pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue && pr.Source != SourceStableRequeueAfter {
 			return false
 		}
 	}
@@ -124,7 +128,7 @@ func allPendingIgnorableForConvergence(pending []PendingReconcile) bool {
 func countIgnorableForConvergence(pending []PendingReconcile) int {
 	count := 0
 	for _, pr := range pending {
-		if pr.Source == SourceAsyncEnqueue || pr.Source == SourceRequeue {
+		if pr.Source == SourceAsyncEnqueue || pr.Source == SourceRequeue || pr.Source == SourceStableRequeueAfter {
 			count++
 		}
 	}
