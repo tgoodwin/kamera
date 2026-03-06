@@ -42,6 +42,11 @@ type EffectContextManager interface {
 type PerturbationConfig struct {
 	PermuteOrder map[ReconcilerID]bool
 	Staleness    map[ReconcilerID]StalenessConfig
+	// UserActionReadyDepths schedules each user action at a specific exploration
+	// depth. This is the primary reason ReadyAtDepth exists: user actions are not
+	// triggered reactively by prior controller output, so the explorer needs an
+	// explicit depth-based scheduler for them.
+	UserActionReadyDepths map[int]int
 }
 
 type StalenessConfig struct {
@@ -147,6 +152,7 @@ type ExploreConfig struct {
 func (cfg ExploreConfig) Clone() ExploreConfig {
 	out := cfg
 	out.Perturbations.PermuteOrder = maps.Clone(cfg.Perturbations.PermuteOrder)
+	out.Perturbations.UserActionReadyDepths = maps.Clone(cfg.Perturbations.UserActionReadyDepths)
 	out.Perturbations.Staleness = make(map[ReconcilerID]StalenessConfig, len(cfg.Perturbations.Staleness))
 	for id, st := range cfg.Perturbations.Staleness {
 		copied := st
@@ -205,8 +211,50 @@ func (e *Explorer) shouldApplyNextUserAction(state StateNode) bool {
 	if !e.hasRemainingUserAction(state) {
 		return false
 	}
+	if readyDepth, ok := e.userActionReadyDepth(state.nextUserActionIdx); ok {
+		if state.depth >= readyDepth {
+			return true
+		}
+		// If a branch converges before a scheduled depth, apply at convergence so
+		// the run can continue without synthetic no-op depth padding.
+		return state.IsConverged()
+	}
 	// policy here is to apply the next user action after the current state has converged
 	return state.IsConverged()
+}
+
+func (e *Explorer) userActionReadyDepth(actionIdx int) (int, bool) {
+	if e == nil || e.Config == nil || e.Config.Perturbations.UserActionReadyDepths == nil {
+		return 0, false
+	}
+	readyDepth, ok := e.Config.Perturbations.UserActionReadyDepths[actionIdx]
+	return readyDepth, ok
+}
+
+func (e *Explorer) nextReadyDepth(state StateNode) (int, bool) {
+	nextDepth := 0
+	setNextDepth := func(candidate int) {
+		if candidate <= state.depth {
+			return
+		}
+		if nextDepth == 0 || candidate < nextDepth {
+			nextDepth = candidate
+		}
+	}
+
+	for _, pr := range state.PendingReconciles {
+		setNextDepth(pr.ReadyAtDepth)
+	}
+	if e.hasRemainingUserAction(state) {
+		if readyDepth, ok := e.userActionReadyDepth(state.nextUserActionIdx); ok {
+			setNextDepth(readyDepth)
+		}
+	}
+
+	if nextDepth == 0 {
+		return 0, false
+	}
+	return nextDepth, true
 }
 
 func (e *Explorer) hasRemainingUserAction(state StateNode) bool {
@@ -884,6 +932,12 @@ func (e *Explorer) explore(
 			continue
 		}
 
+		if len(currentState.ReadyPendingReconciles()) == 0 {
+			if nextDepth, ok := e.nextReadyDepth(currentState); ok {
+				currentState.depth = nextDepth
+			}
+		}
+
 		// A state is considered converged if:
 		// 1. There are no pending reconciles, OR
 		// 2. All remaining pending reconciles are ignorable for convergence (async enqueues
@@ -895,22 +949,22 @@ func (e *Explorer) explore(
 		// if any pending has SourceStateChange.
 		if e.isTerminalConvergedState(currentState) {
 			convergenceKey := currentState.ConvergenceHash()
-			eligiblePending := currentState.EligiblePendingReconciles()
-			reason := "no eligible pending reconciles"
-			if len(eligiblePending) > 0 {
+			readyPending := currentState.ReadyPendingReconciles()
+			reason := "no ready pending reconciles"
+			if len(readyPending) > 0 {
 				reason = "only ignorable pending reconciles remaining"
 			}
 
 			// INVARIANT CHECK: No SourceStateChange pending reconciles should be present
 			// when marking a state as converged. If this fires, there's a bug.
-			for _, pr := range eligiblePending {
+			for _, pr := range readyPending {
 				if pr.Source == SourceStateChange {
 					logger.Error(nil, "BUG: state marked as converged has SourceStateChange pending reconcile",
 						"ReconcilerID", pr.ReconcilerID,
 						"Request", pr.Request.NamespacedName,
 						"Depth", currentState.depth,
-						"TotalPending", len(eligiblePending),
-						"PendingSources", pendingSourcesSummary(eligiblePending),
+						"TotalPending", len(readyPending),
+						"PendingSources", pendingSourcesSummary(readyPending),
 					)
 				}
 			}
@@ -920,8 +974,8 @@ func (e *Explorer) explore(
 					"Depth", currentState.depth,
 					"StateKey", convergenceKey,
 					"Reason", reason,
-					"RemainingIgnorable", countIgnorableForConvergence(eligiblePending),
-					"PendingSources", pendingSourcesSummary(eligiblePending),
+					"RemainingIgnorable", countIgnorableForConvergence(readyPending),
+					"PendingSources", pendingSourcesSummary(readyPending),
 				).Info("arrived at converged state")
 			}
 			if logger.V(2).Enabled() {
@@ -1031,9 +1085,9 @@ func (e *Explorer) explore(
 					"StateKey", stateKey,
 					"ReconcilerID", pendingReconcile.ReconcilerID,
 					"PendingCount", len(currentState.PendingReconciles),
-				).Info("no eligible views for pending reconcile; marking state as aborted")
+				).Info("no ready views for pending reconcile; marking state as aborted")
 
-				abortErr := errors.New(fmt.Sprintf("no eligible views for %s", pendingReconcile.ReconcilerID))
+				abortErr := errors.New(fmt.Sprintf("no ready views for %s", pendingReconcile.ReconcilerID))
 				if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
 					return nil
 				}
@@ -1775,15 +1829,15 @@ func (e *Explorer) selectionRNG() *rand.Rand {
 }
 
 func (e *Explorer) selectPendingReconcile(state StateNode) (PendingReconcile, error) {
-	eligible := state.EligiblePendingReconciles()
-	if len(eligible) == 0 {
-		return PendingReconcile{}, fmt.Errorf("state has no depth-eligible pending reconciles")
+	ready := state.ReadyPendingReconciles()
+	if len(ready) == 0 {
+		return PendingReconcile{}, fmt.Errorf("state has no ready pending reconciles")
 	}
-	if !e.monteCarloEnabled() || len(eligible) == 1 {
-		return eligible[0], nil
+	if !e.monteCarloEnabled() || len(ready) == 1 {
+		return ready[0], nil
 	}
-	idx := e.selectionRNG().Intn(len(eligible))
-	return eligible[idx], nil
+	idx := e.selectionRNG().Intn(len(ready))
+	return ready[idx], nil
 }
 
 func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
@@ -1967,20 +2021,22 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 	}
 
 	// If the controller returned Requeue or RequeueAfter, re-enqueue the original request.
-	// RequeueAfter is treated as actionable follow-up work.
+	// RequeueAfter is treated as actionable follow-up work. Although ReadyAtDepth was
+	// introduced for user-action interleaving, RequeueAfter reuses the same
+	// depth-based readiness gate so all deferred work is scheduled consistently.
 	if consumed != nil && (result.ctrlRes.Requeue || result.ctrlRes.RequeueAfter > 0) {
 		source := SourceRequeue
-		notBeforeDepth := 0
+		readyAtDepth := 0
 		if result.ctrlRes.RequeueAfter > 0 {
 			source = SourceRequeueAfter
 			delaySteps := simclock.StepsForDuration(result.ctrlRes.RequeueAfter)
-			notBeforeDepth = state.depth + 1 + delaySteps
+			readyAtDepth = state.depth + 1 + delaySteps
 		}
 		requeued := PendingReconcile{
-			ReconcilerID:   consumed.ReconcilerID,
-			Request:        consumed.Request,
-			Source:         source,
-			NotBeforeDepth: notBeforeDepth,
+			ReconcilerID: consumed.ReconcilerID,
+			Request:      consumed.Request,
+			Source:       source,
+			ReadyAtDepth: readyAtDepth,
 		}
 		triggeredByChanges = append(triggeredByChanges, requeued)
 	}

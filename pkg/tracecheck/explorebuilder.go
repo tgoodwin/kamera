@@ -112,8 +112,9 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 			SearchMode:      SearchModeDFS,
 			Optimizations:   defaultOptimizationConfig(),
 			Perturbations: PerturbationConfig{
-				PermuteOrder: make(map[ReconcilerID]bool),
-				Staleness:    make(map[ReconcilerID]StalenessConfig),
+				PermuteOrder:          make(map[ReconcilerID]bool),
+				Staleness:             make(map[ReconcilerID]StalenessConfig),
+				UserActionReadyDepths: make(map[int]int),
 			},
 		},
 	}
@@ -410,6 +411,9 @@ func (b *ExplorerBuilder) SetConfig(cfg ExploreConfig) *ExplorerBuilder {
 	}
 	if cloned.Perturbations.Staleness == nil {
 		cloned.Perturbations.Staleness = make(map[ReconcilerID]StalenessConfig)
+	}
+	if cloned.Perturbations.UserActionReadyDepths == nil {
+		cloned.Perturbations.UserActionReadyDepths = make(map[int]int)
 	}
 	b.config = &cloned
 	for id := range b.reconcilers {

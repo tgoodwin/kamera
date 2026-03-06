@@ -47,6 +47,83 @@ func TestShouldApplyNextUserAction_NoUserControllerOrActions(t *testing.T) {
 	}
 }
 
+func TestShouldApplyNextUserAction_ReadyDepthScheduling(t *testing.T) {
+	explorer := &Explorer{
+		Config: &ExploreConfig{
+			Perturbations: PerturbationConfig{
+				UserActionReadyDepths: map[int]int{1: 5},
+			},
+		},
+		userController: &UserController{
+			reconciler: &userActionReconciler{
+				actions: []UserAction{
+					{ID: "a0", OpType: event.CREATE},
+					{ID: "a1", OpType: event.UPDATE},
+				},
+			},
+		},
+	}
+
+	beforeReadyDepthNonConverged := StateNode{
+		depth:             4,
+		nextUserActionIdx: 1,
+		PendingReconciles: []PendingReconcile{
+			{ReconcilerID: "svc", Source: SourceStateChange},
+		},
+	}
+	if explorer.shouldApplyNextUserAction(beforeReadyDepthNonConverged) {
+		t.Fatalf("expected false before ready depth when state is non-converged")
+	}
+
+	atReadyDepthNonConverged := beforeReadyDepthNonConverged
+	atReadyDepthNonConverged.depth = 5
+	if !explorer.shouldApplyNextUserAction(atReadyDepthNonConverged) {
+		t.Fatalf("expected true at ready depth even when state is non-converged")
+	}
+
+	earlyConverged := StateNode{
+		depth:             3,
+		nextUserActionIdx: 1,
+	}
+	if !explorer.shouldApplyNextUserAction(earlyConverged) {
+		t.Fatalf("expected true for converged state below ready depth")
+	}
+}
+
+func TestNextReadyDepth_PrefersEarliestScheduledEvent(t *testing.T) {
+	explorer := &Explorer{
+		Config: &ExploreConfig{
+			Perturbations: PerturbationConfig{
+				UserActionReadyDepths: map[int]int{1: 5},
+			},
+		},
+		userController: &UserController{
+			reconciler: &userActionReconciler{
+				actions: []UserAction{
+					{ID: "a0", OpType: event.CREATE},
+					{ID: "a1", OpType: event.UPDATE},
+				},
+			},
+		},
+	}
+
+	state := StateNode{
+		depth:             3,
+		nextUserActionIdx: 1,
+		PendingReconciles: []PendingReconcile{
+			{ReconcilerID: "svc", Source: SourceRequeueAfter, ReadyAtDepth: 7},
+		},
+	}
+
+	nextDepth, ok := explorer.nextReadyDepth(state)
+	if !ok {
+		t.Fatalf("expected next ready depth to be available")
+	}
+	if nextDepth != 5 {
+		t.Fatalf("expected earliest scheduled depth 5, got %d", nextDepth)
+	}
+}
+
 func TestIsTerminalConvergedState_RequiresUserActionExhaustion(t *testing.T) {
 	explorer := &Explorer{
 		userController: &UserController{

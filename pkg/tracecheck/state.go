@@ -275,23 +275,35 @@ func (sn StateNode) DumpPending() {
 	}
 }
 
-func (sn StateNode) EligiblePendingReconciles() []PendingReconcile {
+func (sn StateNode) ReadyPendingReconciles() []PendingReconcile {
 	if len(sn.PendingReconciles) == 0 {
 		return nil
 	}
-	eligible := make([]PendingReconcile, 0, len(sn.PendingReconciles))
+	ready := make([]PendingReconcile, 0, len(sn.PendingReconciles))
 	for _, pr := range sn.PendingReconciles {
-		if pr.NotBeforeDepth > sn.depth {
+		if pr.IsDeferredAtDepth(sn.depth) {
 			continue
 		}
-		eligible = append(eligible, pr)
+		ready = append(ready, pr)
 	}
-	return eligible
+	return ready
+}
+
+func (sn StateNode) HasDeferredActionablePendingReconciles() bool {
+	for _, pr := range sn.PendingReconciles {
+		if pr.IsDeferredAtDepth(sn.depth) && !isIgnorableForConvergence(pr) {
+			return true
+		}
+	}
+	return false
 }
 
 func (sn StateNode) IsConverged() bool {
-	eligible := sn.EligiblePendingReconciles()
-	return len(eligible) == 0 || allPendingIgnorableForConvergence(eligible)
+	if sn.HasDeferredActionablePendingReconciles() {
+		return false
+	}
+	ready := sn.ReadyPendingReconciles()
+	return len(ready) == 0 || allPendingIgnorableForConvergence(ready)
 }
 
 func (sn StateNode) Objects() ObjectVersions {
@@ -385,7 +397,7 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 			if pi.Request.Name != pj.Request.Name {
 				return pi.Request.Name < pj.Request.Name
 			}
-			return pi.NotBeforeDepth < pj.NotBeforeDepth
+			return pi.ReadyAtDepth < pj.ReadyAtDepth
 		})
 	}
 
@@ -417,9 +429,9 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 		builder.WriteString(pr.Request.Namespace)
 		builder.WriteByte('/')
 		builder.WriteString(pr.Request.Name)
-		if pr.NotBeforeDepth > 0 {
+		if pr.ReadyAtDepth > 0 {
 			builder.WriteByte('@')
-			builder.WriteString(strconv.Itoa(pr.NotBeforeDepth))
+			builder.WriteString(strconv.Itoa(pr.ReadyAtDepth))
 		}
 	}
 
@@ -491,10 +503,10 @@ func (sn StateNode) ContentsHash() ContentsHash {
 // that are irrelevant at the current depth:
 // - async enqueues / poll-style requeues
 // - stable RequeueAfter pollers
-// - delayed reconciles that are not yet depth-eligible
+// - delayed reconciles that are still deferred until a later depth
 func (sn StateNode) ConvergenceHash() NodeHash {
 	filtered := lo.Filter(sn.PendingReconciles, func(pr PendingReconcile, _ int) bool {
-		if pr.NotBeforeDepth > sn.depth {
+		if pr.IsDeferredAtDepth(sn.depth) {
 			return false
 		}
 		return pr.Source != SourceAsyncEnqueue &&
@@ -533,8 +545,8 @@ func (sn StateNode) orderedPendingSignature() string {
 	}
 	keys := make([]string, len(sn.PendingReconciles))
 	for i, pr := range sn.PendingReconciles {
-		if pr.NotBeforeDepth > 0 {
-			keys[i] = fmt.Sprintf("%s:%s/%s@%d", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name, pr.NotBeforeDepth)
+		if pr.ReadyAtDepth > 0 {
+			keys[i] = fmt.Sprintf("%s:%s/%s@%d", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name, pr.ReadyAtDepth)
 			continue
 		}
 		keys[i] = fmt.Sprintf("%s:%s/%s", pr.ReconcilerID, pr.Request.Namespace, pr.Request.Name)

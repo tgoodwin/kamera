@@ -33,12 +33,12 @@ type processJob struct {
 }
 
 type childProcessRequest struct {
-	JobIndex   int
-	InputIndex int
-	TrialIndex int
+	JobIndex     int
+	InputIndex   int
+	TrialIndex   int
 	InvocationID string
-	CWD        string
-	Args       []string
+	CWD          string
+	Args         []string
 }
 
 type childProcessResult struct {
@@ -175,12 +175,12 @@ func (r *ParallelRunner) runSupervisorMode(ctx context.Context, scenarios []Scen
 			args = append(args, fmt.Sprintf("--parallel-child-trial-index=%d", job.TrialIndex))
 			args = append(args, fmt.Sprintf("--parallel-child-job-index=%d", job.JobIndex))
 			resCh <- r.spawnChildFn(ctx, childProcessRequest{
-				JobIndex:   job.JobIndex,
-				InputIndex: job.InputIndex,
-				TrialIndex: job.TrialIndex,
+				JobIndex:     job.JobIndex,
+				InputIndex:   job.InputIndex,
+				TrialIndex:   job.TrialIndex,
 				InvocationID: invocationID,
-				CWD:        cwd,
-				Args:       args,
+				CWD:          cwd,
+				Args:         args,
 			})
 		}
 	}
@@ -343,8 +343,9 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 		return nil, err
 	}
 
-	results := make([]ScenarioResult, len(scenarios))
-	if len(scenarios) == 0 {
+	jobsToRun := buildInProcessJobs(scenarios)
+	results := make([]ScenarioResult, len(jobsToRun))
+	if len(jobsToRun) == 0 {
 		return results, nil
 	}
 
@@ -352,9 +353,12 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 	if maxParallel <= 0 {
 		maxParallel = runtime.GOMAXPROCS(0)
 	}
+	if maxParallel > len(jobsToRun) {
+		maxParallel = len(jobsToRun)
+	}
 
 	jobs := make(chan scenarioJob)
-	resCh := make(chan scenarioResult, len(scenarios))
+	resCh := make(chan scenarioResult, len(jobsToRun))
 
 	var wg sync.WaitGroup
 	worker := func() {
@@ -375,8 +379,8 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 		close(resCh)
 	}()
 
-	for idx, scenario := range scenarios {
-		jobs <- scenarioJob{idx: idx, scenario: scenario}
+	for _, job := range jobsToRun {
+		jobs <- job
 	}
 	close(jobs)
 
@@ -385,6 +389,24 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 	}
 
 	return results, nil
+}
+
+func buildInProcessJobs(scenarios []Scenario) []scenarioJob {
+	jobs := make([]scenarioJob, 0, len(scenarios))
+	for scenarioIdx, scenario := range scenarios {
+		trials := scenarioTrialCount(scenario.Config)
+		for trialIdx := 0; trialIdx < trials; trialIdx++ {
+			jobScenario := applyMonteCarloTrialConfig(scenario, scenarioIdx, trialIdx)
+			if trialIdx > 0 {
+				jobScenario.Name = fmt.Sprintf("%s#trial-%d", strings.TrimSpace(jobScenario.Name), trialIdx)
+			}
+			jobs = append(jobs, scenarioJob{
+				idx:      len(jobs),
+				scenario: jobScenario,
+			})
+		}
+	}
+	return jobs
 }
 
 func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opts ParallelOptions, idx int, invocationID string) ScenarioResult {
@@ -420,6 +442,9 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		// precision/attribution. Harnesses can still override with ClosedLoop.Plan.
 		referenceConfig = disablePerturbations(scenario.Config)
 		planFn = func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
+			if len(scenario.UserInputs) >= 2 {
+				return buildUserActionInterleavingPlans(reference, scenario.Config, scenario.Context, scenario.UserInputs), nil
+			}
 			return buildDefaultScenarioRerunPlans(reference, scenario.Config, scenario.Context), nil
 		}
 	} else if scenario.ClosedLoop.Plan != nil {
@@ -474,6 +499,7 @@ func disablePerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig
 		out.Perturbations.PermuteOrder[id] = false
 	}
 	out.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+	out.Perturbations.UserActionReadyDepths = make(map[int]int)
 	return out
 }
 
@@ -504,6 +530,87 @@ func buildDefaultScenarioRerunPlans(
 			Context: &rerunContext,
 		},
 	}
+}
+
+func buildUserActionInterleavingPlans(
+	reference ScenarioPhaseResult,
+	base tracecheck.ExploreConfig,
+	scenarioCtx ScenarioContext,
+	userInputs []tracecheck.UserAction,
+) []ScenarioPhasePlan {
+	if len(userInputs) < 2 || reference.Result == nil || len(reference.Result.ConvergedStates) == 0 {
+		return nil
+	}
+	firstState := reference.Result.ConvergedStates[0]
+	if len(firstState.Paths) == 0 {
+		return nil
+	}
+	path := firstState.Paths[0]
+	if len(path) == 0 {
+		return nil
+	}
+
+	actionReadyDepths := make(map[int]int, len(userInputs))
+	for depth, step := range path {
+		if step == nil || step.ControllerID != tracecheck.UserControllerID || step.StepMetadata == nil {
+			continue
+		}
+		rawIdx, ok := step.StepMetadata[tracecheck.UserActionIndexMetadataKey]
+		if !ok {
+			continue
+		}
+		actionIdx, err := strconv.Atoi(strings.TrimSpace(rawIdx))
+		if err != nil {
+			continue
+		}
+		if actionIdx < 0 || actionIdx >= len(userInputs) {
+			continue
+		}
+		if _, alreadySet := actionReadyDepths[actionIdx]; !alreadySet {
+			actionReadyDepths[actionIdx] = depth
+		}
+	}
+
+	plans := make([]ScenarioPhasePlan, 0)
+	for actionIdx := 1; actionIdx < len(userInputs); actionIdx++ {
+		prevReadyDepth, prevOk := actionReadyDepths[actionIdx-1]
+		currReadyDepth, currOk := actionReadyDepths[actionIdx]
+		// If any required depth is missing in the reference path, skip interleavings.
+		if !prevOk || !currOk {
+			return nil
+		}
+
+		readyDepths := make([]int, 0)
+		if currReadyDepth > prevReadyDepth+1 {
+			for depth := prevReadyDepth + 1; depth <= currReadyDepth-1; depth++ {
+				readyDepths = append(readyDepths, depth)
+			}
+		} else {
+			// Empty strict-between window fallback.
+			readyDepths = append(readyDepths, currReadyDepth)
+		}
+
+		for _, readyDepth := range readyDepths {
+			cfg := disablePerturbations(base)
+			cfg.Perturbations.UserActionReadyDepths[actionIdx] = readyDepth
+
+			attrs := copyAttributes(scenarioCtx.Attributes)
+			attrs["perturbation.strategy"] = "user_action_interleaving"
+			attrs["perturbation.action_index"] = strconv.Itoa(actionIdx)
+			attrs["perturbation.ready_depth"] = strconv.Itoa(readyDepth)
+			attrs["perturbation.reference_prev_ready_depth"] = strconv.Itoa(prevReadyDepth)
+			attrs["perturbation.reference_action_ready_depth"] = strconv.Itoa(currReadyDepth)
+			ctxCopy := scenarioCtx
+			ctxCopy.Attributes = attrs
+
+			plans = append(plans, ScenarioPhasePlan{
+				Name:    fmt.Sprintf("interleave_action_%d_depth_%d", actionIdx, readyDepth),
+				Config:  cfg,
+				Context: &ctxCopy,
+			})
+		}
+	}
+	return plans
 }
 
 func observedControllersInReference(reference ScenarioPhaseResult) []tracecheck.ReconcilerID {

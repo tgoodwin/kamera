@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -212,6 +213,7 @@ func getObjectKey(obj *unstructured.Unstructured) string {
 
 func (s *Store) indexObject(obj *unstructured.Unstructured) error {
 	objCopy := obj.DeepCopy()
+	tag.EnsureDeterministicIdentity(objCopy)
 	objKey := getObjectKey(objCopy)
 
 	if _, exists := s.objectHashes[objKey]; !exists {

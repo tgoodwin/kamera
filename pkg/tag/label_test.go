@@ -5,8 +5,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
 func TestAddSleeveObjectID(t *testing.T) {
@@ -72,6 +77,68 @@ func TestAddDeletionID(t *testing.T) {
 	deletionID, exists = labels[DeletionID]
 	assert.True(t, exists, "DeletionID label should still be set")
 	assert.Equal(t, existingUUID, deletionID, "DeletionID label should not be overwritten")
+}
+
+func TestEnsureDeterministicIdentity(t *testing.T) {
+	obj := &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Pod",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "po",
+			Namespace: "default",
+		},
+	}
+
+	EnsureDeterministicIdentity(obj)
+
+	expectedID := deterministicSleeveObjectID(obj)
+	require.NotEmpty(t, obj.GetUID())
+	assert.Equal(t, expectedID, obj.GetLabels()[TraceyObjectID])
+	assert.Equal(t, types.UID(expectedID), obj.GetUID())
+
+	obj.SetUID("existing-uid")
+	EnsureDeterministicIdentity(obj)
+	assert.Equal(t, types.UID("existing-uid"), obj.GetUID())
+}
+
+func TestEnsureDeterministicIdentityDisambiguatesOwnerReferences(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, appsv1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	oldRS := &appsv1.ReplicaSet{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "apps/v1",
+			Kind:       "ReplicaSet",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "old",
+			Namespace: "default",
+		},
+	}
+	newRS := oldRS.DeepCopy()
+	newRS.Name = "new"
+
+	EnsureDeterministicIdentity(oldRS)
+	EnsureDeterministicIdentity(newRS)
+	require.NotEqual(t, oldRS.GetUID(), newRS.GetUID())
+
+	pod := &corev1.Pod{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: "v1",
+			Kind:       "Pod",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "child",
+			Namespace: "default",
+		},
+	}
+	require.NoError(t, controllerutil.SetControllerReference(newRS, pod, scheme))
+
+	assert.True(t, metav1.IsControlledBy(pod, newRS))
+	assert.False(t, metav1.IsControlledBy(pod, oldRS))
 }
 
 func TestLabelChange(t *testing.T) {

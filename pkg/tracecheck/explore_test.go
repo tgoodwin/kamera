@@ -352,8 +352,8 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 					Request: reconcile.Request{
 						NamespacedName: types.NamespacedName{Namespace: "namespace1", Name: "name1"},
 					},
-					Source:         SourceRequeueAfter,
-					NotBeforeDepth: 9, // depth=3 + 1 current step + 5 simulated seconds
+					Source:       SourceRequeueAfter,
+					ReadyAtDepth: 9, // depth=3 + 1 current step + 5 simulated seconds
 				},
 			},
 		},
@@ -464,8 +464,8 @@ func Test_determineNewPendingReconciles_RequeueAfterUsesSimclockStepSize(t *test
 			Request: reconcile.Request{
 				NamespacedName: types.NamespacedName{Namespace: "namespace1", Name: "name1"},
 			},
-			Source:         SourceRequeueAfter,
-			NotBeforeDepth: 8, // depth=4 + 1 current step + 3 delay steps
+			Source:       SourceRequeueAfter,
+			ReadyAtDepth: 8, // depth=4 + 1 current step + 3 delay steps
 		},
 	}
 	assert.Equal(t, expected, actual)

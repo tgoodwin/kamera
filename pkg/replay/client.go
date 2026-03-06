@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -81,6 +82,7 @@ var _ client.Client = (*Client)(nil)
 
 func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType, preconditions *PreconditionInfo) error {
 	// TODO validate preconditions
+	tag.EnsureDeterministicIdentity(obj)
 	return c.recorder.RecordEffect(ctx, obj, opType, preconditions)
 }
 

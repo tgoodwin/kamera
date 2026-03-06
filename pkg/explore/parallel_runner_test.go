@@ -386,6 +386,203 @@ func TestParallelRunnerAutoClosedLoopRunsReferenceThenRerunWhenScenarioHasNoPlan
 	}
 }
 
+func TestBuildUserActionInterleavingPlans_StrictlyBetweenDepths(t *testing.T) {
+	path := tracecheck.ExecutionHistory{
+		{
+			ControllerID: tracecheck.UserControllerID,
+			StepMetadata: map[string]string{
+				tracecheck.UserActionIndexMetadataKey: "0",
+			},
+		},
+		{ControllerID: "FooController"},
+		{ControllerID: "FooController"},
+		{ControllerID: "FooController"},
+		{ControllerID: "FooController"},
+		{
+			ControllerID: tracecheck.UserControllerID,
+			StepMetadata: map[string]string{
+				tracecheck.UserActionIndexMetadataKey: "1",
+			},
+		},
+	}
+	reference := ScenarioPhaseResult{
+		Result: &tracecheck.Result{
+			ConvergedStates: []tracecheck.ResultState{
+				{
+					Paths: []tracecheck.ExecutionHistory{path},
+				},
+			},
+		},
+	}
+
+	userInputs := []tracecheck.UserAction{
+		{ID: "action-0"},
+		{ID: "action-1"},
+	}
+	plans := buildUserActionInterleavingPlans(reference, tracecheck.ExploreConfig{}, ScenarioContext{}, userInputs)
+	if len(plans) != 4 {
+		t.Fatalf("expected 4 plans for depths 1..4, got %d", len(plans))
+	}
+
+	for i, expectedDepth := range []int{1, 2, 3, 4} {
+		plan := plans[i]
+		expectedName := fmt.Sprintf("interleave_action_1_depth_%d", expectedDepth)
+		if plan.Name != expectedName {
+			t.Fatalf("expected plan name %q, got %q", expectedName, plan.Name)
+		}
+		gotReadyDepth, ok := plan.Config.Perturbations.UserActionReadyDepths[1]
+		if !ok {
+			t.Fatalf("expected action ready depth for action 1")
+		}
+		if gotReadyDepth != expectedDepth {
+			t.Fatalf("expected ready depth %d, got %d", expectedDepth, gotReadyDepth)
+		}
+	}
+}
+
+func TestBuildUserActionInterleavingPlans_EmptyWindowFallsBackToReferenceDepth(t *testing.T) {
+	path := tracecheck.ExecutionHistory{
+		{
+			ControllerID: tracecheck.UserControllerID,
+			StepMetadata: map[string]string{
+				tracecheck.UserActionIndexMetadataKey: "0",
+			},
+		},
+		{
+			ControllerID: tracecheck.UserControllerID,
+			StepMetadata: map[string]string{
+				tracecheck.UserActionIndexMetadataKey: "1",
+			},
+		},
+	}
+	reference := ScenarioPhaseResult{
+		Result: &tracecheck.Result{
+			ConvergedStates: []tracecheck.ResultState{
+				{
+					Paths: []tracecheck.ExecutionHistory{path},
+				},
+			},
+		},
+	}
+
+	userInputs := []tracecheck.UserAction{
+		{ID: "action-0"},
+		{ID: "action-1"},
+	}
+	plans := buildUserActionInterleavingPlans(reference, tracecheck.ExploreConfig{}, ScenarioContext{}, userInputs)
+	if len(plans) != 1 {
+		t.Fatalf("expected fallback to one plan, got %d", len(plans))
+	}
+	gotReadyDepth := plans[0].Config.Perturbations.UserActionReadyDepths[1]
+	if gotReadyDepth != 1 {
+		t.Fatalf("expected fallback ready depth 1, got %d", gotReadyDepth)
+	}
+}
+
+func TestBuildUserActionInterleavingPlans_MissingSubsequentActionReturnsNoPlans(t *testing.T) {
+	path := tracecheck.ExecutionHistory{
+		{
+			ControllerID: tracecheck.UserControllerID,
+			StepMetadata: map[string]string{
+				tracecheck.UserActionIndexMetadataKey: "0",
+			},
+		},
+		{ControllerID: "FooController"},
+	}
+	reference := ScenarioPhaseResult{
+		Result: &tracecheck.Result{
+			ConvergedStates: []tracecheck.ResultState{
+				{
+					Paths: []tracecheck.ExecutionHistory{path},
+				},
+			},
+		},
+	}
+	userInputs := []tracecheck.UserAction{
+		{ID: "action-0"},
+		{ID: "action-1"},
+	}
+	plans := buildUserActionInterleavingPlans(reference, tracecheck.ExploreConfig{}, ScenarioContext{}, userInputs)
+	if len(plans) != 0 {
+		t.Fatalf("expected no plans when subsequent action is missing, got %d", len(plans))
+	}
+}
+
+func TestParallelRunnerAutoClosedLoopUsesInterleavingForMultiStepWorkflows(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	utilruntime.Must(foov1.AddToScheme(scheme))
+
+	builder := tracecheck.NewExplorerBuilder(scheme)
+	builder.WithMaxDepth(10)
+	state, err := builder.BuildStartStateFromObjects([]ctrlclient.Object{
+		&foov1.Foo{
+			ObjectMeta: metav1.ObjectMeta{
+				Namespace: "default",
+				Name:      "seed",
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("build start state: %v", err)
+	}
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	scenarios := []Scenario{
+		{
+			Name:             "auto-multistep-interleaving",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 10},
+			UserInputs: []tracecheck.UserAction{
+				{
+					ID:     "create-target",
+					OpType: "CREATE",
+					Payload: &foov1.Foo{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: "default",
+							Name:      "target",
+						},
+					},
+				},
+				{
+					ID:     "update-target",
+					OpType: "UPDATE",
+					Payload: &foov1.Foo{
+						ObjectMeta: metav1.ObjectMeta{
+							Namespace: "default",
+							Name:      "target",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if len(results[0].Phases) != 2 {
+		t.Fatalf("expected reference + one interleaving rerun phase, got %d", len(results[0].Phases))
+	}
+	if results[0].Phases[0].Name != "reference" {
+		t.Fatalf("expected first phase to be reference, got %q", results[0].Phases[0].Name)
+	}
+	if !strings.HasPrefix(results[0].Phases[1].Name, "interleave_action_1_depth_") {
+		t.Fatalf("expected second phase name to use interleaving strategy, got %q", results[0].Phases[1].Name)
+	}
+	if results[0].Phases[1].Name == "rerun" {
+		t.Fatalf("expected broad rerun to be replaced for multi-step workflows")
+	}
+}
+
 func withPerturbFlag(t *testing.T, enabled bool) {
 	t.Helper()
 
@@ -788,6 +985,40 @@ func TestBuildProcessJobsExpandsMonteCarloTrials(t *testing.T) {
 		if jobs[i].JobIndex != i {
 			t.Fatalf("job %d expected job index %d, got %d", i, i, jobs[i].JobIndex)
 		}
+	}
+}
+
+func TestParallelRunnerInProcessExpandsMonteCarloTrials(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+	withPerturbFlag(t, false)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	scenarios := []Scenario{
+		{
+			Name:             "alpha",
+			EnvironmentState: state.Clone(),
+			Config: tracecheck.ExploreConfig{
+				MaxDepth:   5,
+				SearchMode: tracecheck.SearchModeMonteCarlo,
+				MonteCarlo: tracecheck.MonteCarloConfig{
+					Seed:   1337,
+					Trials: 3,
+				},
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(results) != 3 {
+		t.Fatalf("expected one result per Monte Carlo trial, got %d", len(results))
 	}
 }
 

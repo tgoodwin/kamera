@@ -29,4 +29,9 @@ func TestExplorerBuilderForkIsolatesStoresAndConfig(t *testing.T) {
 	if b.config.Perturbations.PermuteOrder[ReconcilerID("X")] {
 		t.Fatalf("expected permute map to be cloned")
 	}
+
+	fork.config.Perturbations.UserActionReadyDepths[1] = 10
+	if _, ok := b.config.Perturbations.UserActionReadyDepths[1]; ok {
+		t.Fatalf("expected user action ready depth map to be cloned")
+	}
 }
