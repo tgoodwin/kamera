@@ -1,5 +1,6 @@
 SLEEVECTRL_IMG ?= docker.io/tlg2132/sleeve-controller-manager:latest
 GOBIN := $(shell pwd)/bin
+EXAMPLE_MODULE_DIRS := $(patsubst %/,%,$(sort $(dir $(wildcard examples/*/go.mod))))
 
 # ensure that GOBIN is in PATH when running
 export PATH := $(GOBIN):$(PATH)
@@ -18,6 +19,10 @@ binaries: kamera
 test:
 	@echo "🧪 Running tests..."
 	go test ./...
+	@for dir in $(EXAMPLE_MODULE_DIRS); do \
+		echo "🧪 Running tests in $$dir..."; \
+		( cd $$dir && go test ./... ); \
+	done
 
 .PHONY: build-webhook
 build-webhook:
