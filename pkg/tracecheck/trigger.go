@@ -79,6 +79,13 @@ const (
 	SourceStateChange PendingReconcileSource = "State Change"
 	// SourceAsyncEnqueue indicates the reconcile was triggered by an async enqueue (e.g., ticker)
 	SourceAsyncEnqueue PendingReconcileSource = "Async Enqueue"
+	// SourceRequeueAfter indicates the reconcile was triggered by reconcile.Result.RequeueAfter.
+	// This is actionable delayed work and should block convergence.
+	SourceRequeueAfter PendingReconcileSource = "Requeue After"
+	// SourceStableRequeueAfter indicates a RequeueAfter that has repeatedly
+	// re-fired on the same object state without producing writes. It is treated as
+	// ignorable polling for convergence purposes.
+	SourceStableRequeueAfter PendingReconcileSource = "Stable Requeue After"
 
 	SourceRequeue PendingReconcileSource = "Requeue"
 )
@@ -87,6 +94,9 @@ type PendingReconcile struct {
 	ReconcilerID ReconcilerID
 	Request      reconcile.Request
 	Source       PendingReconcileSource
+	// NotBeforeDepth "suppresses" a pendingReconcile until the explorer reaches this depth.
+	// this is in support of RequeueAfter semantics in which elapsed time is a function of depth (pkg simclock)
+	NotBeforeDepth int
 }
 
 func (pr PendingReconcile) String() string {
@@ -94,7 +104,7 @@ func (pr PendingReconcile) String() string {
 }
 
 // allPendingIgnorableForConvergence returns true if all pending reconciles are from
-// sources that don't indicate state changes (async enqueues from tickers, or requeues
+// sources that don't indicate actionable progress (async enqueues from tickers, or requeues
 // from controllers that always re-enqueue). This is used to determine convergence:
 // if the only remaining work is time-based re-enqueues or poll-based requeues,
 // the controller logic has effectively converged since no state is changing.
@@ -106,18 +116,19 @@ func allPendingIgnorableForConvergence(pending []PendingReconcile) bool {
 		return false // empty list should not be considered "all ignorable"
 	}
 	for _, pr := range pending {
-		if pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue {
+		if pr.Source != SourceAsyncEnqueue && pr.Source != SourceRequeue && pr.Source != SourceStableRequeueAfter {
 			return false
 		}
 	}
 	return true
 }
 
-// countIgnorableForConvergence counts pending reconciles that are ignorable for convergence
+// countIgnorableForConvergence counts pending reconciles that are ignorable for convergence.
+// RequeueAfter is intentionally excluded since it represents actionable follow-up work.
 func countIgnorableForConvergence(pending []PendingReconcile) int {
 	count := 0
 	for _, pr := range pending {
-		if pr.Source == SourceAsyncEnqueue || pr.Source == SourceRequeue {
+		if pr.Source == SourceAsyncEnqueue || pr.Source == SourceRequeue || pr.Source == SourceStableRequeueAfter {
 			count++
 		}
 	}

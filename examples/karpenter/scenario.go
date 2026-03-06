@@ -101,11 +101,16 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 				return nil, fmt.Errorf("build user actions for %s: %w", variant.Name, err)
 			}
 
+			cfg, err := applyInputTuning(baseCfg, variant.Tuning)
+			if err != nil {
+				return nil, fmt.Errorf("apply tuning for %s: %w", variant.Name, err)
+			}
+
 			scenarios = append(scenarios, explore.Scenario{
 				Name:             variant.Name,
 				EnvironmentState: state,
 				UserInputs:       userActions,
-				Config:           applyInputTuning(baseCfg, variant.Tuning),
+				Config:           cfg,
 			})
 		}
 	}
@@ -468,7 +473,7 @@ func initialDependentControllers(obj client.Object) []tracecheck.ReconcilerID {
 	return nil
 }
 
-func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
+func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) (tracecheck.ExploreConfig, error) {
 	cfg := base.Clone()
 	if tuning.MaxDepth > 0 {
 		cfg.MaxDepth = tuning.MaxDepth
@@ -481,7 +486,36 @@ func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
 		}
 	}
-	return cfg
+	mode := strings.TrimSpace(tuning.Search.Mode)
+	if mode != "" {
+		parsed, err := tracecheck.ParseSearchMode(mode)
+		if err != nil {
+			return cfg, fmt.Errorf("parse tuning.search.mode: %w", err)
+		}
+		cfg.SearchMode = parsed
+	}
+
+	mc := tuning.Search.MonteCarlo
+	if cfg.SearchMode != tracecheck.SearchModeMonteCarlo {
+		if mc.Seed != nil || mc.Trials != nil || mc.TrialIndex != nil || mc.ScenarioGroup != nil {
+			cfg.SearchMode = tracecheck.SearchModeMonteCarlo
+		}
+	}
+	if cfg.SearchMode == tracecheck.SearchModeMonteCarlo {
+		if mc.Seed != nil {
+			cfg.MonteCarlo.Seed = *mc.Seed
+		}
+		if mc.Trials != nil {
+			cfg.MonteCarlo.Trials = *mc.Trials
+		}
+		if mc.TrialIndex != nil {
+			cfg.MonteCarlo.TrialIndex = *mc.TrialIndex
+		}
+		if mc.ScenarioGroup != nil {
+			cfg.MonteCarlo.ScenarioGroup = *mc.ScenarioGroup
+		}
+	}
+	return cfg, nil
 }
 
 func cloneCoverageInput(input coverage.Input) coverage.Input {
@@ -500,6 +534,7 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		PermuteControllers: append([]string(nil), input.Tuning.PermuteControllers...),
 		StaleReads:         cloneStringSliceMap(input.Tuning.StaleReads),
 		StaleLookback:      cloneIntMap(input.Tuning.StaleLookback),
+		Search:             cloneInputSearchTuning(input.Tuning.Search),
 	}
 	return coverage.Input{
 		Name:             input.Name,
@@ -507,6 +542,29 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		UserInputs:       userInputs,
 		Tuning:           tuning,
 	}
+}
+
+func cloneInputSearchTuning(search coverage.InputSearchTuning) coverage.InputSearchTuning {
+	out := coverage.InputSearchTuning{
+		Mode: strings.TrimSpace(search.Mode),
+	}
+	if search.MonteCarlo.Seed != nil {
+		seed := *search.MonteCarlo.Seed
+		out.MonteCarlo.Seed = &seed
+	}
+	if search.MonteCarlo.Trials != nil {
+		trials := *search.MonteCarlo.Trials
+		out.MonteCarlo.Trials = &trials
+	}
+	if search.MonteCarlo.TrialIndex != nil {
+		trialIdx := *search.MonteCarlo.TrialIndex
+		out.MonteCarlo.TrialIndex = &trialIdx
+	}
+	if search.MonteCarlo.ScenarioGroup != nil {
+		group := *search.MonteCarlo.ScenarioGroup
+		out.MonteCarlo.ScenarioGroup = &group
+	}
+	return out
 }
 
 func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {

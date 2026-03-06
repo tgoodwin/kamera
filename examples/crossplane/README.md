@@ -23,7 +23,7 @@ Run with the standard Kamera explore flags. Example:
 
 go run . \
   -interactive=false \
-  -dump-output /tmp/kamera-crossplane.jsonl
+  -output /tmp/kamera-crossplane.jsonl
 ```
 
 ## Batch inputs
@@ -33,6 +33,6 @@ To run a generated inputs file, pass `--inputs` and set a dump directory for per
 ```bash
 go run . \
   --inputs /path/to/inputs.json \
-  --dump-output /tmp/crossplane-dumps \
+  --output /tmp/crossplane-dumps \
   --emit-stats
 ```

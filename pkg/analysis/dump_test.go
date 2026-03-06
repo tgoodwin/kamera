@@ -96,3 +96,41 @@ func TestLoadDump_ValidDump(t *testing.T) {
 		t.Errorf("expected state ID 'state-1', got '%s'", dump.States[0].ID)
 	}
 }
+
+func TestLoadDump_CampaignMetrics(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "campaign-metrics.json")
+	content := `{
+		"campaignMetrics": {
+			"uniqueNodeVisits": 11,
+			"totalNodeVisits": 17,
+			"uniqueResourceStates": 9,
+			"durationNs": 123456
+		},
+		"objects": [],
+		"states": []
+	}`
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
+	}
+
+	dump, err := LoadDump(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if dump.CampaignMetrics == nil {
+		t.Fatalf("expected campaign metrics to be present")
+	}
+	if dump.CampaignMetrics.UniqueNodeVisits != 11 {
+		t.Fatalf("expected unique node visits 11, got %d", dump.CampaignMetrics.UniqueNodeVisits)
+	}
+	if dump.CampaignMetrics.TotalNodeVisits != 17 {
+		t.Fatalf("expected total node visits 17, got %d", dump.CampaignMetrics.TotalNodeVisits)
+	}
+	if dump.CampaignMetrics.UniqueResourceStates != 9 {
+		t.Fatalf("expected unique resource states 9, got %d", dump.CampaignMetrics.UniqueResourceStates)
+	}
+	if dump.CampaignMetrics.DurationNS != 123456 {
+		t.Fatalf("expected durationNs 123456, got %d", dump.CampaignMetrics.DurationNS)
+	}
+}

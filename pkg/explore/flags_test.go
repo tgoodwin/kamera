@@ -29,6 +29,18 @@ func TestParallelChildIndexDefault(t *testing.T) {
 	}
 }
 
+func TestParallelChildTrialIndexDefault(t *testing.T) {
+	if ParallelChildTrialIndex() != 0 {
+		t.Fatalf("expected parallel-child-trial-index default 0, got %d", ParallelChildTrialIndex())
+	}
+}
+
+func TestParallelChildJobIndexDefault(t *testing.T) {
+	if ParallelChildJobIndex() != -1 {
+		t.Fatalf("expected parallel-child-job-index default -1, got %d", ParallelChildJobIndex())
+	}
+}
+
 func TestDumpStatsFlagRemoved(t *testing.T) {
 	if got := flag.CommandLine.Lookup("dump-stats"); got != nil {
 		t.Fatalf("expected dump-stats flag to be removed")

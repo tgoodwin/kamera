@@ -12,7 +12,7 @@ Pending Pod → Provisioner → NodeClaim → Node registration.
 ## Usage
 
 ```bash
-go run . -interactive=false -dump-output /tmp/kamera-karpenter.jsonl
+go run . -interactive=false -output /tmp/kamera-karpenter.jsonl
 ```
 
 ## Batch inputs
@@ -26,7 +26,7 @@ go run . \
   --inputs inputs.json \
   --fuzz-cases 12 \
   --fuzz-seed 1337 \
-  --dump-output /tmp/karpenter-dumps \
+  --output /tmp/karpenter-dumps \
   --emit-stats
 ```
 

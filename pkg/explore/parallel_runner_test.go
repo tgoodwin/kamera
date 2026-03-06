@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -97,6 +98,7 @@ func TestParallelRunnerDoesNotLeakConfig(t *testing.T) {
 func TestParallelRunnerWritesDump(t *testing.T) {
 	ctx := context.Background()
 	builder, state := newTestBuilder(t)
+	withPerturbFlag(t, false)
 
 	runner, err := NewParallelRunner(builder)
 	if err != nil {
@@ -349,6 +351,41 @@ func TestParallelRunnerClosedLoopDisablesRerunWhenPerturbDisabled(t *testing.T) 
 	}
 }
 
+func TestParallelRunnerAutoClosedLoopRunsReferenceThenRerunWhenScenarioHasNoPlanner(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	scenarios := []Scenario{
+		{
+			Name:             "auto-closed-loop",
+			EnvironmentState: state.Clone(),
+			Config:           tracecheck.ExploreConfig{MaxDepth: 1},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{MaxParallel: 1})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if len(results[0].Phases) != 2 {
+		t.Fatalf("expected 2 phase results, got %d", len(results[0].Phases))
+	}
+	if results[0].Phases[0].Name != "reference" {
+		t.Fatalf("expected first phase to be reference, got %q", results[0].Phases[0].Name)
+	}
+	if results[0].Phases[1].Name != "rerun" {
+		t.Fatalf("expected second phase to be rerun, got %q", results[0].Phases[1].Name)
+	}
+}
+
 func withPerturbFlag(t *testing.T, enabled bool) {
 	t.Helper()
 
@@ -394,6 +431,7 @@ func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 	if len(results[0].Phases) != 2 {
 		t.Fatalf("expected 2 phase results, got %d", len(results[0].Phases))
 	}
+	invocationIDs := make(map[string]struct{})
 	for _, phase := range results[0].Phases {
 		if strings.TrimSpace(phase.DumpPath) == "" {
 			t.Fatalf("expected dump path for phase %q", phase.Name)
@@ -401,6 +439,39 @@ func TestParallelRunnerClosedLoopWritesPhaseDumps(t *testing.T) {
 		if _, err := os.Stat(phase.DumpPath); err != nil {
 			t.Fatalf("expected dump file for phase %q: %v", phase.Name, err)
 		}
+		dump, err := analysis.LoadDump(phase.DumpPath)
+		if err != nil {
+			t.Fatalf("load dump for phase %q: %v", phase.Name, err)
+		}
+		if dump.Context == nil || dump.Context.Scenario == nil {
+			t.Fatalf("expected context for phase %q dump", phase.Name)
+		}
+		if dump.Context.Scenario.Attributes == nil {
+			t.Fatalf("expected attributes for phase %q dump", phase.Name)
+		}
+		invocationID := strings.TrimSpace(dump.Context.Scenario.Attributes["invocation_id"])
+		if invocationID == "" {
+			t.Fatalf("expected non-empty invocation_id for phase %q dump", phase.Name)
+		}
+		invocationIDs[invocationID] = struct{}{}
+		if dump.CampaignMetrics == nil {
+			t.Fatalf("expected campaignMetrics for phase %q dump", phase.Name)
+		}
+		if dump.CampaignMetrics.TotalNodeVisits <= 0 {
+			t.Fatalf("expected totalNodeVisits > 0 for phase %q dump", phase.Name)
+		}
+		if dump.CampaignMetrics.UniqueNodeVisits <= 0 {
+			t.Fatalf("expected uniqueNodeVisits > 0 for phase %q dump", phase.Name)
+		}
+		if dump.CampaignMetrics.UniqueResourceStates <= 0 {
+			t.Fatalf("expected uniqueResourceStates > 0 for phase %q dump", phase.Name)
+		}
+		if dump.CampaignMetrics.DurationNS <= 0 {
+			t.Fatalf("expected durationNs > 0 for phase %q dump", phase.Name)
+		}
+	}
+	if len(invocationIDs) != 1 {
+		t.Fatalf("expected all phase dumps to share one invocation_id, got %d unique ids", len(invocationIDs))
 	}
 }
 
@@ -601,6 +672,7 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 
 	var mu sync.Mutex
 	var seen []int
+	invocationIDs := map[string]struct{}{}
 	var calls atomic.Int32
 
 	runner.loadInputsFn = func(path string) ([]coverage.Input, error) {
@@ -623,16 +695,23 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 	runner.spawnChildFn = func(_ context.Context, req childProcessRequest) childProcessResult {
 		calls.Add(1)
 		mu.Lock()
-		seen = append(seen, req.ChildIndex)
+		seen = append(seen, req.JobIndex)
+		invocationIDs[strings.TrimSpace(req.InvocationID)] = struct{}{}
 		mu.Unlock()
-		if req.ChildIndex == 1 {
+		if req.JobIndex == 1 {
 			return childProcessResult{
-				ChildIndex: req.ChildIndex,
+				JobIndex:   req.JobIndex,
+				InputIndex: req.InputIndex,
+				TrialIndex: req.TrialIndex,
 				Err:        errors.New("exit status 1"),
 				Stderr:     "boom",
 			}
 		}
-		return childProcessResult{ChildIndex: req.ChildIndex}
+		return childProcessResult{
+			JobIndex:   req.JobIndex,
+			InputIndex: req.InputIndex,
+			TrialIndex: req.TrialIndex,
+		}
 	}
 
 	scenarios := []Scenario{
@@ -647,9 +726,15 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 	}
 	slices.Sort(seen)
 	if !slices.Equal(seen, []int{0, 1, 2}) {
-		t.Fatalf("expected child indices [0 1 2], got %v", seen)
+		t.Fatalf("expected job indices [0 1 2], got %v", seen)
 	}
-	if runErr == nil || !strings.Contains(runErr.Error(), "failed child indices: 1") {
+	if len(invocationIDs) != 1 {
+		t.Fatalf("expected one invocation id for all child jobs, got %d", len(invocationIDs))
+	}
+	if _, ok := invocationIDs[""]; ok {
+		t.Fatalf("expected non-empty invocation id for child jobs")
+	}
+	if runErr == nil || !strings.Contains(runErr.Error(), "failed job indices: 1") {
 		t.Fatalf("expected aggregate failure with index 1, got %v", runErr)
 	}
 	if len(results) != 3 {
@@ -657,6 +742,130 @@ func TestParallelRunnerSupervisorRunsAllChildrenAndAggregatesFailures(t *testing
 	}
 	if results[1].Err == nil {
 		t.Fatalf("expected result error for child index 1")
+	}
+}
+
+func TestBuildProcessJobsExpandsMonteCarloTrials(t *testing.T) {
+	inputs := []coverage.Input{
+		{Name: "alpha"},
+		{Name: "beta"},
+	}
+	scenarios := []Scenario{
+		{
+			Name:   "alpha",
+			Config: tracecheck.ExploreConfig{SearchMode: tracecheck.SearchModeMonteCarlo, MonteCarlo: tracecheck.MonteCarloConfig{Trials: 3}},
+		},
+		{
+			Name:   "beta",
+			Config: tracecheck.ExploreConfig{SearchMode: tracecheck.SearchModeDFS},
+		},
+	}
+
+	jobs, err := buildProcessJobs(inputs, scenarios, "/tmp/inputs.json")
+	if err != nil {
+		t.Fatalf("buildProcessJobs() error = %v", err)
+	}
+	if len(jobs) != 4 {
+		t.Fatalf("expected 4 jobs (3 monte carlo + 1 dfs), got %d", len(jobs))
+	}
+
+	expect := []struct {
+		input int
+		trial int
+	}{
+		{input: 0, trial: 0},
+		{input: 0, trial: 1},
+		{input: 0, trial: 2},
+		{input: 1, trial: 0},
+	}
+	for i, want := range expect {
+		if jobs[i].InputIndex != want.input {
+			t.Fatalf("job %d expected input index %d, got %d", i, want.input, jobs[i].InputIndex)
+		}
+		if jobs[i].TrialIndex != want.trial {
+			t.Fatalf("job %d expected trial index %d, got %d", i, want.trial, jobs[i].TrialIndex)
+		}
+		if jobs[i].JobIndex != i {
+			t.Fatalf("job %d expected job index %d, got %d", i, i, jobs[i].JobIndex)
+		}
+	}
+}
+
+func TestParallelRunnerChildModeAnnotatesMonteCarloTrialMetadata(t *testing.T) {
+	ctx := context.Background()
+	builder, state := newTestBuilder(t)
+
+	runner, err := NewParallelRunner(builder)
+	if err != nil {
+		t.Fatalf("new runner: %v", err)
+	}
+
+	inputsPath := writeInputNamesFile(t, "alpha")
+	withProcessModeFlags(t, true, 0, inputsPath)
+	withProcessTrialFlags(t, 2, 42)
+
+	dumpDir := t.TempDir()
+	scenarios := []Scenario{
+		{
+			Name:             "alpha",
+			EnvironmentState: state.Clone(),
+			Config: tracecheck.ExploreConfig{
+				MaxDepth:   5,
+				SearchMode: tracecheck.SearchModeMonteCarlo,
+				MonteCarlo: tracecheck.MonteCarloConfig{
+					Seed:   1337,
+					Trials: 5,
+				},
+			},
+			Context: ScenarioContext{
+				Workflow: "parallel-process-child",
+				InputRef: inputsPath + "#alpha",
+			},
+		},
+	}
+
+	results, err := runner.RunAll(ctx, scenarios, ParallelOptions{DumpDir: dumpDir})
+	if err != nil {
+		t.Fatalf("run all: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected one child result, got %d", len(results))
+	}
+	if results[0].DumpPath == "" {
+		t.Fatalf("expected child dump path")
+	}
+
+	dump, err := analysis.LoadDump(results[0].DumpPath)
+	if err != nil {
+		t.Fatalf("load dump: %v", err)
+	}
+	if dump.Context == nil || dump.Context.Scenario == nil {
+		t.Fatalf("expected dump context metadata")
+	}
+	if dump.Context.Scenario.RunIndex == nil || *dump.Context.Scenario.RunIndex != 42 {
+		t.Fatalf("expected child run index to use job index 42")
+	}
+
+	attrs := dump.Context.Scenario.Attributes
+	if attrs["search_mode"] != string(tracecheck.SearchModeMonteCarlo) {
+		t.Fatalf("expected search_mode=monte_carlo")
+	}
+	if attrs["mc_trial_index"] != "2" {
+		t.Fatalf("expected mc_trial_index=2, got %q", attrs["mc_trial_index"])
+	}
+	if attrs["mc_trial_count"] != "5" {
+		t.Fatalf("expected mc_trial_count=5, got %q", attrs["mc_trial_count"])
+	}
+	if attrs["mc_role"] != "trial" {
+		t.Fatalf("expected mc_role=trial, got %q", attrs["mc_role"])
+	}
+	group := attrs["mc_group_id"]
+	if strings.TrimSpace(group) == "" {
+		t.Fatalf("expected mc_group_id to be populated")
+	}
+	wantSeed := tracecheck.DeriveMonteCarloSeed(1337, group, 2)
+	if attrs["mc_seed"] != strconv.FormatInt(wantSeed, 10) {
+		t.Fatalf("expected mc_seed=%d, got %q", wantSeed, attrs["mc_seed"])
 	}
 }
 
@@ -682,6 +891,20 @@ func withProcessModeFlags(t *testing.T, enabled bool, childIdx int, inputsPath s
 	*parallelProcessesFlag = enabled
 	*parallelChildIndexFlag = childIdx
 	*inputsPathFlag = inputsPath
+}
+
+func withProcessTrialFlags(t *testing.T, trialIdx int, jobIdx int) {
+	t.Helper()
+
+	oldTrialIdx := *parallelChildTrialIndexFlag
+	oldJobIdx := *parallelChildJobIndexFlag
+	t.Cleanup(func() {
+		*parallelChildTrialIndexFlag = oldTrialIdx
+		*parallelChildJobIndexFlag = oldJobIdx
+	})
+
+	*parallelChildTrialIndexFlag = trialIdx
+	*parallelChildJobIndexFlag = jobIdx
 }
 
 func writeInputNamesFile(t *testing.T, names ...string) string {

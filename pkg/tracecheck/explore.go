@@ -3,10 +3,13 @@ package tracecheck
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"maps"
+	"math/rand"
 	"os"
 	"os/signal"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -46,6 +49,52 @@ type StalenessConfig struct {
 	MaxRestarts     int
 }
 
+type SearchMode string
+
+const (
+	SearchModeDFS        SearchMode = "dfs"
+	SearchModeMonteCarlo SearchMode = "monte_carlo"
+)
+
+func ParseSearchMode(raw string) (SearchMode, error) {
+	mode := SearchMode(strings.TrimSpace(strings.ToLower(raw)))
+	switch mode {
+	case "", SearchModeDFS:
+		return SearchModeDFS, nil
+	case SearchModeMonteCarlo:
+		return SearchModeMonteCarlo, nil
+	default:
+		return "", fmt.Errorf("invalid search mode %q", raw)
+	}
+}
+
+type MonteCarloConfig struct {
+	Seed int64
+	// Trials controls total single-path runs for a scenario in Monte Carlo mode.
+	// It is consumed by runner orchestration.
+	Trials int
+	// TrialIndex identifies the current run in a scenario trial group.
+	TrialIndex int
+	// ScenarioGroup is a stable scenario/input grouping key used for seed derivation.
+	ScenarioGroup string
+}
+
+func (cfg MonteCarloConfig) DerivedSeed() int64 {
+	return DeriveMonteCarloSeed(cfg.Seed, cfg.ScenarioGroup, cfg.TrialIndex)
+}
+
+func DeriveMonteCarloSeed(baseSeed int64, scenarioGroup string, trialIndex int) int64 {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(strconv.FormatInt(baseSeed, 10)))
+	_, _ = h.Write([]byte("|"))
+	_, _ = h.Write([]byte(scenarioGroup))
+	_, _ = h.Write([]byte("|"))
+	_, _ = h.Write([]byte(strconv.Itoa(trialIndex)))
+
+	// Keep the value non-negative to simplify formatting/interop in attributes.
+	return int64(h.Sum64() & 0x7fffffffffffffff)
+}
+
 type OptimizationConfig struct {
 	EarlyConvergence   bool
 	CompletedPathDedup bool
@@ -58,18 +107,29 @@ type OptimizationConfig struct {
 	DisableNoOpOrderingSkip bool
 	CachePrediction         bool
 	SubtreeCompletion       bool
+	// StableRequeueAfterThreshold promotes repeated no-op RequeueAfter wakeups on
+	// the same object state into ignorable polling after N observations. Zero
+	// disables the heuristic.
+	StableRequeueAfterThreshold int
 }
 
 func (opt OptimizationConfig) AnyEnabled() bool {
 	// OnlyPermuteTriggered scopes permutation behavior; it does not independently
 	// turn on any optimization heuristic.
-	return opt.EarlyConvergence || opt.CompletedPathDedup || opt.OrderingPruning || opt.CachePrediction || opt.SubtreeCompletion
+	return opt.EarlyConvergence ||
+		opt.CompletedPathDedup ||
+		opt.OrderingPruning ||
+		opt.CachePrediction ||
+		opt.SubtreeCompletion ||
+		opt.StableRequeueAfterThreshold > 0
 }
 
 type ExploreConfig struct {
 	MaxDepth        int
 	RecordPerfStats bool
 	Timeout         time.Duration
+	SearchMode      SearchMode
+	MonteCarlo      MonteCarloConfig
 
 	// Perturbations configures optional behavioral perturbations (opt-in), such as
 	// reconcile ordering permutations and stale-read view injection.
@@ -128,6 +188,7 @@ type Explorer struct {
 
 	stats         *ExploreStats
 	optimizations *optimizations
+	randomSource  *rand.Rand
 }
 
 // VersionManager returns the shared version manager used during exploration.
@@ -576,6 +637,8 @@ func (e *Explorer) explore(
 	}
 
 	e.optimizations = newOptimizations(e.Config.Optimizations)
+	// Reset selection RNG for each explore run to keep Monte Carlo sampling deterministic per run.
+	e.randomSource = nil
 
 	seenDepths := make(map[int]bool)
 
@@ -643,15 +706,8 @@ func (e *Explorer) explore(
 	// var currentState StateNode
 	var currentState StateNode
 
-	// permute the order of the initial state pending reconciles (assume they were all triggered by the initial state)
-	// Use enqueueWithMarker to set up proper subtree completion tracking from the start.
-	if len(initialState.PendingReconciles) > 1 {
-		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
-		allVariants := append(initialStateVariants, initialState)
-		stack, _ = e.enqueueStates(stack, subtreeTracker, allVariants, useSubtreeCompletion)
-	} else {
-		stack, _ = e.enqueueStates(stack, subtreeTracker, []StateNode{initialState}, useSubtreeCompletion)
-	}
+	// DFS may fan out on initial pending order; Monte Carlo remains single-path.
+	stack, _ = e.enqueueStates(stack, subtreeTracker, e.initialStatesToEnqueue(initialState), useSubtreeCompletion)
 
 	initialHash := initialState.Hash()
 	initialSignature := initialState.ExecutionHistory.UniqueKey()
@@ -839,21 +895,22 @@ func (e *Explorer) explore(
 		// if any pending has SourceStateChange.
 		if e.isTerminalConvergedState(currentState) {
 			convergenceKey := currentState.ConvergenceHash()
-			reason := "no pending reconciles"
-			if len(currentState.PendingReconciles) > 0 {
-				reason = "only async enqueues/requeues remaining"
+			eligiblePending := currentState.EligiblePendingReconciles()
+			reason := "no eligible pending reconciles"
+			if len(eligiblePending) > 0 {
+				reason = "only ignorable pending reconciles remaining"
 			}
 
 			// INVARIANT CHECK: No SourceStateChange pending reconciles should be present
 			// when marking a state as converged. If this fires, there's a bug.
-			for _, pr := range currentState.PendingReconciles {
+			for _, pr := range eligiblePending {
 				if pr.Source == SourceStateChange {
 					logger.Error(nil, "BUG: state marked as converged has SourceStateChange pending reconcile",
 						"ReconcilerID", pr.ReconcilerID,
 						"Request", pr.Request.NamespacedName,
 						"Depth", currentState.depth,
-						"TotalPending", len(currentState.PendingReconciles),
-						"PendingSources", pendingSourcesSummary(currentState.PendingReconciles),
+						"TotalPending", len(eligiblePending),
+						"PendingSources", pendingSourcesSummary(eligiblePending),
 					)
 				}
 			}
@@ -863,8 +920,8 @@ func (e *Explorer) explore(
 					"Depth", currentState.depth,
 					"StateKey", convergenceKey,
 					"Reason", reason,
-					"RemainingIgnorable", countIgnorableForConvergence(currentState.PendingReconciles),
-					"PendingSources", pendingSourcesSummary(currentState.PendingReconciles),
+					"RemainingIgnorable", countIgnorableForConvergence(eligiblePending),
+					"PendingSources", pendingSourcesSummary(eligiblePending),
 				).Info("arrived at converged state")
 			}
 			if logger.V(2).Enabled() {
@@ -925,7 +982,15 @@ func (e *Explorer) explore(
 			pendingReconcile = *entry.staleViewReconcile
 		} else {
 			// Normal entry - get first pending and possible views
-			pendingReconcile = currentState.PendingReconciles[0]
+			selected, selErr := e.selectPendingReconcile(currentState)
+			if selErr != nil {
+				abortErr := errors.Wrap(selErr, "select pending reconcile")
+				if e.emitAbortedState(ctx, abortedStatesCh, currentState, executionPathsToState, currentState.ExecutionHistory, abortErr) {
+					return nil
+				}
+				continue
+			}
+			pendingReconcile = selected
 
 			// Log all pending reconciles for diagnostic purposes
 			if logger.V(2).Enabled() {
@@ -977,7 +1042,8 @@ func (e *Explorer) explore(
 				continue
 			}
 
-			// If multiple stale views, push all onto stack with marker (stack-based branching)
+			// In Monte Carlo mode, getPossibleViewsForReconcile samples to one view, so
+			// this branch naturally only fans out in DFS mode.
 			if len(possibleViews) > 1 {
 				var didEnqueue bool
 				stack, didEnqueue = e.enqueueStaleViewStates(
@@ -1166,7 +1232,7 @@ func (e *Explorer) enqueueNextStates(
 	}
 	statesToEnqueue := make([]StateNode, 0, 1)
 
-	if len(newState.PendingReconciles) > 1 {
+	if e.shouldExpandPendingOrder(newState) {
 		// Order expansion is per logical state branch. If already expanded, we skip
 		// duplicative expansion work for equivalent branches.
 		alreadyExpanded := e.optimizations != nil &&
@@ -1252,6 +1318,7 @@ func (e *Explorer) materializeNextState(
 	newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
 	triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes)
 	newPendingReconciles := e.determineNewPendingReconciles(stepCtx, stateView, consumed, stepResult)
+	e.maybePromoteStableRequeueAfter(stateView, consumed, stepResult, newPendingReconciles)
 	stepLogger.V(1).WithValues(
 		"Depth", stateView.depth,
 		"Count", len(newPendingReconciles),
@@ -1275,6 +1342,42 @@ func (e *Explorer) materializeNextState(
 	newState.ID = string(newState.Hash())
 
 	return newState, triggeredByStep
+}
+
+func (e *Explorer) maybePromoteStableRequeueAfter(
+	stateView StateNode,
+	consumed *PendingReconcile,
+	stepResult *ReconcileResult,
+	pending []PendingReconcile,
+) {
+	if e == nil || e.optimizations == nil || consumed == nil || stepResult == nil {
+		return
+	}
+	if stepResult.ctrlRes.RequeueAfter <= 0 || !stepResult.wasNoOp() {
+		return
+	}
+
+	streak := e.optimizations.recordStableRequeueAfterNoOp(
+		stateView.ContentsHash(),
+		consumed.ReconcilerID,
+		consumed.Request,
+	)
+	if streak < e.optimizations.stableRequeueAfterThreshold() {
+		return
+	}
+
+	for i := range pending {
+		if pending[i].ReconcilerID != consumed.ReconcilerID {
+			continue
+		}
+		if pending[i].Request.NamespacedName != consumed.Request.NamespacedName {
+			continue
+		}
+		if pending[i].Source != SourceRequeueAfter {
+			continue
+		}
+		pending[i].Source = SourceStableRequeueAfter
+	}
 }
 
 // emitAbortedState records an aborted exploration branch and attempts to send it on the channel.
@@ -1643,6 +1746,46 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 	return result, nil
 }
 
+func (e *Explorer) monteCarloEnabled() bool {
+	return e != nil && e.Config != nil && e.Config.SearchMode == SearchModeMonteCarlo
+}
+
+func (e *Explorer) initialStatesToEnqueue(initialState StateNode) []StateNode {
+	if len(initialState.PendingReconciles) > 1 && !e.monteCarloEnabled() {
+		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
+		return append(initialStateVariants, initialState)
+	}
+	return []StateNode{initialState}
+}
+
+func (e *Explorer) shouldExpandPendingOrder(state StateNode) bool {
+	return !e.monteCarloEnabled() && len(state.PendingReconciles) > 1
+}
+
+func (e *Explorer) selectionRNG() *rand.Rand {
+	if e.randomSource != nil {
+		return e.randomSource
+	}
+	seed := time.Now().UnixNano()
+	if e.monteCarloEnabled() {
+		seed = e.Config.MonteCarlo.DerivedSeed()
+	}
+	e.randomSource = rand.New(rand.NewSource(seed))
+	return e.randomSource
+}
+
+func (e *Explorer) selectPendingReconcile(state StateNode) (PendingReconcile, error) {
+	eligible := state.EligiblePendingReconciles()
+	if len(eligible) == 0 {
+		return PendingReconcile{}, fmt.Errorf("state has no depth-eligible pending reconciles")
+	}
+	if !e.monteCarloEnabled() || len(eligible) == 1 {
+		return eligible[0], nil
+	}
+	idx := e.selectionRNG().Intn(len(eligible))
+	return eligible[idx], nil
+}
+
 func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 	res, err := e.triggerManager.GetTriggered(changes)
 	if err != nil {
@@ -1730,6 +1873,13 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		return sn.Contents.Priority != Skip
 	})
 
+	// TODO revisit how we apply randomness here.
+	// might be better to put it under `getAllViewsForController`
+	if e.monteCarloEnabled() && len(filtered) > 1 {
+		idx := e.selectionRNG().Intn(len(filtered))
+		return []StateNode{filtered[idx]}, nil
+	}
+
 	return filtered, nil
 }
 
@@ -1816,13 +1966,21 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 		triggeredByChanges = filtered
 	}
 
-	// if the controller returned a response with Requeue = true,
-	// we need to requeue the original request, no matter what.
-	if consumed != nil && result.ctrlRes.Requeue {
+	// If the controller returned Requeue or RequeueAfter, re-enqueue the original request.
+	// RequeueAfter is treated as actionable follow-up work.
+	if consumed != nil && (result.ctrlRes.Requeue || result.ctrlRes.RequeueAfter > 0) {
+		source := SourceRequeue
+		notBeforeDepth := 0
+		if result.ctrlRes.RequeueAfter > 0 {
+			source = SourceRequeueAfter
+			delaySteps := simclock.StepsForDuration(result.ctrlRes.RequeueAfter)
+			notBeforeDepth = state.depth + 1 + delaySteps
+		}
 		requeued := PendingReconcile{
-			ReconcilerID: consumed.ReconcilerID,
-			Request:      consumed.Request,
-			Source:       SourceRequeue,
+			ReconcilerID:   consumed.ReconcilerID,
+			Request:        consumed.Request,
+			Source:         source,
+			NotBeforeDepth: notBeforeDepth,
 		}
 		triggeredByChanges = append(triggeredByChanges, requeued)
 	}

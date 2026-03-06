@@ -1,5 +1,8 @@
 SLEEVECTRL_IMG ?= docker.io/tlg2132/sleeve-controller-manager:latest
 GOBIN := $(shell pwd)/bin
+SKIPPED_CI_EXAMPLE_MODULE_DIRS := examples/kratix
+EXAMPLE_MODULE_DIRS := $(patsubst %/,%,$(sort $(dir $(wildcard examples/*/go.mod))))
+CI_EXAMPLE_MODULE_DIRS := $(filter-out $(SKIPPED_CI_EXAMPLE_MODULE_DIRS),$(EXAMPLE_MODULE_DIRS))
 
 # ensure that GOBIN is in PATH when running
 export PATH := $(GOBIN):$(PATH)
@@ -18,6 +21,20 @@ binaries: kamera
 test:
 	@echo "🧪 Running tests..."
 	go test ./...
+	@for dir in $(EXAMPLE_MODULE_DIRS); do \
+		echo "🧪 Running tests in $$dir..."; \
+		( cd $$dir && go test ./... ); \
+	done
+
+.PHONY: test-ci
+test-ci:
+	@echo "🧪 Running CI tests..."
+	go test ./...
+	@echo "⏭️  Skipping example modules in CI test sweep: $(SKIPPED_CI_EXAMPLE_MODULE_DIRS)"
+	@for dir in $(CI_EXAMPLE_MODULE_DIRS); do \
+		echo "🧪 Running tests in $$dir..."; \
+		( cd $$dir && go test ./... ); \
+	done
 
 .PHONY: build-webhook
 build-webhook:

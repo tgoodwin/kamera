@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,20 +40,6 @@ import (
 )
 
 var errInvalidKnativeParams = errors.New("invalid knative service params")
-
-type scenarioPhase string
-
-const (
-	scenarioPhaseStandard  scenarioPhase = ""
-	scenarioPhaseReference scenarioPhase = "reference"
-	scenarioPhaseRerun     scenarioPhase = "rerun"
-)
-
-const (
-	v0CheckpointMinPending = 2
-)
-
-var v0PerturbController = tracecheck.ReconcilerID("EndpointsController")
 
 func newKnativeExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Configure simclock to use 2s steps instead of 1s to speed up scale-to-zero simulation
@@ -218,23 +203,11 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 	if builder == nil {
 		return nil, fmt.Errorf("builder is nil")
 	}
-	return scenariosFromInputsForPhase(builder, inputs, builder.Config(), scenarioPhaseStandard)
-}
-
-func scenariosFromInputsForPhase(
-	builder *tracecheck.ExplorerBuilder,
-	inputs []coverage.Input,
-	baseCfg tracecheck.ExploreConfig,
-	phase scenarioPhase,
-) ([]explore.Scenario, error) {
-	if builder == nil {
-		return nil, fmt.Errorf("builder is nil")
-	}
 	if len(inputs) == 0 {
 		return nil, fmt.Errorf("no inputs supplied")
 	}
 
-	includePerturbations := phase != scenarioPhaseReference
+	baseCfg := builder.Config()
 	scenarios := make([]explore.Scenario, 0, len(inputs))
 	for idx, input := range inputs {
 		state, seededObjects, err := buildStateFromCoverageInput(builder, input)
@@ -250,8 +223,8 @@ func scenariosFromInputsForPhase(
 			Name:             input.Name,
 			EnvironmentState: state,
 			UserInputs:       userInputs,
-			Config:           applyInputTuningForPhase(baseCfg, input.Tuning, includePerturbations),
-			Context:          scenarioContextForInput(input, phase),
+			Config:           applyInputTuning(baseCfg, input.Tuning),
+			Context:          scenarioContextForInput(input),
 		})
 	}
 
@@ -261,151 +234,9 @@ func scenariosFromInputsForPhase(
 	return scenarios, nil
 }
 
-func scenariosFromInputsWithClosedLoop(
-	builder *tracecheck.ExplorerBuilder,
-	inputs []coverage.Input,
-) ([]explore.Scenario, error) {
-	if builder == nil {
-		return nil, fmt.Errorf("builder is nil")
-	}
-	if len(inputs) == 0 {
-		return nil, fmt.Errorf("no inputs supplied")
-	}
-
-	referenceBase := withoutPerturbations(builder.Config())
-	scenarios := make([]explore.Scenario, 0, len(inputs))
-	for idx, input := range inputs {
-		state, seededObjects, err := buildStateFromCoverageInput(builder, input)
-		if err != nil {
-			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
-		}
-		userInputs, err := buildUserActionsFromCoverageInput(input, seededObjects)
-		if err != nil {
-			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
-		}
-
-		referenceCfg := applyInputTuningForPhase(referenceBase, input.Tuning, false)
-
-		rerunPlanCfg := referenceCfg.Clone()
-		rerunContext := scenarioContextForInput(input, scenarioPhaseRerun)
-		scenarios = append(scenarios, explore.Scenario{
-			Name:             input.Name,
-			EnvironmentState: state,
-			UserInputs:       userInputs,
-			Config:           referenceCfg,
-			Context:          scenarioContextForInput(input, scenarioPhaseReference),
-			ClosedLoop: &explore.ClosedLoopSpec{
-				Plan: func(reference explore.ScenarioPhaseResult) ([]explore.ScenarioPhasePlan, error) {
-					plan, ok, err := buildV0CheckpointRerunPlan(reference, rerunPlanCfg, rerunContext)
-					if err != nil {
-						return nil, err
-					}
-					if ok {
-						return []explore.ScenarioPhasePlan{plan}, nil
-					}
-					return []explore.ScenarioPhasePlan{
-						{
-							Name:    "rerun",
-							Config:  rerunPlanCfg,
-							Context: &rerunContext,
-						},
-					}, nil
-				},
-			},
-		})
-	}
-
-	if len(scenarios) == 0 {
-		return nil, fmt.Errorf("no scenarios produced")
-	}
-	return scenarios, nil
-}
-
-func buildV0CheckpointRerunPlan(
-	reference explore.ScenarioPhaseResult,
-	baseCfg tracecheck.ExploreConfig,
-	rerunContext explore.ScenarioContext,
-) (explore.ScenarioPhasePlan, bool, error) {
-	path, ok := firstReferencePath(reference)
-	if !ok {
-		return explore.ScenarioPhasePlan{}, false, nil
-	}
-	checkpointIdx, checkpoint, ok := firstCheckpointWithPendingController(path, v0PerturbController)
-	if !ok {
-		return explore.ScenarioPhasePlan{}, false, nil
-	}
-	if checkpoint == nil || len(checkpoint.StateAfter) == 0 || reference.VersionManager == nil {
-		return explore.ScenarioPhasePlan{}, false, nil
-	}
-
-	seed, err := tracecheck.BuildRestartSeedFromState(checkpoint.StateAfter, reference.VersionManager, checkpoint.PendingReconciles)
-	if err != nil {
-		return explore.ScenarioPhasePlan{}, false, fmt.Errorf("build v0 checkpoint restart seed: %w", err)
-	}
-	seed.Depth = checkpointIdx + 1
-
-	cfg := baseCfg.Clone()
-	if cfg.Perturbations.PermuteOrder == nil {
-		cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-	}
-	cfg.Perturbations.PermuteOrder[v0PerturbController] = true
-
-	prefix := slices.Clone(path[:checkpointIdx+1])
-	plan := explore.ScenarioPhasePlan{
-		Name:    "rerun",
-		Config:  cfg,
-		Seed:    &seed,
-		Prefix:  prefix,
-		Context: &rerunContext,
-	}
-	return plan, true, nil
-}
-
-func firstReferencePath(reference explore.ScenarioPhaseResult) (tracecheck.ExecutionHistory, bool) {
-	if reference.Result == nil {
-		return nil, false
-	}
-	for _, state := range reference.Result.ConvergedStates {
-		for _, path := range state.Paths {
-			if len(path) > 0 {
-				return path, true
-			}
-		}
-	}
-	for _, state := range reference.Result.AbortedStates {
-		for _, path := range state.Paths {
-			if len(path) > 0 {
-				return path, true
-			}
-		}
-	}
-	return nil, false
-}
-
-func firstCheckpointWithPendingController(
-	path tracecheck.ExecutionHistory,
-	controller tracecheck.ReconcilerID,
-) (int, *tracecheck.ReconcileResult, bool) {
-	for i, step := range path {
-		if step == nil || len(step.PendingReconciles) < v0CheckpointMinPending {
-			continue
-		}
-		for _, pending := range step.PendingReconciles {
-			if pending.ReconcilerID == controller {
-				return i, step, true
-			}
-		}
-	}
-	return -1, nil, false
-}
-
-func scenarioContextForInput(input coverage.Input, phase scenarioPhase) explore.ScenarioContext {
+func scenarioContextForInput(input coverage.Input) explore.ScenarioContext {
 	workflow := "batch-input"
 	attributes := map[string]string{}
-	if phase == scenarioPhaseReference || phase == scenarioPhaseRerun {
-		workflow = "closed-loop"
-		attributes["phase"] = string(phase)
-	}
 
 	inputRef := ""
 	inputsPath := strings.TrimSpace(explore.InputsPath())
@@ -760,23 +591,9 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 }
 
 func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
-	return applyInputTuningForPhase(base, tuning, true)
-}
-
-func applyInputTuningForPhase(
-	base tracecheck.ExploreConfig,
-	tuning coverage.InputTuning,
-	includePerturbations bool,
-) tracecheck.ExploreConfig {
 	cfg := base.Clone()
-	if !includePerturbations {
-		cfg = withoutPerturbations(cfg)
-	}
 	if tuning.MaxDepth > 0 {
 		cfg.MaxDepth = tuning.MaxDepth
-	}
-	if !includePerturbations {
-		return cfg
 	}
 	if len(tuning.PermuteControllers) > 0 {
 		if cfg.Perturbations.PermuteOrder == nil {
@@ -813,18 +630,6 @@ func applyInputTuningForPhase(
 	return cfg
 }
 
-func withoutPerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig {
-	out := cfg.Clone()
-	if out.Perturbations.PermuteOrder == nil {
-		out.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-	}
-	for id := range out.Perturbations.PermuteOrder {
-		out.Perturbations.PermuteOrder[id] = false
-	}
-	out.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
-	return out
-}
-
 func cloneCoverageInput(input coverage.Input) coverage.Input {
 	objects := make([]*unstructured.Unstructured, 0, len(input.EnvironmentState.Objects))
 	for _, obj := range input.EnvironmentState.Objects {
@@ -841,6 +646,7 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		PermuteControllers: append([]string(nil), input.Tuning.PermuteControllers...),
 		StaleReads:         cloneStringSliceMap(input.Tuning.StaleReads),
 		StaleLookback:      cloneIntMap(input.Tuning.StaleLookback),
+		Search:             cloneInputSearchTuning(input.Tuning.Search),
 	}
 	return coverage.Input{
 		Name: input.Name,
@@ -850,6 +656,29 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		UserInputs: userInputs,
 		Tuning:     tuning,
 	}
+}
+
+func cloneInputSearchTuning(search coverage.InputSearchTuning) coverage.InputSearchTuning {
+	out := coverage.InputSearchTuning{
+		Mode: strings.TrimSpace(search.Mode),
+	}
+	if search.MonteCarlo.Seed != nil {
+		seed := *search.MonteCarlo.Seed
+		out.MonteCarlo.Seed = &seed
+	}
+	if search.MonteCarlo.Trials != nil {
+		trials := *search.MonteCarlo.Trials
+		out.MonteCarlo.Trials = &trials
+	}
+	if search.MonteCarlo.TrialIndex != nil {
+		trialIdx := *search.MonteCarlo.TrialIndex
+		out.MonteCarlo.TrialIndex = &trialIdx
+	}
+	if search.MonteCarlo.ScenarioGroup != nil {
+		group := *search.MonteCarlo.ScenarioGroup
+		out.MonteCarlo.ScenarioGroup = &group
+	}
+	return out
 }
 
 func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {

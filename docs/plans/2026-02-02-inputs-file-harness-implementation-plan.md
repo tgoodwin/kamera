@@ -280,7 +280,7 @@ Not applicable; doc-only change.
 
 **Step 2: Make the change**
 
-Add a short "Batch inputs" snippet showing `--inputs`, `--dump-output`, and
+Add a short "Batch inputs" snippet showing `--inputs`, `--output`, and
 `--emit-stats` usage.
 
 **Step 3: Commit**

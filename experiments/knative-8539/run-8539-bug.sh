@@ -25,7 +25,7 @@ go run . \
   -depth 100 \
   -timeout 300s \
   -interactive=true \
-  -dump-output "${OUTPUT_FILE}" \
+  -output "${OUTPUT_FILE}" \
   -log-level info \
   -emit-stats \
   -explore-config "${SCRIPT_DIR}/explore-config.json"

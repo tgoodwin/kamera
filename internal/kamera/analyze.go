@@ -18,19 +18,29 @@ func RunAnalyze(args []string, stdout, stderr io.Writer) int {
 	}
 
 	cmd := args[0]
-	dumpPath := args[1]
-
-	dump, err := analysis.LoadDump(dumpPath)
-	if err != nil {
-		fmt.Fprintf(stderr, "Error loading dump: %v\n", err)
-		return 1
-	}
 
 	switch cmd {
 	case "diff":
+		dumpPath := args[1]
+		dump, err := analysis.LoadDump(dumpPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error loading dump: %v\n", err)
+			return 1
+		}
 		runDiff(stdout, dump)
 	case "report":
+		dumpPath := args[1]
+		dump, err := analysis.LoadDump(dumpPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "Error loading dump: %v\n", err)
+			return 1
+		}
 		runReport(stdout, dump)
+	case "campaign-metrics":
+		if err := runCampaignMetrics(stdout, stderr, args[1]); err != nil {
+			fmt.Fprintf(stderr, "Error aggregating campaign metrics: %v\n", err)
+			return 1
+		}
 	default:
 		fmt.Fprintf(stderr, "Unknown command: %s\n", cmd)
 		printAnalyzeUsage(stdout)
@@ -46,6 +56,7 @@ func printAnalyzeUsage(stdout io.Writer) {
 	fmt.Fprintln(stdout, "Commands:")
 	fmt.Fprintln(stdout, "  diff    Show differences between converged states")
 	fmt.Fprintln(stdout, "  report  Full backward-trace analysis report")
+	fmt.Fprintln(stdout, "  campaign-metrics  Aggregate campaign metrics by invocation_id")
 }
 
 func runDiff(stdout io.Writer, dump *analysis.Dump) {

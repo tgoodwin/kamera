@@ -117,6 +117,52 @@ func TestLoadInputsInvalidObjectGVK(t *testing.T) {
 	assert.True(t, strings.Contains(err.Error(), "apiVersion") || strings.Contains(err.Error(), "kind"))
 }
 
+func TestLoadInputsAcceptsSearchTuningMonteCarlo(t *testing.T) {
+	seed := int64(4242)
+	trials := 7
+	path := writeInputsFile(t, []Input{
+		{
+			Name:             "mc-case",
+			EnvironmentState: EnvironmentState{Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}},
+			Tuning: InputTuning{
+				Search: InputSearchTuning{
+					Mode: "monte_carlo",
+					MonteCarlo: InputMonteCarloTuning{
+						Seed:   &seed,
+						Trials: &trials,
+					},
+				},
+			},
+		},
+	})
+
+	got, err := LoadInputs(path)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].Tuning.Search.MonteCarlo.Seed)
+	require.NotNil(t, got[0].Tuning.Search.MonteCarlo.Trials)
+	assert.Equal(t, int64(4242), *got[0].Tuning.Search.MonteCarlo.Seed)
+	assert.Equal(t, 7, *got[0].Tuning.Search.MonteCarlo.Trials)
+}
+
+func TestLoadInputsRejectsInvalidSearchMode(t *testing.T) {
+	path := writeInputsFile(t, []Input{
+		{
+			Name:             "bad-search-mode",
+			EnvironmentState: EnvironmentState{Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}},
+			Tuning: InputTuning{
+				Search: InputSearchTuning{
+					Mode: "random_walk",
+				},
+			},
+		},
+	})
+
+	_, err := LoadInputs(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tuning.search.mode")
+}
+
 func writeInputsFile(t *testing.T, inputs []Input) string {
 	t.Helper()
 	data, err := json.Marshal(inputs)

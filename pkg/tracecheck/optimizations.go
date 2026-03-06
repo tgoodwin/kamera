@@ -6,19 +6,21 @@ import (
 	"strings"
 
 	"github.com/samber/lo"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // optimizations is a run-state container for various exploration optimizations.
 type optimizations struct {
 	cfg OptimizationConfig
 
-	visitedStatePaths     map[NodeHash]map[string]struct{}
-	completedPaths        map[string]bool
-	knownNoOps            map[string]bool
-	reconcileResCache     map[string]*cachedReconcileResult
-	exploredLogicalStates map[string]struct{}
-	seenBranchingByState  map[string]bool
-	subtreeTracker        *subtreeTracker
+	visitedStatePaths       map[NodeHash]map[string]struct{}
+	completedPaths          map[string]bool
+	knownNoOps              map[string]bool
+	stableRequeueAfterNoOps map[string]int
+	reconcileResCache       map[string]*cachedReconcileResult
+	exploredLogicalStates   map[string]struct{}
+	seenBranchingByState    map[string]bool
+	subtreeTracker          *subtreeTracker
 }
 
 func newOptimizations(cfg OptimizationConfig) *optimizations {
@@ -26,14 +28,15 @@ func newOptimizations(cfg OptimizationConfig) *optimizations {
 		return nil
 	}
 	return &optimizations{
-		cfg:                   cfg,
-		visitedStatePaths:     make(map[NodeHash]map[string]struct{}),
-		completedPaths:        make(map[string]bool),
-		knownNoOps:            make(map[string]bool),
-		reconcileResCache:     make(map[string]*cachedReconcileResult),
-		exploredLogicalStates: make(map[string]struct{}),
-		seenBranchingByState:  make(map[string]bool),
-		subtreeTracker:        newSubtreeTracker(),
+		cfg:                     cfg,
+		visitedStatePaths:       make(map[NodeHash]map[string]struct{}),
+		completedPaths:          make(map[string]bool),
+		knownNoOps:              make(map[string]bool),
+		stableRequeueAfterNoOps: make(map[string]int),
+		reconcileResCache:       make(map[string]*cachedReconcileResult),
+		exploredLogicalStates:   make(map[string]struct{}),
+		seenBranchingByState:    make(map[string]bool),
+		subtreeTracker:          newSubtreeTracker(),
 	}
 }
 
@@ -55,6 +58,30 @@ func (o *optimizations) noOpOrderingSkipEnabled() bool {
 
 func (o *optimizations) cachePredictionEnabled() bool {
 	return o != nil && o.cfg.CachePrediction
+}
+
+func (o *optimizations) stableRequeueAfterThreshold() int {
+	if o == nil {
+		return 0
+	}
+	return o.cfg.StableRequeueAfterThreshold
+}
+
+func stableRequeueAfterNoOpKey(objectsHash ContentsHash, reconcilerID ReconcilerID, req reconcile.Request) string {
+	return fmt.Sprintf("%s:%s:%s", objectsHash, reconcilerID, req.NamespacedName.String())
+}
+
+func (o *optimizations) recordStableRequeueAfterNoOp(
+	objectsHash ContentsHash,
+	reconcilerID ReconcilerID,
+	req reconcile.Request,
+) int {
+	if o == nil || o.stableRequeueAfterThreshold() <= 0 {
+		return 0
+	}
+	key := stableRequeueAfterNoOpKey(objectsHash, reconcilerID, req)
+	o.stableRequeueAfterNoOps[key]++
+	return o.stableRequeueAfterNoOps[key]
 }
 
 func (o *optimizations) permuteSignature(triggered []PendingReconcile, permuteOrder map[ReconcilerID]bool) string {

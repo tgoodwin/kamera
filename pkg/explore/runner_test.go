@@ -58,6 +58,24 @@ func TestRunnerWritesDumpContext(t *testing.T) {
 	if dump.Context.Scenario.Attributes["exploreConfig"] != "/tmp/explore-config.json" {
 		t.Fatalf("expected explore config attribute in dump context")
 	}
+	if got := dump.Context.Scenario.Attributes["invocation_id"]; got == "" {
+		t.Fatalf("expected invocation_id in dump context attributes")
+	}
+	if dump.CampaignMetrics == nil {
+		t.Fatalf("expected campaignMetrics in dump")
+	}
+	if dump.CampaignMetrics.TotalNodeVisits <= 0 {
+		t.Fatalf("expected campaignMetrics.totalNodeVisits > 0")
+	}
+	if dump.CampaignMetrics.UniqueNodeVisits <= 0 {
+		t.Fatalf("expected campaignMetrics.uniqueNodeVisits > 0")
+	}
+	if dump.CampaignMetrics.UniqueResourceStates <= 0 {
+		t.Fatalf("expected campaignMetrics.uniqueResourceStates > 0")
+	}
+	if dump.CampaignMetrics.DurationNS <= 0 {
+		t.Fatalf("expected campaignMetrics.durationNs > 0")
+	}
 }
 
 func TestRunnerEmbedsStatsInDumpWhenPerfStatsEnabled(t *testing.T) {

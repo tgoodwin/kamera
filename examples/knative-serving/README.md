@@ -27,7 +27,7 @@ Behavior:
 ```bash
 go run . \
   --parallel \
-  --dump-output /tmp/knative-dumps \
+  --output /tmp/knative-dumps \
   --emit-stats
 ```
 
@@ -36,7 +36,7 @@ To run a generated inputs file, pass `--inputs` and set dump directories for per
 ```bash
 go run . \
   --inputs inputs-example.json \
-  --dump-output /tmp/knative-dumps \
+  --output /tmp/knative-dumps \
   --depth 100 \
   --timeout 60s \
   --perturb=false \

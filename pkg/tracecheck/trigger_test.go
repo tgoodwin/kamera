@@ -79,6 +79,20 @@ func sortPendingReconciles(reconciles []PendingReconcile) []PendingReconcile {
 	return reconciles
 }
 
+func TestPendingIgnorableForConvergence_RequeueAfterIsActionable(t *testing.T) {
+	pending := []PendingReconcile{
+		{
+			ReconcilerID: "provisioner",
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: "default", Name: "pending"},
+			},
+			Source: SourceRequeueAfter,
+		},
+	}
+	assert.False(t, allPendingIgnorableForConvergence(pending))
+	assert.Equal(t, 0, countIgnorableForConvergence(pending))
+}
+
 func TestGetTriggeredBasicCase(t *testing.T) {
 	// Set up dependencies
 	podKind := canonical("", "Pod")

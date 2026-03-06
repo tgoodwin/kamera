@@ -9,10 +9,20 @@ import (
 // Dump represents the top-level structure of a kamera dump file.
 // It contains all objects referenced by hash and the result states from exploration.
 type Dump struct {
-	Context *DumpContext             `json:"context,omitempty"`
-	Stats   *tracecheck.ExploreStats `json:"stats,omitempty"`
-	Objects []DumpObject             `json:"objects"`
-	States  []DumpResultState        `json:"states"`
+	Context         *DumpContext             `json:"context,omitempty"`
+	Stats           *tracecheck.ExploreStats `json:"stats,omitempty"`
+	CampaignMetrics *CampaignMetrics         `json:"campaignMetrics,omitempty"`
+	Objects         []DumpObject             `json:"objects"`
+	States          []DumpResultState        `json:"states"`
+}
+
+// CampaignMetrics stores per-phase raw counters for throughput reporting.
+// Derived rates are intentionally computed by reporting tools, not persisted here.
+type CampaignMetrics struct {
+	UniqueNodeVisits     int   `json:"uniqueNodeVisits,omitempty"`
+	TotalNodeVisits      int   `json:"totalNodeVisits,omitempty"`
+	UniqueResourceStates int   `json:"uniqueResourceStates,omitempty"`
+	DurationNS           int64 `json:"durationNs,omitempty"`
 }
 
 // DumpContext carries optional metadata describing how the dump was produced.

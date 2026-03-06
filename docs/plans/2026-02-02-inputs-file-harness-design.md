@@ -15,14 +15,14 @@ runner, without making harnesses part of the Kamera CLI.
 Harnesses keep their current single-scenario behavior, but add a batch mode:
 
 - `--inputs <path>`: JSON file containing an array of `coverage.Input`.
-- `--dump-output <dir>`: directory for per-scenario dumps when `--inputs` is set.
+- `--output <dir>`: directory for per-scenario dumps when `--inputs` is set.
 - `--emit-stats`: includes top-level stats in each dump file.
 - `--interactive`: ignored/disabled in batch mode.
 
 Example:
 
 ```
-go run ./examples/knative-serving --inputs ./inputs.json --dump-output ./dumps --emit-stats
+go run ./examples/knative-serving --inputs ./inputs.json --output ./dumps --emit-stats
 ```
 
 ## Data Flow
@@ -40,14 +40,14 @@ of work and will be plugged into step 4 when available.
 
 ## Parallel Runner Behavior
 - Use `ParallelRunner` for all inputs, preserving input order in results.
-- Treat `--dump-output` as a **directory** in batch mode.
+- Treat `--output` as a **directory** in batch mode.
 - Force `interactive=false` (or error if explicitly set) since parallel runs
   do not surface the inspector UI.
 
 ## Error Handling
 - If `--inputs` is set but the file cannot be read/decoded: return an error.
 - If the decoded inputs list is empty: return an error.
-- If `--dump-output` points to a file: return an error that
+- If `--output` points to a file: return an error that
   requests a directory path.
 
 ## Testing

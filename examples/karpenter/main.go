@@ -75,7 +75,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	builder.SetConfig(applyInputTuning(builder.Config(), inputs[0].Tuning))
+	tunedCfg, err := applyInputTuning(builder.Config(), inputs[0].Tuning)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "apply input tuning: %v\n", err)
+		os.Exit(1)
+	}
+	builder.SetConfig(tunedCfg)
 
 	initialState, seededObjects, err := buildStateFromCoverageInput(builder, inputs[0])
 	if err != nil {

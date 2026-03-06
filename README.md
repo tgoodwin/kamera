@@ -117,7 +117,7 @@ go run .
     }
     ```
 
-    `Runner` honors the standard `-interactive`, `-perturb`, `-dump-output`, and `-emit-stats` flags (see `pkg/explore/flags.go`) so you can disable the inspector, skip closed-loop analysis reruns (`--perturb=false`), or persist results when scripting. When `--emit-stats` is enabled, the dump written via `--dump-output` includes a top-level `stats` section.
+    `Runner` honors the standard `-interactive`, `-perturb`, `-output`, and `-emit-stats` flags (see `pkg/explore/flags.go`) so you can disable the inspector, skip closed-loop analysis reruns (`--perturb=false`), or persist results when scripting. When `--emit-stats` is enabled, the dump written via `--output` includes a top-level `stats` section.
 
 That’s enough to start evaluating how your controllers interact across different interleavings.
 
