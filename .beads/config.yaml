@@ -12,7 +12,6 @@
 # When true, bd will use .beads/issues.jsonl as the source of truth
 # instead of SQLite database
 # no-db: false
-no-db: true
 
 # Disable daemon for RPC communication (forces direct database access)
 # no-daemon: false
