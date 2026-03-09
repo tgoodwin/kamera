@@ -1,0 +1,1 @@
+DAG divergence analysis should consider pending reconcilers, not just ContentsHash
