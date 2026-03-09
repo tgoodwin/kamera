@@ -1,0 +1,1 @@
+Restructure CompositeKey/dump serialization to preserve Kind/Group without post-processing
