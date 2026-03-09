@@ -1,0 +1,1 @@
+Enforce single-path Monte Carlo semantics (disable branch fanout paths)
