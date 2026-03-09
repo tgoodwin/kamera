@@ -45,6 +45,7 @@ testresults/**
 
 .worktrees/
 graph-experiment/
+.yaks
 
 # Dolt database files (added by bd init)
 .dolt/
