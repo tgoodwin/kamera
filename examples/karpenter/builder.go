@@ -15,14 +15,11 @@ import (
 
 	"sigs.k8s.io/karpenter/pkg/cloudprovider/fake"
 	"sigs.k8s.io/karpenter/pkg/controllers/node/hydration"
-	"sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/consistency"
 	nodeclaimhydration "sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/hydration"
-	"sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/lifecycle"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/controllers/state/informer"
 	"sigs.k8s.io/karpenter/pkg/operator/options"
-	"sigs.k8s.io/karpenter/pkg/state/nodepoolhealth"
 	"sigs.k8s.io/karpenter/pkg/test"
 )
 
@@ -39,7 +36,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		})
 	}).For("disabled/PodLifecycle")
 
-	cp := fake.NewCloudProvider()
+	cp := &deterministicCloudProvider{fake.NewCloudProvider()}
 	clk := clock.RealClock{}
 	opts := test.Options()
 	switcher := newSwitchingClient()
@@ -71,8 +68,6 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		})
 		return prov
 	}
-
-	nodePoolHealth := nodepoolhealth.NewState()
 
 	// Provisioner (singleton-style)
 	b.WithReconciler("provisioner", func(c client.Client) tracecheck.Reconciler {
@@ -106,21 +101,15 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		return wrapWithOptions(c, informer.NewNodeClaimController(c, cp, getCluster(c)))
 	}).For("karpenter.sh/NodeClaim")
 
-	// NodeClaim lifecycle + hydration + consistency
+	// NodeClaim hydration + launch
 	b.WithReconciler("nodeclaim.hydration", func(c client.Client) tracecheck.Reconciler {
 		rec := nodeclaimhydration.NewController(c, cp)
 		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
 	}).For("karpenter.sh/NodeClaim")
 
-	b.WithReconciler("nodeclaim.lifecycle", func(c client.Client) tracecheck.Reconciler {
-		rec := lifecycle.NewController(clk, c, cp, newNoopRecorder(), nodePoolHealth)
-		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
-	}).For("karpenter.sh/NodeClaim").Watches("Node", nodeToNodeClaimMapper())
-
-	b.WithReconciler("nodeclaim.consistency", func(c client.Client) tracecheck.Reconciler {
-		rec := consistency.NewController(clk, c, cp, newNoopRecorder())
-		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
-	}).For("karpenter.sh/NodeClaim").Watches("Node", nodeToNodeClaimMapper())
+	b.WithReconciler("nodeclaim.launcher", func(c client.Client) tracecheck.Reconciler {
+		return wrapWithOptions(c, reconcile.AsReconciler(c, &nodeClaimLauncher{cloudProvider: cp}))
+	}).For("karpenter.sh/NodeClaim")
 
 	// Node hydration
 	b.WithReconciler("node.hydration", func(c client.Client) tracecheck.Reconciler {
@@ -138,6 +127,14 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	ticker := simclock.NewTicker(10 * time.Second)
 	simclock.RegisterTickerCallback(ticker, func() {
 		tracecheck.GetGlobalAsyncEnqueueCollector().Add("provisioner", types.NamespacedName{Name: "singleton"})
+	})
+
+	// Reset shared in-memory state before each forked trial so that Monte
+	// Carlo trials and perturbation phases each start from a clean slate.
+	b.OnFork(func() {
+		getCluster(nil).Reset()
+		cp.Reset()
+		provisionerClient.Reset()
 	})
 
 	return b
