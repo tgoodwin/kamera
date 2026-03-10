@@ -77,7 +77,6 @@ func (h *AnonymizingHasher) Hash(obj *unstructured.Unstructured) (VersionHash, e
 var DefaultLabelReplacements = map[string]string{
 	tag.TraceyReconcileID: "RECONCILE_ID",
 	tag.ChangeID:          "CHANGE_ID",
-	tag.TraceyObjectID:    "OBJECT_ID",
 	tag.DeletionID:        "DELETION_ID",
 	tag.TraceyCreatorID:   "CREATOR_ID",
 }

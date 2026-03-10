@@ -1,0 +1,189 @@
+[
+  {
+    "name": "kro-quickstart/create-with-ingress",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "ResourceGraphDefinition",
+          "metadata": {
+            "name": "my-application"
+          },
+          "spec": {
+            "schema": {
+              "apiVersion": "v1alpha1",
+              "kind": "Application",
+              "spec": {
+                "name": "string",
+                "image": "string | default=\"nginx\"",
+                "replicas": "integer | default=3",
+                "ingress": {
+                  "enabled": "boolean | default=false"
+                }
+              },
+              "status": {
+                "deploymentConditions": "${deployment.status.conditions}",
+                "availableReplicas": "${deployment.status.availableReplicas}"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 24
+    },
+    "userInputs": [
+      {
+        "id": "create-application-instance",
+        "type": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "kro-quickstart/create-without-ingress",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "ResourceGraphDefinition",
+          "metadata": {
+            "name": "my-application"
+          },
+          "spec": {
+            "schema": {
+              "apiVersion": "v1alpha1",
+              "kind": "Application",
+              "spec": {
+                "name": "string",
+                "image": "string | default=\"nginx\"",
+                "replicas": "integer | default=3",
+                "ingress": {
+                  "enabled": "boolean | default=false"
+                }
+              },
+              "status": {
+                "deploymentConditions": "${deployment.status.conditions}",
+                "availableReplicas": "${deployment.status.availableReplicas}"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 20
+    },
+    "userInputs": [
+      {
+        "id": "create-application-instance",
+        "type": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "replicas": 1,
+            "ingress": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "kro-quickstart/scale-update",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "ResourceGraphDefinition",
+          "metadata": {
+            "name": "my-application"
+          },
+          "spec": {
+            "schema": {
+              "apiVersion": "v1alpha1",
+              "kind": "Application",
+              "spec": {
+                "name": "string",
+                "image": "string | default=\"nginx\"",
+                "replicas": "integer | default=3",
+                "ingress": {
+                  "enabled": "boolean | default=false"
+                }
+              },
+              "status": {
+                "deploymentConditions": "${deployment.status.conditions}",
+                "availableReplicas": "${deployment.status.availableReplicas}"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 32
+    },
+    "userInputs": [
+      {
+        "id": "create-application-instance",
+        "type": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      {
+        "id": "scale-application-to-3",
+        "type": "UPDATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "replicas": 3,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  }
+]
