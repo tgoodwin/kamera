@@ -16,7 +16,7 @@ go run ./cmd/kamera inspect exploration <dump.jsonl>  # open inspector/TUI
 ```
 Use Go 1.24+. After dependency changes run `go mod tidy`; before review run `go fmt ./...` (or `gofmt -w`) to keep imports and spacing clean.
 
-Use 'bd' for issue tracking.
+Use 'yx' (yaks) for issue tracking.
 
 ## Coding Style & Naming Conventions
 - Standard Go formatting; group imports stdlib/third-party/module-local and avoid unused aliases.
@@ -211,7 +211,7 @@ The specific mapping between GVKs and their instantiation logic is defined in th
 4. **PUSH TO REMOTE** - This is MANDATORY:
    ```bash
    git pull --rebase
-   bd sync
+   yx sync
    git push
    git status  # MUST show "up to date with origin"
    ```
@@ -225,115 +225,88 @@ The specific mapping between GVKs and their instantiation logic is defined in th
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
-<!-- BEGIN BEADS INTEGRATION -->
-## Issue Tracking with bd (beads)
+## Issue Tracking with yx (yaks)
 
-**IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
+**IMPORTANT**: Use **yx** (yaks) for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
 
-### Why bd?
-
-- Dependency-aware: Track blockers and relationships between issues
-- Git-friendly: Dolt-powered version control with native sync
-- Agent-optimized: JSON output, ready work detection, discovered-from links
-- Prevents duplicate tracking systems and confusion
-
-### Quick Start
-
-**Check for ready work:**
-
+### Quick Reference
 ```bash
-bd ready --json
+yx list                          # See all yaks
+yx list --format json            # JSON output for programmatic use
+yx add fix the flaky test        # Create a yak
+yx add subtask --under parent    # Create nested yak (hierarchy)
+yx start fix the flaky test      # Claim work (state -> wip)
+yx done fix the flaky test       # Complete work (state -> done)
+yx show fix the flaky test       # Show details
+yx sync                          # Sync with git refs
+yx --help                        # Full help
 ```
 
-**Create new issues:**
+### Why yaks?
+
+- Hierarchical: Nest sub-yaks under parents with `--under`
+- Git-native: Stored in git refs/notes, syncs with push/pull
+- Agent-optimized: JSON output, name-based addressing
+- Simple: Three states (todo/wip/done), custom fields and tags for metadata
+
+### Creating and Organizing Yaks
 
 ```bash
-bd create "Issue title" --description="Detailed context" -t bug|feature|task -p 0-4 --json
-bd create "Issue title" --description="What this issue is about" -p 1 --deps discovered-from:bd-123 --json
+# Simple yak
+yx add upgrade auth library
+
+# Nested yak (epic with subtasks)
+yx add harness fidelity hardening
+yx add define fidelity contract --under harness fidelity hardening
+yx add validate crossplane parity --under harness fidelity hardening
+
+# With metadata
+yx add fix endpoint controller --field priority=0 --field type=bug
+yx tag add fix endpoint controller p0 bug
 ```
 
-**Claim and update:**
+### Custom Fields and Context
 
 ```bash
-bd update <id> --claim --json
-bd update bd-42 --priority 1 --json
+# Set context (description/notes)
+yx add new feature --context "Detailed description here"
+echo "progress notes" | yx field "fix the bug" progress
+
+# Set priority and type via fields
+yx field "my yak" priority <<< "1"
+yx field "my yak" type <<< "bug"
 ```
 
-**Complete work:**
+### Priorities (via tags or fields)
 
-```bash
-bd close bd-42 --reason "Completed" --json
-```
-
-### Issue Types
-
-- `bug` - Something broken
-- `feature` - New functionality
-- `task` - Work item (tests, docs, refactoring)
-- `epic` - Large feature with subtasks
-- `chore` - Maintenance (dependencies, tooling)
-
-### Priorities
-
-- `0` - Critical (security, data loss, broken builds)
-- `1` - High (major features, important bugs)
-- `2` - Medium (default, nice-to-have)
-- `3` - Low (polish, optimization)
-- `4` - Backlog (future ideas)
+- `p0` - Critical (security, data loss, broken builds)
+- `p1` - High (major features, important bugs)
+- `p2` - Medium (default)
+- `p3` - Low (polish, optimization)
+- `p4` - Backlog (future ideas)
 
 ### Workflow for AI Agents
 
-1. **Check ready work**: `bd ready` shows unblocked issues
-2. **Claim your task atomically**: `bd update <id> --claim`
+1. **Discover work**: `yx list --format json` to see all yaks and their states
+2. **Claim your task**: `yx start "task name"`
 3. **Work on it**: Implement, test, document
-4. **Discover new work?** Create linked issue:
-   - `bd create "Found bug" --description="Details about what was found" -p 1 --deps discovered-from:<parent-id>`
-5. **Complete**: `bd close <id> --reason "Done"`
+4. **Discover new work?** Create linked yak:
+   - `yx add "found a bug" --under "parent task"`
+5. **Complete**: `yx done "task name"`
 
-### Auto-Sync
+### Sync
 
-bd automatically syncs via Dolt:
+yaks stores data in git refs/notes:
 
-- Each write auto-commits to Dolt history
-- Use `bd dolt push`/`bd dolt pull` for remote sync
-- No manual export/import needed!
+- Use `yx sync` to sync with remote
+- Data travels with `git push`/`git pull`
 
 ### Important Rules
 
-- ✅ Use bd for ALL task tracking
-- ✅ Always use `--json` flag for programmatic use
-- ✅ Link discovered work with `discovered-from` dependencies
-- ✅ Check `bd ready` before asking "what should I work on?"
-- ❌ Do NOT create markdown TODO lists
-- ❌ Do NOT use external issue trackers
-- ❌ Do NOT duplicate tracking systems
-
-For more details, see README.md and docs/QUICKSTART.md.
-
-## Landing the Plane (Session Completion)
-
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
-
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd sync
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-
-<!-- END BEADS INTEGRATION -->
+- Use yx for ALL task tracking
+- Use `--format json` for programmatic use
+- Nest related work with `--under` to maintain hierarchy
+- Check `yx list` before asking "what should I work on?"
+- Do NOT create markdown TODO lists
+- Do NOT use external issue trackers
+- Do NOT duplicate tracking systems
