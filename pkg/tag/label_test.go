@@ -14,8 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
-func TestAddSleeveObjectID(t *testing.T) {
-	// Test when the label does not exist
+func TestAddSleeveObjectIDIsNoOp(t *testing.T) {
 	obj := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "po",
@@ -26,25 +25,10 @@ func TestAddSleeveObjectID(t *testing.T) {
 
 	AddSleeveObjectID(obj)
 
-	// Check if the TraceyObjectID label is set
+	// AddSleeveObjectID is now a no-op; the label should NOT be injected.
 	labels := obj.GetLabels()
-	objectID, exists := labels[TraceyObjectID]
-	assert.True(t, exists, "TraceyObjectID label should be set")
-	assert.Equal(t, deterministicSleeveObjectID(obj), objectID, "TraceyObjectID label should be deterministic")
-
-	// Test idempotency: label should not be overwritten if it already exists
-	existingUUID := uuid.New().String()
-	obj.SetLabels(map[string]string{
-		TraceyObjectID: existingUUID,
-	})
-
-	AddSleeveObjectID(obj)
-
-	// Check if the TraceyObjectID label is not overwritten
-	labels = obj.GetLabels()
-	objectID, exists = labels[TraceyObjectID]
-	assert.True(t, exists, "TraceyObjectID label should still be set")
-	assert.Equal(t, existingUUID, objectID, "TraceyObjectID label should not be overwritten")
+	_, exists := labels[TraceyObjectID]
+	assert.False(t, exists, "TraceyObjectID label should no longer be injected")
 }
 
 func TestAddDeletionID(t *testing.T) {
@@ -95,8 +79,10 @@ func TestEnsureDeterministicIdentity(t *testing.T) {
 
 	expectedID := deterministicSleeveObjectID(obj)
 	require.NotEmpty(t, obj.GetUID())
-	assert.Equal(t, expectedID, obj.GetLabels()[TraceyObjectID])
 	assert.Equal(t, types.UID(expectedID), obj.GetUID())
+	// The sleeve-object-id label should NOT be set.
+	_, labelExists := obj.GetLabels()[TraceyObjectID]
+	assert.False(t, labelExists, "TraceyObjectID label should no longer be injected")
 
 	obj.SetUID("existing-uid")
 	EnsureDeterministicIdentity(obj)

@@ -53,31 +53,24 @@ func LabelChange(obj client.Object) {
 	addUIDTag(obj, ChangeID)
 }
 
-func AddSleeveObjectID(obj client.Object) {
-	labels := obj.GetLabels()
-	if labels == nil {
-		labels = make(map[string]string)
-	}
-	if _, ok := labels[TraceyObjectID]; ok {
-		return
-	}
-	labels[TraceyObjectID] = deterministicSleeveObjectID(obj)
-	obj.SetLabels(labels)
-}
+// AddSleeveObjectID is a no-op retained for call-site compatibility.
+// The sleeve-object-id label is no longer injected; deterministic identity
+// is handled entirely through metadata.uid in EnsureDeterministicIdentity.
+func AddSleeveObjectID(_ client.Object) {}
 
-// EnsureDeterministicIdentity makes the synthetic object identity explicit for
-// replay/exploration. Real API servers assign metadata.uid on create, but the
-// harness needs a stable UID earlier so controller-runtime ownership logic
-// remains deterministic.
+// EnsureDeterministicIdentity assigns a stable UID to objects that lack one.
+// Real API servers assign metadata.uid on create, but the harness needs a
+// stable UID earlier so controller-runtime ownership logic remains
+// deterministic. The UID is derived from group/kind/namespace/name so it is
+// reproducible across exploration branches.
 func EnsureDeterministicIdentity(obj client.Object) {
 	if obj == nil {
 		return
 	}
-	AddSleeveObjectID(obj)
 	if obj.GetUID() != "" {
 		return
 	}
-	obj.SetUID(types.UID(GetSleeveObjectID(obj)))
+	obj.SetUID(types.UID(deterministicSleeveObjectID(obj)))
 }
 
 func AddLabel(obj client.Object, key, value string) {
@@ -148,7 +141,7 @@ func SanityCheckLabels(obj client.Object) error {
 }
 
 func IsSleeveLabel(key string) bool {
-	return key == TraceyWebhookLabel || key == TraceyRootID || key == TraceyReconcileID || key == TraceyCreatorID || key == TraceyObjectID
+	return key == TraceyWebhookLabel || key == TraceyRootID || key == TraceyReconcileID || key == TraceyCreatorID
 }
 
 func GetSleeveLabels(obj client.Object) map[string]string {

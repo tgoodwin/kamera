@@ -55,6 +55,7 @@ func newKROExplorerBuilder() *tracecheck.ExplorerBuilder {
 	utilruntime.Must(networkingv1.AddToScheme(scheme))
 
 	builder := tracecheck.NewExplorerBuilder(scheme)
+	builder.WithMaxDepth(30)
 
 	builder.WithReconciler(resourceGraphDefinitionControllerID, func(c client.Client) tracecheck.Reconciler {
 		return &resourceGraphDefinitionController{Client: c}
@@ -425,22 +426,22 @@ func (c *applicationController) deleteIngressIfPresent(ctx context.Context, ingr
 
 func (c *applicationController) updateApplicationStatus(ctx context.Context, app *unstructured.Unstructured, namespace, name string, desiredReplicas int32) error {
 	original := app.DeepCopy()
-	availableReplicas := int64(0)
+	// Use float64 for numeric status fields so that the value matches what
+	// the store returns after JSON round-tripping (JSON numbers decode as float64
+	// in unstructured maps).
+	availableReplicas := float64(0)
 	state := applicationStateInProgress
 
 	deployment := &appsv1.Deployment{}
 	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment); err != nil && !apierrors.IsNotFound(err) {
 		return err
 	} else if err == nil {
-		availableReplicas = int64(deployment.Status.AvailableReplicas)
+		availableReplicas = float64(deployment.Status.AvailableReplicas)
 		if deployment.Status.AvailableReplicas >= desiredReplicas && desiredReplicas > 0 {
 			state = applicationStateActive
 		}
 		if deployment.Status.AvailableReplicas == 0 && desiredReplicas == 0 {
 			state = applicationStateActive
-		}
-		if deploymentConditions, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&deployment.Status.Conditions); err == nil {
-			setNestedField(app.Object, deploymentConditions, "status", "deploymentConditions")
 		}
 	}
 
@@ -749,10 +750,18 @@ func getNestedBool(obj map[string]any, fallback bool, fields ...string) bool {
 
 func getNestedInt32(obj map[string]any, fallback int32, fields ...string) int32 {
 	value, found, err := unstructured.NestedInt64(obj, fields...)
-	if err != nil || !found {
+	if err == nil && found {
+		return int32(value)
+	}
+	// JSON round-tripping converts int64 to float64; handle that gracefully.
+	raw, rawFound, rawErr := unstructured.NestedFieldNoCopy(obj, fields...)
+	if rawErr != nil || !rawFound {
 		return fallback
 	}
-	return int32(value)
+	if f, ok := raw.(float64); ok {
+		return int32(f)
+	}
+	return fallback
 }
 
 func setNestedStringSlice(obj map[string]any, value []string, fields ...string) {
