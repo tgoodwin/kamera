@@ -182,7 +182,7 @@ func (tc *TraceChecker) GetStartStateFromObject(obj client.Object, dependentCont
 		tc.builder = &replay.Builder{ReconcilerIDs: util.NewSet(stringIDs...)}
 	}
 
-	state, err := buildStartStateFromObjects(tc.manager.Store, tc.manager.scheme, []client.Object{obj}, dependent)
+	state, err := buildStartStateFromObjects(tc.manager.Store, tc.manager.scheme, []client.Object{obj}, dependent, nil)
 	if err != nil {
 		panic("building start state: " + err.Error())
 	}

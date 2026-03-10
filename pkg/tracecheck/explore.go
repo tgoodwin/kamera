@@ -584,16 +584,6 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	e.stats = NewExploreStats()
 	e.stats.Start()
 
-	// Seed resourceVersions from the initial state's event history so that
-	// staleness analysis can look up RVs for hashes produced by trace replay.
-	if e.resourceVersions != nil {
-		for _, se := range initialState.Contents.stateEvents {
-			if se.Effect.Version.Value != "" {
-				e.resourceVersions[se.Effect.Version] = se.Sequence
-			}
-		}
-	}
-
 	go func() {
 		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, abortedStateChan)
 		if err != nil {

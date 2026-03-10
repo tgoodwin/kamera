@@ -50,6 +50,11 @@ type ExplorerBuilder struct {
 
 	userActions []UserAction
 
+	// resourceVersions maps each VersionHash to its global ResourceVersion.
+	// Owned by the builder so it is available during BuildStartStateFromObjects
+	// (before Build) and then transferred to the Explorer in Build().
+	resourceVersions map[snapshot.VersionHash]int64
+
 	// onForkFuncs are called at the beginning of Fork() to reset shared
 	// mutable state that lives outside the snapshot system (e.g. in-memory
 	// controller caches). This ensures each forked exploration (Monte Carlo
@@ -110,6 +115,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		emitter:                    event.NewInMemoryEmitter(),
 		snapStore:                  snapshot.NewStore(),
 		reconcilerToKind:           make(map[ReconcilerID]string),
+		resourceVersions:           make(map[snapshot.VersionHash]int64),
 
 		config: &ExploreConfig{
 			MaxDepth:        *searchDepth,
@@ -180,6 +186,7 @@ func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 		builder:                    b.builder,
 		podCrashProbabilities:      maps.Clone(b.podCrashProbabilities),
 		userActions:                slices.Clone(b.userActions),
+		resourceVersions:           make(map[snapshot.VersionHash]int64),
 		onForkFuncs:                b.onForkFuncs,
 	}
 }
@@ -780,7 +787,7 @@ func (b *ExplorerBuilder) PrimeVersionStoreFromHistory(history ExecutionHistory,
 
 // BuildStartStateFromObjects constructs a starting StateNode from concrete objects and an initial pending list.
 func (b *ExplorerBuilder) BuildStartStateFromObjects(objs []client.Object, pending []PendingReconcile) (StateNode, error) {
-	return buildStartStateFromObjects(b.snapStore, b.scheme, objs, pending)
+	return buildStartStateFromObjects(b.snapStore, b.scheme, objs, pending, b.resourceVersions)
 }
 
 func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
@@ -897,7 +904,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		// for prioritizing 'interesting' (potentially bug-causing) states to explore
 		priorityHandler:  b.priorityBuilder.Build(b.snapStore),
 		userController:   userController,
-		resourceVersions: make(map[snapshot.VersionHash]int64),
+		resourceVersions: b.resourceVersions,
 	}
 
 	return explorer, nil
