@@ -442,10 +442,14 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		// precision/attribution. Harnesses can still override with ClosedLoop.Plan.
 		referenceConfig = disablePerturbations(scenario.Config)
 		planFn = func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
+			var plans []ScenarioPhasePlan
 			if len(scenario.UserInputs) >= 2 {
-				return buildUserActionInterleavingPlans(reference, scenario.Config, scenario.Context, scenario.UserInputs), nil
+				plans = append(plans, buildUserActionInterleavingPlans(reference, scenario.Config, scenario.Context, scenario.UserInputs)...)
+			} else {
+				plans = append(plans, buildDefaultScenarioRerunPlans(reference, scenario.Config, scenario.Context)...)
 			}
-			return buildDefaultScenarioRerunPlans(reference, scenario.Config, scenario.Context), nil
+			plans = append(plans, buildStalenessPerturbationPlans(reference, scenario.Config, scenario.Context)...)
+			return plans, nil
 		}
 	} else if scenario.ClosedLoop.Plan != nil {
 		planFn = scenario.ClosedLoop.Plan
@@ -643,6 +647,115 @@ func observedControllersInReference(reference ScenarioPhaseResult) []tracecheck.
 		return out[i] < out[j]
 	})
 	return out
+}
+
+func observedReadKindsPerController(reference ScenarioPhaseResult) map[tracecheck.ReconcilerID][]string {
+	if reference.Result == nil {
+		return nil
+	}
+	seen := make(map[tracecheck.ReconcilerID]map[string]struct{})
+	collect := func(states []tracecheck.ResultState) {
+		for _, state := range states {
+			for _, path := range state.Paths {
+				for _, step := range path {
+					if step == nil || step.ControllerID == "" || step.ControllerID == tracecheck.UserControllerID {
+						continue
+					}
+					for _, obs := range step.Changes.Observations {
+						kind := obs.Key.CanonicalGroupKind()
+						if kind == "" {
+							continue
+						}
+						if seen[step.ControllerID] == nil {
+							seen[step.ControllerID] = make(map[string]struct{})
+						}
+						seen[step.ControllerID][kind] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+	collect(reference.Result.ConvergedStates)
+	collect(reference.Result.AbortedStates)
+
+	out := make(map[tracecheck.ReconcilerID][]string, len(seen))
+	for id, kinds := range seen {
+		sorted := make([]string, 0, len(kinds))
+		for k := range kinds {
+			sorted = append(sorted, k)
+		}
+		sort.Strings(sorted)
+		out[id] = sorted
+	}
+	return out
+}
+
+func buildStalenessPerturbationPlans(
+	reference ScenarioPhaseResult,
+	base tracecheck.ExploreConfig,
+	scenarioCtx ScenarioContext,
+) []ScenarioPhasePlan {
+	readKinds := observedReadKindsPerController(reference)
+	if len(readKinds) == 0 {
+		return nil
+	}
+
+	cfg := disablePerturbations(base)
+	cfg.SearchMode = tracecheck.SearchModeMonteCarlo
+	if base.SearchMode == tracecheck.SearchModeMonteCarlo {
+		cfg.MonteCarlo = base.MonteCarlo
+	}
+
+	staleness := make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig, len(readKinds))
+	var controllerNames []string
+	for controllerID, kinds := range readKinds {
+		bounds := make(tracecheck.LookbackLimits, len(kinds))
+		for _, kind := range kinds {
+			// LookbackLimit controls how many recent sequences to keep. A limit of 2
+			// keeps the current version plus one previous, modeling a single missed
+			// watch event. A limit of 1 would only keep the current version (no stale
+			// views possible).
+			bounds[kind] = 2
+		}
+		staleness[controllerID] = tracecheck.StalenessConfig{
+			StaleReadBounds: bounds,
+			MaxRestarts:     1,
+		}
+		controllerNames = append(controllerNames, string(controllerID))
+	}
+	sort.Strings(controllerNames)
+	cfg.Perturbations.Staleness = staleness
+
+	// Generate multiple MC trials so different seeds explore different stale
+	// view selections. Each trial gets a distinct TrialIndex which produces a
+	// different derived seed, varying which stale views are sampled.
+	const defaultStalenessTrials = 5
+	numTrials := defaultStalenessTrials
+	if base.SearchMode == tracecheck.SearchModeMonteCarlo && base.MonteCarlo.Trials > 0 {
+		numTrials = base.MonteCarlo.Trials
+	}
+
+	plans := make([]ScenarioPhasePlan, 0, numTrials)
+	for trial := 0; trial < numTrials; trial++ {
+		trialCfg := cfg.Clone()
+		trialCfg.MonteCarlo.TrialIndex = trial
+		trialCfg.MonteCarlo.Trials = numTrials
+
+		attrs := copyAttributes(scenarioCtx.Attributes)
+		attrs["perturbation.strategy"] = "staleness"
+		attrs["perturbation.stale_controllers"] = strings.Join(controllerNames, ",")
+		attrs["mc_trial_index"] = strconv.Itoa(trial)
+		attrs["mc_trial_count"] = strconv.Itoa(numTrials)
+		ctxCopy := scenarioCtx
+		ctxCopy.Attributes = attrs
+
+		plans = append(plans, ScenarioPhasePlan{
+			Name:    fmt.Sprintf("staleness_%d", trial),
+			Config:  trialCfg,
+			Context: &ctxCopy,
+		})
+	}
+	return plans
 }
 
 func applyPhaseSummary(result *ScenarioResult, phase ScenarioPhaseResult) {

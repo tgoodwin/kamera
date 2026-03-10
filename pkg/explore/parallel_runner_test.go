@@ -16,6 +16,7 @@ import (
 
 	"github.com/tgoodwin/kamera/pkg/analysis"
 	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
 	foov1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
@@ -52,6 +53,7 @@ func newTestBuilder(t *testing.T) (*tracecheck.ExplorerBuilder, tracecheck.State
 func TestParallelRunnerDoesNotLeakConfig(t *testing.T) {
 	ctx := context.Background()
 	builder, state := newTestBuilder(t)
+	withPerturbFlag(t, false)
 
 	runner, err := NewParallelRunner(builder)
 	if err != nil {
@@ -375,8 +377,8 @@ func TestParallelRunnerAutoClosedLoopRunsReferenceThenRerunWhenScenarioHasNoPlan
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if len(results[0].Phases) != 2 {
-		t.Fatalf("expected 2 phase results, got %d", len(results[0].Phases))
+	if len(results[0].Phases) < 2 {
+		t.Fatalf("expected at least 2 phase results (reference + rerun), got %d", len(results[0].Phases))
 	}
 	if results[0].Phases[0].Name != "reference" {
 		t.Fatalf("expected first phase to be reference, got %q", results[0].Phases[0].Name)
@@ -508,6 +510,183 @@ func TestBuildUserActionInterleavingPlans_MissingSubsequentActionReturnsNoPlans(
 	}
 }
 
+func TestObservedReadKindsPerControllerCollectsFromObservations(t *testing.T) {
+	reference := ScenarioPhaseResult{
+		Result: &tracecheck.Result{
+			ConvergedStates: []tracecheck.ResultState{
+				{
+					Paths: []tracecheck.ExecutionHistory{
+						{
+							{
+								ControllerID: "ControllerA",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("apps", "Deployment", "default", "web")},
+										{Key: testCompositeKey("", "Service", "default", "web-svc")},
+									},
+								},
+							},
+							{
+								ControllerID: "ControllerB",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("", "Service", "default", "web-svc")},
+										{Key: testCompositeKey("networking.k8s.io", "Ingress", "default", "web-ing")},
+									},
+								},
+							},
+							{
+								ControllerID: tracecheck.UserControllerID,
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("", "ConfigMap", "default", "cfg")},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	readKinds := observedReadKindsPerController(reference)
+	if len(readKinds) != 2 {
+		t.Fatalf("expected 2 controllers (UserControllerID excluded), got %d", len(readKinds))
+	}
+
+	aKinds := readKinds["ControllerA"]
+	if len(aKinds) != 2 || aKinds[0] != "apps/Deployment" || aKinds[1] != "core/Service" {
+		t.Fatalf("expected ControllerA to read [apps/Deployment, core/Service], got %v", aKinds)
+	}
+
+	bKinds := readKinds["ControllerB"]
+	if len(bKinds) != 2 || bKinds[0] != "core/Service" || bKinds[1] != "networking.k8s.io/Ingress" {
+		t.Fatalf("expected ControllerB to read [core/Service, networking.k8s.io/Ingress], got %v", bKinds)
+	}
+}
+
+func TestObservedReadKindsPerControllerReturnsNilOnNilResult(t *testing.T) {
+	result := observedReadKindsPerController(ScenarioPhaseResult{})
+	if result != nil {
+		t.Fatalf("expected nil, got %v", result)
+	}
+}
+
+func TestBuildStalenessPerturbationPlansProducesStalenessPhase(t *testing.T) {
+	reference := ScenarioPhaseResult{
+		Result: &tracecheck.Result{
+			ConvergedStates: []tracecheck.ResultState{
+				{
+					Paths: []tracecheck.ExecutionHistory{
+						{
+							{
+								ControllerID: "ControllerA",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("apps", "Deployment", "default", "web")},
+										{Key: testCompositeKey("", "Service", "default", "svc")},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	base := tracecheck.ExploreConfig{MaxDepth: 20}
+	ctx := ScenarioContext{Attributes: map[string]string{"input": "test"}}
+
+	plans := buildStalenessPerturbationPlans(reference, base, ctx)
+	if len(plans) != 5 {
+		t.Fatalf("expected 5 staleness plans (default trial count), got %d", len(plans))
+	}
+
+	// Verify first plan as representative.
+	plan := plans[0]
+	if plan.Name != "staleness_0" {
+		t.Fatalf("expected plan name 'staleness_0', got %q", plan.Name)
+	}
+	if plan.Config.SearchMode != tracecheck.SearchModeMonteCarlo {
+		t.Fatalf("expected Monte Carlo search mode for staleness phase")
+	}
+	if plan.Config.MonteCarlo.TrialIndex != 0 {
+		t.Fatalf("expected trial index 0, got %d", plan.Config.MonteCarlo.TrialIndex)
+	}
+	if plan.Config.MonteCarlo.Trials != 5 {
+		t.Fatalf("expected 5 trials, got %d", plan.Config.MonteCarlo.Trials)
+	}
+
+	staleness := plan.Config.Perturbations.Staleness
+	if len(staleness) != 1 {
+		t.Fatalf("expected 1 staleness entry (ControllerA), got %d", len(staleness))
+	}
+	cfg, ok := staleness["ControllerA"]
+	if !ok {
+		t.Fatalf("expected staleness config for ControllerA")
+	}
+	if cfg.MaxRestarts != 1 {
+		t.Fatalf("expected MaxRestarts=1, got %d", cfg.MaxRestarts)
+	}
+	if len(cfg.StaleReadBounds) != 2 {
+		t.Fatalf("expected 2 stale read bounds, got %d", len(cfg.StaleReadBounds))
+	}
+	if cfg.StaleReadBounds["apps/Deployment"] != 2 {
+		t.Fatalf("expected lookback=2 for apps/Deployment")
+	}
+	if cfg.StaleReadBounds["core/Service"] != 2 {
+		t.Fatalf("expected lookback=2 for core/Service")
+	}
+
+	// Ordering permutation should be disabled to isolate staleness signal.
+	for id, enabled := range plan.Config.Perturbations.PermuteOrder {
+		if enabled {
+			t.Fatalf("expected ordering disabled for staleness phase, but %s is enabled", id)
+		}
+	}
+
+	// Context attributes should indicate staleness strategy.
+	if plan.Context == nil {
+		t.Fatalf("expected plan context")
+	}
+	if plan.Context.Attributes["perturbation.strategy"] != "staleness" {
+		t.Fatalf("expected perturbation.strategy=staleness attribute")
+	}
+
+	// Verify trial indices are distinct across plans.
+	if plans[2].Config.MonteCarlo.TrialIndex != 2 {
+		t.Fatalf("expected trial index 2 for plan[2], got %d", plans[2].Config.MonteCarlo.TrialIndex)
+	}
+}
+
+func TestBuildStalenessPerturbationPlansReturnsNilOnNilResult(t *testing.T) {
+	plans := buildStalenessPerturbationPlans(
+		ScenarioPhaseResult{},
+		tracecheck.ExploreConfig{MaxDepth: 10},
+		ScenarioContext{},
+	)
+	if len(plans) != 0 {
+		t.Fatalf("expected no plans for nil result, got %d", len(plans))
+	}
+}
+
+func testCompositeKey(group, kind, namespace, name string) snapshot.CompositeKey {
+	return snapshot.CompositeKey{
+		IdentityKey: snapshot.IdentityKey{
+			Group: group,
+			Kind:  kind,
+		},
+		ResourceKey: snapshot.ResourceKey{
+			Group:     group,
+			Kind:      kind,
+			Namespace: namespace,
+			Name:      name,
+		},
+	}
+}
+
 func TestParallelRunnerAutoClosedLoopUsesInterleavingForMultiStepWorkflows(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
@@ -569,8 +748,8 @@ func TestParallelRunnerAutoClosedLoopUsesInterleavingForMultiStepWorkflows(t *te
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if len(results[0].Phases) != 2 {
-		t.Fatalf("expected reference + one interleaving rerun phase, got %d", len(results[0].Phases))
+	if len(results[0].Phases) < 2 {
+		t.Fatalf("expected at least reference + interleaving phase, got %d", len(results[0].Phases))
 	}
 	if results[0].Phases[0].Name != "reference" {
 		t.Fatalf("expected first phase to be reference, got %q", results[0].Phases[0].Name)
@@ -1025,6 +1204,7 @@ func TestParallelRunnerInProcessExpandsMonteCarloTrials(t *testing.T) {
 func TestParallelRunnerChildModeAnnotatesMonteCarloTrialMetadata(t *testing.T) {
 	ctx := context.Background()
 	builder, state := newTestBuilder(t)
+	withPerturbFlag(t, false)
 
 	runner, err := NewParallelRunner(builder)
 	if err != nil {
