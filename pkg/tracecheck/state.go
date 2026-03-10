@@ -98,7 +98,20 @@ type ReconcileResult struct {
 
 	PendingReconciles []PendingReconcile // Pending reconciles produced by this step
 
+	// StalenessInfo records per-object staleness for reads taken during this step.
+	// Only populated when the controller observed a stale view.
+	StalenessInfo []StaleReadInfo `json:"stalenessInfo,omitempty"`
+
 	ctrlRes reconcile.Result
+}
+
+// StaleReadInfo records the ResourceVersion gap for one object that was
+// observed at an older version than the current state at the time of the read.
+type StaleReadInfo struct {
+	Key        string `json:"key"`        // canonical group/kind/namespace/name
+	ObservedRV int64  `json:"observedRV"` // RV of the version the controller saw
+	CurrentRV  int64  `json:"currentRV"`  // RV of the latest version at time of read
+	Lag        int64  `json:"lag"`        // CurrentRV - ObservedRV
 }
 
 func (r *ReconcileResult) wasNoOp() bool {

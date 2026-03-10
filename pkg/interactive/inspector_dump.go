@@ -325,6 +325,7 @@ func toDumpReconcileResult(step *tracecheck.ReconcileResult, objIndex map[string
 		KindSeqBefore: step.KindSeqBefore,
 		KindSeqAfter:  step.KindSeqAfter,
 		Pending:       toDumpPendingReconciles(step.PendingReconciles),
+		StalenessInfo: step.StalenessInfo,
 	}
 }
 
@@ -346,6 +347,7 @@ func fromDumpReconcileResult(dump analysis.DumpReconcileResult, resolver *dumpKe
 		KindSeqBefore:     dump.KindSeqBefore,
 		KindSeqAfter:      dump.KindSeqAfter,
 		PendingReconciles: fromDumpPendingReconciles(dump.Pending),
+		StalenessInfo:     dump.StalenessInfo,
 	}
 }
 
