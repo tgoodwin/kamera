@@ -49,6 +49,12 @@ type ExplorerBuilder struct {
 	podCrashProbabilities map[controller.PodLifecycleStage]float64
 
 	userActions []UserAction
+
+	// onForkFuncs are called at the beginning of Fork() to reset shared
+	// mutable state that lives outside the snapshot system (e.g. in-memory
+	// controller caches). This ensures each forked exploration (Monte Carlo
+	// trial, perturbation phase) starts from a clean slate.
+	onForkFuncs []func()
 }
 
 // ReconcilerBuilder enables chaining reconciler-specific configuration
@@ -143,9 +149,21 @@ func (b *ExplorerBuilder) BuildRestartSeed(state StateNode) (RestartSeed, error)
 
 // Fork returns a new builder with shared configuration and fresh mutable state
 // (snapshot store, emitter). This is intended for isolated parallel runs.
+// OnFork registers a callback that runs at the start of each Fork() call.
+// Use this to reset shared mutable state (e.g. in-memory caches, counters)
+// that lives outside the explorer's snapshot system and must start fresh
+// for each independent trial.
+func (b *ExplorerBuilder) OnFork(fn func()) {
+	b.onForkFuncs = append(b.onForkFuncs, fn)
+}
+
 func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 	if b == nil {
 		return nil
+	}
+
+	for _, fn := range b.onForkFuncs {
+		fn()
 	}
 
 	return &ExplorerBuilder{
@@ -162,6 +180,7 @@ func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 		builder:                    b.builder,
 		podCrashProbabilities:      maps.Clone(b.podCrashProbabilities),
 		userActions:                slices.Clone(b.userActions),
+		onForkFuncs:                b.onForkFuncs,
 	}
 }
 
@@ -876,8 +895,9 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		versionManager:       vStore,
 
 		// for prioritizing 'interesting' (potentially bug-causing) states to explore
-		priorityHandler: b.priorityBuilder.Build(b.snapStore),
-		userController:  userController,
+		priorityHandler:  b.priorityBuilder.Build(b.snapStore),
+		userController:   userController,
+		resourceVersions: make(map[snapshot.VersionHash]int64),
 	}
 
 	return explorer, nil

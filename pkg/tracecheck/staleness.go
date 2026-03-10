@@ -504,10 +504,14 @@ func getAllPossibleViews(baseState *StateSnapshot, relevantKinds []string, kindB
 
 	filtered := make(map[string][]int64)
 	for k, v := range seqByKind {
-		// since the number of stale states can explode so quickly, we require users
-		// to explicitly include the dimensions (kinds) they want to consider.
+		// When kindBounds is provided, it is the authoritative filter for which
+		// kinds to generate stale views for. The planner derives kindBounds from
+		// actual observed reads, making it more precise than static resource deps
+		// which may not include all kinds a controller reads (e.g., Watches that
+		// don't register as resource deps). Fall back to relevantKinds when no
+		// bounds are configured.
 		_, kindConfiguredForStaleness := kindBounds[k]
-		if lo.Contains(relevantKinds, k) && kindConfiguredForStaleness {
+		if kindConfiguredForStaleness || (len(kindBounds) == 0 && lo.Contains(relevantKinds, k)) {
 			filtered[k] = v
 		}
 	}

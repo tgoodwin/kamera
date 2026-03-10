@@ -195,6 +195,12 @@ type Explorer struct {
 	stats         *ExploreStats
 	optimizations *optimizations
 	randomSource  *rand.Rand
+
+	// resourceVersions maps each VersionHash to the global ResourceVersion at
+	// which it was created. This mirrors K8s/etcd semantics where every write
+	// increments a global revision counter. Used for staleness observability:
+	// comparing a controller's observed RV against the current RV reveals lag.
+	resourceVersions map[snapshot.VersionHash]int64
 }
 
 // VersionManager returns the shared version manager used during exploration.
@@ -577,6 +583,16 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	e.stats = NewExploreStats()
 	e.stats.Start()
+
+	// Seed resourceVersions from the initial state's event history so that
+	// staleness analysis can look up RVs for hashes produced by trace replay.
+	if e.resourceVersions != nil {
+		for _, se := range initialState.Contents.stateEvents {
+			if se.Effect.Version.Value != "" {
+				e.resourceVersions[se.Effect.Version] = se.Sequence
+			}
+		}
+	}
 
 	go func() {
 		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, abortedStateChan)
@@ -1369,6 +1385,13 @@ func (e *Explorer) materializeNextState(
 	stepResult.StateBefore = maps.Clone(stateView.Objects())
 	stepResult.KindSeqBefore = maps.Clone(stateView.Contents.KindSequences)
 
+	// Compute staleness info when the controller observed a stale view.
+	if consumed != nil && stateView.stuckReconcilerPositions != nil {
+		if stuckSeqs, stuck := stateView.stuckReconcilerPositions[consumed.ReconcilerID]; stuck {
+			stepResult.StalenessInfo = e.computeStalenessInfo(stateView, consumed.ReconcilerID, stuckSeqs)
+		}
+	}
+
 	newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
 	triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes)
 	newPendingReconciles := e.determineNewPendingReconciles(stepCtx, stateView, consumed, stepResult)
@@ -1396,6 +1419,39 @@ func (e *Explorer) materializeNextState(
 	newState.ID = string(newState.Hash())
 
 	return newState, triggeredByStep
+}
+
+// computeStalenessInfo compares the stale objects a controller would observe
+// against the real current objects and records per-object ResourceVersion gaps.
+func (e *Explorer) computeStalenessInfo(stateView StateNode, reconcilerID ReconcilerID, stuckSeqs KindSequences) []StaleReadInfo {
+	currentObjects := stateView.Contents.All()
+	observedObjects := stateView.ObserveAs(reconcilerID)
+
+	var info []StaleReadInfo
+	for key, currentHash := range currentObjects {
+		observedHash, exists := observedObjects[key]
+		if !exists {
+			continue
+		}
+		kind := key.CanonicalGroupKind()
+		if _, staleKind := stuckSeqs[kind]; !staleKind {
+			continue
+		}
+		if observedHash == currentHash {
+			continue
+		}
+		currentRV := e.resourceVersions[currentHash]
+		observedRV := e.resourceVersions[observedHash]
+		if currentRV > observedRV {
+			info = append(info, StaleReadInfo{
+				Key:        fmt.Sprintf("%s/%s/%s", kind, key.ResourceKey.Namespace, key.ResourceKey.Name),
+				ObservedRV: observedRV,
+				CurrentRV:  currentRV,
+				Lag:        currentRV - observedRV,
+			})
+		}
+	}
+	return info
 }
 
 func (e *Explorer) maybePromoteStableRequeueAfter(
@@ -1626,10 +1682,22 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 
 		// increment resourceversion for the kind
 		nextSequences[effect.Key.IdentityKey.CanonicalGroupKind()] = newRV
+
+		// Record the global ResourceVersion for this object version so that
+		// staleness analysis can compare observed vs current RV.
+		if vHash := changes[effect.Key]; vHash.Value != "" && e.resourceVersions != nil {
+			e.resourceVersions[vHash] = newRV
+		}
+
+		// Use the post-modification version hash (after Generation bumps, etc.)
+		// rather than the original effect's version, so that stateEvent hashes
+		// stay consistent with Contents.contents for staleness replay.
+		recordedEffect := effect
+		recordedEffect.Version = changes[effect.Key]
 		stateEvent := StateEvent{
 			ReconcileID: stepResult.FrameID,
 			Sequence:    newRV,
-			Effect:      effect,
+			Effect:      recordedEffect,
 			// TODO handle time info
 			Timestamp: "",
 		}
@@ -1873,10 +1941,17 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	possiblePastViews = e.priorityHandler.AssignPriorities(possiblePastViews)
 	possiblePastViews = e.priorityHandler.PrioritizeViews(possiblePastViews)
 
-	// When we generate possible stale views for a controller at a certain depth in the execution,
-	// we're modeling a controller restarting and reconnecting to a network-partitioned APIServer.
-	e.stats.RestartsPerReconciler[reconcilerID]++
-	logger.V(1).Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(possiblePastViews))
+	// Only count a restart when actual stale views were generated (more than
+	// just the current state). At early depths, objects may not have been
+	// written enough times to produce stale alternatives. Deferring the
+	// restart count lets the controller be checked again at a later depth
+	// when more write history has accumulated.
+	if len(possiblePastViews) > 1 {
+		e.stats.RestartsPerReconciler[reconcilerID]++
+	}
+	if len(possiblePastViews) > 1 {
+		logger.V(1).Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(possiblePastViews), "CurrDepth", currDepth)
+	}
 
 	divergenceHash := currState.Hash()
 	asStateNodes := lo.Map(possiblePastViews, func(staleState *StateSnapshot, _ int) StateNode {
