@@ -131,7 +131,7 @@
       ]
     },
     "tuning": {
-      "maxDepth": 150,
+      "maxDepth": 80,
       "permuteControllers": null,
       "staleReads": null,
       "staleLookback": null,

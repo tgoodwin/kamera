@@ -25,7 +25,11 @@ import (
 
 func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	b := tracecheck.NewExplorerBuilder(newScheme())
-	simclock.Configure(time.Unix(0, 0), time.Second)
+	// Use a 30-second step so that karpenter's 1-minute state-informer
+	// RequeueAfter translates to only 2 simulated steps instead of 60.
+	// This lets the stable-requeue-after convergence mechanism build its
+	// streak (threshold=3) within a reasonable depth budget.
+	simclock.Configure(time.Unix(0, 0), 30*time.Second)
 
 	// Disable generic pod lifecycle simulation for this harness.
 	// Karpenter provisioning should reason over unschedulable pods, and Pod lifecycle
@@ -108,7 +112,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	}).For("karpenter.sh/NodeClaim")
 
 	b.WithReconciler("nodeclaim.launcher", func(c client.Client) tracecheck.Reconciler {
-		return wrapWithOptions(c, reconcile.AsReconciler(c, &nodeClaimLauncher{cloudProvider: cp}))
+		return wrapWithOptions(c, reconcile.AsReconciler(c, &nodeClaimLauncher{cloudProvider: cp, kubeClient: c}))
 	}).For("karpenter.sh/NodeClaim")
 
 	// Node hydration
@@ -124,7 +128,8 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 
 	// Singleton-style deterministic tick for provisioner.
 	// NOTE: this approximates controller-runtime singleton.Source() using simclock.
-	ticker := simclock.NewTicker(10 * time.Second)
+	// Interval must be a positive multiple of the simclock step (30s).
+	ticker := simclock.NewTicker(30 * time.Second)
 	simclock.RegisterTickerCallback(ticker, func() {
 		tracecheck.GetGlobalAsyncEnqueueCollector().Add("provisioner", types.NamespacedName{Name: "singleton"})
 	})

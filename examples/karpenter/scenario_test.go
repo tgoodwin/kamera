@@ -29,8 +29,8 @@ func TestScenariosFromInputsRequiresBuilder(t *testing.T) {
 func TestKarpenterBuilderConfiguresSimclockStepSize(t *testing.T) {
 	simclock.Configure(time.Unix(0, 0), 2*time.Second)
 	newKarpenterExplorerBuilder()
-	if got := simclock.StepDuration(); got != time.Second {
-		t.Fatalf("expected karpenter builder to configure simclock step to 1s, got %v", got)
+	if got := simclock.StepDuration(); got != 30*time.Second {
+		t.Fatalf("expected karpenter builder to configure simclock step to 30s, got %v", got)
 	}
 }
 
