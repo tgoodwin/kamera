@@ -230,6 +230,208 @@ func TestApplyEffects_ApplyIncrementsGenerationWhenKeyIdentityChanges(t *testing
 	require.Equal(t, "new", updated.Object["spec"].(map[string]any)["message"])
 }
 
+func TestApplyEffects_StatusUpdatePreservesSpecAndGeneration(t *testing.T) {
+	store := snapshot.NewStore()
+	vs := NewVersionStore(store, nil)
+	explorer := &Explorer{versionManager: vs}
+
+	key := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "example", "obj1")
+
+	oldObj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"namespace":  "default",
+				"name":       "example",
+				"generation": int64(7),
+			},
+			"spec":   map[string]any{"message": "keep-me"},
+			"status": map[string]any{"phase": "old"},
+		},
+	}
+	oldHash := vs.Publish(oldObj)
+
+	statusOnlyObj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"namespace": "default",
+				"name":      "example",
+			},
+			"status": map[string]any{"phase": "new"},
+		},
+	}
+	statusOnlyHash := vs.Publish(statusOnlyObj)
+
+	stepResult := &ReconcileResult{
+		Changes: Changes{
+			ObjectVersions: ObjectVersions{key: statusOnlyHash},
+			Effects: []Effect{
+				{
+					OpType:      event.UPDATE,
+					Key:         key,
+					Version:     statusOnlyHash,
+					Subresource: "status",
+				},
+			},
+		},
+	}
+
+	state := StateNode{
+		Contents: NewStateSnapshot(
+			ObjectVersions{key: oldHash},
+			KindSequences{key.CanonicalGroupKind(): 1},
+			nil,
+		),
+	}
+
+	nextState, _, _ := explorer.applyEffects(logr.Discard(), state, stepResult)
+
+	updatedHash, ok := nextState[key]
+	require.True(t, ok, "expected updated object to exist")
+	updated := vs.Resolve(updatedHash)
+	require.NotNil(t, updated, "expected updated object to resolve")
+	require.Equal(t, int64(7), updated.GetGeneration(), "status update must not bump generation")
+	require.Equal(t, "keep-me", updated.Object["spec"].(map[string]any)["message"], "status update must preserve spec")
+	require.Equal(t, "new", updated.Object["status"].(map[string]any)["phase"], "status update must replace status")
+}
+
+func TestApplyEffects_StatusApplyPreservesSpec(t *testing.T) {
+	store := snapshot.NewStore()
+	vs := NewVersionStore(store, nil)
+	explorer := &Explorer{versionManager: vs}
+
+	key := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "example", "obj1")
+
+	oldObj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"namespace":  "default",
+				"name":       "example",
+				"generation": int64(3),
+			},
+			"spec":   map[string]any{"message": "keep-me"},
+			"status": map[string]any{"phase": "old"},
+		},
+	}
+	oldHash := vs.Publish(oldObj)
+
+	statusOnlyObj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"namespace": "default",
+				"name":      "example",
+			},
+			"status": map[string]any{"phase": "applied"},
+		},
+	}
+	statusOnlyHash := vs.Publish(statusOnlyObj)
+
+	stepResult := &ReconcileResult{
+		Changes: Changes{
+			ObjectVersions: ObjectVersions{key: statusOnlyHash},
+			Effects: []Effect{
+				{
+					OpType:      event.APPLY,
+					Key:         key,
+					Version:     statusOnlyHash,
+					Subresource: "status",
+				},
+			},
+		},
+	}
+
+	state := StateNode{
+		Contents: NewStateSnapshot(
+			ObjectVersions{key: oldHash},
+			KindSequences{key.CanonicalGroupKind(): 1},
+			nil,
+		),
+	}
+
+	nextState, _, _ := explorer.applyEffects(logr.Discard(), state, stepResult)
+
+	updatedHash, ok := nextState[key]
+	require.True(t, ok, "expected updated object to exist")
+	updated := vs.Resolve(updatedHash)
+	require.NotNil(t, updated, "expected updated object to resolve")
+	require.Equal(t, "keep-me", updated.Object["spec"].(map[string]any)["message"], "status apply must preserve spec")
+	require.Equal(t, "applied", updated.Object["status"].(map[string]any)["phase"], "status apply must replace status")
+	require.Equal(t, int64(3), updated.GetGeneration(), "status apply must not bump generation")
+}
+
+func TestApplyEffects_StatusUpdateClearsStatusWhenIncomingObjectOmitsIt(t *testing.T) {
+	store := snapshot.NewStore()
+	vs := NewVersionStore(store, nil)
+	explorer := &Explorer{versionManager: vs}
+
+	key := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "example", "obj1")
+
+	oldObj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"namespace": "default",
+				"name":      "example",
+			},
+			"spec":   map[string]any{"message": "keep-me"},
+			"status": map[string]any{"phase": "old"},
+		},
+	}
+	oldHash := vs.Publish(oldObj)
+
+	statuslessObj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "v1",
+			"kind":       "ConfigMap",
+			"metadata": map[string]any{
+				"namespace": "default",
+				"name":      "example",
+			},
+		},
+	}
+	statuslessHash := vs.Publish(statuslessObj)
+
+	stepResult := &ReconcileResult{
+		Changes: Changes{
+			ObjectVersions: ObjectVersions{key: statuslessHash},
+			Effects: []Effect{
+				{
+					OpType:      event.UPDATE,
+					Key:         key,
+					Version:     statuslessHash,
+					Subresource: "status",
+				},
+			},
+		},
+	}
+
+	state := StateNode{
+		Contents: NewStateSnapshot(
+			ObjectVersions{key: oldHash},
+			KindSequences{key.CanonicalGroupKind(): 1},
+			nil,
+		),
+	}
+
+	nextState, _, _ := explorer.applyEffects(logr.Discard(), state, stepResult)
+
+	updatedHash, ok := nextState[key]
+	require.True(t, ok, "expected updated object to exist")
+	updated := vs.Resolve(updatedHash)
+	require.NotNil(t, updated, "expected updated object to resolve")
+	_, hasStatus := updated.Object["status"]
+	require.False(t, hasStatus, "status update without status must clear stored status")
+	require.Equal(t, "keep-me", updated.Object["spec"].(map[string]any)["message"], "status update must preserve spec")
+}
+
 // TestApplyEffects_StateEventHashMatchesContents_Create verifies that after
 // applyEffects processes a CREATE with generation 0 (which triggers a
 // generation bump and re-publish), the stateEvent records the post-modification

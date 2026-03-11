@@ -1556,6 +1556,14 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			if exists && existingKey != effect.Key {
 				delete(nextState, existingKey)
 			}
+			if effect.Subresource == "status" {
+				oldObj := e.versionManager.Resolve(oldVersion)
+				newObj := e.versionManager.Resolve(changes[effect.Key])
+				mergedObj := mergeStatusSubresourceObject(oldObj, newObj)
+				changes[effect.Key] = e.versionManager.Publish(mergedObj)
+				nextState[effect.Key] = changes[effect.Key]
+				break
+			}
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
 			oldObj := e.versionManager.Resolve(oldVersion)
 			newObj := e.versionManager.Resolve(changes[effect.Key])
@@ -1587,6 +1595,24 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			}
 			nextState[effect.Key] = changes[effect.Key]
 		case event.APPLY:
+			if effect.Subresource == "status" {
+				if !exists {
+					panic("status apply effect object not found in prev state: " + effect.Key.String())
+				}
+
+				oldVersion := nextState[existingKey]
+				if exists && existingKey != effect.Key {
+					delete(nextState, existingKey)
+				}
+
+				oldObj := e.versionManager.Resolve(oldVersion)
+				newObj := e.versionManager.Resolve(changes[effect.Key])
+				mergedObj := mergeStatusSubresourceObject(oldObj, newObj)
+				changes[effect.Key] = e.versionManager.Publish(mergedObj)
+				nextState[effect.Key] = changes[effect.Key]
+				break
+			}
+
 			// Server-side apply has upsert semantics (create if missing, update if present).
 			if !exists {
 				// Apply has upsert semantics; if the object doesn't exist, treat as CREATE.
@@ -1695,6 +1721,30 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 	}
 
 	return nextState, nextSequences, newStateEvents
+}
+
+func mergeStatusSubresourceObject(oldObj, newObj *unstructured.Unstructured) *unstructured.Unstructured {
+	if oldObj == nil {
+		panic("status subresource update missing old object")
+	}
+	if newObj == nil {
+		panic("status subresource update missing new object")
+	}
+
+	mergedObj := oldObj.DeepCopy()
+	sourceObj := newObj.DeepCopy()
+
+	status, found, err := unstructured.NestedFieldNoCopy(sourceObj.Object, "status")
+	if err != nil {
+		panic(fmt.Errorf("read status subresource: %w", err))
+	}
+	if !found {
+		delete(mergedObj.Object, "status")
+		return mergedObj
+	}
+
+	mergedObj.Object["status"] = status
+	return mergedObj
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode

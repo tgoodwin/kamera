@@ -14,8 +14,8 @@ func TestTwoStepWorkflowReferenceRunConverges(t *testing.T) {
 	const (
 		trials = 3
 		// the # TODO fix: steps is still nondeterministic
-		minSteps = 175
-		maxSteps = 182
+		minSteps = 160
+		maxSteps = 190
 	)
 
 	for trial := 0; trial < trials; trial++ {

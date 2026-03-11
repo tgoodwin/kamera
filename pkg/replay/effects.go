@@ -11,7 +11,11 @@ import (
 // Handles recording of effects (reads/writes) performed by a reconciler
 // during a simulated execution
 type EffectRecorder interface {
-	RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, precondition *PreconditionInfo) error
+	RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, precondition *PreconditionInfo, options *EffectOptions) error
+}
+
+type EffectOptions struct {
+	Subresource string
 }
 
 type DataEffect struct {
@@ -48,7 +52,7 @@ type Recorder struct {
 var _ EffectRecorder = (*Recorder)(nil)
 
 // Deprecated: This method is deprecated and will be removed in a future version.
-func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, _ *PreconditionInfo) error {
+func (r *Recorder) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, _ *PreconditionInfo, _ *EffectOptions) error {
 	reconcileID := FrameIDFromContext(ctx)
 	e, err := event.NewOperation(obj, reconcileID, r.reconcilerID, "<REPLAY>", opType)
 	if err != nil {
