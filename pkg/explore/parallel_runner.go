@@ -441,6 +441,7 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		// This intentionally favors "get end-to-end scaffolding running" over
 		// precision/attribution. Harnesses can still override with ClosedLoop.Plan.
 		referenceConfig = disablePerturbations(scenario.Config)
+		hasExplicitStaleness := len(scenario.Config.Perturbations.Staleness) > 0
 		planFn = func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
 			var plans []ScenarioPhasePlan
 			if len(scenario.UserInputs) >= 2 {
@@ -448,7 +449,14 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 			} else {
 				plans = append(plans, buildDefaultScenarioRerunPlans(reference, scenario.Config, scenario.Context)...)
 			}
-			plans = append(plans, buildStalenessPerturbationPlans(reference, scenario.Config, scenario.Context)...)
+			if hasExplicitStaleness {
+				// Workflow JSON specified targeted staleness config; honor it
+				// in a dedicated rerun phase.
+				plans = append(plans, buildExplicitStalenessPlans(reference, scenario.Config, scenario.Context)...)
+			} else {
+				// No explicit staleness; auto-derive from reference trace reads.
+				plans = append(plans, buildStalenessPerturbationPlans(reference, scenario.Config, scenario.Context)...)
+			}
 			return plans, nil
 		}
 	} else if scenario.ClosedLoop.Plan != nil {
@@ -495,6 +503,8 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 func disablePerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig {
 	// Naive baseline utility used by v1 auto closed-loop:
 	// treat reference runs as "control" by clearing all perturbation knobs.
+	// UserActionReadyDepths is preserved because it is scheduling metadata,
+	// not a perturbation that should be toggled for controlled experiments.
 	out := cfg.Clone()
 	if out.Perturbations.PermuteOrder == nil {
 		out.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
@@ -503,7 +513,9 @@ func disablePerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig
 		out.Perturbations.PermuteOrder[id] = false
 	}
 	out.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
-	out.Perturbations.UserActionReadyDepths = make(map[int]int)
+	if out.Perturbations.UserActionReadyDepths == nil {
+		out.Perturbations.UserActionReadyDepths = make(map[int]int)
+	}
 	return out
 }
 
@@ -688,6 +700,40 @@ func observedReadKindsPerController(reference ScenarioPhaseResult) map[tracechec
 		out[id] = sorted
 	}
 	return out
+}
+
+// buildExplicitStalenessPlans creates a rerun phase using the staleness config
+// from the workflow JSON directly, rather than auto-deriving from the reference
+// trace. This honors targeted staleness tuning (specific controllers, kinds,
+// and lookback values) specified by the workflow author. Ordering permutation
+// for all controllers observed in the reference is also enabled.
+func buildExplicitStalenessPlans(
+	reference ScenarioPhaseResult,
+	base tracecheck.ExploreConfig,
+	scenarioCtx ScenarioContext,
+) []ScenarioPhasePlan {
+	cfg := base.Clone()
+	// Enable ordering permutation for all controllers observed in the reference.
+	seenControllers := observedControllersInReference(reference)
+	if cfg.Perturbations.PermuteOrder == nil {
+		cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+	}
+	for _, controllerID := range seenControllers {
+		if controllerID == "" || controllerID == tracecheck.UserControllerID {
+			continue
+		}
+		cfg.Perturbations.PermuteOrder[controllerID] = true
+	}
+	// Staleness config is already set from applyInputTuning via scenario.Config.
+
+	rerunContext := scenarioCtx
+	return []ScenarioPhasePlan{
+		{
+			Name:    "rerun",
+			Config:  cfg,
+			Context: &rerunContext,
+		},
+	}
 }
 
 func buildStalenessPerturbationPlans(
