@@ -1745,15 +1745,21 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		return tolerableErrResult, nil
 	}
 	if err != nil {
-		// Other errors cause the branch to be abandoned. Return a minimal result for history tracking.
-		stepLog.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")
-		failure := &ReconcileResult{
+		// Reconciler errors in real Kubernetes cause a requeue with backoff -- the
+		// reconciler will retry once other controllers advance the state. Treat
+		// the error as a no-op (no state change) and re-enqueue the reconciler so
+		// exploration continues through other pending reconciles.
+		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).
+			Info("tolerating reconcile error; treating as no-op with re-enqueue")
+		tolerableErrResult := &ReconcileResult{
 			ControllerID: pr.ReconcilerID,
 			FrameID:      frameID,
 			FrameType:    FrameTypeExplore,
+			Changes:      Changes{ObjectVersions: make(ObjectVersions)},
 			Error:        err.Error(),
+			ReenqueueRequest: &pr,
 		}
-		return failure, err
+		return tolerableErrResult, nil
 	}
 
 	return reconcileResult, nil
@@ -2102,6 +2108,17 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 			Request:      consumed.Request,
 			Source:       source,
 			ReadyAtDepth: readyAtDepth,
+		}
+		triggeredByChanges = append(triggeredByChanges, requeued)
+	}
+
+	// If the reconciler errored and requested re-enqueue, add it back so it can
+	// retry after other controllers have had a chance to advance the state.
+	if result.ReenqueueRequest != nil {
+		requeued := PendingReconcile{
+			ReconcilerID: result.ReenqueueRequest.ReconcilerID,
+			Request:      result.ReenqueueRequest.Request,
+			Source:       SourceRequeue,
 		}
 		triggeredByChanges = append(triggeredByChanges, requeued)
 	}

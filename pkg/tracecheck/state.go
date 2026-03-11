@@ -102,6 +102,12 @@ type ReconcileResult struct {
 	// Only populated when the controller observed a stale view.
 	StalenessInfo []StaleReadInfo `json:"stalenessInfo,omitempty"`
 
+	// ReenqueueRequest, when non-nil, causes the reconciler to be re-enqueued
+	// after the step completes. Used to model controller-runtime's error-driven
+	// requeue behavior: the reconciler errored, but exploration should continue
+	// through other pending reconciles before retrying.
+	ReenqueueRequest *PendingReconcile `json:"-"`
+
 	ctrlRes reconcile.Result
 }
 
