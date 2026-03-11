@@ -14,6 +14,8 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -161,6 +163,12 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 		return fmt.Errorf("frame %s not found", frameID)
 	}
 
+	// Extract list options for filtering.
+	listOpts := &client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(listOpts)
+	}
+
 	itemsValue := reflect.ValueOf(list).Elem().FieldByName("Items")
 	if !itemsValue.IsValid() {
 		return fmt.Errorf("List object does not have Items field")
@@ -181,6 +189,21 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 	}
 
 	for _, obj := range objsForKind {
+		// Namespace filter.
+		if listOpts.Namespace != "" && obj.GetNamespace() != listOpts.Namespace {
+			continue
+		}
+		// Label selector filter.
+		if listOpts.LabelSelector != nil && !listOpts.LabelSelector.Matches(labels.Set(obj.GetLabels())) {
+			continue
+		}
+		// Field selector filter.
+		if listOpts.FieldSelector != nil && !listOpts.FieldSelector.Empty() {
+			if !matchesFieldSelector(obj, listOpts.FieldSelector) {
+				continue
+			}
+		}
+
 		if err := c.handleEffect(ctx, obj, event.LIST, nil); err != nil {
 			return err
 		}
@@ -195,6 +218,30 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 
 	itemsValue.Set(newSlice)
 	return nil
+}
+
+// matchesFieldSelector checks whether an unstructured object satisfies the
+// given field selector. It extracts only the fields referenced by the
+// selector's requirements, using dot-separated paths to navigate the nested
+// object map (e.g. "spec.providerID", "status.providerID").
+func matchesFieldSelector(obj *unstructured.Unstructured, sel fields.Selector) bool {
+	fs := fields.Set{
+		"metadata.name":      obj.GetName(),
+		"metadata.namespace": obj.GetNamespace(),
+	}
+	for _, req := range sel.Requirements() {
+		if _, ok := fs[req.Field]; ok {
+			continue // already populated
+		}
+		parts := strings.Split(req.Field, ".")
+		val, found, _ := unstructured.NestedFieldNoCopy(obj.Object, parts...)
+		if found {
+			if s, ok := val.(string); ok {
+				fs[req.Field] = s
+			}
+		}
+	}
+	return sel.Matches(fs)
 }
 
 // TODO create or set an ObjectID here
