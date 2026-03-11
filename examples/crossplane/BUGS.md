@@ -2,8 +2,6 @@
 
 ## 1. CompositionRevision reconciler performs unconditional status writes
 
-**Severity:** Medium — causes infinite reconcile loop masked by rate limiting in production
-
 **Controller:** `revision/reconciler.go` (`CompositionRevisionReconciler`)
 
 **Version:** crossplane v2.1.0
