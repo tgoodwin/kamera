@@ -179,6 +179,22 @@ lifecycle := analysis.AnalyzeObjectLifecycle(dump, stateIdx, pathIdx, key, targe
 4. **Use Go API** to compare StateBefore across paths - this reveals what each controller saw when it made its write
 5. **Check lifecycle** if needed - does the differing hash appear earlier in one path but not another?
 
+## Scenario Run Tuning
+
+After every scenario run, **always** run `campaign-metrics` to check convergence:
+```bash
+go run ./cmd/kamera analyze campaign-metrics <dump.jsonl>
+```
+This shows the true breakdown of converged vs aborted states. Do NOT rely on `analyze diff` alone — it treats aborted (max-depth) states as converged, which produces misleading "divergence" results. The `campaign-metrics` output distinguishes `aborted states` from `max-depth aborted states` and actual converged states.
+
+If **all** states are max-depth aborted (i.e., zero truly converged states), the `maxDepth` is too low for the scenario. In that case:
+
+1. Double the `maxDepth` value (2x the current setting).
+2. Re-run the scenario with the increased depth.
+3. If the scenario is still not converging after doubling 2 or 3 times, inspect the executions to diagnose what's going on.
+
+This applies to both reference and rerun phases. A run where every path hits max depth produces no converged states and therefore no usable divergence analysis.
+
 ## Dependency Graph Analysis (pkg/analyze)
 
 The `pkg/analyze` package (and associated `cmd/analyze` tool) relies on static dependency graphs of Kubernetes operators to identify interaction hotspots.
