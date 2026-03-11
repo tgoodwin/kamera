@@ -271,9 +271,26 @@ type StateNode struct {
 	// tracks what KindSequences a controller may be "stuck" on
 	// e.g. if a controller's watches are connected to a partitioned APIServer
 	stuckReconcilerPositions map[ReconcilerID]KindSequences
+
+	// stalenessIntervals carries immutable interval config from ExploreConfig.
+	// When non-nil, ObserveAs uses interval evaluation instead of stuckReconcilerPositions.
+	stalenessIntervals []StalenessInterval
 }
 
 func (sn StateNode) ObserveAs(reconcilerID ReconcilerID) ObjectVersions {
+	// Interval-based staleness takes precedence when configured.
+	if len(sn.stalenessIntervals) > 0 {
+		staleSeqs := sn.evaluateStalenessIntervals(reconcilerID)
+		if len(staleSeqs) == 0 {
+			return sn.Contents.All()
+		}
+		kindSequences := maps.Clone(sn.Contents.KindSequences)
+		for k, seq := range staleSeqs {
+			kindSequences[k] = seq
+		}
+		return sn.Contents.ObserveAt(kindSequences)
+	}
+
 	if sn.stuckReconcilerPositions == nil {
 		return sn.Contents.All()
 	}
@@ -286,6 +303,37 @@ func (sn StateNode) ObserveAs(reconcilerID ReconcilerID) ObjectVersions {
 		return sn.Contents.ObserveAt(kindSequences)
 	}
 	return sn.Contents.All()
+}
+
+// evaluateStalenessIntervals returns stale KindSequences for the given reconciler
+// based on configured staleness intervals and the current frontier sequences.
+func (sn StateNode) evaluateStalenessIntervals(reconcilerID ReconcilerID) KindSequences {
+	if len(sn.stalenessIntervals) == 0 {
+		return nil
+	}
+	var result KindSequences
+	for _, interval := range sn.stalenessIntervals {
+		if interval.ReconcilerID != reconcilerID {
+			continue
+		}
+		frontier := sn.Contents.KindSequences[interval.Kind]
+		if frontier < interval.StaleAt || frontier >= interval.CatchUpAt {
+			continue // not in stale window
+		}
+		if result == nil {
+			result = make(KindSequences)
+		}
+		if interval.Lag == -1 {
+			result[interval.Kind] = interval.StaleAt
+		} else {
+			staleSeq := frontier - interval.Lag
+			if staleSeq < interval.StaleAt {
+				staleSeq = interval.StaleAt
+			}
+			result[interval.Kind] = staleSeq
+		}
+	}
+	return result
 }
 
 func (sn StateNode) DumpPending() {
@@ -367,6 +415,7 @@ func (sn StateNode) Clone() StateNode {
 		divergenceKey:     sn.divergenceKey,
 
 		stuckReconcilerPositions: maps.Clone(sn.stuckReconcilerPositions),
+		stalenessIntervals:       sn.stalenessIntervals, // immutable config, share reference
 	}
 }
 

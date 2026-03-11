@@ -39,6 +39,16 @@ type EffectContextManager interface {
 	CleanupEffectContext(ctx context.Context)
 }
 
+// StalenessInterval defines a window during which a reconciler's view
+// of a specific resource kind lags behind the actual cluster state.
+type StalenessInterval struct {
+	ReconcilerID ReconcilerID `json:"reconciler"`
+	Kind         string       `json:"kind"`  // canonical group/kind
+	StaleAt      int64        `json:"staleAt"`
+	CatchUpAt    int64        `json:"catchUpAt"`
+	Lag          int64        `json:"lag"` // how far behind frontier; -1 = frozen at StaleAt sequence
+}
+
 type PerturbationConfig struct {
 	PermuteOrder map[ReconcilerID]bool
 	Staleness    map[ReconcilerID]StalenessConfig
@@ -47,6 +57,11 @@ type PerturbationConfig struct {
 	// triggered reactively by prior controller output, so the explorer needs an
 	// explicit depth-based scheduler for them.
 	UserActionReadyDepths map[int]int
+
+	// StalenessIntervals defines declarative windows during which a reconciler's
+	// view of a specific resource kind lags behind actual cluster state. When
+	// configured, this replaces the per-step branching approach of the Staleness map.
+	StalenessIntervals []StalenessInterval `json:"stalenessIntervals,omitempty"`
 }
 
 type StalenessConfig struct {
@@ -159,6 +174,7 @@ func (cfg ExploreConfig) Clone() ExploreConfig {
 		copied.StaleReadBounds = maps.Clone(st.StaleReadBounds)
 		out.Perturbations.Staleness[id] = copied
 	}
+	out.Perturbations.StalenessIntervals = slices.Clone(cfg.Perturbations.StalenessIntervals)
 	return out
 }
 
@@ -569,6 +585,12 @@ func (e *Explorer) enqueueState(queue []StateNode, state StateNode) []StateNode 
 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
 	logger.Info("starting!")
+
+	// Stamp interval-based staleness config onto the initial state so it
+	// propagates to all descendant states via materializeNextState.
+	if len(e.Config.Perturbations.StalenessIntervals) > 0 {
+		initialState.stalenessIntervals = e.Config.Perturbations.StalenessIntervals
+	}
 
 	exploreCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -1376,9 +1398,13 @@ func (e *Explorer) materializeNextState(
 	stepResult.KindSeqBefore = maps.Clone(stateView.Contents.KindSequences)
 
 	// Compute staleness info when the controller observed a stale view.
-	if consumed != nil && stateView.stuckReconcilerPositions != nil {
-		if stuckSeqs, stuck := stateView.stuckReconcilerPositions[consumed.ReconcilerID]; stuck {
-			stepResult.StalenessInfo = e.computeStalenessInfo(stateView, consumed.ReconcilerID, stuckSeqs)
+	if consumed != nil {
+		if staleSeqs := stateView.evaluateStalenessIntervals(consumed.ReconcilerID); len(staleSeqs) > 0 {
+			stepResult.StalenessInfo = e.computeStalenessInfo(stateView, consumed.ReconcilerID, staleSeqs)
+		} else if stateView.stuckReconcilerPositions != nil {
+			if stuckSeqs, stuck := stateView.stuckReconcilerPositions[consumed.ReconcilerID]; stuck {
+				stepResult.StalenessInfo = e.computeStalenessInfo(stateView, consumed.ReconcilerID, stuckSeqs)
+			}
 		}
 	}
 
@@ -1403,6 +1429,7 @@ func (e *Explorer) materializeNextState(
 		action:                   stepResult,
 		divergenceKey:            stateView.divergenceKey,
 		stuckReconcilerPositions: maps.Clone(stateView.stuckReconcilerPositions),
+		stalenessIntervals:       stateView.stalenessIntervals, // immutable config, share reference
 		ExecutionHistory:         append(slices.Clone(stateView.ExecutionHistory), stepResult),
 		nextUserActionIdx:        nextUserActionIdx,
 	}
@@ -1914,6 +1941,12 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 }
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID ReconcilerID, currDepth int) ([]StateNode, error) {
+	// When interval-based staleness is configured, staleness is deterministic
+	// (handled transparently by ObserveAs) — no branching needed.
+	if len(e.Config.Perturbations.StalenessIntervals) > 0 {
+		return []StateNode{currState}, nil
+	}
+
 	currSnapshot := currState.Contents
 	config, ok := e.Config.Perturbations.Staleness[reconcilerID]
 	if !ok {
@@ -2067,10 +2100,28 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 		).V(1).Info("reconcilers triggered by changes")
 	}
 
-	// for those that would have been triggered but have been configured as "stuck",
-	// filter them out of the triggered list if the changes are contained within the
-	// kinds their watch streams are "stuck" on.
-	if state.stuckReconcilerPositions != nil {
+	// For interval-based staleness: filter out triggers for kinds the reconciler
+	// is currently stale on (its informer hasn't seen those changes yet).
+	if len(state.stalenessIntervals) > 0 {
+		filtered := lo.Filter(triggeredByChanges, func(pending PendingReconcile, _ int) bool {
+			staleSeqs := state.evaluateStalenessIntervals(pending.ReconcilerID)
+			if len(staleSeqs) == 0 {
+				return true // not in any stale window
+			}
+			resourceDeps, _ := e.triggerManager.KindDepsForReconciler(pending.ReconcilerID)
+			for changeKey := range result.Changes.ObjectVersions {
+				canonicalKind := util.CanonicalGroupKind(changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind)
+				if _, staleOnKind := staleSeqs[canonicalKind]; !staleOnKind {
+					if slices.Contains(resourceDeps, canonicalKind) {
+						return true
+					}
+				}
+			}
+			return false
+		})
+		triggeredByChanges = filtered
+	} else if state.stuckReconcilerPositions != nil {
+		// Legacy stuck-reconciler filtering for non-interval staleness.
 		filtered := lo.Filter(triggeredByChanges, func(pending PendingReconcile, _ int) bool {
 			stuckKinds, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]
 			if !stuck {
