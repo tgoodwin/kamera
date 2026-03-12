@@ -25,13 +25,23 @@ type UserInput struct {
 	Object *unstructured.Unstructured `json:"object"`
 }
 
+// InputStalenessInterval is the JSON-facing staleness interval configuration.
+type InputStalenessInterval struct {
+	Reconciler string `json:"reconciler"`
+	Kind       string `json:"kind"`
+	StaleAt    int64  `json:"staleAt"`
+	CatchUpAt  int64  `json:"catchUpAt"`
+	Lag        int64  `json:"lag"`
+}
+
 // InputTuning carries compact hints for later ExploreConfig construction.
 type InputTuning struct {
-	MaxDepth           int                 `json:"maxDepth"`
-	PermuteControllers []string            `json:"permuteControllers"`
-	StaleReads         map[string][]string `json:"staleReads"`
-	StaleLookback      map[string]int      `json:"staleLookback"`
-	Search             InputSearchTuning   `json:"search"`
+	MaxDepth           int                      `json:"maxDepth"`
+	PermuteControllers []string                 `json:"permuteControllers"`
+	StaleReads         map[string][]string      `json:"staleReads"`
+	StaleLookback      map[string]int           `json:"staleLookback"`
+	StalenessIntervals []InputStalenessInterval `json:"stalenessIntervals"`
+	Search             InputSearchTuning        `json:"search"`
 }
 
 // InputSearchTuning carries optional per-input search-mode overrides.
