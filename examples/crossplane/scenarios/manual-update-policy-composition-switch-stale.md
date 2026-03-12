@@ -121,3 +121,75 @@ if current != nil && pol != nil && *pol == xpv1.UpdateManual {
     return rev, nil
 }
 ```
+
+## Re-run (2026-03-11)
+
+### What was run
+
+```bash
+# Non-stale variant
+cd /Users/tgoodwin/projects/kamera/examples/crossplane
+go run . -inputs workflow_crossplane-policy_manual-update-policy-composition-switch.json \
+  -interactive=false -log-level=info \
+  -output=/tmp/rerun-manual-policy-clean-v2
+
+# Stale variant
+go run . -inputs workflow_crossplane-policy_manual-update-policy-composition-switch-stale.json \
+  -interactive=false -log-level=info \
+  -output=/tmp/rerun-manual-policy-stale
+```
+
+### Campaign metrics
+
+**Non-stale variant -- reference run:**
+```
+  unique node visits:        11
+  total node visits:         11
+  unique resource states:    8
+  aborted states:            1
+  max-depth aborted states:  1
+```
+
+**Non-stale variant -- rerun:**
+```
+  unique node visits:        1,888
+  total node visits:         2,023
+  unique resource states:    86
+  aborted states:            317
+  max-depth aborted states:  317
+```
+
+**Stale variant (single combined output):**
+```
+  unique node visits:        1,895
+  total node visits:         2,028
+  unique resource states:    86
+  aborted states:            311
+  max-depth aborted states:  311
+```
+
+### Answers to key questions
+
+1. **Did the reference run converge?** No (non-stale reference cycles with 11 unique nodes at default depth).
+2. **Did the reference run hit max depth?** Yes -- cycling.
+3. **Did the perturbed runs converge?** No. Non-stale rerun: 317 max-depth aborts. Stale variant: 311 max-depth aborts.
+4. **Did the perturbed runs hit max depth?** Yes -- all terminal states are max-depth aborts.
+5. **Are there multiple distinct converged states?** N/A -- no states converged.
+6. **How do the campaign-metrics compare?** Non-stale and stale variants are nearly identical: ~1,890 unique nodes, 86 resource states, ~310 aborted states. The staleness perturbation adds only marginal additional state space (7 more unique nodes, 6 fewer aborts). This confirms the earlier conclusion that staleness amplification is minimal for the Manual policy path because it uses exact-name Get rather than List.
+
+### What changed vs previous conclusions
+
+Previously:
+- **Non-stale variant:** 3 distinct states, first reconcile succeeded (demonstrating the P0 bug), second reconcile failed due to harness status subresource issue.
+- **Stale variant:** ALL branches aborted at depth 0 with ownerReference UID mismatch.
+
+Now:
+- **Non-stale variant:** Massively expanded exploration (1,888 unique nodes vs 3). The status subresource issue is fixed (commit `af250b25`), allowing thousands of state transitions. All paths still cycle due to the unconditional `Status().Update()` bug.
+- **Stale variant:** Now fully functional (1,895 unique nodes vs 0). Commit `d2935ba9` (auto-fixup ownerReference UIDs) resolved the depth-0 abort. The exploration matches the non-stale variant closely, confirming that staleness has minimal impact on the Manual policy path.
+
+### Previously-reported issues resolved by recent commits
+
+- **Issue 2 (OwnerReference UID mismatch):** Fully resolved by commit `d2935ba9`. The stale variant now runs to completion without UID errors.
+- **Issue 1 (Status subresource updates replace entire object):** Resolved by commit `af250b25`. The second reconcile no longer fails due to spec stripping. Exploration now proceeds through thousands of states.
+- **The P0 cross-reference inconsistency bug is unchanged.** Both variants still show "Successfully composed resources" using alpha's revision while `compositionRef` points to beta.
+- **Staleness amplification confirmed as minimal** for Manual policy -- the stale and non-stale variants produce nearly identical state spaces.

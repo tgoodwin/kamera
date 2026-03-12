@@ -125,3 +125,138 @@ if err := f.client.Get(ctx, ref, comp); err != nil {
     return nil, errors.Wrap(err, errGetComposition)
 }
 ```
+
+## Re-run (2026-03-11)
+
+### What was run
+
+```bash
+cd /Users/tgoodwin/projects/kamera/examples/crossplane
+go run . -inputs workflow_crossplane-deletion_composition-deleted-while-xr-bound.json \
+  -interactive=false -log-level=info -depth 40 \
+  -output=/tmp/rerun-composition-deleted
+```
+
+Ran at depth 10 (default), 20, and 40 to rule out max-depth issues.
+
+### Campaign metrics
+
+**Reference run:**
+```
+  unique node visits:        15
+  total node visits:         41
+  unique resource states:    6
+  aborted states:            1
+  max-depth aborted states:  1
+```
+
+**Rerun (staleness perturbations):**
+```
+  unique node visits:        115
+  total node visits:         212
+  unique resource states:    16
+  aborted states:            3
+  max-depth aborted states:  3
+```
+
+### Answers to key questions
+
+1. **Did the reference run converge?** No. It hit max depth even at depth=40 with only 15 unique nodes, indicating an infinite cycle.
+2. **Did the reference run hit max depth?** Yes -- the exploration cycles and never reaches a fixed point. Increasing depth from 10 to 20 to 40 did not help (same 15 unique nodes, just more total visits).
+3. **Did the perturbed runs converge?** No. All 3 terminal states are max-depth aborts.
+4. **Did the perturbed runs hit max depth?** Yes -- same cycling behavior with 115 unique nodes explored.
+5. **Are there multiple distinct converged states?** N/A -- no states converged.
+6. **How do the campaign-metrics compare?** The rerun explores significantly more state space (115 unique nodes vs 15) due to staleness perturbation combinations, but both ultimately cycle.
+
+### What changed vs previous conclusions
+
+Previously, both reference and rerun converged to the same state (`qjpgnp1v`) at depth ~3. The CompositeReconciler never fired because it was only triggered by XWidget changes.
+
+Now, due to recent Kamera commits (particularly `38ff304d` -- tolerate reconciler errors as no-ops with re-enqueue, and broader harness fixes in `c968dd97`), the **CompositeReconciler now fires** and its error is tolerated and re-enqueued. This creates an infinite cycle:
+
+1. CompositeReconciler runs, tries to fetch the deleted Composition, gets an error
+2. Error is tolerated as no-op, CompositeReconciler is re-enqueued
+3. On re-enqueue, it hits the same error again
+4. This repeats forever, never converging
+
+This is actually a **more accurate model of production behavior** -- in real Crossplane, the CompositeReconciler would indeed enter an infinite error-retry loop when its Composition is deleted. The previous analysis noted this as a "harness limitation" that the CompositeReconciler never fired. That limitation is now resolved, and the infinite loop confirms the original bug hypothesis: the orphaned `compositionRef` with no recovery path causes permanent error cycling.
+
+### Previously-reported issues resolved by recent commits
+
+- **Harness limitation (CompositeReconciler never fires):** Resolved by `c968dd97` (harness fixes) and `38ff304d` (error tolerance). The CompositeReconciler now participates in exploration.
+- The original **bug hypothesis (orphaned compositionRef)** is now **directly confirmed** by the infinite cycle -- Kamera shows the system never converges because the reconciler cannot recover from the deleted Composition reference.
+
+## Re-run (2026-03-12, depth=100)
+
+### What was run
+
+```bash
+cd /Users/tgoodwin/projects/kamera/examples/crossplane
+go run . -inputs scenarios/workflow_crossplane-deletion_composition-deleted-while-xr-bound.json \
+  -interactive=false -log-level=info \
+  -output=/tmp/depth100-composition-deleted
+```
+
+Ran at depth 100 (default), then 200, then 400 to confirm cycling behavior.
+
+### Campaign metrics
+
+**Depth 100:**
+```
+invocation: 33b71c12-6602-4e00-a11d-08ebdb4aae51
+  unique node visits:        15
+  total node visits:         101
+  unique resource states:    6
+  duration:                  0s
+  aborted states:            1
+  max-depth aborted states:  1
+```
+
+**Depth 200:**
+```
+invocation: dcd46070-8035-43f1-8c56-98400d690694
+  unique node visits:        15
+  total node visits:         201
+  unique resource states:    6
+  duration:                  0s
+  aborted states:            1
+  max-depth aborted states:  1
+```
+
+**Depth 400:**
+```
+invocation: 64fd1a78-1756-4f5b-a1ca-f710d0be59f1
+  unique node visits:        15
+  total node visits:         401
+  unique resource states:    6
+  duration:                  1s
+  aborted states:            1
+  max-depth aborted states:  1
+```
+
+### Answers to key questions
+
+1. **Did the reference run converge?** No. The exploration cycles indefinitely through 15 unique nodes and 6 unique resource states.
+2. **Did the reference run hit max depth?** Yes -- at depth 100, 200, and 400. The unique node count stays fixed at 15 regardless of depth, confirming a finite cycle.
+3. **Did the perturbed run(s) converge?** N/A -- only 1 invocation was produced (combined reference+rerun). It did not converge.
+4. **Did the perturbed runs hit max depth?** Yes.
+5. **Are there multiple distinct converged states?** No -- zero converged states at any depth.
+6. **How do the campaign-metrics compare between reference and perturbed runs?** Only one invocation produced. The metrics are identical across all depths except total node visits (which scales linearly with depth).
+
+### Comparison with previous runs
+
+| Metric | Original | 2026-03-11 (depth=40) Ref | 2026-03-11 (depth=40) Rerun | 2026-03-12 (depth=100) |
+|--------|----------|---------------------------|-----------------------------|-----------------------|
+| Unique node visits | 4-6 | 15 | 115 | 15 |
+| Total node visits | 4-7 | 41 | 212 | 101 |
+| Unique resource states | 3 | 6 | 16 | 6 |
+| Converged states | 1 | 0 | 0 | 0 |
+| Max-depth aborted | 0 | 1 | 3 | 1 |
+
+The deeper exploration (depth 100-400) confirms the findings from the 2026-03-11 re-run. The system enters a finite cycle of 15 unique nodes among 6 resource states and never converges. Increasing depth from 40 to 400 does not help -- the cycle is structural.
+
+Note that in this run, only a single invocation was produced (the reference and rerun appear combined), whereas the 2026-03-11 run produced separate reference and rerun invocations with different exploration breadth. The staleness perturbation in the 2026-03-11 rerun explored more states (115 unique nodes, 16 resource states) but also failed to converge.
+
+### Updated conclusions
+
+The **orphaned compositionRef bug** is robustly confirmed. The infinite reconciliation loop is a genuine production behavior: after Composition deletion, the CompositeReconciler enters an error-retry cycle that never self-heals. The depth-100+ exploration adds no new information beyond confirming the cycle is finite and structural. The original bug analysis and proposed fixes remain valid.

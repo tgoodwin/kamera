@@ -90,3 +90,72 @@ No new Crossplane bug was found in this scenario. The target divergence cannot m
 1. Fix `buildStartStateFromObjects` to automatically patch ownerReference UIDs after assigning deterministic identity
 2. Treat transient reconcile errors (like pipeline-not-yet-validated) as tolerable/retriable rather than branch-terminating
 3. Consider per-invocation staleness (rather than per-reconciler) to model informer cache updates between reconcile invocations
+
+## Re-run (2026-03-11)
+
+### What was run
+
+```bash
+cd /Users/tgoodwin/projects/kamera/examples/crossplane
+go run . -inputs workflow_crossplane-concurrency_two-xrs-shared-composition-update.json \
+  -interactive=false -log-level=info -depth 30 \
+  -output=/tmp/rerun-two-xrs-shared
+```
+
+Ran at depth 10, 20, and 30 to check convergence trends.
+
+### Campaign metrics
+
+**Reference run (depth=30):**
+```
+  unique node visits:        19
+  total node visits:         31
+  unique resource states:    9
+  aborted states:            1
+  max-depth aborted states:  1
+```
+
+**Rerun (depth=30):**
+```
+  unique node visits:        536
+  total node visits:         669
+  unique resource states:    66
+  aborted states:            6
+  max-depth aborted states:  6
+```
+
+**Depth progression (rerun):**
+
+| Depth | Unique nodes | Total visits | Aborted states | Resource states |
+|-------|-------------|--------------|----------------|-----------------|
+| 10    | 516         | 564          | 36             | 66              |
+| 20    | 536         | 609          | 6              | 66              |
+| 30    | 536         | 669          | 6              | 66              |
+
+### Answers to key questions
+
+1. **Did the reference run converge?** No. It cycles (19 unique nodes at depth=20 and depth=30; total visits grow linearly).
+2. **Did the reference run hit max depth?** Yes -- pure cycle. Unique nodes plateau at 19.
+3. **Did the perturbed runs converge?** No. All 6 terminal states are max-depth aborts.
+4. **Did the perturbed runs hit max depth?** Yes. Unique nodes plateau at 536 between depth=20 and depth=30, confirming all state space is explored but no path converges.
+5. **Are there multiple distinct converged states?** N/A -- no states converged.
+6. **How do the campaign-metrics compare?** Rerun explores significantly more state space (536 vs 19 unique nodes, 66 vs 9 resource states) due to controller permutations and staleness. Previous run had 414 unique nodes; now 536 with better harness support.
+
+### What changed vs previous conclusions
+
+Previously: 414 unique nodes, 0 converged. 68% pipeline-unknown errors, 32% max-depth. The pipeline-unknown errors blocked exploration of post-validation behavior.
+
+Now with recent commits:
+- **Commit `38ff304d` (tolerate reconciler errors):** All 40 pipeline-unknown errors from before are now tolerated and re-enqueued. This allows the exploration to proceed past the validation race. The 68% of branches that previously terminated at "pipeline status unknown" now continue exploring. This is a major improvement.
+- **Commit `d2935ba9` (auto-fixup ownerReference UIDs):** The manual UID fix in the workflow JSON is no longer needed. The harness automatically patches ownerReference UIDs.
+- **State space growth:** 516->536 unique nodes (vs 414 before), 66 resource states (same as before). The additional nodes come from error-tolerance paths that were previously dead ends.
+- **All paths now cycle** due to the unconditional `Status().Update()` bug in CompositionRevisionReconciler creating infinite resource version increments.
+
+**The original assessment remains valid:** No new Crossplane bug found beyond the known issues (pipeline validation race, unconditional status writes). The divergence hypothesis cannot manifest under the per-reconciler staleness model. Both XRs always see the same stale/fresh view of CompositionRevisions within a given branch.
+
+### Previously-reported issues resolved by recent commits
+
+- **Improvement #1 (auto-fix ownerReference UIDs):** Fully resolved by commit `d2935ba9`. No manual UID computation needed.
+- **Improvement #2 (tolerate transient errors):** Fully resolved by commit `38ff304d`. Pipeline-unknown errors are now re-enqueued, enabling exploration past the validation race. This was the main blocker for this scenario.
+- **Improvement #3 (per-invocation staleness):** Not addressed by recent commits. This would require a deeper architectural change to the staleness model.
+- **The unconditional Status().Update() bug (Bug #1)** remains the dominant cause of non-convergence across all paths.

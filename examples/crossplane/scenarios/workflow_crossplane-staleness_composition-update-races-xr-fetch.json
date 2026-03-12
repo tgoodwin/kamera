@@ -109,7 +109,7 @@
       ]
     },
     "tuning": {
-      "maxDepth": 100,
+      "maxDepth": 200,
       "permuteControllers": [
         "CompositeReconciler",
         "CompositionReconciler"

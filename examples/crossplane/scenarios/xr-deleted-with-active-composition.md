@@ -119,3 +119,120 @@ Additionally, `applyInputTuning` constructs `StalenessConfig` without setting `M
 - Read Crossplane CompositeReconciler source code at `/Users/tgoodwin/go/pkg/mod/github.com/crossplane/crossplane/v2@v2.1.0/internal/controller/apiextensions/composite/reconciler.go`
 - Traced the Kamera staleness mechanism through `explore.go`, `staleness.go`, and `parallel_runner.go`
 - Confirmed nonconvergence signal: Total States growing unboundedly while Resource States remains constant
+
+## Re-run (2026-03-11)
+
+### What was run
+
+```bash
+cd /Users/tgoodwin/projects/kamera/examples/crossplane
+go run . -inputs workflow_crossplane-deletion_xr-deleted-with-active-composition.json \
+  -interactive=false -log-level=info -depth 20 \
+  -output=/tmp/rerun-xr-deleted
+```
+
+Ran at depth 10 (default) and 20. Both show the same cycling pattern.
+
+### Campaign metrics
+
+**Reference run (depth=20):**
+```
+  unique node visits:        15
+  total node visits:         21
+  unique resource states:    6
+  aborted states:            1
+  max-depth aborted states:  1
+```
+
+**Rerun (depth=20):**
+```
+  unique node visits:        115
+  total node visits:         152
+  unique resource states:    16
+  aborted states:            3
+  max-depth aborted states:  3
+```
+
+### Answers to key questions
+
+1. **Did the reference run converge?** No. It cycles infinitely, hitting max depth at both depth=10 and depth=20 with the same unique node count (15).
+2. **Did the reference run hit max depth?** Yes -- cycling due to unconditional `Status().Update()` on the deletion path.
+3. **Did the perturbed runs converge?** No. All 3 terminal states are max-depth aborts.
+4. **Did the perturbed runs hit max depth?** Yes -- same cycling pattern, 115 unique nodes.
+5. **Are there multiple distinct converged states?** N/A -- no states converged.
+6. **How do the campaign-metrics compare?** Rerun explores more state space (115 vs 15 unique nodes) but both cycle indefinitely.
+
+### What changed vs previous conclusions
+
+Previously, the reference run converged (4 unique nodes, 3 resource states) and the rerun also converged (7 unique nodes, 4 resource states). The unconditional `Status().Update()` on the deletion path was identified but convergence was still reached because the cycle was bounded.
+
+Now, with commit `38ff304d` (tolerate reconciler errors as no-ops with re-enqueue) and `c968dd97` (harness fixes), the CompositeReconciler is more actively participating. The `Status().Update()` on the deletion path triggers re-enqueues that create a genuine infinite cycle. The system never reaches a quiescent state because every status write triggers another reconcile.
+
+This is consistent with the original Finding 1 about the unconditional `Status().Update()` -- the cycle was always present, but previously the harness terminated it early. Now the harness more faithfully models the production behavior where this cycle would continue (dampened only by rate limiting).
+
+### Previously-reported issues resolved by recent commits
+
+- **Finding 2 (stale-read tuning never applied):** Commit `96729574` (honor workflow JSON staleness config in rerun phase) was expected to fix this. However, the current run does not produce a separate staleness phase, so validating this fix requires checking whether the staleness config is actually being applied in the rerun phase. The rerun does show 115 unique nodes (vs 7 before), suggesting more perturbation combinations are being explored.
+- **Finding 1 (unconditional Status().Update):** Still present and now more impactful -- it causes infinite cycling rather than bounded extra work.
+
+## Re-run (2026-03-12, depth=100)
+
+### What was run
+
+```bash
+cd /Users/tgoodwin/projects/kamera/examples/crossplane
+go run . -inputs scenarios/workflow_crossplane-deletion_xr-deleted-with-active-composition.json \
+  -interactive=false -log-level=info \
+  -output=/tmp/depth100-xr-deleted
+```
+
+Ran at depth 100 (default), then depth 400 to confirm cycling.
+
+### Campaign metrics
+
+**Depth 100:**
+```
+invocation: 65313059-d3b1-45f6-9717-0a0dc4818682
+  unique node visits:        15
+  total node visits:         101
+  unique resource states:    6
+  duration:                  0s
+  aborted states:            1
+  max-depth aborted states:  1
+```
+
+**Depth 400:**
+```
+invocation: 3715a47d-642c-41fc-b90b-d81ea61b3f43
+  unique node visits:        15
+  total node visits:         401
+  unique resource states:    6
+  duration:                  1s
+  aborted states:            1
+  max-depth aborted states:  1
+```
+
+### Answers to key questions
+
+1. **Did the reference run converge?** No. Cycles indefinitely through 15 unique nodes and 6 resource states.
+2. **Did the reference run hit max depth?** Yes -- at depth 100 and 400. Unique node count stays fixed at 15.
+3. **Did the perturbed run(s) converge?** N/A -- single combined invocation, no convergence.
+4. **Did the perturbed runs hit max depth?** Yes.
+5. **Are there multiple distinct converged states?** No -- zero converged states.
+6. **How do the campaign-metrics compare?** Only one invocation produced. Metrics identical across depths except total visits.
+
+### Comparison with previous runs
+
+| Metric | Original Ref | Original Rerun | 2026-03-11 Ref (d=20) | 2026-03-11 Rerun (d=20) | 2026-03-12 (d=100) |
+|--------|-------------|---------------|----------------------|------------------------|---------------------|
+| Unique node visits | 4 | 7 | 15 | 115 | 15 |
+| Total node visits | 4 | 9 | 21 | 152 | 101 |
+| Unique resource states | 3 | 4 | 6 | 16 | 6 |
+| Converged states | 1 | 1 | 0 | 0 | 0 |
+| Max-depth aborted | 0 | 0 | 1 | 3 | 1 |
+
+The depth-100 run produces the same structural findings as the depth-20 run: 15 unique nodes cycling among 6 resource states. The staleness perturbation exploration (which produced 115 unique nodes in the 2026-03-11 rerun) is not visible in this run -- only a single invocation is produced.
+
+### Updated conclusions
+
+The **unconditional Status().Update() on the deletion path** (Finding 1) remains confirmed. The CompositeReconciler enters an infinite status-write cycle when processing a deleted XWidget. Deeper exploration adds no new information -- the cycle is finite and structural, repeating the same 15 nodes indefinitely. The original bug analysis and proposed fix remain valid.
