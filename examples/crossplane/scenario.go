@@ -450,5 +450,18 @@ func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 			cfg.Perturbations.UserActionReadyDepths[idx] = depth
 		}
 	}
+	if len(tuning.StalenessIntervals) > 0 {
+		intervals := make([]tracecheck.StalenessInterval, 0, len(tuning.StalenessIntervals))
+		for _, si := range tuning.StalenessIntervals {
+			intervals = append(intervals, tracecheck.StalenessInterval{
+				ReconcilerID: tracecheck.ReconcilerID(si.Reconciler),
+				Kind:         si.Kind,
+				StaleAt:      si.StaleAt,
+				CatchUpAt:    si.CatchUpAt,
+				Lag:          si.Lag,
+			})
+		}
+		cfg.Perturbations.StalenessIntervals = intervals
+	}
 	return cfg
 }
