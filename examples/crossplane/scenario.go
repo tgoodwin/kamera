@@ -26,7 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
@@ -56,7 +58,8 @@ func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
 			revision.WithLogger(log),
 			revision.WithRecorder(recorder),
 		)
-	}).For("apiextensions.crossplane.io/CompositionRevision")
+	}).For("apiextensions.crossplane.io/CompositionRevision").
+		Watches("pkg.crossplane.io/FunctionRevision", functionRevisionToCompositionRevisionMapper())
 
 	builder.WithReconciler("CompositeReconciler", func(c client.Client) tracecheck.Reconciler {
 		runner := stubFunctionRunner{}
@@ -127,6 +130,37 @@ func buildCompositeResource() *unstructured.Unstructured {
 		},
 	}
 	return xr
+}
+
+// functionRevisionToCompositionRevisionMapper creates a WatchMapper that
+// models the Crossplane EnqueueCompositionRevisionsForFunctionRevision handler.
+// When a FunctionRevision changes, the real handler lists all CompositionRevisions
+// and enqueues those whose pipeline references the function. Since the Kamera
+// WatchMapper doesn't have store access, this mapper uses the known
+// CompositionRevision naming convention from the scenario.
+func functionRevisionToCompositionRevisionMapper() tracecheck.WatchMapper {
+	return func(obj *unstructured.Unstructured) []reconcile.Request {
+		if obj == nil {
+			return nil
+		}
+		labels := obj.GetLabels()
+		if labels == nil {
+			return nil
+		}
+		// Only trigger for functions that have the parent package label
+		pkgName := labels[pkgv1.LabelParentPackage]
+		if pkgName == "" {
+			return nil
+		}
+		// In the real controller, this would List all CompositionRevisions
+		// and find those whose pipeline references this function.
+		// For the Kamera harness, we use the known CompositionRevision name
+		// from the scenario. The rev-1 naming follows the convention used
+		// in the workflow JSON.
+		return []reconcile.Request{
+			{NamespacedName: types.NamespacedName{Name: compositionName + "-rev-1"}},
+		}
+	}
 }
 
 func buildFunctionRevision() *pkgv1.FunctionRevision {
@@ -280,11 +314,43 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 		return tracecheck.StateNode{}, nil, fmt.Errorf("input has no seedable objects")
 	}
 
-	state, err := builder.BuildStartStateFromObjects(objects, nil)
+	// Compute initial pending reconciles for environment state objects.
+	// Each object whose GVK has a registered primary reconciler gets an
+	// initial pending reconcile so the reconciler processes it at startup.
+	pending := initialPendingForObjects(builder, objects)
+
+	state, err := builder.BuildStartStateFromObjects(objects, pending)
 	if err != nil {
 		return tracecheck.StateNode{}, nil, err
 	}
 	return state, objects, nil
+}
+
+// initialPendingForObjects returns initial pending reconciles for environment
+// state objects that have a registered primary reconciler.
+func initialPendingForObjects(builder *tracecheck.ExplorerBuilder, objects []client.Object) []tracecheck.PendingReconcile {
+	var pending []tracecheck.PendingReconcile
+	for _, obj := range objects {
+		gvk := obj.GetObjectKind().GroupVersionKind()
+		if gvk.Kind == "" {
+			continue
+		}
+		reconcilerID := builder.ReconcilerForGVK(gvk)
+		if reconcilerID == "" {
+			continue
+		}
+		pending = append(pending, tracecheck.PendingReconcile{
+			ReconcilerID: reconcilerID,
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: obj.GetNamespace(),
+					Name:      obj.GetName(),
+				},
+			},
+			Source: tracecheck.SourceStateChange,
+		})
+	}
+	return pending
 }
 
 func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
@@ -372,6 +438,16 @@ func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 				st.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
 			}
 			cfg.Perturbations.Staleness[id] = st
+		}
+	}
+	if len(tuning.UserActionReadyDepths) > 0 {
+		if cfg.Perturbations.UserActionReadyDepths == nil {
+			cfg.Perturbations.UserActionReadyDepths = make(map[int]int)
+		}
+		for idxStr, depth := range tuning.UserActionReadyDepths {
+			idx := 0
+			fmt.Sscanf(idxStr, "%d", &idx)
+			cfg.Perturbations.UserActionReadyDepths[idx] = depth
 		}
 	}
 	return cfg

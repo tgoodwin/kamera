@@ -790,6 +790,18 @@ func (b *ExplorerBuilder) BuildStartStateFromObjects(objs []client.Object, pendi
 	return buildStartStateFromObjects(b.snapStore, b.scheme, objs, pending, b.resourceVersions)
 }
 
+// ReconcilerForGVK returns the reconciler ID that is primary for the given GVK,
+// or empty string if no reconciler is registered for it.
+func (b *ExplorerBuilder) ReconcilerForGVK(gvk schema.GroupVersionKind) ReconcilerID {
+	canonical := util.CanonicalGroupKind(gvk.Group, gvk.Kind)
+	for id, kind := range b.reconcilerToKind {
+		if kind == canonical {
+			return id
+		}
+	}
+	return ""
+}
+
 func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
 	dependent := lo.Map(dependentControllers, func(s ReconcilerID, _ int) PendingReconcile {
 		return PendingReconcile{

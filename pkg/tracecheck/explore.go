@@ -1971,12 +1971,9 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		// no staleness bounds configured for this reconciler, so dont compute stale states
 		return []StateNode{currState}, nil
 	}
-	maxRestarts := config.MaxRestarts
-	currRestarts := e.stats.RestartsPerReconciler[reconcilerID]
-	if currRestarts >= maxRestarts {
-		logger.V(2).Info("max restarts reached for reconciler", "ReconcilerID", reconcilerID, "CurrRestarts", currRestarts, "MaxRestarts", maxRestarts)
-		return []StateNode{currState}, nil
-	}
+	// TODO: revisit MaxRestarts as a staleness budget mechanism.
+	// For now, disabled so that stale views are always generated when
+	// staleness bounds are configured for a reconciler.
 
 	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.Config.MaxDepth)
 	possiblePastViews, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.StaleReadBounds)

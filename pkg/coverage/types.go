@@ -27,11 +27,12 @@ type UserInput struct {
 
 // InputTuning carries compact hints for later ExploreConfig construction.
 type InputTuning struct {
-	MaxDepth           int                 `json:"maxDepth"`
-	PermuteControllers []string            `json:"permuteControllers"`
-	StaleReads         map[string][]string `json:"staleReads"`
-	StaleLookback      map[string]int      `json:"staleLookback"`
-	Search             InputSearchTuning   `json:"search"`
+	MaxDepth               int                 `json:"maxDepth"`
+	PermuteControllers     []string            `json:"permuteControllers"`
+	StaleReads             map[string][]string `json:"staleReads"`
+	StaleLookback          map[string]int      `json:"staleLookback"`
+	UserActionReadyDepths  map[string]int      `json:"userActionReadyDepths,omitempty"`
+	Search                 InputSearchTuning   `json:"search"`
 }
 
 // InputSearchTuning carries optional per-input search-mode overrides.
