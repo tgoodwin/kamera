@@ -14,7 +14,7 @@ import (
 
 var (
 	emitStats   = flag.Bool("emit-stats", false, "record and emit reconcile performance stats")
-	searchDepth = flag.Int("depth", 10, "exploration search depth")
+	searchDepth = flag.Int("depth", 100, "exploration search depth")
 	timeout     = flag.Duration("timeout", 0, "abort exploration after this duration (0 disables)")
 	logLevel    = flag.String("log-level", "info", "logging level (debug, info, warn, error)")
 )
