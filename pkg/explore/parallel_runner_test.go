@@ -573,7 +573,45 @@ func TestObservedReadKindsPerControllerReturnsNilOnNilResult(t *testing.T) {
 	}
 }
 
-func TestBuildStalenessPerturbationPlansProducesStalenessPhase(t *testing.T) {
+func TestMaxKindFrontiers(t *testing.T) {
+	path := tracecheck.ExecutionHistory{
+		{
+			ControllerID: "A",
+			KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 1, "core/Service": 2},
+		},
+		{
+			ControllerID: "B",
+			KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 3, "core/Service": 2},
+		},
+		{
+			ControllerID: "A",
+			KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 3, "core/Service": 4},
+		},
+	}
+	maxSeqs := maxKindFrontiers(path)
+	if maxSeqs["apps/Deployment"] != 3 {
+		t.Fatalf("expected maxSeq=3 for apps/Deployment, got %d", maxSeqs["apps/Deployment"])
+	}
+	if maxSeqs["core/Service"] != 4 {
+		t.Fatalf("expected maxSeq=4 for core/Service, got %d", maxSeqs["core/Service"])
+	}
+}
+
+func TestMaxKindFrontiersSkipsNilSteps(t *testing.T) {
+	path := tracecheck.ExecutionHistory{
+		nil,
+		{ControllerID: "A", KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 2}},
+	}
+	maxSeqs := maxKindFrontiers(path)
+	if maxSeqs["apps/Deployment"] != 2 {
+		t.Fatalf("expected maxSeq=2, got %d", maxSeqs["apps/Deployment"])
+	}
+}
+
+func TestBuildStalenessPerturbationPlansProducesIntervalPlans(t *testing.T) {
+	// Reference: ControllerA reads apps/Deployment, frontier advances to 2.
+	// Expected intervals for (ControllerA, apps/Deployment) with maxSeq=2:
+	//   [0,1), [0,2), [1,2) → 3 plans
 	reference := ScenarioPhaseResult{
 		Result: &tracecheck.Result{
 			ConvergedStates: []tracecheck.ResultState{
@@ -585,9 +623,18 @@ func TestBuildStalenessPerturbationPlansProducesStalenessPhase(t *testing.T) {
 								Changes: tracecheck.Changes{
 									Observations: []tracecheck.Effect{
 										{Key: testCompositeKey("apps", "Deployment", "default", "web")},
-										{Key: testCompositeKey("", "Service", "default", "svc")},
 									},
 								},
+								KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 1},
+							},
+							{
+								ControllerID: "ControllerA",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("apps", "Deployment", "default", "web")},
+									},
+								},
+								KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 2},
 							},
 						},
 					},
@@ -600,64 +647,90 @@ func TestBuildStalenessPerturbationPlansProducesStalenessPhase(t *testing.T) {
 	ctx := ScenarioContext{Attributes: map[string]string{"input": "test"}}
 
 	plans := buildStalenessPerturbationPlans(reference, base, ctx)
-	if len(plans) != 5 {
-		t.Fatalf("expected 5 staleness plans (default trial count), got %d", len(plans))
+	if len(plans) != 3 {
+		t.Fatalf("expected 3 interval plans, got %d", len(plans))
 	}
 
-	// Verify first plan as representative.
+	// Verify first plan uses StalenessIntervals, not old Staleness map.
 	plan := plans[0]
-	if plan.Name != "staleness_0" {
-		t.Fatalf("expected plan name 'staleness_0', got %q", plan.Name)
+	if plan.Name != "staleness_interval_0" {
+		t.Fatalf("expected plan name 'staleness_interval_0', got %q", plan.Name)
 	}
-	if plan.Config.SearchMode != tracecheck.SearchModeMonteCarlo {
-		t.Fatalf("expected Monte Carlo search mode for staleness phase")
+	if len(plan.Config.Perturbations.StalenessIntervals) != 1 {
+		t.Fatalf("expected 1 staleness interval per plan, got %d", len(plan.Config.Perturbations.StalenessIntervals))
 	}
-	if plan.Config.MonteCarlo.TrialIndex != 0 {
-		t.Fatalf("expected trial index 0, got %d", plan.Config.MonteCarlo.TrialIndex)
-	}
-	if plan.Config.MonteCarlo.Trials != 5 {
-		t.Fatalf("expected 5 trials, got %d", plan.Config.MonteCarlo.Trials)
+	if len(plan.Config.Perturbations.Staleness) != 0 {
+		t.Fatalf("expected old Staleness map to be empty, got %d entries", len(plan.Config.Perturbations.Staleness))
 	}
 
-	staleness := plan.Config.Perturbations.Staleness
-	if len(staleness) != 1 {
-		t.Fatalf("expected 1 staleness entry (ControllerA), got %d", len(staleness))
+	// Verify interval values (sorted: staleAt=0,catchUpAt=1 first).
+	iv := plan.Config.Perturbations.StalenessIntervals[0]
+	if iv.ReconcilerID != "ControllerA" {
+		t.Fatalf("expected ReconcilerID=ControllerA, got %s", iv.ReconcilerID)
 	}
-	cfg, ok := staleness["ControllerA"]
-	if !ok {
-		t.Fatalf("expected staleness config for ControllerA")
+	if iv.Kind != "apps/Deployment" {
+		t.Fatalf("expected Kind=apps/Deployment, got %s", iv.Kind)
 	}
-	if cfg.MaxRestarts != 1 {
-		t.Fatalf("expected MaxRestarts=1, got %d", cfg.MaxRestarts)
+	if iv.StaleAt != 0 || iv.CatchUpAt != 1 {
+		t.Fatalf("expected first interval [0,1), got [%d,%d)", iv.StaleAt, iv.CatchUpAt)
 	}
-	if len(cfg.StaleReadBounds) != 2 {
-		t.Fatalf("expected 2 stale read bounds, got %d", len(cfg.StaleReadBounds))
-	}
-	if cfg.StaleReadBounds["apps/Deployment"] != 2 {
-		t.Fatalf("expected lookback=2 for apps/Deployment")
-	}
-	if cfg.StaleReadBounds["core/Service"] != 2 {
-		t.Fatalf("expected lookback=2 for core/Service")
+	if iv.Lag != -1 {
+		t.Fatalf("expected Lag=-1 (frozen), got %d", iv.Lag)
 	}
 
-	// Ordering permutation should be disabled to isolate staleness signal.
-	for id, enabled := range plan.Config.Perturbations.PermuteOrder {
-		if enabled {
-			t.Fatalf("expected ordering disabled for staleness phase, but %s is enabled", id)
-		}
+	// Verify ordering permutation is enabled for observed controllers.
+	if !plan.Config.Perturbations.PermuteOrder["ControllerA"] {
+		t.Fatalf("expected ordering permutation enabled for ControllerA")
 	}
 
-	// Context attributes should indicate staleness strategy.
+	// Verify context attributes.
 	if plan.Context == nil {
 		t.Fatalf("expected plan context")
 	}
-	if plan.Context.Attributes["perturbation.strategy"] != "staleness" {
-		t.Fatalf("expected perturbation.strategy=staleness attribute")
+	if plan.Context.Attributes["perturbation.strategy"] != "staleness_interval" {
+		t.Fatalf("expected perturbation.strategy=staleness_interval, got %q", plan.Context.Attributes["perturbation.strategy"])
+	}
+	if plan.Context.Attributes["perturbation.reconciler"] != "ControllerA" {
+		t.Fatalf("expected perturbation.reconciler=ControllerA")
 	}
 
-	// Verify trial indices are distinct across plans.
-	if plans[2].Config.MonteCarlo.TrialIndex != 2 {
-		t.Fatalf("expected trial index 2 for plan[2], got %d", plans[2].Config.MonteCarlo.TrialIndex)
+	// Verify remaining intervals cover [0,2) and [1,2).
+	iv1 := plans[1].Config.Perturbations.StalenessIntervals[0]
+	if iv1.StaleAt != 0 || iv1.CatchUpAt != 2 {
+		t.Fatalf("expected second interval [0,2), got [%d,%d)", iv1.StaleAt, iv1.CatchUpAt)
+	}
+	iv2 := plans[2].Config.Perturbations.StalenessIntervals[0]
+	if iv2.StaleAt != 1 || iv2.CatchUpAt != 2 {
+		t.Fatalf("expected third interval [1,2), got [%d,%d)", iv2.StaleAt, iv2.CatchUpAt)
+	}
+}
+
+func TestBuildStalenessPerturbationPlansNoIntervalsWhenMaxSeqZero(t *testing.T) {
+	// Kind frontier never advances past 0 → no intervals possible.
+	reference := ScenarioPhaseResult{
+		Result: &tracecheck.Result{
+			ConvergedStates: []tracecheck.ResultState{
+				{
+					Paths: []tracecheck.ExecutionHistory{
+						{
+							{
+								ControllerID: "ControllerA",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("apps", "Deployment", "default", "web")},
+									},
+								},
+								KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 0},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	plans := buildStalenessPerturbationPlans(reference, tracecheck.ExploreConfig{MaxDepth: 10}, ScenarioContext{})
+	if len(plans) != 0 {
+		t.Fatalf("expected no plans when maxSeq=0, got %d", len(plans))
 	}
 }
 

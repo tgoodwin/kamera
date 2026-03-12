@@ -442,6 +442,12 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		// precision/attribution. Harnesses can still override with ClosedLoop.Plan.
 		referenceConfig = disablePerturbations(scenario.Config)
 		hasExplicitStaleness := len(scenario.Config.Perturbations.Staleness) > 0
+		// TODO: The perturbation strategies below are orthogonal — plans mix
+		// either user-action interleaving or staleness, but never both simultaneously.
+		// A combined plan (e.g. inject stale reads while also interleaving a second
+		// user action) could expose bugs that only manifest when both perturbations
+		// are active together. A future cross-product or compositional planner would
+		// enumerate these combinations.
 		planFn = func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
 			var plans []ScenarioPhasePlan
 			if len(scenario.UserInputs) >= 2 {
@@ -702,6 +708,24 @@ func observedReadKindsPerController(reference ScenarioPhaseResult) map[tracechec
 	return out
 }
 
+// maxKindFrontiers returns the maximum KindSequence frontier value observed for
+// each kind across all steps in the reference path. This gives the upper bound
+// of each kind's sequence space, used to exhaustively enumerate staleness intervals.
+func maxKindFrontiers(path tracecheck.ExecutionHistory) map[string]int64 {
+	maxSeqs := make(map[string]int64)
+	for _, step := range path {
+		if step == nil {
+			continue
+		}
+		for kind, seq := range step.KindSeqAfter {
+			if seq > maxSeqs[kind] {
+				maxSeqs[kind] = seq
+			}
+		}
+	}
+	return maxSeqs
+}
+
 // buildExplicitStalenessPlans creates a rerun phase using the staleness config
 // from the workflow JSON directly, rather than auto-deriving from the reference
 // trace. This honors targeted staleness tuning (specific controllers, kinds,
@@ -741,63 +765,106 @@ func buildStalenessPerturbationPlans(
 	base tracecheck.ExploreConfig,
 	scenarioCtx ScenarioContext,
 ) []ScenarioPhasePlan {
+	if reference.Result == nil || len(reference.Result.ConvergedStates) == 0 {
+		return nil
+	}
+	firstState := reference.Result.ConvergedStates[0]
+	if len(firstState.Paths) == 0 {
+		return nil
+	}
+	path := firstState.Paths[0]
+	if len(path) == 0 {
+		return nil
+	}
+
+	// Collect (controller, kind) pairs and per-kind frontier upper bounds.
 	readKinds := observedReadKindsPerController(reference)
 	if len(readKinds) == 0 {
 		return nil
 	}
+	maxFrontiers := maxKindFrontiers(path)
 
-	cfg := disablePerturbations(base)
-	cfg.SearchMode = tracecheck.SearchModeMonteCarlo
-	if base.SearchMode == tracecheck.SearchModeMonteCarlo {
-		cfg.MonteCarlo = base.MonteCarlo
+	// Collect observed controllers for ordering permutation.
+	seenControllers := observedControllersInReference(reference)
+
+	// Enumerate intervals exhaustively over [0, maxSeq] for each (controller, kind).
+	// This is decoupled from specific execution ordering so intervals remain valid
+	// when composed with other perturbation strategies.
+	type intervalKey struct {
+		controllerID tracecheck.ReconcilerID
+		kind         string
+		staleAt      int64
+		catchUpAt    int64
 	}
-
-	staleness := make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig, len(readKinds))
-	var controllerNames []string
+	var intervals []intervalKey
 	for controllerID, kinds := range readKinds {
-		bounds := make(tracecheck.LookbackLimits, len(kinds))
 		for _, kind := range kinds {
-			// LookbackLimit controls how many recent sequences to keep. A limit of 2
-			// keeps the current version plus one previous, modeling a single missed
-			// watch event. A limit of 1 would only keep the current version (no stale
-			// views possible).
-			bounds[kind] = 2
+			maxSeq, ok := maxFrontiers[kind]
+			if !ok || maxSeq < 1 {
+				continue // need at least frontier range [0, 1) for a window
+			}
+			for staleAt := int64(0); staleAt < maxSeq; staleAt++ {
+				for catchUpAt := staleAt + 1; catchUpAt <= maxSeq; catchUpAt++ {
+					intervals = append(intervals, intervalKey{
+						controllerID: controllerID,
+						kind:         kind,
+						staleAt:      staleAt,
+						catchUpAt:    catchUpAt,
+					})
+				}
+			}
 		}
-		staleness[controllerID] = tracecheck.StalenessConfig{
-			StaleReadBounds: bounds,
-			MaxRestarts:     1,
-		}
-		controllerNames = append(controllerNames, string(controllerID))
-	}
-	sort.Strings(controllerNames)
-	cfg.Perturbations.Staleness = staleness
-
-	// Generate multiple MC trials so different seeds explore different stale
-	// view selections. Each trial gets a distinct TrialIndex which produces a
-	// different derived seed, varying which stale views are sampled.
-	const defaultStalenessTrials = 5
-	numTrials := defaultStalenessTrials
-	if base.SearchMode == tracecheck.SearchModeMonteCarlo && base.MonteCarlo.Trials > 0 {
-		numTrials = base.MonteCarlo.Trials
 	}
 
-	plans := make([]ScenarioPhasePlan, 0, numTrials)
-	for trial := 0; trial < numTrials; trial++ {
-		trialCfg := cfg.Clone()
-		trialCfg.MonteCarlo.TrialIndex = trial
-		trialCfg.MonteCarlo.Trials = numTrials
+	if len(intervals) == 0 {
+		return nil
+	}
+
+	// Sort for deterministic output.
+	sort.Slice(intervals, func(i, j int) bool {
+		a, b := intervals[i], intervals[j]
+		if a.controllerID != b.controllerID {
+			return a.controllerID < b.controllerID
+		}
+		if a.kind != b.kind {
+			return a.kind < b.kind
+		}
+		if a.staleAt != b.staleAt {
+			return a.staleAt < b.staleAt
+		}
+		return a.catchUpAt < b.catchUpAt
+	})
+
+	// One plan per interval.
+	plans := make([]ScenarioPhasePlan, 0, len(intervals))
+	for i, iv := range intervals {
+		cfg := disablePerturbations(base)
+		for _, cid := range seenControllers {
+			if cid == "" || cid == tracecheck.UserControllerID {
+				continue
+			}
+			cfg.Perturbations.PermuteOrder[cid] = true
+		}
+		cfg.Perturbations.StalenessIntervals = []tracecheck.StalenessInterval{{
+			ReconcilerID: iv.controllerID,
+			Kind:         iv.kind,
+			StaleAt:      iv.staleAt,
+			CatchUpAt:    iv.catchUpAt,
+			Lag:          -1,
+		}}
 
 		attrs := copyAttributes(scenarioCtx.Attributes)
-		attrs["perturbation.strategy"] = "staleness"
-		attrs["perturbation.stale_controllers"] = strings.Join(controllerNames, ",")
-		attrs["mc_trial_index"] = strconv.Itoa(trial)
-		attrs["mc_trial_count"] = strconv.Itoa(numTrials)
+		attrs["perturbation.strategy"] = "staleness_interval"
+		attrs["perturbation.reconciler"] = string(iv.controllerID)
+		attrs["perturbation.kind"] = iv.kind
+		attrs["perturbation.stale_at"] = strconv.FormatInt(iv.staleAt, 10)
+		attrs["perturbation.catch_up_at"] = strconv.FormatInt(iv.catchUpAt, 10)
 		ctxCopy := scenarioCtx
 		ctxCopy.Attributes = attrs
 
 		plans = append(plans, ScenarioPhasePlan{
-			Name:    fmt.Sprintf("staleness_%d", trial),
-			Config:  trialCfg,
+			Name:    fmt.Sprintf("staleness_interval_%d", i),
+			Config:  cfg,
 			Context: &ctxCopy,
 		})
 	}
