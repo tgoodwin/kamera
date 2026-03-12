@@ -1,0 +1,89 @@
+[
+  {
+    "name": "crossplane-staleness/xr-created-before-revision-validated",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "pkg.crossplane.io/v1",
+          "kind": "FunctionRevision",
+          "metadata": {
+            "name": "kamera-stub-rev",
+            "labels": {
+              "pkg.crossplane.io/package": "kamera-stub"
+            }
+          },
+          "spec": {
+            "desiredState": "Active"
+          },
+          "status": {
+            "capabilities": [
+              "composition"
+            ]
+          }
+        },
+        {
+          "apiVersion": "apiextensions.crossplane.io/v1",
+          "kind": "Composition",
+          "metadata": {
+            "name": "widget-composition"
+          },
+          "spec": {
+            "compositeTypeRef": {
+              "apiVersion": "example.org/v1",
+              "kind": "XWidget"
+            },
+            "mode": "Pipeline",
+            "pipeline": [
+              {
+                "step": "pipeline",
+                "functionRef": {
+                  "name": "kamera-stub"
+                }
+              }
+            ],
+            "writeConnectionSecretsToNamespace": "default"
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 100,
+      "permuteControllers": [
+        "CompositionReconciler",
+        "CompositionRevisionReconciler",
+        "CompositeReconciler"
+      ],
+      "staleReads": {
+        "CompositeReconciler": [
+          "apiextensions.crossplane.io/CompositionRevision"
+        ]
+      },
+      "staleLookback": {
+        "apiextensions.crossplane.io/CompositionRevision": 2
+      },
+      "userActionReadyDepths": {
+        "0": 0
+      }
+    },
+    "userInputs": [
+      {
+        "id": "create xr before revision exists",
+        "type": "CREATE",
+        "object": {
+          "apiVersion": "example.org/v1",
+          "kind": "XWidget",
+          "metadata": {
+            "name": "example",
+            "namespace": "default"
+          },
+          "spec": {
+            "compositionRef": {
+              "name": "widget-composition"
+            },
+            "compositionUpdatePolicy": "Automatic"
+          }
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,174 @@
+[
+  {
+    "name": "crossplane-concurrency/two-xrs-shared-composition-update",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "pkg.crossplane.io/v1",
+          "kind": "FunctionRevision",
+          "metadata": {
+            "name": "kamera-stub-rev",
+            "labels": {
+              "pkg.crossplane.io/package": "kamera-stub"
+            }
+          },
+          "spec": {
+            "desiredState": "Active"
+          },
+          "status": {
+            "capabilities": [
+              "composition"
+            ]
+          }
+        },
+        {
+          "apiVersion": "apiextensions.crossplane.io/v1",
+          "kind": "Composition",
+          "metadata": {
+            "name": "widget-composition-shared"
+          },
+          "spec": {
+            "compositeTypeRef": {
+              "apiVersion": "example.org/v1",
+              "kind": "XWidget"
+            },
+            "mode": "Pipeline",
+            "pipeline": [
+              {
+                "step": "pipeline",
+                "functionRef": {
+                  "name": "kamera-stub"
+                }
+              }
+            ],
+            "writeConnectionSecretsToNamespace": "default"
+          }
+        },
+        {
+          "apiVersion": "apiextensions.crossplane.io/v1",
+          "kind": "CompositionRevision",
+          "metadata": {
+            "name": "widget-composition-shared-rev-1",
+            "labels": {
+              "crossplane.io/composition-name": "widget-composition-shared"
+            },
+            "ownerReferences": [
+              {
+                "apiVersion": "apiextensions.crossplane.io/v1",
+                "kind": "Composition",
+                "name": "widget-composition-shared",
+                "uid": "1r9jr5wn",
+                "controller": true
+              }
+            ]
+          },
+          "spec": {
+            "compositeTypeRef": {
+              "apiVersion": "example.org/v1",
+              "kind": "XWidget"
+            },
+            "mode": "Pipeline",
+            "pipeline": [
+              {
+                "step": "pipeline",
+                "functionRef": {
+                  "name": "kamera-stub"
+                }
+              }
+            ],
+            "writeConnectionSecretsToNamespace": "default",
+            "revision": 1
+          },
+          "status": {
+            "conditions": [
+              {
+                "type": "ValidPipeline",
+                "status": "True",
+                "reason": "ValidPipeline"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "example.org/v1",
+          "kind": "XWidget",
+          "metadata": {
+            "name": "xr-one",
+            "namespace": "default"
+          },
+          "spec": {
+            "compositionRef": {
+              "name": "widget-composition-shared"
+            },
+            "compositionRevisionRef": {
+              "name": "widget-composition-shared-rev-1"
+            },
+            "compositionUpdatePolicy": "Automatic"
+          }
+        },
+        {
+          "apiVersion": "example.org/v1",
+          "kind": "XWidget",
+          "metadata": {
+            "name": "xr-two",
+            "namespace": "default"
+          },
+          "spec": {
+            "compositionRef": {
+              "name": "widget-composition-shared"
+            },
+            "compositionRevisionRef": {
+              "name": "widget-composition-shared-rev-1"
+            },
+            "compositionUpdatePolicy": "Automatic"
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": [
+        "CompositionReconciler",
+        "CompositionRevisionReconciler",
+        "CompositeReconciler"
+      ],
+      "staleReads": {
+        "CompositeReconciler": [
+          "apiextensions.crossplane.io/CompositionRevision"
+        ]
+      },
+      "staleLookback": {
+        "apiextensions.crossplane.io/CompositionRevision": 2
+      }
+    },
+    "userInputs": [
+      {
+        "id": "update shared composition",
+        "type": "UPDATE",
+        "object": {
+          "apiVersion": "apiextensions.crossplane.io/v1",
+          "kind": "Composition",
+          "metadata": {
+            "name": "widget-composition-shared"
+          },
+          "spec": {
+            "compositeTypeRef": {
+              "apiVersion": "example.org/v1",
+              "kind": "XWidget"
+            },
+            "mode": "Pipeline",
+            "pipeline": [
+              {
+                "step": "pipeline",
+                "functionRef": {
+                  "name": "kamera-stub"
+                }
+              }
+            ],
+            "writeConnectionSecretsToNamespace": "crossplane-system"
+          }
+        }
+      }
+    ]
+  }
+]
