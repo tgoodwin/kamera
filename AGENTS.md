@@ -195,6 +195,33 @@ If **all** states are max-depth aborted (i.e., zero truly converged states), the
 
 This applies to both reference and rerun phases. A run where every path hits max depth produces no converged states and therefore no usable divergence analysis.
 
+## Measuring Pipeline Changes with Campaign Metrics
+
+When modifying perturbation strategies, plan builders, or other parts of the exploration pipeline, use `campaign-metrics` as a before/after measurement tool to validate that changes improve state space coverage.
+
+### Workflow
+
+1. **Before the change**: Run the scenario on a representative input and save the dump:
+   ```bash
+   # run scenario, note the dump path
+   go run ./cmd/kamera analyze campaign-metrics /path/to/before-dump.jsonl
+   ```
+   Record: unique node visits, total node visits, unique resource states, converged/aborted counts.
+
+2. **After the change**: Run the same scenario on the same input with the modified pipeline:
+   ```bash
+   go run ./cmd/kamera analyze campaign-metrics /path/to/after-dump.jsonl
+   ```
+
+3. **Compare the key metrics**:
+   - **Unique node visits increasing** = good. The change explores states that weren't reached before.
+   - **Total node visits increasing while unique stays flat** = bad. The change creates more work (redundant exploration) without gaining coverage.
+   - **Converged states changing** = worth investigating. More converged states may mean better convergence; more unique converged states means unearthing potential bugs (good!); fewer may mean the change disrupts settling.
+
+### Why this matters
+
+Campaign metrics ensure that we are modifying the Kamera pipeline in alignment with our goal of exploring the state space to find bugs: if a strategy change doesn't move the unique-node-visits needle on a representative input, it isn't earning its cost. Be measurement-driven when iterating on the pipeline.
+
 ## Dependency Graph Analysis (pkg/analyze)
 
 The `pkg/analyze` package (and associated `cmd/analyze` tool) relies on static dependency graphs of Kubernetes operators to identify interaction hotspots.
