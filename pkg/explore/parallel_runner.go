@@ -423,7 +423,11 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 	}
 
 	if !PerturbEnabled() {
-		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, nil, scenario.Context, invocationID)
+		cfg := scenario.Config
+		if NoPerturbationsEnabled() {
+			cfg = disablePerturbations(cfg)
+		}
+		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", cfg, seed, nil, nil, scenario.Context, invocationID)
 		result.Phases = []ScenarioPhaseResult{phase}
 		applyPhaseSummary(&result, phase)
 		return result
@@ -519,6 +523,7 @@ func disablePerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig
 		out.Perturbations.PermuteOrder[id] = false
 	}
 	out.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+	out.Perturbations.StalenessIntervals = nil
 	if out.Perturbations.UserActionReadyDepths == nil {
 		out.Perturbations.UserActionReadyDepths = make(map[int]int)
 	}
