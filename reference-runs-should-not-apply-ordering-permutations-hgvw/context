@@ -1,0 +1,1 @@
+Finding 5 re-investigation showed reference run already permutes controllers via permuteControllers config, making it impossible to distinguish ordering-only vs staleness effects. Reference runs should explore only the natural ordering; permutations should be reserved for rerun/staleness phases.
