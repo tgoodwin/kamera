@@ -145,7 +145,10 @@ func TestApplyInputTuningAppliesStaleness(t *testing.T) {
 		},
 	}
 
-	cfg := applyInputTuning(base, tuning)
+	cfg, err := explore.ApplyInputTuning(base, tuning)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	st, ok := cfg.Perturbations.Staleness["ServiceReconciler"]
 	if !ok {
 		t.Fatal("expected ServiceReconciler staleness config")

@@ -219,11 +219,15 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
 		}
 
+		cfg, err := explore.ApplyInputTuning(baseCfg, input.Tuning)
+		if err != nil {
+			return nil, fmt.Errorf("apply tuning for input %d (%s): %w", idx, input.Name, err)
+		}
 		scenarios = append(scenarios, explore.Scenario{
 			Name:             input.Name,
 			EnvironmentState: state,
 			UserInputs:       userInputs,
-			Config:           applyInputTuning(baseCfg, input.Tuning),
+			Config:           cfg,
 			Context:          scenarioContextForInput(input),
 		})
 	}
@@ -590,45 +594,6 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 	return state, objects, nil
 }
 
-func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
-	cfg := base.Clone()
-	if tuning.MaxDepth > 0 {
-		cfg.MaxDepth = tuning.MaxDepth
-	}
-	if len(tuning.PermuteControllers) > 0 {
-		if cfg.Perturbations.PermuteOrder == nil {
-			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-		}
-		for _, controllerID := range tuning.PermuteControllers {
-			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
-		}
-	}
-	if len(tuning.StaleReads) > 0 {
-		if cfg.Perturbations.Staleness == nil {
-			cfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
-		}
-		for controllerID, kinds := range tuning.StaleReads {
-			id := tracecheck.ReconcilerID(controllerID)
-			st := cfg.Perturbations.Staleness[id]
-			if st.StaleReadBounds == nil {
-				st.StaleReadBounds = make(tracecheck.LookbackLimits)
-			}
-			for _, kind := range kinds {
-				trimmed := strings.TrimSpace(kind)
-				if trimmed == "" {
-					continue
-				}
-				lookback := tuning.StaleLookback[trimmed]
-				if lookback <= 0 {
-					lookback = 1
-				}
-				st.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
-			}
-			cfg.Perturbations.Staleness[id] = st
-		}
-	}
-	return cfg
-}
 
 func cloneCoverageInput(input coverage.Input) coverage.Input {
 	objects := make([]*unstructured.Unstructured, 0, len(input.EnvironmentState.Objects))

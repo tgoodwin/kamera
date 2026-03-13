@@ -474,48 +474,7 @@ func initialDependentControllers(obj client.Object) []tracecheck.ReconcilerID {
 }
 
 func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) (tracecheck.ExploreConfig, error) {
-	cfg := base.Clone()
-	if tuning.MaxDepth > 0 {
-		cfg.MaxDepth = tuning.MaxDepth
-	}
-	if len(tuning.PermuteControllers) > 0 {
-		if cfg.Perturbations.PermuteOrder == nil {
-			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-		}
-		for _, controllerID := range tuning.PermuteControllers {
-			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
-		}
-	}
-	mode := strings.TrimSpace(tuning.Search.Mode)
-	if mode != "" {
-		parsed, err := tracecheck.ParseSearchMode(mode)
-		if err != nil {
-			return cfg, fmt.Errorf("parse tuning.search.mode: %w", err)
-		}
-		cfg.SearchMode = parsed
-	}
-
-	mc := tuning.Search.MonteCarlo
-	if cfg.SearchMode != tracecheck.SearchModeMonteCarlo {
-		if mc.Seed != nil || mc.Trials != nil || mc.TrialIndex != nil || mc.ScenarioGroup != nil {
-			cfg.SearchMode = tracecheck.SearchModeMonteCarlo
-		}
-	}
-	if cfg.SearchMode == tracecheck.SearchModeMonteCarlo {
-		if mc.Seed != nil {
-			cfg.MonteCarlo.Seed = *mc.Seed
-		}
-		if mc.Trials != nil {
-			cfg.MonteCarlo.Trials = *mc.Trials
-		}
-		if mc.TrialIndex != nil {
-			cfg.MonteCarlo.TrialIndex = *mc.TrialIndex
-		}
-		if mc.ScenarioGroup != nil {
-			cfg.MonteCarlo.ScenarioGroup = *mc.ScenarioGroup
-		}
-	}
-	return cfg, nil
+	return explore.ApplyInputTuning(base, tuning)
 }
 
 func cloneCoverageInput(input coverage.Input) coverage.Input {

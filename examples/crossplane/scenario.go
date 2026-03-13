@@ -277,11 +277,15 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
 		}
 
+		cfg, err := explore.ApplyInputTuning(baseCfg, input.Tuning)
+		if err != nil {
+			return nil, fmt.Errorf("apply tuning for input %d (%s): %w", idx, input.Name, err)
+		}
 		scenarios = append(scenarios, explore.Scenario{
 			Name:             input.Name,
 			EnvironmentState: state,
 			UserInputs:       userInputs,
-			Config:           applyInputTuning(baseCfg, input.Tuning),
+			Config:           cfg,
 		})
 	}
 
@@ -403,65 +407,3 @@ func sameObjectIdentity(a, b client.Object) bool {
 	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
 }
 
-func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
-	cfg := base.Clone()
-	if tuning.MaxDepth > 0 {
-		cfg.MaxDepth = tuning.MaxDepth
-	}
-	if len(tuning.PermuteControllers) > 0 {
-		if cfg.Perturbations.PermuteOrder == nil {
-			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-		}
-		for _, controllerID := range tuning.PermuteControllers {
-			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
-		}
-	}
-	if len(tuning.StaleReads) > 0 {
-		if cfg.Perturbations.Staleness == nil {
-			cfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
-		}
-		for controllerID, kinds := range tuning.StaleReads {
-			id := tracecheck.ReconcilerID(controllerID)
-			st := cfg.Perturbations.Staleness[id]
-			if st.StaleReadBounds == nil {
-				st.StaleReadBounds = make(tracecheck.LookbackLimits)
-			}
-			for _, kind := range kinds {
-				trimmed := strings.TrimSpace(kind)
-				if trimmed == "" {
-					continue
-				}
-				lookback := tuning.StaleLookback[trimmed]
-				if lookback <= 0 {
-					lookback = 1
-				}
-				st.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
-			}
-			cfg.Perturbations.Staleness[id] = st
-		}
-	}
-	if len(tuning.UserActionReadyDepths) > 0 {
-		if cfg.Perturbations.UserActionReadyDepths == nil {
-			cfg.Perturbations.UserActionReadyDepths = make(map[int]int)
-		}
-		for idxStr, depth := range tuning.UserActionReadyDepths {
-			idx := 0
-			fmt.Sscanf(idxStr, "%d", &idx)
-			cfg.Perturbations.UserActionReadyDepths[idx] = depth
-		}
-	}
-	if len(tuning.StalenessIntervals) > 0 {
-		intervals := make([]tracecheck.StalenessInterval, 0, len(tuning.StalenessIntervals))
-		for _, si := range tuning.StalenessIntervals {
-			intervals = append(intervals, tracecheck.StalenessInterval{
-				ReconcilerID: tracecheck.ReconcilerID(si.Reconciler),
-				Kind:         si.Kind,
-				StaleAt:      si.StaleAt,
-				CatchUpAt:    si.CatchUpAt,
-				Lag:          si.Lag,
-			})
-		}
-		cfg.Perturbations.StalenessIntervals = intervals
-	}
-	return cfg
-}

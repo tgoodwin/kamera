@@ -335,11 +335,15 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
 		}
 
+		cfg, err := explore.ApplyInputTuning(builder.Config(), input.Tuning)
+		if err != nil {
+			return nil, fmt.Errorf("apply tuning for input %d (%s): %w", idx, input.Name, err)
+		}
 		scenarios = append(scenarios, explore.Scenario{
 			Name:             input.Name,
 			EnvironmentState: state,
 			UserInputs:       userInputs,
-			Config:           applyInputTuning(builder.Config(), input.Tuning),
+			Config:           cfg,
 		})
 	}
 
@@ -527,45 +531,6 @@ func copyDynamicControllers(
 	return out
 }
 
-func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
-	cfg := base.Clone()
-	if tuning.MaxDepth > 0 {
-		cfg.MaxDepth = tuning.MaxDepth
-	}
-	if len(tuning.PermuteControllers) > 0 {
-		if cfg.Perturbations.PermuteOrder == nil {
-			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-		}
-		for _, controllerID := range tuning.PermuteControllers {
-			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
-		}
-	}
-	if len(tuning.StaleReads) > 0 {
-		if cfg.Perturbations.Staleness == nil {
-			cfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
-		}
-		for controllerID, kinds := range tuning.StaleReads {
-			id := tracecheck.ReconcilerID(controllerID)
-			staleness := cfg.Perturbations.Staleness[id]
-			if staleness.StaleReadBounds == nil {
-				staleness.StaleReadBounds = make(tracecheck.LookbackLimits)
-			}
-			for _, kind := range kinds {
-				trimmed := strings.TrimSpace(kind)
-				if trimmed == "" {
-					continue
-				}
-				lookback := tuning.StaleLookback[trimmed]
-				if lookback <= 0 {
-					lookback = 1
-				}
-				staleness.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
-			}
-			cfg.Perturbations.Staleness[id] = staleness
-		}
-	}
-	return cfg
-}
 
 func buildUserActionsFromCoverageInput(
 	input coverage.Input,
