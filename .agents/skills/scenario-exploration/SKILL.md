@@ -234,13 +234,39 @@ For each unverified hypothesis from Phase 4, determine which perturbation type c
 
 | Hypothesis type | Perturbation |
 |----------------|--------------|
-| Ordering X before Y produces different outcome | `permuteControllers` |
+| Ordering X before Y produces different outcome | `permuteControllers` — **required base**; specifies which controllers to permute |
+| Race only relevant after a specific event fires (e.g., CREATE of a revision) | `permuteAfterEvent` — optional scoping modifier |
+| Race only relevant within a bounded depth range | `permuteDepthRange` — optional scoping modifier |
 | Controller C sees stale data for kind K during window [A, B) | `stalenessIntervals` |
 | User action fires at the wrong point in the execution | `userActionReadyDepths` |
 | State space not fully sampled (non-determinism suspected) | `search.monteCarlo` |
 
+> **Permutation scoping:** `permuteControllers` is required to enable any ordering permutation —
+> it specifies *which* controllers are permuted. `permuteAfterEvent` and `permuteDepthRange` are
+> optional scoping modifiers that narrow *when* permutations are active. They compose with AND
+> logic: when both are set, permutations activate only when the trigger event has fired AND the
+> current depth is within range. Omitting both means permutation is always active (default).
+
 If a hypothesis requires a code change before it's testable (e.g., a prerequisite bug must
 be fixed first), label it **blocked** and skip it.
+
+### Pre-flight checklist (run before any scenario)
+
+Before running or re-running a scenario, verify:
+
+1. **Are all relevant controllers in `permuteControllers`?** If the hypothesis involves
+   controller C running before controller D, both must be listed. Missing a controller
+   is the most common reason an ordering is never explored. Note: `permuteAfterEvent`
+   and `permuteDepthRange` only scope *when* permutations are active — they have no
+   effect if the relevant controllers are absent from `permuteControllers`.
+2. **Does the user action fire?** If `userInputs` is non-empty but `userActionReadyDepths`
+   is missing, the action fires at convergence. If the reference run cycles, the action
+   never fires. Add `"userActionReadyDepths": {"0": 0}` to fire immediately.
+3. **Is the staleness window active?** Check that `staleAt` < initial KindSequence <
+   `catchUpAt` for the target kind. If the initial KindSequence is already >= `catchUpAt`,
+   the staleness window is expired before the run starts.
+4. **Is `maxDepth` sufficient?** If all states are max-depth aborted with low cycling
+   ratio (< 3x), increase depth. If cycling ratio is high, depth won't help.
 
 ### Step 2: Read KindSequences from the reference trace
 
@@ -265,6 +291,26 @@ For `userActionReadyDepths`, `{"0": N}` fires user action 0 at DFS depth N. Read
 index from the reference trace at which the action should fire to produce the hypothesized
 race.
 
+For `permuteAfterEvent`, find the event that opens the race window:
+
+```bash
+# Find all CREATE effects and their kinds
+jq '.states[0].paths[0][] | .effects[]? | select(.opType == "CREATE") | {opType, kind: .key.identityKey}' dump.jsonl
+```
+
+Set `opType` and `kind` (canonical `group/Kind` format) to the event that should trigger
+permutation. Permutations are suppressed before this event and active after it.
+
+For `permuteDepthRange`, identify the depth range where the race occurs:
+
+```bash
+# Find which depths produce the interesting divergence
+jq '.states[0].paths[0][] | {depth: .depth, controllerId, effectCount: (.effects | length)}' dump.jsonl
+```
+
+Set `min` and `max` to bracket the interesting depths. This avoids wasting exploration
+budget on deterministic early steps or cycling noise at deeper depths.
+
 Find valid controller IDs from the dump:
 
 ```bash
@@ -286,6 +332,11 @@ Edit the `tuning` section. All perturbation fields are supported:
 "tuning": {
   "maxDepth": 200,
   "permuteControllers": ["ControllerA", "ControllerB"],
+  "permuteAfterEvent": {
+    "opType": "CREATE",
+    "kind": "GROUP/Kind"
+  },
+  "permuteDepthRange": {"min": 1, "max": 10},
   "stalenessIntervals": [
     {
       "reconciler": "ControllerA",
@@ -302,6 +353,32 @@ Edit the `tuning` section. All perturbation fields are supported:
   }
 }
 ```
+
+**`permuteControllers`** (required to enable ordering permutation): list of controller IDs
+whose scheduling order is permuted during exploration. Without this, the exploration follows
+a single deterministic order.
+
+**Optional scoping modifiers** (all default to unconstrained; AND logic when combined):
+
+- `permuteAfterEvent`: Only start permuting after an effect matching `opType` + `kind`
+  is observed on the current exploration path. Implemented as a one-shot boolean (`permuteTriggered`)
+  on each `StateNode` — once fired, it is inherited by all descendant states and included in
+  state serialization so deduplication is trigger-aware. Use when the race window only opens
+  after a specific event (e.g., "only permute after a CompositionRevision is created").
+
+- `permuteDepthRange`: Only permute within depths `[min, max]` (inclusive). Acts as an
+  off-switch for permutation outside the interesting depth range. Use when the race occurs in
+  a known depth window and you want to avoid wasting exploration budget on uninteresting early
+  steps or cycling noise at deeper depths.
+
+- `permuteAfterEvent` + `permuteDepthRange` (combined): Permute only when BOTH the trigger
+  event has fired AND the current depth is within range. Useful when the race window is both
+  event-gated and depth-bounded (e.g., "start permuting after the CompositionRevision is created,
+  but stop at depth 15 before cycling begins").
+
+**Planned:** `permuteForSteps` — (not yet implemented) a relative window alternative to `permuteDepthRange.max`. After
+`permuteAfterEvent` fires, permute for at most N additional steps, then stop. This is more robust
+than an absolute depth bound when the trigger event's depth varies across branches.
 
 ### Step 4: Re-run and compare
 
