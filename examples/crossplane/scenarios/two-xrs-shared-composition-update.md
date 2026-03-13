@@ -1,3 +1,5 @@
+> **STALE**: This analysis contains outdated conclusions from multiple investigation rounds. See [ANALYSIS.md](ANALYSIS.md) for the current evidence-grounded analysis.
+
 # Scenario: two-xrs-shared-composition-update
 
 ## Setup
