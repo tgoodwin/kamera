@@ -1,21 +1,46 @@
 ---
 name: scenario-exploration
-description: Analyze Kamera scenario runs to extract grounded bug findings. Use this after running a workflow scenario to systematically check convergence, compare orderings, and produce evidence-backed bug reports. Enforces the distinction between observed trace evidence and inferred hypotheses.
+description: Run and analyze Kamera workflow scenarios to extract grounded bug findings. Covers the full agent loop — getting a clean reference run, analyzing convergence and controller orderings, formulating targeted hypotheses, designing perturbation experiments, and producing evidence-backed bug reports.
 metadata:
-  short-description: Analyze scenario dumps and produce evidence-grounded bug reports
+  short-description: Run, analyze, and iterate on Kamera scenario dumps to produce evidence-grounded bug reports
 ---
 
 # Scenario Exploration Skill
 
-Use this skill to analyze the results of a Kamera scenario run. The output is
-an evidence-grounded bug report that clearly distinguishes what was **observed
-in the trace** from what was **inferred from code analysis**.
+Use this skill to run and analyze Kamera workflow scenarios. The typical agent
+loop is:
+
+1. **Get a clean reference run** — run the scenario with perturbations stripped to see unperturbed behavior
+2. **Analyze the trace** (Phases 1–4) — assess convergence, compare orderings, identify what the run reveals
+3. **Formulate hypotheses** — decide which suspected race conditions or ordering sensitivities need targeted testing
+4. **Design and run perturbation experiments** (Phase 6) — create variant JSONs and run them in exploration mode
+5. **Build the bug report** — ground every claim in the trace, clearly label what was observed vs inferred
+
+The output is an evidence-grounded bug report that clearly distinguishes what
+was **observed in the trace** from what was **inferred from code analysis**.
 
 ## Prerequisites
 
-- A completed scenario run with output in a dump directory
-- The workflow JSON that produced it
+- A workflow JSON file describing the scenario
+- Access to a harness binary for the system under test (e.g., `go run ./examples/crossplane/`)
 - Access to `campaign-metrics` and `inspect exploration` CLI tools
+
+**Start with a clean reference run.** Before analyzing, get an unperturbed trace
+from the workflow JSON — regardless of what `permuteControllers` or `stalenessIntervals`
+are configured in it:
+
+```bash
+go run <path/to/harness> \
+  --closed-loop=false --no-perturbations \
+  --inputs <workflow.json> \
+  --output <ref-dir> \
+  --interactive=false
+```
+
+This is your ground truth: what the system does with no ordering permutations or
+staleness injections. Analyze this trace in Phases 1–4. In Phase 6, you take over
+the perturbation planning role — designing targeted experiments based on what you
+observed, rather than relying on the automated closed-loop pipeline.
 
 ## Run Modes
 
@@ -237,11 +262,20 @@ This phase is optional. Enter it when Phase 4 produces **unverified hypotheses t
 tested by modifying scenario tuning** — as opposed to hypotheses that require code fixes
 before they can be verified.
 
-> **Context:** The Kamera pipeline has an automatic perturbation stage (`parallel_runner.go`
-> planFn) that generates staleness/ordering reruns programmatically from reference runs. This
-> phase gives an agent a manual, targeted path to the same configuration surface: use it when
-> you have a specific hypothesis the automatic stage didn't cover, or when you want to probe
-> a targeted race condition directly.
+> **The agent-in-the-loop model:** Kamera has an automated closed-loop pipeline
+> (`--closed-loop=true`, the default) that generates perturbation reruns from reference traces
+> using a fixed planner. That planner is exhaustive but generic — it enumerates all observed
+> controllers and all staleness windows without understanding which races actually matter.
+>
+> In Phase 6, **you are the perturbation planner.** You've read the trace, you know which
+> controllers interact at which depths, and you have specific hypotheses about what ordering
+> or staleness condition triggers the bug. Design experiments that test exactly those
+> hypotheses. A well-targeted `permuteAfterEvent` + `permuteControllers` variant will find
+> the race faster and with less noise than an exhaustive automated rerun.
+>
+> Run your variants in **Exploration mode** (`--closed-loop=false`) so the config in the
+> variant JSON is applied directly — no closed-loop pipeline, no plan generation, just
+> your perturbation running against the scenario.
 
 ### Step 1: Classify each unverified hypothesis
 
