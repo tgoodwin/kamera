@@ -11,6 +11,31 @@ Use this skill to design Kamera workflow scenarios that target specific bug
 patterns in Kubernetes controller systems. The output is a set of workflow JSON
 inputs, each constructed backward from a concrete vulnerability hypothesis.
 
+## Prior Findings
+
+Before designing new scenarios, check whether the project has an existing
+analysis file at `examples/<project>/.agents/ANALYSIS.md`. This file records
+what scenarios have already been explored and what they found.
+
+**If the file exists**, read it and reason about:
+
+- Which scenarios surfaced confirmed bugs — these directions are productive and
+  worth extending (e.g., testing edge cases, related code paths, combining with
+  other findings)
+- Which scenarios found nothing — understand *why* (wrong environment state,
+  scenario design gap, the hypothesized bug doesn't exist) before concluding
+  the area is exhausted
+- Which bug patterns appear repeatedly across scenarios — this signals systemic
+  issues in the controller design worth probing from multiple angles
+- Which areas of the controller have not yet been exercised at all
+
+Use this to avoid redundant scenarios and to identify unexplored angles. Do not
+look for explicit "do not re-explore" markers — read the findings and draw your
+own conclusions about what's left.
+
+**If the file does not exist**, the project is in early exploration. Skip this
+step and proceed directly to Phase 1.
+
 ## Prerequisite
 
 You need one of:

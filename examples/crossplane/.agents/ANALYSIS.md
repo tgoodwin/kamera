@@ -679,22 +679,165 @@ all cycling. All explored orderings produce errors.
 CompositionRevisionReconciler → CompositeReconciler would succeed. This was
 never observed in any trace.
 
+### xr-and-composition-deleted-simultaneously (2026-03-13)
+
+**Scenario:** `workflow_crossplane-concurrent-deletion_xr-and-composition-deleted-simultaneously.json`
+
+**Hypothesis tested:** Two concurrent DELETEs (XR + Composition at the same
+time). The XR's deletion finalizer needs the Composition to understand which
+composed resources to clean up. If CleanupReconciler removes the Composition
+before the XR finalizer runs, the XR may be stuck in Terminating permanently.
+
+**Result:** Hypothesis not confirmed. The CompositeReconciler deletion path
+does not fetch or inspect the Composition — it only removes the XR's finalizer
+and updates status. The XR deletes cleanly in all controller orderings. No
+ordering-dependent divergence was observed.
+
+**Metrics:** Reference: 12 unique / 101 total (8.4x cycling). Exploration
+(permuted controllers): 43 unique / 139 total (3.2x cycling). Single terminal
+state across all paths, 0 differing objects.
+
+**Do not re-explore:** The XR delete path's independence from the Composition
+is architectural (composite/reconciler.go deletion short-circuit). Concurrent
+deletion of XR + Composition cannot produce a stuck-Terminating XR via this
+mechanism. Further scenario variants along this axis are unlikely to reveal
+new bugs unless the delete path is substantially changed.
+
+**Observed side-effect:** After both objects are removed, the orphaned
+CompositionRevision (ownerRef pointing to the deleted Composition) cycles
+indefinitely due to Finding 2. In production, Kubernetes GC would
+cascade-delete the CompositionRevision, ending the cycle. The model does not
+simulate GC.
+
+### two-xrs-deleted-simultaneously (2026-03-13)
+
+**Scenario:** `workflow_crossplane-concurrent-deletion_two-xrs-deleted-simultaneously.json`
+
+**Hypothesis tested:** Two concurrent DELETEs of both XRs sharing a
+Composition. One XR's cleanup may delete composed resources the other XR's
+finalizer still expects, leaving one XR stuck in Terminating.
+
+**Result:** Hypothesis not testable with this scenario design. Both DELETEs
+fire at depth 0 via `userActionReadyDepths`, before any composition has run.
+The CompositeReconciler delete path (`meta.WasDeleted(xr)=true` on first
+reconcile) short-circuits without entering the compose phase, so no composed
+resources are ever created. Both XRs delete cleanly in all orderings.
+
+**Metrics:** Reference: 16 unique / 101 total (6.3x cycling). Exploration
+(permuted controllers): 302 unique / 499 total (1.65x cycling). 2 terminal
+states, 0 differing objects.
+
+**Do not re-explore in this form.** To test the actual hypothesis (shared
+composed resource conflict at deletion time), a different scenario is needed:
+start with both XRs in a composed/ready state (composed resources already in
+environment), then delete both XRs simultaneously. The kamera-stub returns a
+static ConfigMap name (`xr-config`) for all XRs, so both XRs' composed
+resources would be the same object — a prerequisite for the conflict. However,
+this also means only one XR can successfully compose at a time
+(`AddControllerReference` would fail for the second XR), making the scenario
+degenerate. A stub that generates per-XR resource names would be needed to
+test this properly.
+
+### manual-xr-switch-with-old-composition-deleted (2026-03-13)
+
+**Scenario:** `workflow_crossplane-concurrent-deletion_manual-xr-switch-with-old-composition-deleted.json`
+
+**Hypothesis tested:** Combines Finding 1 (Manual policy mismatched refs) with
+Finding 3 (deleted Composition orphaning). User simultaneously UPDATEs the XR
+to switch compositionRef=beta (leaving compositionRevisionRef=alpha-rev-1) AND
+DELETEs widget-composition-alpha. The Manual policy code will Get(alpha-rev-1)
+— which belongs to the now-deleted Composition — while compositionRef points to
+beta. Different orderings may produce 3+ divergent terminal states.
+
+**Result:** Finding 1 is confirmed operative — the Manual policy fetches
+alpha-rev-1 regardless of compositionRef=beta, and alpha-rev-1 persists
+(orphaned, no GC in model) indefinitely. However, adding the concurrent DELETE
+of alpha does not produce new divergent terminal states. The exploration run
+(770 unique nodes / 1,761 total, 12 terminal states) shows **0 differing
+objects** across all 12 states — all orderings cycle to the same object content.
+
+The concurrent DELETE confirms the orphaned-revision scenario from Finding 3
+is reachable via the Manual policy path, but does not compound into a distinct
+new failure mode beyond what Findings 1 and 3 individually document.
+
+**Metrics:** Reference: 20 unique / 101 total (5.0x). Exploration: 770 unique /
+1,761 total (2.3x). 12 aborted states, 0 differing objects.
+
+**Do not re-explore:** The interaction of Manual policy + concurrent Composition
+deletion produces no outcome category beyond what Findings 1 and 3 cover
+individually. In production (with GC), alpha-rev-1 would be cascade-deleted
+after alpha is removed, causing the Manual policy `Get(alpha-rev-1)` to return
+NotFound — at which point the XR enters Finding 3's permanent error loop.
+That behavior is already documented under Finding 3.
+
+### composition-update-with-capability-removal (2026-03-13)
+
+**Scenario:** `workflow_crossplane-concurrent-staleness_composition-update-with-capability-removal.json`
+
+**Hypothesis tested:** Combines Finding 4 (unvalidated rev-2 race) with
+Finding 5 (stale ValidPipeline). User simultaneously UPDATEs the Composition
+(triggers rev-2 creation) AND removes the composition capability from the
+FunctionRevision. Rev-2 is born already-invalid; CompositeReconciler may select
+it before CompositionRevisionReconciler marks it ValidPipeline=False — and
+since rev-2 was never valid, this is a stricter variant of Finding 5 where the
+stale condition was never correct for that revision.
+
+**Result:** The "inherited ValidPipeline=True on rev-2" hypothesis was
+**refuted**. New CompositionRevisions are created with zero status conditions
+(not inherited from prior revisions). Rev-2 never has ValidPipeline=True;
+any CompositeReconciler attempt to use rev-2 correctly errors with "pipeline
+status unknown."
+
+The bug that manifests is **Finding 5 operating on rev-1**: before
+CompositionRevisionReconciler has processed the capability removal, rev-1
+still carries `ValidPipeline=True`. If CompositeReconciler runs first, it
+selects rev-1 (rev-2 may not exist yet at step 2) and composes resources using
+the stale condition. This is identical to Finding 5's mechanism.
+
+**Metrics:** Reference: 11 unique / 101 total (9.2x). Exploration (permuted
+controllers): 129 unique / 1,030 total (8.0x). 10 aborted states, 5 distinct
+terminal state hashes.
+
+**State categorization (trace-grounded):**
+
+| State | Terminal ID | Compositions | First controller after user action |
+|-------|-------------|-------------|-------------------------------------|
+| 0, 1 | aborted-2pgzvfjj | 1 (bug) | CompositeReconciler |
+| 2 | aborted-2u7kzlp9 | 0 (correct) | CompositionRevisionReconciler |
+| 3 | aborted-3d1891je | 1 (bug) | CompositeReconciler |
+| 4, 5 | aborted-3swcrta5 | 0 (correct) | CompositionRevisionReconciler |
+| 6 | aborted-3swcrta5 | 0 (correct) | CompositionReconciler |
+| 7, 8, 9 | aborted-4e6yru0h | 2 (bug) | CompositeReconciler |
+
+6 of 10 states show buggy composition. The first controller to run after the
+user action fully determines the outcome: CompositeReconciler-first → bug;
+CompositionRevisionReconciler-first or CompositionReconciler-first → correct.
+
+**Do not re-explore as a new finding.** This scenario confirms Finding 5
+applies when a Composition UPDATE coincides with a capability removal, but
+produces no new outcome categories. Any further investigation of the
+ValidPipeline race should be tracked under Finding 5.
+
 ---
 
 ## Artifact Index
 
 | Scenario | Workflow JSON | Old Report (stale) | Dump Location |
 |----------|--------------|-------------------|---------------|
-| composition-deleted-while-xr-bound | [workflow JSON](workflow_crossplane-deletion_composition-deleted-while-xr-bound.json) | [old report](composition-deleted-while-xr-bound.md) | `/tmp/depth100-composition-deleted/` |
-| composition-deleted-while-xr-bound (hypothesis-1) | [hypothesis JSON](workflow_crossplane-deletion_composition-deleted-while-xr-bound-hypothesis-1.json) | — | `/tmp/finding3-hypothesis1/` |
-| xr-deleted-with-active-composition | [workflow JSON](workflow_crossplane-deletion_xr-deleted-with-active-composition.json) | [old report](xr-deleted-with-active-composition.md) | `/tmp/depth100-xr-deleted/` |
-| composition-update-races-xr-fetch | [workflow JSON](workflow_crossplane-staleness_composition-update-races-xr-fetch.json) | [old report](composition-update-races-xr-fetch.md) | `/tmp/depth100-composition-update-races/` |
-| composition-update-races-xr-fetch (hypothesis-1) | [hypothesis JSON](workflow_crossplane-staleness_composition-update-races-xr-fetch-hypothesis-1.json) | — | `/tmp/finding4-hypothesis1/` |
-| composition-update-races-xr-fetch (hypothesis-2) | [hypothesis JSON](workflow_crossplane-staleness_composition-update-races-xr-fetch-hypothesis-2.json) | — | `/tmp/finding4-hypothesis2/` |
-| function-capability-removed | [workflow JSON](workflow_crossplane-staleness_function-capability-removed.json) | [old report](function-capability-removed.md) | `/tmp/depth100-function-capability/` |
-| function-capability-removed (interval) | [interval JSON](interval_function-capability-removed.json) | — | `/tmp/finding5-rerun/` |
-| function-capability-removed (hypothesis-1) | [hypothesis JSON](workflow_crossplane-staleness_function-capability-removed-hypothesis-1.json) | — | (panics — see Finding 5 re-run) |
-| xr-created-before-revision-validated | [workflow JSON](workflow_crossplane-staleness_xr-created-before-revision-validated.json) | [old report](xr-created-before-revision-validated.md) | `/tmp/depth100-xr-before-validation/` |
-| manual-update-policy-composition-switch | [workflow JSON](workflow_crossplane-policy_manual-update-policy-composition-switch.json) | [old report](manual-update-policy-composition-switch.md) | `/tmp/depth100-manual-policy-clean/` |
-| manual-update-policy-composition-switch-stale | [workflow JSON](workflow_crossplane-policy_manual-update-policy-composition-switch-stale.json) | [old report](manual-update-policy-composition-switch-stale.md) | `/tmp/rerun-manual-policy-stale/` |
-| two-xrs-shared-composition-update | [workflow JSON](workflow_crossplane-concurrency_two-xrs-shared-composition-update.json) | [old report](two-xrs-shared-composition-update.md) | `/tmp/rerun-two-xrs-shared/` |
+| composition-deleted-while-xr-bound | [workflow JSON](../scenarios/workflow_crossplane-deletion_composition-deleted-while-xr-bound.json) | [old report](../scenarios/composition-deleted-while-xr-bound.md) | `/tmp/depth100-composition-deleted/` |
+| composition-deleted-while-xr-bound (hypothesis-1) | [hypothesis JSON](../scenarios/workflow_crossplane-deletion_composition-deleted-while-xr-bound-hypothesis-1.json) | — | `/tmp/finding3-hypothesis1/` |
+| xr-deleted-with-active-composition | [workflow JSON](../scenarios/workflow_crossplane-deletion_xr-deleted-with-active-composition.json) | [old report](../scenarios/xr-deleted-with-active-composition.md) | `/tmp/depth100-xr-deleted/` |
+| composition-update-races-xr-fetch | [workflow JSON](../scenarios/workflow_crossplane-staleness_composition-update-races-xr-fetch.json) | [old report](../scenarios/composition-update-races-xr-fetch.md) | `/tmp/depth100-composition-update-races/` |
+| composition-update-races-xr-fetch (hypothesis-1) | [hypothesis JSON](../scenarios/workflow_crossplane-staleness_composition-update-races-xr-fetch-hypothesis-1.json) | — | `/tmp/finding4-hypothesis1/` |
+| composition-update-races-xr-fetch (hypothesis-2) | [hypothesis JSON](../scenarios/workflow_crossplane-staleness_composition-update-races-xr-fetch-hypothesis-2.json) | — | `/tmp/finding4-hypothesis2/` |
+| function-capability-removed | [workflow JSON](../scenarios/workflow_crossplane-staleness_function-capability-removed.json) | [old report](../scenarios/function-capability-removed.md) | `/tmp/depth100-function-capability/` |
+| function-capability-removed (interval) | [interval JSON](../scenarios/interval_function-capability-removed.json) | — | `/tmp/finding5-rerun/` |
+| function-capability-removed (hypothesis-1) | [hypothesis JSON](../scenarios/workflow_crossplane-staleness_function-capability-removed-hypothesis-1.json) | — | (panics — see Finding 5 re-run) |
+| xr-created-before-revision-validated | [workflow JSON](../scenarios/workflow_crossplane-staleness_xr-created-before-revision-validated.json) | [old report](../scenarios/xr-created-before-revision-validated.md) | `/tmp/depth100-xr-before-validation/` |
+| manual-update-policy-composition-switch | [workflow JSON](../scenarios/workflow_crossplane-policy_manual-update-policy-composition-switch.json) | [old report](../scenarios/manual-update-policy-composition-switch.md) | `/tmp/depth100-manual-policy-clean/` |
+| manual-update-policy-composition-switch-stale | [workflow JSON](../scenarios/workflow_crossplane-policy_manual-update-policy-composition-switch-stale.json) | [old report](../scenarios/manual-update-policy-composition-switch-stale.md) | `/tmp/rerun-manual-policy-stale/` |
+| two-xrs-shared-composition-update | [workflow JSON](../scenarios/workflow_crossplane-concurrency_two-xrs-shared-composition-update.json) | [old report](../scenarios/two-xrs-shared-composition-update.md) | `/tmp/rerun-two-xrs-shared/` |
+| xr-and-composition-deleted-simultaneously | [workflow JSON](../scenarios/workflow_crossplane-concurrent-deletion_xr-and-composition-deleted-simultaneously.json) | — | `/tmp/xr-comp-simultaneous-ref/`, `/tmp/xr-comp-simultaneous-explore/` |
+| two-xrs-deleted-simultaneously | [workflow JSON](../scenarios/workflow_crossplane-concurrent-deletion_two-xrs-deleted-simultaneously.json) | — | `/tmp/two-xrs-simultaneous-ref/`, `/tmp/two-xrs-simultaneous-explore/` |
+| manual-xr-switch-with-old-composition-deleted | [workflow JSON](../scenarios/workflow_crossplane-concurrent-deletion_manual-xr-switch-with-old-composition-deleted.json) | — | `/tmp/manual-xr-switch-ref/`, `/tmp/manual-xr-switch-explore/` |
+| composition-update-with-capability-removal | [workflow JSON](../scenarios/workflow_crossplane-concurrent-staleness_composition-update-with-capability-removal.json) | — | `/tmp/comp-update-cap-removal-ref/`, `/tmp/comp-update-cap-removal-explore/` |
