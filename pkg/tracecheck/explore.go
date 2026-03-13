@@ -49,6 +49,20 @@ type StalenessInterval struct {
 	Lag          int64        `json:"lag"` // how far behind frontier; -1 = frozen at StaleAt sequence
 }
 
+// PermuteDepthRange constrains ordering permutations to a specific depth window.
+// When set, permutations are only expanded for states within [Min, Max] (inclusive).
+type PermuteDepthRange struct {
+	Min int
+	Max int
+}
+
+// PermuteEventTrigger specifies an event (opType + canonical kind) that must
+// be observed in a path's effects before ordering permutations activate.
+type PermuteEventTrigger struct {
+	OpType event.OperationType
+	Kind   string // canonical group/kind, e.g. "apiextensions.crossplane.io/CompositionRevision"
+}
+
 type PerturbationConfig struct {
 	PermuteOrder map[ReconcilerID]bool
 	Staleness    map[ReconcilerID]StalenessConfig
@@ -62,6 +76,14 @@ type PerturbationConfig struct {
 	// view of a specific resource kind lags behind actual cluster state. When
 	// configured, this replaces the per-step branching approach of the Staleness map.
 	StalenessIntervals []StalenessInterval `json:"stalenessIntervals,omitempty"`
+
+	// PermuteDepthRange, when non-nil, restricts ordering permutations to states
+	// whose depth falls within [Min, Max] inclusive.
+	PermuteDepthRange *PermuteDepthRange
+
+	// PermuteAfterEvent, when non-nil, requires the specified event to have
+	// occurred before ordering permutations activate on a branch.
+	PermuteAfterEvent *PermuteEventTrigger
 }
 
 type StalenessConfig struct {
@@ -175,6 +197,14 @@ func (cfg ExploreConfig) Clone() ExploreConfig {
 		out.Perturbations.Staleness[id] = copied
 	}
 	out.Perturbations.StalenessIntervals = slices.Clone(cfg.Perturbations.StalenessIntervals)
+	if cfg.Perturbations.PermuteDepthRange != nil {
+		copied := *cfg.Perturbations.PermuteDepthRange
+		out.Perturbations.PermuteDepthRange = &copied
+	}
+	if cfg.Perturbations.PermuteAfterEvent != nil {
+		copied := *cfg.Perturbations.PermuteAfterEvent
+		out.Perturbations.PermuteAfterEvent = &copied
+	}
 	return out
 }
 
@@ -1422,6 +1452,18 @@ func (e *Explorer) materializeNextState(
 	stepResult.KindSeqAfter = newSequences
 	stepResult.PendingReconciles = newPendingReconciles
 
+	// Propagate permuteTriggered from parent; check step effects against trigger condition.
+	triggered := stateView.permuteTriggered
+	if !triggered && e.Config != nil && e.Config.Perturbations.PermuteAfterEvent != nil {
+		trigger := e.Config.Perturbations.PermuteAfterEvent
+		for _, eff := range stepResult.Changes.Effects {
+			if eff.OpType == trigger.OpType && eff.Key.CanonicalGroupKind() == trigger.Kind {
+				triggered = true
+				break
+			}
+		}
+	}
+
 	newState := StateNode{
 		Contents:                 NewStateSnapshot(newContents, newSequences, newStateEvents),
 		PendingReconciles:        newPendingReconciles,
@@ -1432,6 +1474,7 @@ func (e *Explorer) materializeNextState(
 		stalenessIntervals:       stateView.stalenessIntervals, // immutable config, share reference
 		ExecutionHistory:         append(slices.Clone(stateView.ExecutionHistory), stepResult),
 		nextUserActionIdx:        nextUserActionIdx,
+		permuteTriggered:         triggered,
 	}
 	newState.ID = string(newState.Hash())
 
@@ -1946,7 +1989,7 @@ func (e *Explorer) monteCarloEnabled() bool {
 }
 
 func (e *Explorer) initialStatesToEnqueue(initialState StateNode) []StateNode {
-	if len(initialState.PendingReconciles) > 1 && !e.monteCarloEnabled() {
+	if e.shouldExpandPendingOrder(initialState) {
 		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
 		return append(initialStateVariants, initialState)
 	}
@@ -1954,7 +1997,22 @@ func (e *Explorer) initialStatesToEnqueue(initialState StateNode) []StateNode {
 }
 
 func (e *Explorer) shouldExpandPendingOrder(state StateNode) bool {
-	return !e.monteCarloEnabled() && len(state.PendingReconciles) > 1
+	if e.monteCarloEnabled() || len(state.PendingReconciles) <= 1 {
+		return false
+	}
+	if e.Config != nil {
+		// Depth-range gate: if configured, only permute within [Min, Max].
+		if dr := e.Config.Perturbations.PermuteDepthRange; dr != nil {
+			if state.depth < dr.Min || state.depth > dr.Max {
+				return false
+			}
+		}
+		// Event-trigger gate: if configured, only permute after trigger event has been observed.
+		if e.Config.Perturbations.PermuteAfterEvent != nil && !state.permuteTriggered {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Explorer) selectionRNG() *rand.Rand {

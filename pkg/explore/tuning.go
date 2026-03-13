@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 )
 
@@ -27,6 +28,20 @@ func ApplyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 		}
 		for _, controllerID := range tuning.PermuteControllers {
 			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
+		}
+	}
+
+	if tuning.PermuteDepthRange != nil {
+		cfg.Perturbations.PermuteDepthRange = &tracecheck.PermuteDepthRange{
+			Min: tuning.PermuteDepthRange.Min,
+			Max: tuning.PermuteDepthRange.Max,
+		}
+	}
+
+	if tuning.PermuteAfterEvent != nil {
+		cfg.Perturbations.PermuteAfterEvent = &tracecheck.PermuteEventTrigger{
+			OpType: event.OperationType(tuning.PermuteAfterEvent.OpType),
+			Kind:   tuning.PermuteAfterEvent.Kind,
 		}
 	}
 

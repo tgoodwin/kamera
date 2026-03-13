@@ -275,6 +275,11 @@ type StateNode struct {
 	// stalenessIntervals carries immutable interval config from ExploreConfig.
 	// When non-nil, ObserveAs uses interval evaluation instead of stuckReconcilerPositions.
 	stalenessIntervals []StalenessInterval
+
+	// permuteTriggered records whether the event-trigger condition for ordering
+	// permutations has been satisfied on this branch. Once set to true it is
+	// inherited by all descendant states.
+	permuteTriggered bool
 }
 
 func (sn StateNode) ObserveAs(reconcilerID ReconcilerID) ObjectVersions {
@@ -416,6 +421,7 @@ func (sn StateNode) Clone() StateNode {
 
 		stuckReconcilerPositions: maps.Clone(sn.stuckReconcilerPositions),
 		stalenessIntervals:       sn.stalenessIntervals, // immutable config, share reference
+		permuteTriggered:         sn.permuteTriggered,
 	}
 }
 
@@ -505,6 +511,10 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 
 	builder.WriteString("|u:")
 	builder.WriteString(strconv.Itoa(sn.nextUserActionIdx))
+
+	if sn.permuteTriggered {
+		builder.WriteString("|pt:1")
+	}
 
 	return builder.String()
 }

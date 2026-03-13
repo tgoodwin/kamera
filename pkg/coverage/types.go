@@ -34,10 +34,25 @@ type InputStalenessInterval struct {
 	Lag        int64  `json:"lag"`
 }
 
+// InputDepthRange constrains permutation expansion to a specific depth window.
+type InputDepthRange struct {
+	Min int `json:"min"`
+	Max int `json:"max"`
+}
+
+// InputPermuteEvent specifies an event that must occur before permutation begins.
+type InputPermuteEvent struct {
+	OpType string `json:"opType"`
+	Kind   string `json:"kind"`
+}
+
 // InputTuning carries compact hints for later ExploreConfig construction.
 type InputTuning struct {
-	MaxDepth              int                      `json:"maxDepth"`
-	PermuteControllers    []string                 `json:"permuteControllers"`
+	MaxDepth           int                `json:"maxDepth"`
+	PermuteControllers []string           `json:"permuteControllers"`
+	PermuteDepthRange  *InputDepthRange   `json:"permuteDepthRange,omitempty"`
+	PermuteAfterEvent  *InputPermuteEvent `json:"permuteAfterEvent,omitempty"`
+	// TODO cleanup in favor of StalenessIntervals
 	StaleReads            map[string][]string      `json:"staleReads"`
 	StaleLookback         map[string]int           `json:"staleLookback"`
 	UserActionReadyDepths map[string]int           `json:"userActionReadyDepths,omitempty"`
