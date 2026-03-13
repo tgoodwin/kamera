@@ -109,8 +109,21 @@ All states converged?
 **Cycling detection:** If `total node visits / unique node visits > 3`, the
 exploration is cycling. Increasing depth will not help. Diagnose the cycle:
 - Unconditional API writes (known pattern)
-- Error re-enqueue loops
-- Feedback cycles between controllers
+- Error re-enqueue loops (controller returns error → re-enqueues → same error forever)
+- Feedback cycles between controllers (A writes → triggers B → B writes → triggers A)
+
+**Cycling does not mean no findings.** When a run cycles and produces zero converged
+states, shift to partial-trace analysis:
+
+1. Read the first ~10 steps of path 0 — this shows the initial ordering and any early errors
+2. Check `abortedStates` for distinct error messages across states — if different states fail
+   with different errors, that is ordering-dependent behavior even without convergence
+3. Look for error steps: `jq '.states[0].paths[0][] | select(.error != "") | {depth, controllerId, error}' dump.jsonl`
+4. Look for the cycling actor: whichever controller produces repeated identical-hash effects
+   is likely the source
+
+An error re-enqueue loop may be indicitave of a bug. Controller-based systems are designed to tolerate transient errors, but eventually resolve as the system converges. If a controller encounters a non-transient error that causes it to re-enqueue indefinitely, that may indicate that the execution has entered some irrecoverable path. That is a bug worth investigating — even if the run never converges.
+
 
 ## Phase 2: State Comparison
 
@@ -128,10 +141,20 @@ Key questions:
 If all converged states are identical, no ordering-dependent divergence exists
 for this scenario configuration.
 
+> **Reference-run note:** A reference run (`--no-perturbations`) explores a single
+> deterministic ordering and produces at most one terminal state. `diff` on a single
+> state is a no-op. Ordering divergence requires an exploration-mode run with
+> `permuteControllers` configured — proceed to Phase 6 to set that up.
+
 ## Phase 3: Ordering Analysis
 
 This is the core of Kamera's value: determining whether different controller
 orderings produce different outcomes.
+
+> **Requires an exploration-mode run.** Ordering analysis only applies when
+> `permuteControllers` is configured and the run was executed with `--closed-loop=false`
+> (exploration mode). If you only have a reference trace, this phase will find nothing —
+> that is expected. Note what orderings you want to test and proceed to Phase 6.
 
 ### What constitutes an ordering-dependent bug?
 
@@ -174,10 +197,10 @@ does not appear in the trace, you MUST label this as an inference:
 > error. This ordering was not explored because [reason].
 
 Common reasons an ordering wasn't explored:
-- The reference run didn't converge, so no rerun was generated
-- The controller wasn't triggered (no watch registration for the event)
-- Max depth was reached before the ordering could complete
-- The scenario tuning didn't include the controller in `permuteControllers`
+- The controller wasn't in `permuteControllers` — add it to the variant JSON
+- The controller wasn't triggered (no watch registration for the event type)
+- Max depth was reached before the ordering could complete — increase `maxDepth`
+- `permuteAfterEvent` suppressed permutation — the trigger event never fired
 
 ## Phase 4: Bug Report Construction
 
@@ -486,4 +509,21 @@ jq '.states[0].paths[0][].controllerId' <dump.jsonl>
 
 # Get the final converged state objects
 jq '.states[0].state.contents.objects' <dump.jsonl>
+
+# --- Cycling / partial-trace analysis ---
+
+# Find all error steps (essential for cycling runs)
+jq '.states[0].paths[0][] | select(.error != "") | {depth, controllerId, error}' <dump.jsonl>
+
+# Count effect types across the path (spot unconditional writes)
+jq '[.states[0].paths[0][].effects[]?.opType] | group_by(.) | map({op: .[0], count: length})' <dump.jsonl>
+
+# Find steps where a specific kind was written (for KindSequence calibration)
+jq '.states[0].paths[0][] | select(.KindSeqAfter["GROUP/Kind"] > .KindSeqBefore["GROUP/Kind"]) | {depth, controllerId, before: .KindSeqBefore["GROUP/Kind"], after: .KindSeqAfter["GROUP/Kind"]}' <dump.jsonl>
+
+# Compare errors across aborted states (ordering-dependent failures in cycling runs)
+jq '.states[].paths[0][0] | {stateHash, controllerId, error}' <dump.jsonl>
+
+# Find all CREATE effects and their kinds (for permuteAfterEvent calibration)
+jq '.states[0].paths[0][] | .effects[]? | select(.opType == "CREATE") | {depth, opType, kind: .key.identityKey}' <dump.jsonl>
 ```
