@@ -17,6 +17,21 @@ in the trace** from what was **inferred from code analysis**.
 - The workflow JSON that produced it
 - Access to `campaign-metrics` and `inspect exploration` CLI tools
 
+## Run Modes
+
+Every harness run is one of three modes, controlled by flags:
+
+| Mode | Flags | Behavior |
+|------|-------|----------|
+| **Reference** | `--perturb=false --no-perturbations` | Single run with all perturbations stripped. Use to get a clean baseline from a JSON that already has `permuteControllers` configured. |
+| **Exploration** | `--perturb=false` (default when `--perturb` absent) | Single run with the JSON config applied as-is, including any `permuteControllers`, `stalenessIntervals`, etc. This is the primary agent-driven mode. |
+| **Closed-loop** | `--perturb=true` (default) | Runs a reference phase (perturbations stripped) followed by auto-generated perturbation plans derived from the reference trace. |
+
+> **Agent workflow:** For hypothesis-driven re-exploration (Phase 6), use **Exploration mode** (`--perturb=false`).
+> Configure the perturbations in the JSON variant file and run it directly. Use **Reference mode**
+> (`--perturb=false --no-perturbations`) when you want a baseline trace from the same JSON file without
+> manually removing the perturbation fields.
+
 ## Core Principle: Evidence Before Conclusions
 
 Every claim in a bug report must be traceable to one of two sources:
@@ -383,7 +398,11 @@ than an absolute depth bound when the trigger event's depth varies across branch
 ### Step 4: Re-run and compare
 
 ```bash
-go run <path/to/harness> --inputs <hypothesis-variant.json> --output <new-dir> --interactive=false
+# Exploration mode: run with perturbations as configured in the hypothesis JSON
+go run <path/to/harness> --perturb=false --inputs <hypothesis-variant.json> --output <new-dir> --interactive=false
+
+# Reference mode: run the same JSON with perturbations stripped (for baseline comparison)
+go run <path/to/harness> --perturb=false --no-perturbations --inputs <hypothesis-variant.json> --output <ref-dir> --interactive=false
 ```
 
 Then compare:
