@@ -1,0 +1,167 @@
+[
+  {
+    "name": "crossplane-concurrent-deletion/two-xrs-deleted-simultaneously",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "pkg.crossplane.io/v1",
+          "kind": "FunctionRevision",
+          "metadata": {
+            "name": "kamera-stub-rev",
+            "labels": {
+              "pkg.crossplane.io/package": "kamera-stub"
+            }
+          },
+          "spec": {
+            "desiredState": "Active"
+          },
+          "status": {
+            "capabilities": [
+              "composition"
+            ]
+          }
+        },
+        {
+          "apiVersion": "apiextensions.crossplane.io/v1",
+          "kind": "Composition",
+          "metadata": {
+            "name": "widget-composition-shared"
+          },
+          "spec": {
+            "compositeTypeRef": {
+              "apiVersion": "example.org/v1",
+              "kind": "XWidget"
+            },
+            "mode": "Pipeline",
+            "pipeline": [
+              {
+                "step": "pipeline",
+                "functionRef": {
+                  "name": "kamera-stub"
+                }
+              }
+            ],
+            "writeConnectionSecretsToNamespace": "default"
+          }
+        },
+        {
+          "apiVersion": "apiextensions.crossplane.io/v1",
+          "kind": "CompositionRevision",
+          "metadata": {
+            "name": "widget-composition-shared-rev-1",
+            "labels": {
+              "crossplane.io/composition-name": "widget-composition-shared"
+            },
+            "ownerReferences": [
+              {
+                "apiVersion": "apiextensions.crossplane.io/v1",
+                "kind": "Composition",
+                "name": "widget-composition-shared",
+                "uid": "1r9jr5wn",
+                "controller": true
+              }
+            ]
+          },
+          "spec": {
+            "compositeTypeRef": {
+              "apiVersion": "example.org/v1",
+              "kind": "XWidget"
+            },
+            "mode": "Pipeline",
+            "pipeline": [
+              {
+                "step": "pipeline",
+                "functionRef": {
+                  "name": "kamera-stub"
+                }
+              }
+            ],
+            "writeConnectionSecretsToNamespace": "default",
+            "revision": 1
+          },
+          "status": {
+            "conditions": [
+              {
+                "type": "ValidPipeline",
+                "status": "True",
+                "reason": "ValidPipeline"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "example.org/v1",
+          "kind": "XWidget",
+          "metadata": {
+            "name": "xr-one",
+            "namespace": "default"
+          },
+          "spec": {
+            "compositionRef": {
+              "name": "widget-composition-shared"
+            },
+            "compositionRevisionRef": {
+              "name": "widget-composition-shared-rev-1"
+            },
+            "compositionUpdatePolicy": "Automatic"
+          }
+        },
+        {
+          "apiVersion": "example.org/v1",
+          "kind": "XWidget",
+          "metadata": {
+            "name": "xr-two",
+            "namespace": "default"
+          },
+          "spec": {
+            "compositionRef": {
+              "name": "widget-composition-shared"
+            },
+            "compositionRevisionRef": {
+              "name": "widget-composition-shared-rev-1"
+            },
+            "compositionUpdatePolicy": "Automatic"
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": [
+        "CompositeReconciler",
+        "CompositionReconciler",
+        "CompositionRevisionReconciler"
+      ],
+      "userActionReadyDepths": {
+        "0": 0,
+        "1": 0
+      }
+    },
+    "userInputs": [
+      {
+        "id": "delete xr-one",
+        "type": "DELETE",
+        "object": {
+          "apiVersion": "example.org/v1",
+          "kind": "XWidget",
+          "metadata": {
+            "name": "xr-one",
+            "namespace": "default"
+          }
+        }
+      },
+      {
+        "id": "delete xr-two simultaneously",
+        "type": "DELETE",
+        "object": {
+          "apiVersion": "example.org/v1",
+          "kind": "XWidget",
+          "metadata": {
+            "name": "xr-two",
+            "namespace": "default"
+          }
+        }
+      }
+    ]
+  }
+]
