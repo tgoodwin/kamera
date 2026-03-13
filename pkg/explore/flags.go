@@ -7,9 +7,9 @@ var (
 	dumpPathFlag          = flag.String("output", "", "optional path to write exploration dump to disk (states, plus stats when --emit-stats is enabled)")
 	configPathFlag        = flag.String("explore-config", "", "optional JSON file to configure exploration")
 	inputsPathFlag        = flag.String("inputs", "", `path to input JSON file`)
-	perturbFlag            = flag.Bool("perturb", true, "enable closed-loop rerun pipeline for batch inputs when supported by scenario generation")
-	noPerturbationsFlag    = flag.Bool("no-perturbations", false, "force-disable all perturbations (ordering, staleness) for a clean reference run, regardless of what is configured in the inputs file")
-	parallelProcessesFlag  = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
+	closedLoopFlag        = flag.Bool("closed-loop", true, "enable closed-loop rerun pipeline: runs a reference phase then auto-generated perturbation phases derived from the reference trace")
+	noPerturbationsFlag   = flag.Bool("no-perturbations", false, "force-disable all perturbations (ordering, staleness) for a clean reference run, regardless of what is configured in the inputs file")
+	parallelProcessesFlag = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
 	// these ones are internal flags used by child processes in --parallel-processes mode,
 	// not intended for manual setting
 	parallelChildIndexFlag = flag.Int(
@@ -49,17 +49,18 @@ func InputsPath() string {
 	return *inputsPathFlag
 }
 
-// PerturbEnabled returns the parsed value for the perturb flag.
-// When true, enables the closed-loop rerun pipeline (reference phase + auto-planned perturbation phases).
+// ClosedLoopEnabled returns true when the closed-loop rerun pipeline is active.
+// When true, runs a reference phase (perturbations stripped) followed by auto-generated
+// perturbation phases derived from the reference trace.
 // When false, runs a single phase with the config as specified in the inputs file.
-func PerturbEnabled() bool {
-	return *perturbFlag
+func ClosedLoopEnabled() bool {
+	return *closedLoopFlag
 }
 
 // NoPerturbationsEnabled returns true when --no-perturbations is set.
 // When true, all perturbation config (ordering, staleness) is stripped before running,
 // producing a clean reference run regardless of what is configured in the inputs file.
-// This is mode 1: "run this scenario as a reference without changing the JSON."
+// Use this to get a baseline trace from a JSON that already has permuteControllers configured.
 func NoPerturbationsEnabled() bool {
 	return *noPerturbationsFlag
 }

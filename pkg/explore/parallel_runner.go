@@ -422,7 +422,7 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		return result
 	}
 
-	if !PerturbEnabled() {
+	if !ClosedLoopEnabled() {
 		cfg := scenario.Config
 		if NoPerturbationsEnabled() {
 			cfg = disablePerturbations(cfg)

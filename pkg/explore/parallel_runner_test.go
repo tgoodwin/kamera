@@ -838,10 +838,10 @@ func TestParallelRunnerAutoClosedLoopUsesInterleavingForMultiStepWorkflows(t *te
 func withPerturbFlag(t *testing.T, enabled bool) {
 	t.Helper()
 
-	oldValue := *perturbFlag
-	*perturbFlag = enabled
+	oldValue := *closedLoopFlag
+	*closedLoopFlag = enabled
 	t.Cleanup(func() {
-		*perturbFlag = oldValue
+		*closedLoopFlag = oldValue
 	})
 }
 
