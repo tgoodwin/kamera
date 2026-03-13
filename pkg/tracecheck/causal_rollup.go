@@ -112,7 +112,7 @@ func replayCausalEventSequenceToState(events []StateEvent) *StateSnapshot {
 			seenChangeIDs[e.MustGetChangeID()] = e.Effect.Version.Value
 			stateEvents = append(stateEvents, e)
 
-		case event.UPDATE, event.PATCH:
+		case event.UPDATE, event.PATCH, event.APPLY:
 			changeID := e.MustGetChangeID()
 			seenUpdateDeleteChangeIDs[changeID] = e
 			seenChangeIDs[changeID] = e.Effect.Version.Value
