@@ -50,6 +50,12 @@ controller makes about the data it reads). Both are needed for high-quality
 scenarios. If you only have the graph, you can still produce scenarios, but they
 will target structural patterns rather than specific code-level vulnerabilities.
 
+If `dependency-graph.json` does not already exist for the project, invoke the
+`dependency-analysis` skill to produce it before Phase 1. If source code access
+is available but no graph exists and running the skill is not practical, proceed
+directly from source — but note that scenario quality will be lower without the
+validated topology.
+
 ## Methodology
 
 The process has five phases. Each phase produces artifacts that feed the next.
