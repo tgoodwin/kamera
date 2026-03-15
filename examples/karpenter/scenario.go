@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -378,7 +379,7 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 		if obj == nil {
 			continue
 		}
-		objects = append(objects, obj.DeepCopy())
+		objects = append(objects, safeDeepCopyUnstructured(obj))
 	}
 	for _, userInput := range input.UserInputs {
 		if userInput.Type != event.CREATE || userInput.Object == nil || !isKarpenterPod(userInput.Object) {
@@ -470,6 +471,12 @@ func initialDependentControllers(obj client.Object) []tracecheck.ReconcilerID {
 	if isKarpenterNodePool(obj) {
 		return []tracecheck.ReconcilerID{"state.nodepool"}
 	}
+	if isKarpenterNodeClaim(obj) {
+		return []tracecheck.ReconcilerID{"state.nodeclaim", "nodeclaim.hydration", "nodeclaim.launcher", "node.registrar"}
+	}
+	if isKarpenterNode(obj) {
+		return []tracecheck.ReconcilerID{"state.node", "node.hydration"}
+	}
 	return nil
 }
 
@@ -489,11 +496,21 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 
 	userInputs := cloneUserInputs(input.UserInputs)
 	tuning := coverage.InputTuning{
-		MaxDepth:           input.Tuning.MaxDepth,
-		PermuteControllers: append([]string(nil), input.Tuning.PermuteControllers...),
-		StaleReads:         cloneStringSliceMap(input.Tuning.StaleReads),
-		StaleLookback:      cloneIntMap(input.Tuning.StaleLookback),
-		Search:             cloneInputSearchTuning(input.Tuning.Search),
+		MaxDepth:              input.Tuning.MaxDepth,
+		PermuteControllers:    append([]string(nil), input.Tuning.PermuteControllers...),
+		StaleReads:            cloneStringSliceMap(input.Tuning.StaleReads),
+		StaleLookback:         cloneIntMap(input.Tuning.StaleLookback),
+		UserActionReadyDepths: cloneIntMap(input.Tuning.UserActionReadyDepths),
+		StalenessIntervals:    append([]coverage.InputStalenessInterval(nil), input.Tuning.StalenessIntervals...),
+		Search:                cloneInputSearchTuning(input.Tuning.Search),
+	}
+	if input.Tuning.PermuteDepthRange != nil {
+		cpy := *input.Tuning.PermuteDepthRange
+		tuning.PermuteDepthRange = &cpy
+	}
+	if input.Tuning.PermuteAfterEvent != nil {
+		cpy := *input.Tuning.PermuteAfterEvent
+		tuning.PermuteAfterEvent = &cpy
 	}
 	return coverage.Input{
 		Name:             input.Name,
@@ -586,11 +603,30 @@ func cloneUserInputs(inputs []coverage.UserInput) []coverage.UserInput {
 			Type: input.Type,
 		}
 		if input.Object != nil {
-			cloned.Object = input.Object.DeepCopy()
+			cloned.Object = safeDeepCopyUnstructured(input.Object)
 		}
 		out = append(out, cloned)
 	}
 	return out
+}
+
+// safeDeepCopyUnstructured copies an Unstructured object via JSON round-trip.
+// The standard DeepCopy panics on []uint8 values that appear when Go's JSON
+// unmarshaler encounters null fields in unstructured data.
+func safeDeepCopyUnstructured(obj *unstructured.Unstructured) *unstructured.Unstructured {
+	if obj == nil {
+		return nil
+	}
+	data, err := json.Marshal(obj.Object)
+	if err != nil {
+		// Fall back to standard deep copy if marshal fails.
+		return obj.DeepCopy()
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return obj.DeepCopy()
+	}
+	return &unstructured.Unstructured{Object: m}
 }
 
 func cloneStringSliceMap(in map[string][]string) map[string][]string {
@@ -663,6 +699,34 @@ func isKarpenterNodePool(obj client.Object) bool {
 	}
 	if u, ok := obj.(*unstructured.Unstructured); ok {
 		return u.GetKind() == "NodePool" && strings.HasPrefix(u.GetAPIVersion(), "karpenter.sh/")
+	}
+	return false
+}
+
+func isKarpenterNodeClaim(obj client.Object) bool {
+	if obj == nil {
+		return false
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Kind == "NodeClaim" && gvk.Group == "karpenter.sh" {
+		return true
+	}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return u.GetKind() == "NodeClaim" && strings.HasPrefix(u.GetAPIVersion(), "karpenter.sh/")
+	}
+	return false
+}
+
+func isKarpenterNode(obj client.Object) bool {
+	if obj == nil {
+		return false
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Kind == "Node" && (gvk.Group == "" || gvk.Group == "core") {
+		return true
+	}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return u.GetKind() == "Node"
 	}
 	return false
 }
