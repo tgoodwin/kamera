@@ -2370,37 +2370,105 @@ is never used despite having available capacity. 100% hit rate.
 
 ---
 
-## Disruption Path Survey (pre-investigation)
+## Disruption Path Investigation
 
 **Date:** 2026-03-15
 
-### Status
+### Controller Registration
 
-**No disruption controllers are registered in `builder.go`.** Disruption bug hunting requires
-adding the following controllers to the kamera harness:
+Four disruption controllers were registered in `builder.go`:
 
-| Controller ID | Source | Watches | Role |
-|---|---|---|---|
-| `disruption` | `pkg/controllers/disruption/controller.go` | singleton | Main orchestrator: reads candidates, computes budgets, enqueues commands |
-| `disruption.queue` | `pkg/controllers/disruption/queue.go` | NodeClaim (channel) | Executes commands: marks disrupted, creates replacements, marks for deletion |
-| `nodeclaim.disruption` | `pkg/controllers/nodeclaim/disruption/controller.go` | NodeClaim, NodePool, Pod | Marks NodeClaims with drift/consolidatable conditions |
-| `node.termination` | `pkg/controllers/node/termination/controller.go` | Node (with DeletionTimestamp) | Finalizes deletion: drain, detach, terminate, remove finalizer |
+| Controller ID | Watches | Role |
+|---|---|---|
+| `disruption` | singleton tick | Main orchestrator: reads candidates, computes budgets, enqueues commands |
+| `disruption.queue` | NodeClaim | Executes commands: marks disrupted, creates replacements, marks for deletion |
+| `nodeclaim.disruption` | NodeClaim | Marks NodeClaims with drift/consolidatable conditions |
+| `node.termination` | Node | Finalizes deletion: drain, detach, terminate, remove finalizer |
 
-### Identified Vulnerability Windows
+Infrastructure fixes applied during this work:
+- `scenario.go`: `safeDeepCopyUnstructured()` — JSON round-trip deep copy to avoid `[]uint8`
+  panic when deep-copying unstructured objects with null fields
+- `scenario.go`: `initialDependentControllers()` — registers informers for pre-seeded
+  NodeClaim/Node objects in environmentState (from D2 investigation)
+- `builder.go`: OnFork reset clears `disruption.Queue.ProviderIDToCommand` between MC trials
 
-**1. Budget double-spend across reconcile cycles:**
+### D7: Emptiness disruption baseline (CONFIRMED WORKING)
+
+**Scenario file:** `examples/karpenter/scenarios/d7_emptiness-disruption-baseline.json`
+**Output directory:** `/tmp/d7-baseline/`
+
+Baseline scenario verifying the disruption pipeline works end-to-end in kamera. Pre-existing
+empty node (NodeClaim + Node, no pods) with `consolidateAfter: "0s"`. 5/5 trials show the
+complete pipeline:
+
+```
+nodeclaim.disruption: PATCH NodeClaim/default-00001  (marks consolidatable)
+disruption:           PATCH Node + PATCH NodeClaim   (taint + disruption reason)
+disruption.queue:     DELETE NodeClaim/default-00001  (executes deletion)
+CleanupReconciler:    REMOVE NodeClaim/default-00001  (finalizes)
+```
+
+#### Reproduction
+
+```bash
+cd examples/karpenter
+go build -o karpenter .
+mkdir -p /tmp/d7-repro
+./karpenter --inputs scenarios/d7_emptiness-disruption-baseline.json \
+  --output /tmp/d7-repro --interactive=false --timeout 90s
+```
+
+### D9: Disruption-provisioner ordering race (NEGATIVE — no bug found)
+
+**Scenario file:** `examples/karpenter/scenarios/d9_disruption-provisioner-race.json`
+**Output directory:** `/tmp/d9-race/`
+
+Tests whether controller ordering permutation can cause the provisioner to create a
+NodeClaim BEFORE disruption deletes an empty node, resulting in 2 NodeClaims against
+a `nodes: "1"` limit.
+
+**Setup:** Pre-existing empty node + non-provisionable pod. UPDATE user action makes
+pod Unschedulable at `readyDepth=5`. Pod requests `cpu: "5"` (can't fit on 4-CPU node).
+`permuteControllers` includes disruption, provisioner, queue, and state informers.
+`permuteAfterEvent` focuses permutation after the first NodeClaim PATCH (disruption mark).
+
+**Result:** In all orderings explored, the disruption pipeline completes (DELETE) before
+the provisioner creates a replacement. In 1/3 base trials where the UPDATE fires, the
+provisioner correctly creates a replacement NodeClaim within the `nodes: "1"` limit (old
+node already deleted). No ordering produced >1 NodeClaim simultaneously.
+
+**Root cause of negative result:** `StartCommand()` (the disruption controller's multi-step
+operation: mark disrupted → create replacements → mark for deletion) executes within a
+SINGLE `Reconcile()` call. kamera treats each `Reconcile()` as atomic — ordering permutation
+only affects which controller runs NEXT, not what happens inside a controller. The
+provisioner can only run after `StartCommand` has fully completed, so the old node is
+always deleted before the provisioner acts.
+
+**Implication for kamera:** To test intra-reconcile races (e.g., crash between
+`markDisrupted` and `createReplacementNodeClaims`), kamera would need a "fault injection"
+capability that interrupts a `Reconcile()` call after N API operations. This is a
+meaningful enhancement for future work.
+
+### Identified but untested vulnerability windows
+
+**1. Budget double-spend across reconcile cycles (D8):**
 `BuildDisruptionBudgetMapping()` computes allowed disruptions from cluster state. Between
-reconciles (10s interval), if a disruption was initiated but `state.Cluster` hasn't reflected
-the deletion, the next reconcile sees the same budget and disrupts another node.
+reconciles, if a disruption was initiated but `state.Cluster` hasn't reflected the
+deletion, the next reconcile sees the same budget and disrupts another node. Testing
+requires two disruption controller reconciles with stale state between them — feasible
+with staleness intervals on `state.nodeclaim`.
 
-**2. Replacement overshoot (multi-step non-atomic StartCommand):**
-`queue.StartCommand()` sequence: mark disrupted → create replacements → `MarkForDeletion()`.
-If the provisioner runs between steps 2 and 3, it counts both old and new nodes in
-`nodePoolResources`, potentially interacting with `nodes` limits.
-
-**3. Consolidatable condition TOCTOU:**
+**2. Consolidatable condition TOCTOU:**
 `nodeclaim.disruption` marks NodeClaim as `consolidatable=true` after TTL. Main disruption
-reads this and decides to consolidate. Between read and `StartCommand`, pods may arrive on the
-node — the node is no longer underutilized but disruption proceeds. Validation is TTL-based
-(15s window), not deterministic.
+reads this and decides to consolidate. Between read and `StartCommand`, pods may arrive on
+the node. Testing requires the provisioner to schedule a pod to a consolidatable node
+between the condition read and the disruption action — feasible with ordering permutation
+if both controllers are pending simultaneously.
+
+**3. `ExceededBy` off-by-one is load-bearing for consolidation replacements:**
+`createReplacementNodeClaims()` calls `provisioner.CreateNodeClaims()` which calls
+`Create()` → `ExceededBy()`. With `nodes: "1"` and one existing node,
+`ExceededBy({nodes:1} vs {nodes:1}) = 1 > 1 = false` allows the replacement. Fixing
+the off-by-one (D2) would break consolidation unless a bypass is added for replacement
+NodeClaims. This is a design tension, not a testable bug.
 
