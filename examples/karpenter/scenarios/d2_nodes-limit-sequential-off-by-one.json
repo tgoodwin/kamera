@@ -1,0 +1,225 @@
+[
+  {
+    "name": "d2/nodes-limit-sequential-off-by-one",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "karpenter.test.sh/v1alpha1",
+          "kind": "TestNodeClass",
+          "metadata": {
+            "creationTimestamp": "2026-02-18T04:02:02Z",
+            "generation": 1,
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
+            "name": "default",
+            "uid": "testnodeclass-uid"
+          },
+          "spec": {},
+          "status": {
+            "conditions": [
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "observedGeneration": 1,
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "karpenter.sh/v1",
+          "kind": "NodePool",
+          "metadata": {
+            "creationTimestamp": "2026-02-18T04:02:02Z",
+            "generation": 1,
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
+            "name": "default",
+            "uid": "nodepool-uid"
+          },
+          "spec": {
+            "disruption": {
+              "consolidateAfter": "Never"
+            },
+            "limits": {
+              "nodes": "1"
+            },
+            "template": {
+              "metadata": {
+                "labels": {
+                  "testing/cluster": "unspecified"
+                }
+              },
+              "spec": {
+                "expireAfter": "Never",
+                "nodeClassRef": {
+                  "group": "karpenter.test.sh",
+                  "kind": "TestNodeClass",
+                  "name": "default"
+                },
+                "requirements": []
+              }
+            }
+          },
+          "status": {
+            "conditions": [
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "observedGeneration": 1,
+                "reason": "ValidationSucceeded",
+                "status": "True",
+                "type": "ValidationSucceeded"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "observedGeneration": 1,
+                "reason": "NodeClassReady",
+                "status": "True",
+                "type": "NodeClassReady"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "observedGeneration": 1,
+                "reason": "NodeRegistrationHealthy",
+                "status": "True",
+                "type": "NodeRegistrationHealthy"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "observedGeneration": 1,
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
+            ],
+            "nodes": null
+          }
+        },
+        {
+          "apiVersion": "v1",
+          "kind": "Pod",
+          "metadata": {
+            "labels": {},
+            "name": "pod-1",
+            "namespace": "default",
+            "uid": "pod-1-uid"
+          },
+          "spec": {
+            "nodeSelector": {
+              "kubernetes.io/arch": "amd64"
+            },
+            "containers": [
+              {
+                "image": "pause",
+                "name": "c",
+                "resources": {
+                  "requests": {
+                    "cpu": "3"
+                  }
+                }
+              }
+            ]
+          },
+          "status": {
+            "conditions": [
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": null,
+                "reason": "Unschedulable",
+                "status": "False",
+                "type": "PodScheduled"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "v1",
+          "kind": "Pod",
+          "metadata": {
+            "labels": {},
+            "name": "pod-2",
+            "namespace": "default",
+            "uid": "pod-2-uid"
+          },
+          "spec": {
+            "containers": [
+              {
+                "image": "pause",
+                "name": "c",
+                "resources": {
+                  "requests": {
+                    "cpu": "5"
+                  }
+                }
+              }
+            ]
+          },
+          "status": {
+            "conditions": []
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 80,
+      "userActionReadyDepths": {
+        "0": 30
+      },
+      "search": {
+        "mode": "monte_carlo",
+        "monteCarlo": {
+          "seed": 42,
+          "trials": 5
+        }
+      }
+    },
+    "userInputs": [
+      {
+        "id": "make-pod-2-unschedulable",
+        "type": "UPDATE",
+        "object": {
+          "apiVersion": "v1",
+          "kind": "Pod",
+          "metadata": {
+            "labels": {},
+            "name": "pod-2",
+            "namespace": "default",
+            "uid": "pod-2-uid"
+          },
+          "spec": {
+            "containers": [
+              {
+                "image": "pause",
+                "name": "c",
+                "resources": {
+                  "requests": {
+                    "cpu": "5"
+                  }
+                }
+              }
+            ]
+          },
+          "status": {
+            "conditions": [
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": null,
+                "reason": "Unschedulable",
+                "status": "False",
+                "type": "PodScheduled"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,200 @@
+[
+  {
+    "name": "d1/nodes-limit-batching-bypass",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "karpenter.test.sh/v1alpha1",
+          "kind": "TestNodeClass",
+          "metadata": {
+            "creationTimestamp": "2026-02-18T04:02:02Z",
+            "generation": 1,
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
+            "name": "default",
+            "uid": "testnodeclass-uid"
+          },
+          "spec": {},
+          "status": {
+            "conditions": [
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "karpenter.sh/v1",
+          "kind": "NodePool",
+          "metadata": {
+            "creationTimestamp": "2026-02-18T04:02:02Z",
+            "generation": 1,
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
+            "name": "default",
+            "uid": "nodepool-uid"
+          },
+          "spec": {
+            "disruption": {
+              "consolidateAfter": "Never"
+            },
+            "limits": {
+              "nodes": "1"
+            },
+            "template": {
+              "metadata": {
+                "labels": {
+                  "testing/cluster": "unspecified"
+                }
+              },
+              "spec": {
+                "expireAfter": "Never",
+                "nodeClassRef": {
+                  "group": "karpenter.test.sh",
+                  "kind": "TestNodeClass",
+                  "name": "default"
+                },
+                "requirements": [
+                  {
+                    "key": "kubernetes.io/arch",
+                    "operator": "In",
+                    "values": [
+                      "amd64"
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          "status": {
+            "conditions": [
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "ValidationSucceeded",
+                "status": "True",
+                "type": "ValidationSucceeded"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "NodeClassReady",
+                "status": "True",
+                "type": "NodeClassReady"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "NodeRegistrationHealthy",
+                "status": "True",
+                "type": "NodeRegistrationHealthy"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
+            ],
+            "nodes": null
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 80,
+      "search": {
+        "mode": "monte_carlo",
+        "monteCarlo": {
+          "seed": 1234,
+          "trials": 5
+        }
+      }
+    },
+    "userInputs": [
+      {
+        "id": "create pod-1",
+        "type": "CREATE",
+        "object": {
+          "apiVersion": "v1",
+          "kind": "Pod",
+          "metadata": {
+            "labels": {},
+            "name": "pending-1",
+            "namespace": "default",
+            "uid": "pod-1-uid"
+          },
+          "spec": {
+            "containers": [
+              {
+                "image": "pause",
+                "name": "c",
+                "resources": {
+                  "requests": {
+                    "cpu": "3"
+                  }
+                }
+              }
+            ]
+          },
+          "status": {
+            "conditions": [
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": null,
+                "reason": "Unschedulable",
+                "status": "False",
+                "type": "PodScheduled"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "create pod-2",
+        "type": "CREATE",
+        "object": {
+          "apiVersion": "v1",
+          "kind": "Pod",
+          "metadata": {
+            "labels": {},
+            "name": "pending-2",
+            "namespace": "default",
+            "uid": "pod-2-uid"
+          },
+          "spec": {
+            "containers": [
+              {
+                "image": "pause",
+                "name": "c",
+                "resources": {
+                  "requests": {
+                    "cpu": "3"
+                  }
+                }
+              }
+            ]
+          },
+          "status": {
+            "conditions": [
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": null,
+                "reason": "Unschedulable",
+                "status": "False",
+                "type": "PodScheduled"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+]
