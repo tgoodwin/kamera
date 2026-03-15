@@ -1960,7 +1960,7 @@ unverified hypotheses for further directions.
 
 **Date:** 2026-03-14 (original); 2026-03-15 (revised after audit)
 **Scenario file:** `examples/karpenter/scenarios/d1_nodes-limit-batching-bypass-with-staleness.json`
-**Output directory:** `examples/karpenter/.agents/ref-d1-two-pod-limit-violation/`
+**Evidence:** `examples/karpenter/.agents/evidence/d1_nodes-limit-batching-bypass/`
 **Severity: P1** — NodePool `nodes` limit silently violated with 100% probability.
 
 ### Root Cause
@@ -2113,7 +2113,7 @@ no permutation, no `userActionReadyDepths`. Just two pods + a `nodes: "1"` NodeP
 
 **Date:** 2026-03-15
 **Scenario file:** `examples/karpenter/scenarios/d2_nodes-limit-sequential-off-by-one.json`
-**Output directory:** `/tmp/d2-update/`
+**Evidence:** `examples/karpenter/.agents/evidence/d2_nodes-limit-sequential-off-by-one/`
 **Severity: P1** — NodePool `nodes` limit violated by sequential pod arrivals.
 
 ### Root Cause
@@ -2288,7 +2288,7 @@ scheduler blocks over-limit NodeClaims before `ExceededBy` is reached.
 ### D5: CONFIRMED — Custom resource limit silently ignored
 
 **Scenario file:** `examples/karpenter/scenarios/d5_custom-resource-limit-ignored.json`
-**Output directory:** `/tmp/d5-custom/`
+**Evidence:** `examples/karpenter/.agents/evidence/d5_custom-resource-limit-ignored/`
 
 NodePool with `limits: {"custom.example.com/widget": "0"}` — a limit of literally zero.
 3/3 base MC trials created 2 NodeClaims (one per pod). The custom resource limit has
@@ -2325,7 +2325,7 @@ created despite a limit of zero on a custom resource. 100% hit rate.
 ### D6: CONFIRMED — Multi-NodePool spillover failure
 
 **Scenario file:** `examples/karpenter/scenarios/d6_multi-nodepool-spillover.json`
-**Output directory:** `/tmp/d6-spillover/`
+**Evidence:** `examples/karpenter/.agents/evidence/d6_multi-nodepool-spillover/`
 
 Two NodePools: pool-a (weight=10, `nodes: "1"`) and pool-b (weight=1, `nodes: "1"`).
 Three pods, each requesting cpu: "3" (can't co-locate on 4-CPU instances). 3/3 base
@@ -2395,7 +2395,7 @@ Infrastructure fixes applied during this work:
 ### D7: Emptiness disruption baseline (CONFIRMED WORKING)
 
 **Scenario file:** `examples/karpenter/scenarios/d7_emptiness-disruption-baseline.json`
-**Output directory:** `/tmp/d7-baseline/`
+**Evidence:** `examples/karpenter/.agents/evidence/d7_emptiness-disruption-baseline/`
 
 Baseline scenario verifying the disruption pipeline works end-to-end in kamera. Pre-existing
 empty node (NodeClaim + Node, no pods) with `consolidateAfter: "0s"`. 5/5 trials show the
@@ -2421,7 +2421,7 @@ mkdir -p /tmp/d7-repro
 ### D9: Disruption-provisioner ordering race (NEGATIVE — no bug found)
 
 **Scenario file:** `examples/karpenter/scenarios/d9_disruption-provisioner-race.json`
-**Output directory:** `/tmp/d9-race/`
+**Evidence:** `/tmp/d9-race/` (negative result, not persisted)
 
 Tests whether controller ordering permutation can cause the provisioner to create a
 NodeClaim BEFORE disruption deletes an empty node, resulting in 2 NodeClaims against
@@ -2448,6 +2448,61 @@ always deleted before the provisioner acts.
 `markDisrupted` and `createReplacementNodeClaims`), kamera would need a "fault injection"
 capability that interrupts a `Reconcile()` call after N API operations. This is a
 meaningful enhancement for future work.
+
+### D10: CONFIRMED — NodeClass readiness TOCTOU
+
+**Scenario file:** `examples/karpenter/scenarios/d10_nodeclass-readiness-toctou.json`
+**Evidence:** `examples/karpenter/.agents/evidence/d10_nodeclass-readiness-toctou/`
+**Severity: P2** — Provisioner creates NodeClaim against a not-Ready NodeClass.
+
+When a TestNodeClass goes not-Ready (simulating an infrastructure event like an AMI
+deletion), the provisioner can race `nodepool.readiness` and create a NodeClaim before
+the not-Ready status propagates to the NodePool.
+
+**Setup:** TestNodeClass (Ready), NodePool (Ready), pending pod. UPDATE user action sets
+TestNodeClass to `Ready=False` at `readyDepth=2`. `permuteControllers` includes provisioner
+and `nodepool.readiness`. TestNodeClass watch mapper triggers `nodepool.readiness` on
+TestNodeClass changes.
+
+**Results: 14/76 trials (18%) produce a NodeClaim against a not-Ready NodeClass.**
+
+In the bug-triggering orderings, the provisioner reads NodePool as Ready (before
+`nodepool.readiness` can propagate the TestNodeClass change) and creates a NodeClaim.
+The NodeClaim persists — no controller retroactively validates it against the NodeClass.
+
+In the non-bug orderings, `nodepool.readiness` runs first, sets `NodeClassReady=False`
+on the NodePool, and the provisioner skips the not-Ready NodePool.
+
+**Harness fixes required for this scenario:**
+- TestNodeClass → nodepool.readiness watch mapper (added to builder.go)
+- `cloneCoverageInput` preserving `userActionReadyDepths` (was silently dropped)
+
+#### Reproduction
+
+```bash
+cd examples/karpenter
+go build -o karpenter .
+mkdir -p /tmp/d10-repro
+./karpenter --inputs scenarios/d10_nodeclass-readiness-toctou.json \
+  --output /tmp/d10-repro --interactive=false --timeout 180s
+```
+
+Count bug-triggering trials:
+
+```bash
+cd /tmp/d10-repro
+total=0; bugged=0
+for f in *.jsonl; do
+  ncs=$(jq -r '[.states[0].paths[0][] | .changes.effects[]?
+    | select(.OpType == "CREATE") | select(.Key.resourceKind == "NodeClaim")
+    | .Key.name] | unique | length' "$f" 2>/dev/null)
+  total=$((total+1))
+  if [ "$ncs" -gt 0 ]; then bugged=$((bugged+1)); fi
+done
+echo "Bug triggered: $bugged/$total"
+```
+
+Expected: ~18% of trials produce a NodeClaim (ordering-dependent).
 
 ### Identified but untested vulnerability windows
 

@@ -83,7 +83,7 @@
       "userActionReadyDepths": { "0": 2 },
       "search": {
         "mode": "monte_carlo",
-        "monteCarlo": { "seed": 700, "trials": 3 }
+        "monteCarlo": { "seed": 700, "trials": 20 }
       }
     },
     "userInputs": [
