@@ -292,7 +292,7 @@ Produce workflow JSON matching the Kamera coverage input schema:
 
 ```json
 {
-  "name": "category/descriptive-name",
+  "name": "d7/descriptive-name",
   "environmentState": {
     "objects": [ ... ]
   },
@@ -326,14 +326,29 @@ or analysis notes) with:
 
 ## Naming Convention
 
-Use `category/descriptive-name` where category is one of:
+Each bug hypothesis gets a unique identifier (e.g., D1, D2, ..., D6) that persists across
+scenario iterations, analysis notes, and conversation references. The identifier is assigned
+when the hypothesis is first formulated and does not change even if the scenario is revised.
 
-- `staleness` -- staleness injection is the primary perturbation
-- `ordering` -- controller permutation is the primary perturbation
-- `deletion` -- tests deletion/lifecycle edge cases
-- `policy` -- tests behavior under specific policy/config branches
-- `concurrency` -- tests multi-instance or multi-controller contention
-- `baseline` -- no perturbation, tests basic convergence
+**Scenario file naming:** `<id>_<descriptive-name>.json`
+
+Examples:
+- `d1_nodes-limit-batching-bypass.json`
+- `d2_nodes-limit-sequential-off-by-one.json`
+- `d5_custom-resource-limit-ignored.json`
+- `d6_multi-nodepool-spillover.json`
+
+Variant files (e.g., earlier attempts, with-staleness versions) append a suffix:
+- `d1_nodes-limit-batching-bypass-with-staleness.json`
+- `d2_earlier-attempt-preseeded.json`
+
+**Scenario `name` field inside JSON:** `<id>/<descriptive-name>`
+
+Examples: `"name": "d1/nodes-limit-batching-bypass"`
+
+Every scenario gets a D-identifier when it is created. Check ANALYSIS.md for the
+highest existing identifier and increment from there. If a scenario turns out to be a
+dead end, keep the identifier — don't reuse it.
 
 ## Quality Checks
 

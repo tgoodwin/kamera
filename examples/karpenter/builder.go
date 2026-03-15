@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/controllers/state/informer"
+	nodepoolreadiness "sigs.k8s.io/karpenter/pkg/controllers/nodepool/readiness"
 	"sigs.k8s.io/karpenter/pkg/operator/options"
 	"sigs.k8s.io/karpenter/pkg/test"
 )
@@ -114,6 +115,14 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	b.WithReconciler("nodeclaim.launcher", func(c client.Client) tracecheck.Reconciler {
 		return wrapWithOptions(c, reconcile.AsReconciler(c, &nodeClaimLauncher{cloudProvider: cp, kubeClient: c}))
 	}).For("karpenter.sh/NodeClaim")
+
+	// NodePool readiness: propagates NodeClass readiness into NodePool status conditions.
+	// The provisioner filters out NodePools where StatusConditions[Ready] is not True,
+	// so this controller is the write side of the NodeClass-readiness TOCTOU window.
+	b.WithReconciler("nodepool.readiness", func(c client.Client) tracecheck.Reconciler {
+		rec := nodepoolreadiness.NewController(c, cp)
+		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
+	}).For("karpenter.sh/NodePool")
 
 	// Node hydration
 	b.WithReconciler("node.hydration", func(c client.Client) tracecheck.Reconciler {
