@@ -9,14 +9,23 @@
           "metadata": {
             "creationTimestamp": "2026-02-18T04:02:02Z",
             "generation": 1,
-            "labels": { "testing/cluster": "unspecified" },
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
             "name": "default",
             "uid": "testnodeclass-uid"
           },
           "spec": {},
           "status": {
             "conditions": [
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Ready", "status": "True", "type": "Ready" }
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
             ]
           }
         },
@@ -26,28 +35,70 @@
           "metadata": {
             "creationTimestamp": "2026-02-18T04:02:02Z",
             "generation": 1,
-            "labels": { "testing/cluster": "unspecified" },
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
             "name": "default",
             "uid": "nodepool-uid"
           },
           "spec": {
-            "disruption": { "consolidateAfter": "0s" },
-            "limits": { "nodes": "1" },
+            "disruption": {
+              "consolidateAfter": "0s"
+            },
+            "limits": {
+              "nodes": "1"
+            },
             "template": {
-              "metadata": { "labels": { "testing/cluster": "unspecified" } },
+              "metadata": {
+                "labels": {
+                  "testing/cluster": "unspecified"
+                }
+              },
               "spec": {
                 "expireAfter": "Never",
-                "nodeClassRef": { "group": "karpenter.test.sh", "kind": "TestNodeClass", "name": "default" },
+                "nodeClassRef": {
+                  "group": "karpenter.test.sh",
+                  "kind": "TestNodeClass",
+                  "name": "default"
+                },
                 "requirements": []
               }
             }
           },
           "status": {
             "conditions": [
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "ValidationSucceeded", "status": "True", "type": "ValidationSucceeded" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "NodeClassReady", "status": "True", "type": "NodeClassReady" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "NodeRegistrationHealthy", "status": "True", "type": "NodeRegistrationHealthy" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Ready", "status": "True", "type": "Ready" }
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "ValidationSucceeded",
+                "status": "True",
+                "type": "ValidationSucceeded"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "NodeClassReady",
+                "status": "True",
+                "type": "NodeClassReady"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "NodeRegistrationHealthy",
+                "status": "True",
+                "type": "NodeRegistrationHealthy"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
             ]
           }
         },
@@ -68,28 +119,98 @@
             "name": "default-00001",
             "uid": "nodeclaim-00001-uid",
             "ownerReferences": [
-              { "apiVersion": "karpenter.sh/v1", "blockOwnerDeletion": true, "kind": "NodePool", "name": "default", "uid": "nodepool-uid" }
+              {
+                "apiVersion": "karpenter.sh/v1",
+                "blockOwnerDeletion": true,
+                "kind": "NodePool",
+                "name": "default",
+                "uid": "nodepool-uid"
+              }
             ]
           },
           "spec": {
             "expireAfter": "Never",
-            "nodeClassRef": { "group": "karpenter.test.sh", "kind": "TestNodeClass", "name": "default" },
+            "nodeClassRef": {
+              "group": "karpenter.test.sh",
+              "kind": "TestNodeClass",
+              "name": "default"
+            },
             "requirements": [
-              { "key": "kubernetes.io/arch", "operator": "In", "values": ["amd64"] },
-              { "key": "node.kubernetes.io/instance-type", "operator": "In", "values": ["default-instance-type"] },
-              { "key": "karpenter.sh/capacity-type", "operator": "In", "values": ["on-demand"] },
-              { "key": "topology.kubernetes.io/zone", "operator": "In", "values": ["test-zone-1"] }
+              {
+                "key": "kubernetes.io/arch",
+                "operator": "In",
+                "values": [
+                  "amd64"
+                ]
+              },
+              {
+                "key": "node.kubernetes.io/instance-type",
+                "operator": "In",
+                "values": [
+                  "default-instance-type"
+                ]
+              },
+              {
+                "key": "karpenter.sh/capacity-type",
+                "operator": "In",
+                "values": [
+                  "on-demand"
+                ]
+              },
+              {
+                "key": "topology.kubernetes.io/zone",
+                "operator": "In",
+                "values": [
+                  "test-zone-1"
+                ]
+              }
             ]
           },
           "status": {
             "providerID": "fake:///default-00001",
-            "allocatable": { "cpu": "4", "memory": "4Gi", "pods": "5" },
-            "capacity": { "cpu": "4", "memory": "4Gi", "pods": "5" },
+            "allocatable": {
+              "cpu": "4",
+              "memory": "4Gi",
+              "pods": "5"
+            },
+            "capacity": {
+              "cpu": "4",
+              "memory": "4Gi",
+              "pods": "5"
+            },
             "conditions": [
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Launched", "status": "True", "type": "Launched" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Registered", "status": "True", "type": "Registered" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Initialized", "status": "True", "type": "Initialized" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Ready", "status": "True", "type": "Ready" }
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Launched",
+                "status": "True",
+                "type": "Launched"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Registered",
+                "status": "True",
+                "type": "Registered"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Initialized",
+                "status": "True",
+                "type": "Initialized"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
             ]
           }
         },
@@ -112,12 +233,26 @@
             "name": "fake:///default-00001",
             "uid": "node-00001-uid"
           },
-          "spec": { "providerID": "fake:///default-00001" },
+          "spec": {
+            "providerID": "fake:///default-00001"
+          },
           "status": {
-            "allocatable": { "cpu": "4", "memory": "4Gi", "pods": "5" },
-            "capacity": { "cpu": "4", "memory": "4Gi", "pods": "5" },
+            "allocatable": {
+              "cpu": "4",
+              "memory": "4Gi",
+              "pods": "5"
+            },
+            "capacity": {
+              "cpu": "4",
+              "memory": "4Gi",
+              "pods": "5"
+            },
             "conditions": [
-              { "type": "Ready", "status": "True", "lastTransitionTime": "2026-02-18T04:02:02Z" }
+              {
+                "type": "Ready",
+                "status": "True",
+                "lastTransitionTime": "2026-02-18T04:02:02Z"
+              }
             ]
           }
         },
@@ -135,13 +270,21 @@
               {
                 "image": "pause",
                 "name": "c",
-                "resources": { "requests": { "cpu": "5" } }
+                "resources": {
+                  "requests": {
+                    "cpu": "5"
+                  }
+                }
               }
             ]
           },
           "status": {
             "conditions": [
-              { "type": "PodScheduled", "status": "True", "reason": "Scheduled" }
+              {
+                "type": "PodScheduled",
+                "status": "True",
+                "reason": "Scheduled"
+              }
             ]
           }
         }
@@ -150,14 +293,28 @@
     "tuning": {
       "maxDepth": 80,
       "permuteControllers": [
-        "disruption", "disruption.queue", "provisioner", "provisioner.trigger.pod",
-        "state.nodeclaim", "state.node", "state.pod", "nodeclaim.disruption"
+        "disruption",
+        "disruption.queue",
+        "provisioner",
+        "provisioner.trigger.pod",
+        "state.nodeclaim",
+        "state.node",
+        "state.pod",
+        "nodeclaim.disruption"
       ],
-      "permuteAfterEvent": { "opType": "PATCH", "kind": "NodeClaim" },
-      "userActionReadyDepths": { "0": 5 },
+      "permuteAfterEvent": {
+        "opType": "PATCH",
+        "kind": "NodeClaim"
+      },
+      "userActionReadyDepths": {
+        "0": 5
+      },
       "search": {
         "mode": "monte_carlo",
-        "monteCarlo": { "seed": 500, "trials": 10 }
+        "monteCarlo": {
+          "seed": 500,
+          "trials": 10
+        }
       }
     },
     "externalInputs": [
@@ -178,16 +335,25 @@
               {
                 "image": "pause",
                 "name": "c",
-                "resources": { "requests": { "cpu": "5" } }
+                "resources": {
+                  "requests": {
+                    "cpu": "5"
+                  }
+                }
               }
             ]
           },
           "status": {
             "conditions": [
-              { "reason": "Unschedulable", "status": "False", "type": "PodScheduled" }
+              {
+                "reason": "Unschedulable",
+                "status": "False",
+                "type": "PodScheduled"
+              }
             ]
           }
-        }
+        },
+        "source": "EnvironmentEvent"
       }
     ]
   }

@@ -173,7 +173,8 @@
               }
             ]
           }
-        }
+        },
+        "source": "EnvironmentEvent"
       },
       {
         "id": "create pod-2",
@@ -211,7 +212,8 @@
               }
             ]
           }
-        }
+        },
+        "source": "EnvironmentEvent"
       }
     ]
   }

@@ -9,14 +9,23 @@
           "metadata": {
             "creationTimestamp": "2026-02-18T04:02:02Z",
             "generation": 1,
-            "labels": { "testing/cluster": "unspecified" },
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
             "name": "default",
             "uid": "testnodeclass-uid"
           },
           "spec": {},
           "status": {
             "conditions": [
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Ready", "status": "True", "type": "Ready" }
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
             ]
           }
         },
@@ -26,29 +35,75 @@
           "metadata": {
             "creationTimestamp": "2026-02-18T04:02:02Z",
             "generation": 1,
-            "labels": { "testing/cluster": "unspecified" },
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
             "name": "default",
             "uid": "nodepool-uid"
           },
           "spec": {
-            "disruption": { "consolidateAfter": "0s" },
+            "disruption": {
+              "consolidateAfter": "0s"
+            },
             "template": {
-              "metadata": { "labels": { "testing/cluster": "unspecified" } },
+              "metadata": {
+                "labels": {
+                  "testing/cluster": "unspecified"
+                }
+              },
               "spec": {
                 "expireAfter": "Never",
-                "nodeClassRef": { "group": "karpenter.test.sh", "kind": "TestNodeClass", "name": "default" },
+                "nodeClassRef": {
+                  "group": "karpenter.test.sh",
+                  "kind": "TestNodeClass",
+                  "name": "default"
+                },
                 "requirements": [
-                  { "key": "kubernetes.io/arch", "operator": "In", "values": ["amd64"] }
+                  {
+                    "key": "kubernetes.io/arch",
+                    "operator": "In",
+                    "values": [
+                      "amd64"
+                    ]
+                  }
                 ]
               }
             }
           },
           "status": {
             "conditions": [
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "ValidationSucceeded", "status": "True", "type": "ValidationSucceeded" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "NodeClassReady", "status": "True", "type": "NodeClassReady" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "NodeRegistrationHealthy", "status": "True", "type": "NodeRegistrationHealthy" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Ready", "status": "True", "type": "Ready" }
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "ValidationSucceeded",
+                "status": "True",
+                "type": "ValidationSucceeded"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "NodeClassReady",
+                "status": "True",
+                "type": "NodeClassReady"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "NodeRegistrationHealthy",
+                "status": "True",
+                "type": "NodeRegistrationHealthy"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
             ]
           }
         },
@@ -69,28 +124,98 @@
             "name": "default-00001",
             "uid": "nodeclaim-00001-uid",
             "ownerReferences": [
-              { "apiVersion": "karpenter.sh/v1", "blockOwnerDeletion": true, "kind": "NodePool", "name": "default", "uid": "nodepool-uid" }
+              {
+                "apiVersion": "karpenter.sh/v1",
+                "blockOwnerDeletion": true,
+                "kind": "NodePool",
+                "name": "default",
+                "uid": "nodepool-uid"
+              }
             ]
           },
           "spec": {
             "expireAfter": "Never",
-            "nodeClassRef": { "group": "karpenter.test.sh", "kind": "TestNodeClass", "name": "default" },
+            "nodeClassRef": {
+              "group": "karpenter.test.sh",
+              "kind": "TestNodeClass",
+              "name": "default"
+            },
             "requirements": [
-              { "key": "kubernetes.io/arch", "operator": "In", "values": ["amd64"] },
-              { "key": "node.kubernetes.io/instance-type", "operator": "In", "values": ["default-instance-type"] },
-              { "key": "karpenter.sh/capacity-type", "operator": "In", "values": ["on-demand"] },
-              { "key": "topology.kubernetes.io/zone", "operator": "In", "values": ["test-zone-1"] }
+              {
+                "key": "kubernetes.io/arch",
+                "operator": "In",
+                "values": [
+                  "amd64"
+                ]
+              },
+              {
+                "key": "node.kubernetes.io/instance-type",
+                "operator": "In",
+                "values": [
+                  "default-instance-type"
+                ]
+              },
+              {
+                "key": "karpenter.sh/capacity-type",
+                "operator": "In",
+                "values": [
+                  "on-demand"
+                ]
+              },
+              {
+                "key": "topology.kubernetes.io/zone",
+                "operator": "In",
+                "values": [
+                  "test-zone-1"
+                ]
+              }
             ]
           },
           "status": {
             "providerID": "fake:///default-00001",
-            "allocatable": { "cpu": "4", "memory": "4Gi", "pods": "5" },
-            "capacity": { "cpu": "4", "memory": "4Gi", "pods": "5" },
+            "allocatable": {
+              "cpu": "4",
+              "memory": "4Gi",
+              "pods": "5"
+            },
+            "capacity": {
+              "cpu": "4",
+              "memory": "4Gi",
+              "pods": "5"
+            },
             "conditions": [
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Launched", "status": "True", "type": "Launched" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Registered", "status": "True", "type": "Registered" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Initialized", "status": "True", "type": "Initialized" },
-              { "lastTransitionTime": "2026-02-18T04:02:02Z", "observedGeneration": 1, "message": "", "reason": "Ready", "status": "True", "type": "Ready" }
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Launched",
+                "status": "True",
+                "type": "Launched"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Registered",
+                "status": "True",
+                "type": "Registered"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Initialized",
+                "status": "True",
+                "type": "Initialized"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "observedGeneration": 1,
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
             ]
           }
         },
@@ -113,12 +238,26 @@
             "name": "fake:///default-00001",
             "uid": "node-00001-uid"
           },
-          "spec": { "providerID": "fake:///default-00001" },
+          "spec": {
+            "providerID": "fake:///default-00001"
+          },
           "status": {
-            "allocatable": { "cpu": "4", "memory": "4Gi", "pods": "5" },
-            "capacity": { "cpu": "4", "memory": "4Gi", "pods": "5" },
+            "allocatable": {
+              "cpu": "4",
+              "memory": "4Gi",
+              "pods": "5"
+            },
+            "capacity": {
+              "cpu": "4",
+              "memory": "4Gi",
+              "pods": "5"
+            },
             "conditions": [
-              { "type": "Ready", "status": "True", "lastTransitionTime": "2026-02-18T04:02:02Z" }
+              {
+                "type": "Ready",
+                "status": "True",
+                "lastTransitionTime": "2026-02-18T04:02:02Z"
+              }
             ]
           }
         },
@@ -133,12 +272,24 @@
           },
           "spec": {
             "containers": [
-              { "image": "nginx", "name": "app", "resources": { "requests": { "cpu": "1" } } }
+              {
+                "image": "nginx",
+                "name": "app",
+                "resources": {
+                  "requests": {
+                    "cpu": "1"
+                  }
+                }
+              }
             ]
           },
           "status": {
             "conditions": [
-              { "type": "PodScheduled", "status": "True", "reason": "Scheduled" }
+              {
+                "type": "PodScheduled",
+                "status": "True",
+                "reason": "Scheduled"
+              }
             ]
           }
         }
@@ -147,10 +298,17 @@
     "tuning": {
       "maxDepth": 60,
       "permuteControllers": [
-        "disruption", "disruption.queue", "nodeclaim.disruption",
-        "state.pod", "state.node", "state.nodeclaim", "state.nodepool"
+        "disruption",
+        "disruption.queue",
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
-      "userActionReadyDepths": { "0": 20 },
+      "userActionReadyDepths": {
+        "0": 20
+      },
       "stalenessIntervals": [
         {
           "reconciler": "disruption",
@@ -162,7 +320,10 @@
       ],
       "search": {
         "mode": "monte_carlo",
-        "monteCarlo": { "seed": 800, "trials": 20 }
+        "monteCarlo": {
+          "seed": 800,
+          "trials": 20
+        }
       }
     },
     "externalInputs": [
@@ -181,17 +342,32 @@
           "spec": {
             "nodeName": "fake:///default-00001",
             "containers": [
-              { "image": "nginx", "name": "app", "resources": { "requests": { "cpu": "1" } } }
+              {
+                "image": "nginx",
+                "name": "app",
+                "resources": {
+                  "requests": {
+                    "cpu": "1"
+                  }
+                }
+              }
             ]
           },
           "status": {
             "phase": "Running",
             "conditions": [
-              { "type": "Ready", "status": "True" },
-              { "type": "PodScheduled", "status": "True" }
+              {
+                "type": "Ready",
+                "status": "True"
+              },
+              {
+                "type": "PodScheduled",
+                "status": "True"
+              }
             ]
           }
-        }
+        },
+        "source": "EnvironmentEvent"
       }
     ]
   }

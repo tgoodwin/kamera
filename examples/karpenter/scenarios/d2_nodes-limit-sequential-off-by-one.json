@@ -218,7 +218,8 @@
               }
             ]
           }
-        }
+        },
+        "source": "EnvironmentEvent"
       }
     ]
   }
