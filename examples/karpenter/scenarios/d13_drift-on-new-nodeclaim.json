@@ -31,7 +31,7 @@
             "uid": "nodepool-uid"
           },
           "spec": {
-            "disruption": { "consolidateAfter": "Never" },
+            "disruption": { "consolidateAfter": "0s" },
             "template": {
               "metadata": { "labels": { "testing/cluster": "unspecified" } },
               "spec": {
@@ -75,9 +75,10 @@
       ]
     },
     "tuning": {
-      "maxDepth": 60,
+      "maxDepth": 80,
       "permuteControllers": [
         "provisioner", "provisioner.trigger.pod", "nodeclaim.disruption",
+        "disruption", "disruption.queue",
         "nodeclaim.hydration", "nodeclaim.launcher",
         "state.nodeclaim", "state.pod", "state.nodepool"
       ],

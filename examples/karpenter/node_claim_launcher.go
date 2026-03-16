@@ -36,6 +36,8 @@ func (l *nodeClaimLauncher) Reconcile(ctx context.Context, nodeClaim *v1.NodeCla
 	}
 	lifecycle.PopulateNodeClaimDetails(nodeClaim, created)
 	nodeClaim.StatusConditions().SetTrue(v1.ConditionTypeLaunched)
+	nodeClaim.StatusConditions().SetTrue(v1.ConditionTypeRegistered)
+	nodeClaim.StatusConditions().SetTrue(v1.ConditionTypeInitialized)
 
 	// Persist labels and status (ProviderID, allocatable, etc.) back to the API
 	// so that downstream controllers (nodeRegistrar, state informers) see them.
