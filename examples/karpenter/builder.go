@@ -21,6 +21,8 @@ import (
 	terminatortypes "sigs.k8s.io/karpenter/pkg/controllers/node/termination/terminator"
 	nodeclaimdisruption "sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/disruption"
 	nodeclaimhydration "sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/hydration"
+	"sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/lifecycle"
+	"sigs.k8s.io/karpenter/pkg/state/nodepoolhealth"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/controllers/state/informer"
@@ -117,8 +119,22 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
 	}).For("karpenter.sh/NodeClaim")
 
-	b.WithReconciler("nodeclaim.launcher", func(c client.Client) tracecheck.Reconciler {
-		return wrapWithOptions(c, reconcile.AsReconciler(c, &nodeClaimLauncher{cloudProvider: cp, kubeClient: c}))
+	recorder := newNoopRecorder()
+
+	// NodeClaim lifecycle: launch → registration → initialization → liveness.
+	// Replaces the previous nodeClaimLauncher shim + nodeRegistrar shim.
+	var npHealthOnce sync.Once
+	var npHealth *nodepoolhealth.State
+	getNpHealth := func() *nodepoolhealth.State {
+		npHealthOnce.Do(func() {
+			npHealth = nodepoolhealth.NewState()
+		})
+		return npHealth
+	}
+
+	b.WithReconciler("nodeclaim.lifecycle", func(c client.Client) tracecheck.Reconciler {
+		rec := lifecycle.NewController(clk, c, cp, recorder, getNpHealth())
+		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
 	}).For("karpenter.sh/NodeClaim")
 
 	// NodePool readiness: propagates NodeClass readiness into NodePool status conditions.
@@ -136,14 +152,14 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
 	}).For("Node")
 
-	// NodeRegistrar shim
+	// NodeRegistrar shim: creates a Node object when a NodeClaim has a ProviderID.
+	// In real Karpenter, the kubelet registers the Node. The lifecycle controller's
+	// registration step then finds the Node by ProviderID (via MatchingFields query).
 	b.WithReconciler("node.registrar", func(c client.Client) tracecheck.Reconciler {
 		return wrapWithOptions(c, nodeRegistrar{client: c})
 	}).For("karpenter.sh/NodeClaim")
 
 	// --- Disruption controllers ---
-
-	recorder := newNoopRecorder()
 
 	// Disruption queue: executes disruption commands (taint, create replacements, delete).
 	var queueOnce sync.Once

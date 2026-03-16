@@ -50,7 +50,7 @@
     "tuning": {
       "maxDepth": 60,
       "permuteControllers": [
-        "nodeclaim.hydration", "node.hydration", "nodeclaim.launcher",
+        "nodeclaim.hydration", "node.hydration", "nodeclaim.lifecycle",
         "node.registrar", "state.nodeclaim", "state.node"
       ],
       "permuteAfterEvent": { "opType": "CREATE", "kind": "NodeClaim" },

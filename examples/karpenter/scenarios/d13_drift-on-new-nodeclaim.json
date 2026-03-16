@@ -79,7 +79,7 @@
       "permuteControllers": [
         "provisioner", "provisioner.trigger.pod", "nodeclaim.disruption",
         "disruption", "disruption.queue",
-        "nodeclaim.hydration", "nodeclaim.launcher",
+        "nodeclaim.hydration", "nodeclaim.lifecycle",
         "state.nodeclaim", "state.pod", "state.nodepool"
       ],
       "permuteAfterEvent": {

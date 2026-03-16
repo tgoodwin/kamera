@@ -1,0 +1,249 @@
+[
+  {
+    "name": "policy/nodeclass-not-ready-during-provisioning",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "karpenter.test.sh/v1alpha1",
+          "kind": "TestNodeClass",
+          "metadata": {
+            "creationTimestamp": "2026-02-18T04:02:02Z",
+            "generation": 1,
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
+            "name": "default",
+            "uid": "testnodeclass-uid"
+          },
+          "spec": {},
+          "status": {
+            "conditions": [
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "karpenter.sh/v1",
+          "kind": "NodePool",
+          "metadata": {
+            "creationTimestamp": "2026-02-18T04:02:02Z",
+            "generation": 1,
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
+            "name": "default",
+            "uid": "nodepool-uid"
+          },
+          "spec": {
+            "disruption": {
+              "consolidateAfter": "Never"
+            },
+            "limits": {
+              "cpu": "2k"
+            },
+            "template": {
+              "metadata": {
+                "labels": {
+                  "testing/cluster": "unspecified"
+                }
+              },
+              "spec": {
+                "expireAfter": "Never",
+                "nodeClassRef": {
+                  "group": "karpenter.test.sh",
+                  "kind": "TestNodeClass",
+                  "name": "default"
+                },
+                "requirements": []
+              }
+            }
+          },
+          "status": {
+            "conditions": [
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "ValidationSucceeded",
+                "status": "True",
+                "type": "ValidationSucceeded"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "NodeClassReady",
+                "status": "True",
+                "type": "NodeClassReady"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "object is awaiting reconciliation",
+                "reason": "AwaitingReconciliation",
+                "status": "Unknown",
+                "type": "NodeRegistrationHealthy"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "Ready",
+                "status": "True",
+                "type": "Ready"
+              }
+            ],
+            "nodes": null
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 80,
+      "permuteControllers": [
+        "provisioner",
+        "state.nodepool",
+        "state.pod",
+        "provisioner.trigger.pod"
+      ],
+      "userActionReadyDepths": {
+        "1": 0
+      },
+      "stalenessIntervals": [
+        {
+          "reconciler": "state.nodepool",
+          "kind": "karpenter.sh/NodePool",
+          "staleAt": 2,
+          "catchUpAt": 100,
+          "lag": -1
+        },
+        {
+          "reconciler": "provisioner",
+          "kind": "karpenter.sh/NodePool",
+          "staleAt": 2,
+          "catchUpAt": 100,
+          "lag": -1
+        }
+      ],
+      "search": {
+        "mode": "monte_carlo",
+        "monteCarlo": {
+          "seed": 6001,
+          "trials": 40
+        }
+      }
+    },
+    "userInputs": [
+      {
+        "id": "create pending pod",
+        "type": "CREATE",
+        "object": {
+          "apiVersion": "v1",
+          "kind": "Pod",
+          "metadata": {
+            "labels": {},
+            "name": "pending",
+            "namespace": "default",
+            "uid": "pod-uid"
+          },
+          "spec": {
+            "containers": [
+              {
+                "image": "pause",
+                "name": "c",
+                "resources": {}
+              }
+            ]
+          },
+          "status": {
+            "conditions": [
+              {
+                "lastProbeTime": null,
+                "lastTransitionTime": null,
+                "reason": "Unschedulable",
+                "status": "False",
+                "type": "PodScheduled"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "nodeclass goes not-ready",
+        "type": "UPDATE",
+        "object": {
+          "apiVersion": "karpenter.sh/v1",
+          "kind": "NodePool",
+          "metadata": {
+            "creationTimestamp": "2026-02-18T04:02:02Z",
+            "generation": 2,
+            "labels": {
+              "testing/cluster": "unspecified"
+            },
+            "name": "default",
+            "uid": "nodepool-uid"
+          },
+          "spec": {
+            "disruption": {
+              "consolidateAfter": "Never"
+            },
+            "limits": {
+              "cpu": "2k"
+            },
+            "template": {
+              "metadata": {
+                "labels": {
+                  "testing/cluster": "unspecified"
+                }
+              },
+              "spec": {
+                "expireAfter": "Never",
+                "nodeClassRef": {
+                  "group": "karpenter.test.sh",
+                  "kind": "TestNodeClass",
+                  "name": "default"
+                },
+                "requirements": []
+              }
+            }
+          },
+          "status": {
+            "conditions": [
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "",
+                "reason": "ValidationSucceeded",
+                "status": "True",
+                "type": "ValidationSucceeded"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "NodeClass is not ready",
+                "reason": "NodeClassNotReady",
+                "status": "False",
+                "type": "NodeClassReady"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "object is awaiting reconciliation",
+                "reason": "AwaitingReconciliation",
+                "status": "Unknown",
+                "type": "NodeRegistrationHealthy"
+              },
+              {
+                "lastTransitionTime": "2026-02-18T04:02:02Z",
+                "message": "NodeClass is not ready",
+                "reason": "NodeClassNotReady",
+                "status": "False",
+                "type": "Ready"
+              }
+            ],
+            "nodes": null
+          }
+        }
+      }
+    ]
+  }
+]
