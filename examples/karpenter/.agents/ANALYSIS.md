@@ -2690,3 +2690,64 @@ done | sort -t: -k2 | uniq -f1 -c
 
 Expected: multiple distinct Node hashes across trials.
 
+### D19: CONFIRMED — Disruption + provisioner race violates `nodes` limit
+
+**Scenario file:** `examples/karpenter/scenarios/d19_disruption-provisioner-nodes-limit-v2.json`
+**Evidence:** `examples/karpenter/.agents/evidence/d19_disruption-provisioner-nodes-limit-v2/`
+**Severity: P2** — Transient `nodes` limit violation during disruption-provisioner race.
+
+A pre-existing empty node (NodeClaim-00001) is being disrupted while a new pod arrives
+(via UPDATE at readyDepth=15). The provisioner creates NodeClaim-00002 for the pod. In
+some orderings, the provisioner creates the replacement BEFORE the disruption controller
+deletes the old node — both NodeClaims exist simultaneously against a `nodes: "1"` limit.
+
+**Results: 4/7 trials (57%) show both NodeClaims existing at end of trace.**
+
+In bug-triggering orderings, the provisioner runs after the pod becomes Unschedulable
+but before `disruption.queue` deletes the old NodeClaim. `ExceededBy({nodes:1} vs
+{nodes:1}) = 1 > 1 = false` allows the creation (same off-by-one as D2). The disruption
+controller then marks the old node for deletion, but the trace ends (max depth) before
+`disruption.queue` can execute the delete.
+
+In non-bug orderings (3/7), disruption completes first → old node deleted → provisioner
+creates replacement → total stays at 1.
+
+This is distinct from D9 (which was negative) because the launcher now sets
+`Initialized=true`, enabling the full disruption pipeline to activate within the trace.
+
+#### Reproduction
+
+```bash
+cd examples/karpenter
+go build -o karpenter .
+mkdir -p /tmp/d19-repro
+./karpenter --inputs scenarios/d19_disruption-provisioner-nodes-limit-v2.json \
+  --output /tmp/d19-repro --interactive=false --timeout 120s
+```
+
+Count trials with both NodeClaims existing:
+```bash
+cd /tmp/d19-repro
+for f in *.jsonl; do
+  created=$(jq -r '[.states[0].paths[0][] | .changes.effects[]?
+    | select(.OpType == "CREATE") | select(.Key.resourceKind == "NodeClaim")
+    | .Key.name] | unique | length' "$f" 2>/dev/null)
+  deleted=$(jq -r '[.states[0].paths[0][] | .changes.effects[]?
+    | select(.OpType == "DELETE") | .Key.name] | unique | length' "$f" 2>/dev/null)
+  if [ "$created" -gt 0 ] && [ "$deleted" -eq 0 ]; then
+    echo "BUG: $f"
+  fi
+done
+```
+
+Expected: ~50% of trials show provisioner creating a NodeClaim before disruption deletes
+the old one.
+
+### D20: Cross-NodePool disruption budget (NEGATIVE)
+
+**Scenario file:** `examples/karpenter/scenarios/d20_cross-nodepool-disruption-budget.json`
+
+A single NodePool with `budgets: [{nodes: "0"}]` (zero disruptions allowed) and one empty
+node. The disruption controller correctly respects the zero budget — 0/9 trials delete
+the node. Budget enforcement works correctly for the zero case.
+
