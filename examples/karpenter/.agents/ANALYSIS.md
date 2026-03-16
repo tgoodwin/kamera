@@ -2513,12 +2513,7 @@ deletion, the next reconcile sees the same budget and disrupts another node. Tes
 requires two disruption controller reconciles with stale state between them — feasible
 with staleness intervals on `state.nodeclaim`.
 
-**2. Consolidatable condition TOCTOU:**
-`nodeclaim.disruption` marks NodeClaim as `consolidatable=true` after TTL. Main disruption
-reads this and decides to consolidate. Between read and `StartCommand`, pods may arrive on
-the node. Testing requires the provisioner to schedule a pod to a consolidatable node
-between the condition read and the disruption action — feasible with ordering permutation
-if both controllers are pending simultaneously.
+**2. Consolidatable condition TOCTOU — see D12 below (CONFIRMED).**
 
 **3. `ExceededBy` off-by-one is load-bearing for consolidation replacements:**
 `createReplacementNodeClaims()` calls `provisioner.CreateNodeClaims()` which calls
@@ -2526,4 +2521,74 @@ if both controllers are pending simultaneously.
 `ExceededBy({nodes:1} vs {nodes:1}) = 1 > 1 = false` allows the replacement. Fixing
 the off-by-one (D2) would break consolidation unless a bypass is added for replacement
 NodeClaims. This is a design tension, not a testable bug.
+
+### D12: CONFIRMED — Emptiness disruption deletes node with active workload
+
+**Scenario file:** `examples/karpenter/scenarios/d12_consolidatable-condition-toctou.json`
+**Evidence:** `examples/karpenter/.agents/evidence/d12_consolidatable-condition-toctou/`
+**Severity: P1** — Active workload pod deleted when disruption races pod scheduling.
+
+The disruption controller's emptiness check reads pods from the API via
+`node.ValidatePodsDisruptable()` → `nodeutils.GetPods()` which uses a
+`MatchingFields{"spec.nodeName": node.Name}` field selector. If the disruption controller
+evaluates the node BEFORE a pod is bound to it (before `spec.nodeName` is set), the node
+appears empty and is marked for deletion. When the pod binding arrives (kube-scheduler
+assigns `spec.nodeName`), it's too late — the disruption command is already enqueued.
+
+**Setup:** Pre-existing empty node (NodeClaim + Node) with `consolidateAfter: "0s"`.
+A pod exists in the environment without `spec.nodeName` (representing a pod about to be
+scheduled). An UPDATE user action at `readyDepth=20` sets `spec.nodeName` on the pod,
+simulating the kube-scheduler's binding. `permuteControllers` includes `disruption`,
+`disruption.queue`, `nodeclaim.disruption`, and state informers. Staleness on `disruption`'s
+`core/Pod` reads frozen at kindSeq=2 ensures the disruption controller sees the pre-binding
+state.
+
+**Trace Evidence (reference_0, the bug-triggering path):**
+
+```
+nodeclaim.disruption: PATCH NodeClaim/default-00001      (marks consolidatable)
+disruption:           PATCH Node + PATCH NodeClaim        (node appears EMPTY → marks for disruption)
+External User:        UPDATE Pod/workload-pod             (pod binds to node — TOO LATE)
+disruption.queue:     DELETE NodeClaim/default-00001      (deletes node with active pod!)
+CleanupReconciler:    REMOVE NodeClaim/default-00001      (finalizes)
+```
+
+**Results: 2/17 trials delete the node after a pod is bound to it.**
+
+In the 2 bug-triggering orderings, the disruption controller evaluates the node as empty
+(pod hasn't been bound yet), marks it for disruption, and the queue deletes it — even
+though the pod was bound in between. In the other 15 orderings, the pod binding occurs
+before the disruption evaluation, and the emptiness check correctly sees the pod.
+
+**Key finding about kamera's replay client:** The `MatchingFields` field selector IS
+supported by kamera's replay client (lines 200-205 of `replay/client.go`). The
+`matchesFieldSelector` function at line 227 correctly extracts nested fields from
+unstructured objects. This means Karpenter's `GetPods` field-selector-based queries
+work correctly in the simulation.
+
+#### Reproduction
+
+```bash
+cd examples/karpenter
+go build -o karpenter .
+mkdir -p /tmp/d12-repro
+./karpenter --inputs scenarios/d12_consolidatable-condition-toctou.json \
+  --output /tmp/d12-repro --interactive=false --timeout 120s
+```
+
+Count deletion trials:
+
+```bash
+cd /tmp/d12-repro
+total=0; deleted=0
+for f in *.jsonl; do
+  del=$(jq -r '[.states[0].paths[0][] | .changes.effects[]?
+    | select(.OpType == "DELETE" or .OpType == "REMOVE")] | length' "$f" 2>/dev/null)
+  total=$((total+1))
+  if [ "$del" -gt 0 ]; then deleted=$((deleted+1)); fi
+done
+echo "Has deletion: $deleted/$total"
+```
+
+Expected: ~12% of trials delete the node after a pod is bound to it.
 
