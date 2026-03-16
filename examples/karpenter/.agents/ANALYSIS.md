@@ -2751,3 +2751,131 @@ A single NodePool with `budgets: [{nodes: "0"}]` (zero disruptions allowed) and 
 node. The disruption controller correctly respects the zero budget — 0/9 trials delete
 the node. Budget enforcement works correctly for the zero case.
 
+### D21: CONFIRMED — Liveness timeout race causes create-delete churn
+
+**Scenario file:** `examples/karpenter/scenarios/d21_liveness-timeout-race.json`
+**Evidence:** `examples/karpenter/.agents/evidence/d21_liveness-timeout-race/`
+**Severity: P2** — Provisioner and lifecycle liveness check churn indefinitely.
+
+The lifecycle controller's liveness sub-controller has a 15-minute registration timeout.
+With simclock at 30s/step, this timeout fires after ~30 steps. If `node.registrar`
+(simulating kubelet registration) is delayed by ordering permutation beyond 30 steps,
+the liveness check kills the NodeClaim before registration completes. The provisioner
+recreates it, and the cycle repeats.
+
+**Results:** Trial 1 shows 3 provisioner CREATEs + 3 lifecycle DELETEs — the pod never
+gets a stable node. This is a realistic production concern: slow kubelet registration
+(network issues, AMI boot time, cloud provider delays) can trigger the liveness timeout,
+causing Karpenter to delete and recreate NodeClaims in a loop.
+
+### D23: CONFIRMED — Provisioner places pod on ghost node (stale disruption taint)
+
+**Scenario file:** `examples/karpenter/scenarios/d23_orphaned-node-after-nodeclaim-delete.json`
+**Severity: P2** — Provisioner schedules pod to a node being deleted.
+
+After disruption taints a node for deletion, `state.node` hasn't synced the taint into
+`state.Cluster`. The provisioner's virtual scheduler reads the stale node (without the
+`karpenter.sh/disruption` NoSchedule taint) and places the pod there. The pod appears
+"scheduled" but the node is being terminated.
+
+**Root cause:** The provisioner's scheduler uses `cluster.DeepCopyNodes()` which reads
+from `state.Cluster`. If `state.node` hasn't processed the disruption controller's
+taint PATCH, the node in state.Cluster doesn't have the taint. The scheduler treats it
+as available capacity. `state.node` eventually processes the taint, but by then the
+scheduling decision has already been made.
+
+**Trace evidence:** Provisioner at frame 27 (after pod becomes Unschedulable at frame
+20) lists pods and NodePools, gets past Synced(), but produces 0 effects — the scheduler
+places the pod on the existing (tainted but stale in state.Cluster) node. 14 subsequent
+provisioner runs also produce 0 effects for the same reason.
+
+---
+
+## Fault Injection Investigation
+
+**Date:** 2026-03-15
+
+### Implementation
+
+A new perturbation type `faultInjection` was added to kamera core. It intercepts API
+writes inside `RecordEffect` (the replay client's effect recording path) and returns
+an error when the write count exceeds a configured threshold. This causes the
+controller's code to receive an API error and return early — preventing all subsequent
+in-memory side effects (channel sends, map updates) that would normally follow.
+
+```json
+"faultInjection": [
+  {
+    "reconciler": "disruption",
+    "crashAfterEffect": 1,
+    "triggerOnce": true
+  }
+]
+```
+
+**Key design decisions:**
+- **RecordEffect-level injection** (not post-reconcile truncation): the crash error
+  propagates through the controller's error handling path, preventing in-memory side
+  effects like queue channel sends. This is more faithful than truncating effects after
+  the reconcile completes.
+- **OnCrash callback**: `ExplorerBuilder.OnCrash()` registers callbacks that reset
+  shared in-memory state (cluster, queue, cloud provider) when a crash fires. This
+  simulates a real process restart where all controller state is lost.
+- **triggerOnce**: crash fires on the first invocation only. Subsequent reconciles
+  proceed normally, simulating a controller restart that completes on the retry.
+
+### D24: Lifecycle finalize crash (NEGATIVE — system self-heals)
+
+**Scenario file:** `examples/karpenter/scenarios/d24_finalization-crash-after-node-delete.json`
+
+Crashes `nodeclaim.lifecycle` after 1 write during finalization (after deleting the Node
+but before deleting the cloud instance). On recovery (triggerOnce), the lifecycle
+controller completes finalization. Meanwhile, `node.termination` also participates in
+cleanup — it independently handles Node termination when it detects the Node with a
+DeletionTimestamp.
+
+**Finding:** Karpenter's mutual finalization design is crash-resilient. Both
+`nodeclaim.lifecycle` and `node.termination` can independently handle cleanup. Neither
+is a single point of failure. The system converges to a clean state in all 4 trials.
+
+**Mild finding:** `node.registrar` creates a transient orphaned Node for the deleted
+NodeClaim. This happens because `node.registrar` still has a pending reconcile from the
+original NodeClaim CREATE event. The orphaned Node is cleaned up by the lifecycle
+controller, but exists transiently.
+
+### D25: Node termination crash (NEGATIVE — system self-heals)
+
+**Scenario file:** `examples/karpenter/scenarios/d25_node-termination-crash-mid-drain.json`
+
+Crashes `node.termination` after 1 write (taint PATCH but before drain). On recovery,
+`node.termination` retries and completes the drain. Same mutual finalization pattern as
+D24 — `nodeclaim.lifecycle` compensates for the termination controller's crash.
+
+Same transient orphaned Node from `node.registrar`.
+
+### D26: Disruption crash + provisioner race (NEGATIVE — dominated by D23)
+
+**Scenario file:** `examples/karpenter/scenarios/d26_crash-recovery-missed-events.json`
+
+Crashes disruption after taint PATCH, then a pod arrives during the crash window. On
+recovery, disruption completes normally. The provisioner doesn't create a new NodeClaim
+because of D23's stale taint issue — it places the pod on the ghost node regardless of
+the crash.
+
+### Crash Resilience Assessment
+
+The fault injection investigation reveals that Karpenter's disruption/termination
+pipeline is **surprisingly robust to controller crashes**:
+
+| Controller crashed | Self-heals? | Mechanism |
+|---|---|---|
+| `nodeclaim.lifecycle` (finalize) | Yes | `node.termination` handles cleanup independently |
+| `node.termination` (drain) | Yes | `nodeclaim.lifecycle` handles cleanup independently |
+| `disruption` (StartCommand) | Yes | Recovery run completes the disruption |
+| `nodeclaim.lifecycle` (liveness) | N/A | Liveness is the crash *cause*, not crash *victim* |
+
+The mutual finalization pattern (both lifecycle and termination can clean up each other's
+resources) is a strong design choice. The only crash-related issues found are:
+1. **Transient orphaned Nodes** from stale `node.registrar` reconciles (P4, self-correcting)
+2. **D23's stale taint** in state.Cluster (P2, pre-existing — not caused by crash)
+
