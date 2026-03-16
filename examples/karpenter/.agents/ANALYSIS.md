@@ -2592,3 +2592,101 @@ echo "Has deletion: $deleted/$total"
 
 Expected: ~12% of trials delete the node after a pod is bound to it.
 
+### D14: CONFIRMED — Disruption budget violated with multiple empty nodes
+
+**Scenario file:** `examples/karpenter/scenarios/d14_disruption-budget-enforcement.json`
+**Evidence:** `examples/karpenter/.agents/evidence/d14_disruption-budget-enforcement/`
+**Severity: P2** — Disruption budget `nodes: "1"` violated; both nodes deleted.
+
+Two pre-existing empty nodes with `budgets: [{nodes: "1"}]` (only 1 disruption at a time).
+3/3 MC trials delete BOTH `default-00001` AND `default-00002`. The disruption controller
+runs twice in the same exploration: the first run deletes node-1, the second run computes
+the budget from cluster state that hasn't reflected node-1's deletion → budget still
+shows 1 available → deletes node-2.
+
+**Trace pattern (reference_0):**
+```
+disruption:       PATCH Node/default-00001, PATCH NodeClaim/default-00001  (marks #1)
+disruption.queue: DELETE NodeClaim/default-00001                           (deletes #1)
+disruption:       PATCH Node/default-00002, PATCH NodeClaim/default-00002  (marks #2 — budget should block!)
+disruption.queue: DELETE NodeClaim/default-00002                           (deletes #2)
+```
+
+The budget is only enforced within a single `ComputeCommands` call (which correctly
+decrements the budget per candidate). Across reconcile cycles, the budget is recomputed
+from stale cluster state.
+
+#### Reproduction
+
+```bash
+cd examples/karpenter
+go build -o karpenter .
+mkdir -p /tmp/d14-repro
+./karpenter --inputs scenarios/d14_disruption-budget-enforcement.json \
+  --output /tmp/d14-repro --interactive=false --timeout 120s
+```
+
+Check both NodeClaims deleted:
+```bash
+cd /tmp/d14-repro
+for f in *base*.jsonl; do
+  deleted=$(jq -r '[.states[0].paths[0][] | .changes.effects[]?
+    | select(.OpType == "DELETE") | .Key.name] | unique' "$f" 2>/dev/null)
+  echo "$f: deleted=$deleted"
+done
+```
+
+Expected: both `default-00001` and `default-00002` deleted in every trial despite
+budget of 1.
+
+### D15: consolidateAfter TTL behavior (not a bug)
+
+**Scenario file:** `examples/karpenter/scenarios/d15_consolidate-after-ttl-race.json`
+
+An empty node with `consolidateAfter: "30s"`. With simclock advancing 30s per step,
+the TTL is satisfied after 1 step. The node is marked consolidatable and disrupted.
+This is expected behavior — not a TOCTOU. The `consolidateAfter` TTL works correctly
+with the simclock. No ordering-dependent divergence observed.
+
+### D16: CONFIRMED — Node hydration produces ordering-dependent labels
+
+**Scenario file:** `examples/karpenter/scenarios/d16_node-hydration-label-race.json`
+**Evidence:** `examples/karpenter/.agents/evidence/d16_node-hydration-label-race/`
+**Severity: P3** — Node label content varies by controller ordering.
+
+When a NodeClaim is created, `nodeclaim.hydration` copies NodePool labels onto the
+NodeClaim, and `node.hydration` copies labels from the NodeClaim onto the Node. With
+`permuteAfterEvent` on NodeClaim CREATE, different orderings of these two controllers
+produce Nodes with different label sets.
+
+**Results: 3 distinct Node content hashes across 7 reference trials.** Most trials
+(5/7) converge to the same Node hash, but 2/7 produce different Node content. The
+same 5 objects are present in all trials, but the Node's labels differ.
+
+This is a scheduling-quality issue: if `node.hydration` runs before `nodeclaim.hydration`
+has updated the NodeClaim's labels, the Node gets incomplete labels. Pods with
+nodeSelector targeting those labels might not match the Node, causing unnecessary
+rescheduling or scheduling failures.
+
+#### Reproduction
+
+```bash
+cd examples/karpenter
+go build -o karpenter .
+mkdir -p /tmp/d16-repro
+./karpenter --inputs scenarios/d16_node-hydration-label-race.json \
+  --output /tmp/d16-repro --interactive=false --timeout 120s
+```
+
+Check for distinct Node hashes:
+```bash
+cd /tmp/d16-repro
+for f in *base*reference*.jsonl; do
+  node_hash=$(jq -r '[.states[0].paths[0][-1].stateAfter[]
+    | select(.key.resourceKind == "Node") | .hash.Value] | .[0]' "$f" 2>/dev/null)
+  echo "$f: $node_hash"
+done | sort -t: -k2 | uniq -f1 -c
+```
+
+Expected: multiple distinct Node hashes across trials.
+
