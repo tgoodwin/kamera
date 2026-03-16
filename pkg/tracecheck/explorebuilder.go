@@ -60,6 +60,10 @@ type ExplorerBuilder struct {
 	// controller caches). This ensures each forked exploration (Monte Carlo
 	// trial, perturbation phase) starts from a clean slate.
 	onForkFuncs []func()
+
+	// onCrashFuncs are called when a fault injection crash is triggered.
+	// They reset shared in-memory state to simulate a process restart.
+	onCrashFuncs []func()
 }
 
 // ReconcilerBuilder enables chaining reconciler-specific configuration
@@ -163,6 +167,15 @@ func (b *ExplorerBuilder) OnFork(fn func()) {
 	b.onForkFuncs = append(b.onForkFuncs, fn)
 }
 
+// OnCrash registers a callback that runs when a fault injection crash is
+// triggered during exploration. Use this to reset shared in-memory state
+// (e.g. caches, queues, counters) that would be lost in a real process crash.
+// All controllers share the same process in real Kubernetes, so a crash
+// resets ALL controller state — not just the crashed controller's.
+func (b *ExplorerBuilder) OnCrash(fn func()) {
+	b.onCrashFuncs = append(b.onCrashFuncs, fn)
+}
+
 func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 	if b == nil {
 		return nil
@@ -188,6 +201,7 @@ func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 		userActions:                slices.Clone(b.userActions),
 		resourceVersions:           make(map[snapshot.VersionHash]int64),
 		onForkFuncs:                b.onForkFuncs,
+		onCrashFuncs:               b.onCrashFuncs,
 	}
 }
 
@@ -917,6 +931,7 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		priorityHandler:  b.priorityBuilder.Build(b.snapStore),
 		userController:   userController,
 		resourceVersions: b.resourceVersions,
+		onCrashFuncs:     b.onCrashFuncs,
 	}
 
 	return explorer, nil

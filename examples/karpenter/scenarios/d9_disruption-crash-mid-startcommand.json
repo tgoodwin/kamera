@@ -87,7 +87,7 @@
       "faultInjection": [
         {
           "reconciler": "disruption",
-          "crashAfterEffect": 2,
+          "crashAfterEffect": 1,
           "triggerOnce": true
         }
       ],

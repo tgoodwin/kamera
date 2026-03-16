@@ -261,6 +261,10 @@ type Explorer struct {
 	// increments a global revision counter. Used for staleness observability:
 	// comparing a controller's observed RV against the current RV reveals lag.
 	resourceVersions map[snapshot.VersionHash]int64
+
+	// onCrashFuncs are called when fault injection truncates a reconcile.
+	// They reset shared in-memory state to simulate a process restart.
+	onCrashFuncs []func()
 }
 
 // VersionManager returns the shared version manager used during exploration.
@@ -1207,11 +1211,33 @@ func (e *Explorer) explore(
 			}
 
 			stepLogger.Info("Taking reconcile step")
+
+			// Set up fault injection crash injector if configured.
+			var crashInjectorInst *crashInjector
+			if fi, ok := e.getFaultInjectionConfig(pendingReconcile.ReconcilerID, &stateView); ok {
+				crashInjectorInst = newCrashInjector(fi.CrashAfterEffect)
+				stepCtx = withCrashInjector(stepCtx, crashInjectorInst)
+			}
+
 			stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
 
-			// Fault injection: truncate effects if this reconciler has a crash config.
-			if stepResult != nil && err == nil {
-				stepResult = e.applyFaultInjection(stepResult, pendingReconcile.ReconcilerID, &stateView)
+			// Handle fault injection crash: if the reconcile was aborted by crash
+			// injection, clear the error (it's expected) and call crash callbacks.
+			if crashInjectorInst != nil && crashInjectorInst.DidCrash() {
+				err = nil // crash is not a real error
+				// Mark reconciler as crashed for triggerOnce
+				if stateView.crashedReconcilers == nil {
+					stateView.crashedReconcilers = make(map[ReconcilerID]bool)
+				}
+				stateView.crashedReconcilers[pendingReconcile.ReconcilerID] = true
+				// Call crash callbacks to reset shared in-memory state
+				for _, fn := range e.onCrashFuncs {
+					fn()
+				}
+				stepLogger.Info("fault injection: controller crashed mid-reconcile",
+					"reconciler", pendingReconcile.ReconcilerID,
+					"crashAfterEffect", crashInjectorInst.crashThreshold,
+				)
 			}
 
 			// Diagnostic logging for non-determinism investigation:
@@ -1494,6 +1520,7 @@ func (e *Explorer) materializeNextState(
 		ExecutionHistory:         append(slices.Clone(stateView.ExecutionHistory), stepResult),
 		nextUserActionIdx:        nextUserActionIdx,
 		permuteTriggered:         triggered,
+		crashedReconcilers:       maps.Clone(stateView.crashedReconcilers),
 	}
 	newState.ID = string(newState.Hash())
 
@@ -2416,6 +2443,23 @@ func (e *Explorer) computeSubtreeKey(state StateNode) string {
 	return fmt.Sprintf("%s|%s", state.ContentsHash(), strings.Join(pendingStrs, ","))
 }
 
+// getFaultInjectionConfig returns the fault injection config for a reconciler, if any.
+func (e *Explorer) getFaultInjectionConfig(reconcilerID ReconcilerID, state *StateNode) (FaultInjectionConfig, bool) {
+	if e.Config == nil || len(e.Config.Perturbations.FaultInjection) == 0 {
+		return FaultInjectionConfig{}, false
+	}
+	for _, fi := range e.Config.Perturbations.FaultInjection {
+		if fi.ReconcilerID != reconcilerID {
+			continue
+		}
+		if fi.TriggerOnce && state.crashedReconcilers != nil && state.crashedReconcilers[reconcilerID] {
+			continue
+		}
+		return fi, true
+	}
+	return FaultInjectionConfig{}, false
+}
+
 // applyFaultInjection checks if the given reconciler has a fault injection config
 // and truncates its write effects if so. This simulates a mid-reconcile crash where
 // only the first N write effects are applied to the object store.
@@ -2480,6 +2524,12 @@ func (e *Explorer) applyFaultInjection(result *ReconcileResult, reconcilerID Rec
 			"originalWrites", writeCount,
 			"keptWrites", fi.CrashAfterEffect,
 		)
+		// Call crash callbacks to reset shared in-memory state.
+		// In real Kubernetes, all controllers share a process — a crash
+		// resets ALL controller state, not just the crashed one.
+		for _, fn := range e.onCrashFuncs {
+			fn()
+		}
 		break
 	}
 	return result

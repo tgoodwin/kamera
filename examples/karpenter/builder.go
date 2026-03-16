@@ -231,6 +231,23 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		}
 	})
 
+	// Reset shared in-memory state on fault injection crash. All controllers
+	// share the same process in real Kubernetes, so a crash resets everything.
+	// Unlike OnFork (which resets to empty), OnCrash resets to a state where
+	// controllers will re-list from the API server on their next reconcile.
+	b.OnCrash(func() {
+		getCluster(nil).Reset()
+		cp.Reset()
+		provisionerClient.Reset()
+		if q := getDisruptionQueue(); q != nil {
+			q.Lock()
+			for k := range q.ProviderIDToCommand {
+				delete(q.ProviderIDToCommand, k)
+			}
+			q.Unlock()
+		}
+	})
+
 	return b
 }
 

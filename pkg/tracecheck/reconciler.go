@@ -177,12 +177,12 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 	}
 	defer cleanup()
 
-	res, err := r.Strategy.ReconcileAtState(ctx, req.NamespacedName)
-	if err != nil {
-		return nil, errors.Wrap(err, "executing reconcile")
+	res, reconcileErr := r.Strategy.ReconcileAtState(ctx, req.NamespacedName)
+	if reconcileErr != nil && !isFaultInjectionCrash(reconcileErr) {
+		return nil, errors.Wrap(reconcileErr, "executing reconcile")
 	}
 
-	logger.V(2).Info("reconcile complete", "result", res)
+	logger.V(2).Info("reconcile complete", "result", res, "crashed", reconcileErr != nil)
 	effects, err := r.effectReader.GetEffects(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")

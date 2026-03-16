@@ -107,6 +107,13 @@ var _ replay.EffectRecorder = (*manager)(nil)
 var DefaultHasher = snapshot.JSONHasher{}
 
 func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, precondition *replay.PreconditionInfo, options *replay.EffectOptions) error {
+	// Check fault injection crash threshold before recording.
+	if ci := getCrashInjector(ctx); ci != nil {
+		if err := ci.CheckWrite(opType); err != nil {
+			return err
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
