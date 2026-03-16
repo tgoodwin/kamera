@@ -127,10 +127,10 @@
         "0": 0
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "remove composition capability from function",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "pkg.crossplane.io/v1",
           "kind": "FunctionRevision",

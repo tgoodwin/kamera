@@ -454,8 +454,8 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		// enumerate these combinations.
 		planFn = func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
 			var plans []ScenarioPhasePlan
-			if len(scenario.UserInputs) >= 2 {
-				plans = append(plans, buildUserActionInterleavingPlans(reference, scenario.Config, scenario.Context, scenario.UserInputs)...)
+			if len(scenario.ExternalInputs) >= 2 {
+				plans = append(plans, buildUserActionInterleavingPlans(reference, scenario.Config, scenario.Context, scenario.ExternalInputs)...)
 			} else {
 				plans = append(plans, buildDefaultScenarioRerunPlans(reference, scenario.Config, scenario.Context)...)
 			}
@@ -912,7 +912,7 @@ func (r *ParallelRunner) runScenarioPhase(
 		phase.Err = fmt.Errorf("fork builder: nil")
 		return phase
 	}
-	fork.WithUserActions(cloneUserActions(scenario.UserInputs))
+	fork.WithUserActions(cloneUserActions(scenario.ExternalInputs))
 	fork.SetConfig(cfg)
 	if len(prefix) > 0 && prefixResolver != nil {
 		if err := fork.PrimeVersionStoreFromHistory(prefix, prefixResolver); err != nil {

@@ -188,10 +188,10 @@
         "1": 0
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "switch compositionRef to beta but keep alpha revisionRef",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "example.org/v1",
           "kind": "XWidget",

@@ -65,10 +65,10 @@
         "0": 0
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "create xr before revision exists",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "example.org/v1",
           "kind": "XWidget",

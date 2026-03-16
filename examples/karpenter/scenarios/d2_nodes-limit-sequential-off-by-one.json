@@ -181,10 +181,10 @@
         }
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "make-pod-2-unschedulable",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "v1",
           "kind": "Pod",

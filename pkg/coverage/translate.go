@@ -26,7 +26,7 @@ func TranslateHotspots(graph *analyze.Graph, hotspots []analyze.HotspotInstance,
 	// 	resourceIDs := collectResourceIDs(hotspot)
 	// 	resourceList := sortedNodeIDs(resourceIDs)
 
-	// 	userInputs := make([]UserInput, 0, len(resourceList))
+	// 	userInputs := make([]ExternalInput, 0, len(resourceList))
 
 	// 	for _, nodeID := range resourceList {
 	// 		node, ok := graph.Nodes[nodeID]
@@ -63,7 +63,7 @@ func TranslateHotspots(graph *analyze.Graph, hotspots []analyze.HotspotInstance,
 	// 	tuning := buildTuning(hotspot, graph)
 	// 	input := Input{
 	// 		Name:       fmt.Sprintf("hotspot-%s-%d", hotspot.Type, i),
-	// 		UserInputs: userInputs,
+	// 		ExternalInputs: userInputs,
 	// 		Tuning:     tuning,
 	// 	}
 	// 	out = append(out, input)

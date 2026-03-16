@@ -33,10 +33,10 @@
     "tuning": {
       "maxDepth": 24
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "create-application-instance",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "kro.run/v1alpha1",
           "kind": "Application",
@@ -89,10 +89,10 @@
     "tuning": {
       "maxDepth": 20
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "create-application-instance",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "kro.run/v1alpha1",
           "kind": "Application",
@@ -145,10 +145,10 @@
     "tuning": {
       "maxDepth": 32
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "create-application-instance",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "kro.run/v1alpha1",
           "kind": "Application",
@@ -167,7 +167,7 @@
       },
       {
         "id": "scale-application-to-3",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "kro.run/v1alpha1",
           "kind": "Application",

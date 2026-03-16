@@ -342,7 +342,7 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 		scenarios = append(scenarios, explore.Scenario{
 			Name:             input.Name,
 			EnvironmentState: state,
-			UserInputs:       userInputs,
+			ExternalInputs:       userInputs,
 			Config:           cfg,
 		})
 	}
@@ -432,7 +432,7 @@ func dynamicControllerSpecsFromInputs(inputs []coverage.Input) []dynamicControll
 		for _, obj := range input.EnvironmentState.Objects {
 			add(obj)
 		}
-		for _, userInput := range input.UserInputs {
+		for _, userInput := range input.ExternalInputs {
 			add(userInput.Object)
 		}
 	}
@@ -536,8 +536,8 @@ func buildUserActionsFromCoverageInput(
 	input coverage.Input,
 	seededObjects []ctrlclient.Object,
 ) ([]tracecheck.UserAction, error) {
-	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
-	for idx, action := range input.UserInputs {
+	actions := make([]tracecheck.UserAction, 0, len(input.ExternalInputs))
+	for idx, action := range input.ExternalInputs {
 		if action.Object == nil {
 			return nil, fmt.Errorf("input user input %d has nil object", idx)
 		}
@@ -545,7 +545,7 @@ func buildUserActionsFromCoverageInput(
 		if id == "" {
 			id = fmt.Sprintf("user-input-%d", idx)
 		}
-		opType := action.Type
+		opType := action.OpType
 		if opType == event.CREATE && isInputObjectSeeded(action.Object, seededObjects) {
 			opType = event.UPDATE
 		}

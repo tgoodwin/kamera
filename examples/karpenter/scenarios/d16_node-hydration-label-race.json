@@ -59,6 +59,6 @@
         "monteCarlo": { "seed": 1300, "trials": 20 }
       }
     },
-    "userInputs": []
+    "externalInputs": []
   }
 ]

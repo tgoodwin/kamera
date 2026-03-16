@@ -789,7 +789,7 @@ func TestParallelRunnerAutoClosedLoopUsesInterleavingForMultiStepWorkflows(t *te
 			Name:             "auto-multistep-interleaving",
 			EnvironmentState: state.Clone(),
 			Config:           tracecheck.ExploreConfig{MaxDepth: 10},
-			UserInputs: []tracecheck.UserAction{
+			ExternalInputs: []tracecheck.UserAction{
 				{
 					ID:     "create-target",
 					OpType: "CREATE",

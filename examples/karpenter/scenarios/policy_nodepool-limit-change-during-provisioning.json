@@ -135,10 +135,10 @@
         }
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "create pending pod",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "v1",
           "kind": "Pod",
@@ -172,7 +172,7 @@
       },
       {
         "id": "reduce nodepool cpu limit",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "karpenter.sh/v1",
           "kind": "NodePool",

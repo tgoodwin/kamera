@@ -160,10 +160,10 @@
         "monteCarlo": { "seed": 500, "trials": 10 }
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "make-pod-unschedulable",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "v1",
           "kind": "Pod",

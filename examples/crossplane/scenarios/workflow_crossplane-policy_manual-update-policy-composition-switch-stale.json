@@ -191,10 +191,10 @@
         "apiextensions.crossplane.io/CompositionRevision": 2
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "switch compositionRef but keep old revisionRef",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "example.org/v1",
           "kind": "XWidget",

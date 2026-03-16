@@ -10,10 +10,10 @@
       "staleReads": null,
       "staleLookback": null
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "serving.knative.dev/v1",
           "kind": "Service",

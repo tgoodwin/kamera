@@ -59,9 +59,9 @@ func TestTranslateHotspots(t *testing.T) {
 	require.Len(t, inputs, len(multi))
 
 	input := inputs[0]
-	require.Len(t, input.UserInputs, 1)
-	inputAction := input.UserInputs[0]
-	require.Equal(t, "CREATE", string(inputAction.Type))
+	require.Len(t, input.ExternalInputs, 1)
+	inputAction := input.ExternalInputs[0]
+	require.Equal(t, "CREATE", string(inputAction.OpType))
 	obj := inputAction.Object
 	require.Equal(t, "hs-multi_writer-0-service", obj.GetName())
 	require.Equal(t, "default", obj.GetNamespace())

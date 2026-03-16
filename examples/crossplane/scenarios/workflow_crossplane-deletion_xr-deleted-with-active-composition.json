@@ -124,7 +124,7 @@
         "example.org/XWidget": 1
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "delete xr",
         "type": "DELETE",

@@ -226,7 +226,7 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 		scenarios = append(scenarios, explore.Scenario{
 			Name:             input.Name,
 			EnvironmentState: state,
-			UserInputs:       userInputs,
+			ExternalInputs:       userInputs,
 			Config:           cfg,
 			Context:          scenarioContextForInput(input),
 		})
@@ -282,12 +282,12 @@ func expandKnativeParameterizedInput(input coverage.Input, fuzzCases int, fuzzSe
 
 	base := cloneCoverageInput(input)
 	base.Name = baseName + "/base"
-	serviceIdx := findKnativeServiceInUserInputs(base.UserInputs)
+	serviceIdx := findKnativeServiceInUserInputs(base.ExternalInputs)
 	if serviceIdx < 0 {
 		return []coverage.Input{base}, nil
 	}
 
-	templateSvc, err := unstructuredToService(base.UserInputs[serviceIdx].Object)
+	templateSvc, err := unstructuredToService(base.ExternalInputs[serviceIdx].Object)
 	if err != nil {
 		return nil, err
 	}
@@ -447,10 +447,10 @@ func buildKnativeVariantInput(
 	if err != nil {
 		return coverage.Input{}, fmt.Errorf("convert parameterized service for %q: %w", name, err)
 	}
-	if serviceIdx >= len(updated.UserInputs) || updated.UserInputs[serviceIdx].Object == nil {
+	if serviceIdx >= len(updated.ExternalInputs) || updated.ExternalInputs[serviceIdx].Object == nil {
 		return coverage.Input{}, fmt.Errorf("service user input missing for %q", name)
 	}
-	updated.UserInputs[serviceIdx].Object = serviceObj
+	updated.ExternalInputs[serviceIdx].Object = serviceObj
 	return updated, nil
 }
 
@@ -604,7 +604,7 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		}
 		objects = append(objects, obj.DeepCopy())
 	}
-	userInputs := cloneUserInputs(input.UserInputs)
+	userInputs := cloneUserInputs(input.ExternalInputs)
 
 	tuning := coverage.InputTuning{
 		MaxDepth:           input.Tuning.MaxDepth,
@@ -618,7 +618,7 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		EnvironmentState: coverage.EnvironmentState{
 			Objects: objects,
 		},
-		UserInputs: userInputs,
+		ExternalInputs: userInputs,
 		Tuning:     tuning,
 	}
 }
@@ -647,8 +647,8 @@ func cloneInputSearchTuning(search coverage.InputSearchTuning) coverage.InputSea
 }
 
 func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
-	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
-	for idx, action := range input.UserInputs {
+	actions := make([]tracecheck.UserAction, 0, len(input.ExternalInputs))
+	for idx, action := range input.ExternalInputs {
 		if action.Object == nil {
 			return nil, fmt.Errorf("input user input %d has nil object", idx)
 		}
@@ -656,7 +656,7 @@ func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []cli
 		if id == "" {
 			id = fmt.Sprintf("user-input-%d", idx)
 		}
-		opType := action.Type
+		opType := action.OpType
 		if opType == event.CREATE && isInputObjectSeeded(action.Object, seededObjects) {
 			opType = event.UPDATE
 		}
@@ -693,15 +693,15 @@ func sameObjectIdentity(a, b client.Object) bool {
 	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
 }
 
-func cloneUserInputs(inputs []coverage.UserInput) []coverage.UserInput {
+func cloneUserInputs(inputs []coverage.ExternalInput) []coverage.ExternalInput {
 	if len(inputs) == 0 {
 		return nil
 	}
-	out := make([]coverage.UserInput, 0, len(inputs))
+	out := make([]coverage.ExternalInput, 0, len(inputs))
 	for _, input := range inputs {
-		clone := coverage.UserInput{
+		clone := coverage.ExternalInput{
 			ID:     input.ID,
-			Type:   input.Type,
+			Type:   input.OpType,
 			Object: nil,
 		}
 		if input.Object != nil {
@@ -746,7 +746,7 @@ func findKnativeService(objects []*unstructured.Unstructured) int {
 	return -1
 }
 
-func findKnativeServiceInUserInputs(userInputs []coverage.UserInput) int {
+func findKnativeServiceInUserInputs(userInputs []coverage.ExternalInput) int {
 	for idx, input := range userInputs {
 		if input.Object == nil {
 			continue

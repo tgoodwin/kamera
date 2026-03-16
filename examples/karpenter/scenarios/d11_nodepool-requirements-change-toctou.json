@@ -85,10 +85,10 @@
         "monteCarlo": { "seed": 900, "trials": 20 }
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "tighten-nodepool-requirements",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "karpenter.sh/v1",
           "kind": "NodePool",

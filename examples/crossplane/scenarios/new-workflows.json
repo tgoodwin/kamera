@@ -62,10 +62,10 @@
         "apiextensions.crossplane.io/CompositionRevision": 2
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "create xr before revision exists",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "example.org/v1",
           "kind": "XWidget",
@@ -209,10 +209,10 @@
         "apiextensions.crossplane.io/CompositionRevision": 2
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "update composition while xr is bound",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "apiextensions.crossplane.io/v1",
           "kind": "Composition",
@@ -364,7 +364,7 @@
         "example.org/XWidget": 1
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "delete xr",
         "type": "DELETE",
@@ -564,10 +564,10 @@
       "staleReads": null,
       "staleLookback": null
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "switch compositionRef but keep old revisionRef",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "example.org/v1",
           "kind": "XWidget",
@@ -780,10 +780,10 @@
         "apiextensions.crossplane.io/CompositionRevision": 2
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "switch compositionRef but keep old revisionRef",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "example.org/v1",
           "kind": "XWidget",
@@ -946,10 +946,10 @@
         "apiextensions.crossplane.io/CompositionRevision": 2
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "update shared composition",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "apiextensions.crossplane.io/v1",
           "kind": "Composition",
@@ -1100,10 +1100,10 @@
         "pkg.crossplane.io/FunctionRevision": 1
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "remove composition capability from function",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "pkg.crossplane.io/v1",
           "kind": "FunctionRevision",
@@ -1247,7 +1247,7 @@
         "apiextensions.crossplane.io/Composition": 1
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "delete composition while xr is bound",
         "type": "DELETE",

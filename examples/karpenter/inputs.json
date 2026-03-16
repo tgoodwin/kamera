@@ -106,10 +106,10 @@
       "staleReads": null,
       "staleLookback": null
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "create pending pod",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "v1",
           "kind": "Pod",

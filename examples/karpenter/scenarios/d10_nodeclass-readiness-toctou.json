@@ -86,10 +86,10 @@
         "monteCarlo": { "seed": 700, "trials": 20 }
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "nodeclass-goes-not-ready",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "karpenter.test.sh/v1alpha1",
           "kind": "TestNodeClass",

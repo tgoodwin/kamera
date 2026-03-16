@@ -65,7 +65,7 @@ func loadTwoStepWorkflowScenario(t *testing.T) exploreScenario {
 	return exploreScenario{
 		builder:  builder,
 		state:    scenarios[0].EnvironmentState,
-		actions:  append([]tracecheck.UserAction(nil), scenarios[0].UserInputs...),
+		actions:  append([]tracecheck.UserAction(nil), scenarios[0].ExternalInputs...),
 		config:   disableExamplePerturbations(scenarios[0].Config),
 		scenario: scenarios[0].Name,
 	}

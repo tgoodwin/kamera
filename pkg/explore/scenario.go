@@ -12,7 +12,7 @@ type ScenarioContext struct {
 type Scenario struct {
 	Name            string
 	EnvironmentState tracecheck.StateNode
-	UserInputs      []tracecheck.UserAction
+	ExternalInputs  []tracecheck.UserAction
 	Config          tracecheck.ExploreConfig
 	Invariant       func(tracecheck.StateNode) error
 	Context         ScenarioContext

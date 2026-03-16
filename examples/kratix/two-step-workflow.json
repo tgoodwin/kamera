@@ -79,10 +79,10 @@
       "staleReads": null,
       "staleLookback": null
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "create easyapp request",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "example.promise.syntasso.io/v1",
           "kind": "EasyApp",
@@ -99,7 +99,7 @@
       },
       {
         "id": "update easyapp image",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "example.promise.syntasso.io/v1",
           "kind": "EasyApp",

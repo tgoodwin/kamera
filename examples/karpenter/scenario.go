@@ -110,7 +110,7 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 			scenarios = append(scenarios, explore.Scenario{
 				Name:             variant.Name,
 				EnvironmentState: state,
-				UserInputs:       userActions,
+				ExternalInputs:       userActions,
 				Config:           cfg,
 			})
 		}
@@ -141,13 +141,13 @@ func expandKarpenterParameterizedInput(input coverage.Input, fuzzCases int, fuzz
 	base := cloneCoverageInput(input)
 	base.Name = baseName + "/base"
 
-	podIdx := findKarpenterPodInUserInputs(base.UserInputs)
+	podIdx := findKarpenterPodInUserInputs(base.ExternalInputs)
 	nodePoolIdx := findKarpenterNodePool(base.EnvironmentState.Objects)
 	if podIdx < 0 || nodePoolIdx < 0 {
 		return []coverage.Input{base}, nil
 	}
 
-	templatePod, err := unstructuredToPod(base.UserInputs[podIdx].Object)
+	templatePod, err := unstructuredToPod(base.ExternalInputs[podIdx].Object)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +299,7 @@ func buildKarpenterVariantInput(input coverage.Input, podIdx int, nodePoolIdx in
 	if err != nil {
 		return coverage.Input{}, fmt.Errorf("convert nodepool for %q: %w", name, err)
 	}
-	updated.UserInputs[podIdx].Object = podObj
+	updated.ExternalInputs[podIdx].Object = podObj
 	if nodePoolIdx < 0 || nodePoolIdx >= len(updated.EnvironmentState.Objects) {
 		return coverage.Input{}, fmt.Errorf("nodepool environment index %d out of range", nodePoolIdx)
 	}
@@ -381,8 +381,8 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 		}
 		objects = append(objects, safeDeepCopyUnstructured(obj))
 	}
-	for _, userInput := range input.UserInputs {
-		if userInput.Type != event.CREATE || userInput.Object == nil || !isKarpenterPod(userInput.Object) {
+	for _, userInput := range input.ExternalInputs {
+		if userInput.OpType != event.CREATE || userInput.Object == nil || !isKarpenterPod(userInput.Object) {
 			continue
 		}
 		if isInputObjectSeeded(userInput.Object, objects) {
@@ -494,7 +494,7 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		objects = append(objects, obj.DeepCopy())
 	}
 
-	userInputs := cloneUserInputs(input.UserInputs)
+	userInputs := cloneUserInputs(input.ExternalInputs)
 	tuning := coverage.InputTuning{
 		MaxDepth:              input.Tuning.MaxDepth,
 		PermuteControllers:    append([]string(nil), input.Tuning.PermuteControllers...),
@@ -516,7 +516,7 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 	return coverage.Input{
 		Name:             input.Name,
 		EnvironmentState: coverage.EnvironmentState{Objects: objects},
-		UserInputs:       userInputs,
+		ExternalInputs:       userInputs,
 		Tuning:           tuning,
 	}
 }
@@ -545,12 +545,12 @@ func cloneInputSearchTuning(search coverage.InputSearchTuning) coverage.InputSea
 }
 
 func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
-	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
-	for idx, userInput := range input.UserInputs {
+	actions := make([]tracecheck.UserAction, 0, len(input.ExternalInputs))
+	for idx, userInput := range input.ExternalInputs {
 		if userInput.Object == nil {
 			return nil, fmt.Errorf("user input %d (%s) missing object", idx, input.Name)
 		}
-		opType := userInput.Type
+		opType := userInput.OpType
 		if opType == event.CREATE && isInputObjectSeeded(userInput.Object, seededObjects) {
 			opType = event.UPDATE
 		}
@@ -592,16 +592,16 @@ func sameObjectIdentity(a, b client.Object) bool {
 	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
 }
 
-func cloneUserInputs(inputs []coverage.UserInput) []coverage.UserInput {
+func cloneUserInputs(inputs []coverage.ExternalInput) []coverage.ExternalInput {
 	if len(inputs) == 0 {
 		return nil
 	}
 
-	out := make([]coverage.UserInput, 0, len(inputs))
+	out := make([]coverage.ExternalInput, 0, len(inputs))
 	for _, input := range inputs {
-		cloned := coverage.UserInput{
+		cloned := coverage.ExternalInput{
 			ID:   input.ID,
-			Type: input.Type,
+			OpType: input.OpType,
 		}
 		if input.Object != nil {
 			cloned.Object = safeDeepCopyUnstructured(input.Object)
@@ -652,7 +652,7 @@ func cloneIntMap(in map[string]int) map[string]int {
 	return out
 }
 
-func findKarpenterPodInUserInputs(userInputs []coverage.UserInput) int {
+func findKarpenterPodInUserInputs(userInputs []coverage.ExternalInput) int {
 	for idx, input := range userInputs {
 		if input.Object == nil {
 			continue

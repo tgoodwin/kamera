@@ -87,8 +87,8 @@ func TestLoadInputsInvalidUserInputsType(t *testing.T) {
 		{
 			Name:             "case-1",
 			EnvironmentState: EnvironmentState{Objects: []*unstructured.Unstructured{inputObject("v1", "ConfigMap")}},
-			UserInputs: []UserInput{{
-				Type:   "NOPE",
+			ExternalInputs: []ExternalInput{{
+				OpType: "NOPE",
 				Object: inputObject("v1", "ConfigMap"),
 			}},
 		},

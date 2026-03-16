@@ -165,10 +165,10 @@
         "monteCarlo": { "seed": 800, "trials": 20 }
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "pod-scheduled-to-node",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "v1",
           "kind": "Pod",

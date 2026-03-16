@@ -125,10 +125,10 @@
         "apiextensions.crossplane.io/CompositionRevision": 2
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "update composition while xr is bound",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "apiextensions.crossplane.io/v1",
           "kind": "Composition",

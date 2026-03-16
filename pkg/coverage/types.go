@@ -9,7 +9,7 @@ import (
 type Input struct {
 	Name             string           `json:"name"`
 	EnvironmentState EnvironmentState `json:"environmentState"`
-	UserInputs       []UserInput      `json:"userInputs"`
+	ExternalInputs   []ExternalInput   `json:"externalInputs"`
 	Tuning           InputTuning      `json:"tuning"`
 }
 
@@ -18,12 +18,30 @@ type EnvironmentState struct {
 	Objects []*unstructured.Unstructured `json:"objects"`
 }
 
-// UserInput models a declarative state change performed by the user
-type UserInput struct {
+// ExternalInputSource distinguishes the origin of an external input.
+type ExternalInputSource string
+
+const (
+	// ExternalSourceUserAction represents a deliberate user/operator action
+	// (e.g., applying a new manifest, deleting a resource).
+	ExternalSourceUserAction ExternalInputSource = "UserAction"
+	// ExternalSourceEnvironmentEvent represents an infrastructure or
+	// environment change outside the controller system (e.g., cloud provider
+	// API failure, AMI deletion, kube-scheduler pod binding).
+	ExternalSourceEnvironmentEvent ExternalInputSource = "EnvironmentEvent"
+)
+
+// ExternalInput models a declarative state change originating outside the
+// controller system — either a user/operator action or an environment event.
+type ExternalInput struct {
 	ID     string                     `json:"id"`
-	Type   event.OperationType        `json:"type"`
+	OpType event.OperationType        `json:"opType"`
+	Source ExternalInputSource        `json:"source,omitempty"`
 	Object *unstructured.Unstructured `json:"object"`
 }
+
+// Deprecated: UserInput is an alias for ExternalInput for backward compatibility.
+type UserInput = ExternalInput
 
 // InputStalenessInterval is the JSON-facing staleness interval configuration.
 type InputStalenessInterval struct {

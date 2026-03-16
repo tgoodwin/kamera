@@ -154,10 +154,10 @@
         }
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "create pod-2",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "v1",
           "kind": "Pod",

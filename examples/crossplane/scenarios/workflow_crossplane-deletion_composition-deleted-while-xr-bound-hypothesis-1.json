@@ -126,7 +126,7 @@
         "0": 0
       }
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "delete composition while xr is bound",
         "type": "DELETE",

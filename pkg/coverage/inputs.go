@@ -42,7 +42,7 @@ func validateInputs(inputs []Input) error {
 		}
 		seenNames[name] = struct{}{}
 
-		if len(input.EnvironmentState.Objects) == 0 && len(input.UserInputs) == 0 {
+		if len(input.EnvironmentState.Objects) == 0 && len(input.ExternalInputs) == 0 {
 			return fmt.Errorf("input[%d] (%s) must include either environmentState.objects or userInputs", i, name)
 		}
 
@@ -55,14 +55,14 @@ func validateInputs(inputs []Input) error {
 			}
 		}
 
-		for actionIdx, action := range input.UserInputs {
+		for actionIdx, action := range input.ExternalInputs {
 			if action.Object == nil {
 				return fmt.Errorf("input[%d] (%s) userInputs[%d].object must be set", i, name, actionIdx)
 			}
-			if strings.TrimSpace(string(action.Type)) == "" {
+			if strings.TrimSpace(string(action.OpType)) == "" {
 				return fmt.Errorf("input[%d] (%s) userInputs[%d].type must be set", i, name, actionIdx)
 			}
-			if !isValidUserActionType(action.Type) {
+			if !isValidUserActionType(action.OpType) {
 				return fmt.Errorf("input[%d] (%s) userInputs[%d].type must be CREATE, UPDATE, or DELETE", i, name, actionIdx)
 			}
 			if strings.TrimSpace(action.Object.GetAPIVersion()) == "" || strings.TrimSpace(action.Object.GetKind()) == "" {
