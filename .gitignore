@@ -50,3 +50,9 @@ graph-experiment/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Built binaries
+examples/karpenter/karpenter
+examples/crossplane/crossplane
+examples/knative-serving/knative-serving
+examples/kratix/kratix
