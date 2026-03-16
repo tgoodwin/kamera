@@ -57,7 +57,16 @@ type InputTuning struct {
 	StaleLookback         map[string]int           `json:"staleLookback"`
 	UserActionReadyDepths map[string]int           `json:"userActionReadyDepths,omitempty"`
 	StalenessIntervals    []InputStalenessInterval `json:"stalenessIntervals"`
+	FaultInjection        []InputFaultInjection    `json:"faultInjection,omitempty"`
 	Search                InputSearchTuning        `json:"search"`
+}
+
+// InputFaultInjection specifies a mid-reconcile crash for a specific reconciler.
+type InputFaultInjection struct {
+	Reconciler       string `json:"reconciler"`
+	CrashAfterEffect int    `json:"crashAfterEffect"`
+	RecoverAtDepth   int    `json:"recoverAtDepth,omitempty"`
+	TriggerOnce      bool   `json:"triggerOnce,omitempty"`
 }
 
 // InputSearchTuning carries optional per-input search-mode overrides.

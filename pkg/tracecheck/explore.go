@@ -84,6 +84,19 @@ type PerturbationConfig struct {
 	// PermuteAfterEvent, when non-nil, requires the specified event to have
 	// occurred before ordering permutations activate on a branch.
 	PermuteAfterEvent *PermuteEventTrigger
+
+	// FaultInjection defines mid-reconcile crash injection rules. When
+	// configured, a reconciler's write effects are truncated after
+	// CrashAfterEffect writes, simulating a controller crash mid-reconcile.
+	FaultInjection []FaultInjectionConfig `json:"faultInjection,omitempty"`
+}
+
+// FaultInjectionConfig defines a mid-reconcile crash for a specific reconciler.
+type FaultInjectionConfig struct {
+	ReconcilerID     ReconcilerID `json:"reconciler"`
+	CrashAfterEffect int          `json:"crashAfterEffect"`
+	RecoverAtDepth   int          `json:"recoverAtDepth,omitempty"`
+	TriggerOnce      bool         `json:"triggerOnce,omitempty"`
 }
 
 type StalenessConfig struct {
@@ -205,6 +218,7 @@ func (cfg ExploreConfig) Clone() ExploreConfig {
 		copied := *cfg.Perturbations.PermuteAfterEvent
 		out.Perturbations.PermuteAfterEvent = &copied
 	}
+	out.Perturbations.FaultInjection = slices.Clone(cfg.Perturbations.FaultInjection)
 	return out
 }
 
@@ -1194,6 +1208,11 @@ func (e *Explorer) explore(
 
 			stepLogger.Info("Taking reconcile step")
 			stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+
+			// Fault injection: truncate effects if this reconciler has a crash config.
+			if stepResult != nil && err == nil {
+				stepResult = e.applyFaultInjection(stepResult, pendingReconcile.ReconcilerID, &stateView)
+			}
 
 			// Diagnostic logging for non-determinism investigation:
 			// Log the effects order to detect if Knative reconcilers produce effects in different orders across runs.
@@ -2395,6 +2414,75 @@ func (e *Explorer) computeSubtreeKey(state StateNode) string {
 	})
 	// NOT sorted - order matters for subtree identity
 	return fmt.Sprintf("%s|%s", state.ContentsHash(), strings.Join(pendingStrs, ","))
+}
+
+// applyFaultInjection checks if the given reconciler has a fault injection config
+// and truncates its write effects if so. This simulates a mid-reconcile crash where
+// only the first N write effects are applied to the object store.
+func (e *Explorer) applyFaultInjection(result *ReconcileResult, reconcilerID ReconcilerID, state *StateNode) *ReconcileResult {
+	if e.Config == nil || len(e.Config.Perturbations.FaultInjection) == 0 {
+		return result
+	}
+	for _, fi := range e.Config.Perturbations.FaultInjection {
+		if fi.ReconcilerID != reconcilerID {
+			continue
+		}
+		// Check triggerOnce: skip if already crashed
+		if fi.TriggerOnce && state.crashedReconcilers != nil && state.crashedReconcilers[reconcilerID] {
+			continue
+		}
+		// Count write effects (CREATE, PATCH, DELETE, UPDATE, APPLY, MARK_FOR_DELETION, REMOVE)
+		writeCount := 0
+		for _, eff := range result.Changes.Effects {
+			if eff.OpType != event.GET && eff.OpType != event.LIST {
+				writeCount++
+			}
+		}
+		if writeCount <= fi.CrashAfterEffect {
+			continue // not enough effects to trigger crash
+		}
+		// Truncate: keep only the first CrashAfterEffect write effects
+		truncated := make([]Effect, 0, fi.CrashAfterEffect+len(result.Changes.Observations))
+		writesSeen := 0
+		for _, eff := range result.Changes.Effects {
+			if eff.OpType == event.GET || eff.OpType == event.LIST {
+				truncated = append(truncated, eff) // observations always kept
+			} else {
+				writesSeen++
+				if writesSeen <= fi.CrashAfterEffect {
+					truncated = append(truncated, eff) // keep this write
+				}
+				// else: discard (crashed before this write)
+			}
+		}
+		result.Changes.Effects = truncated
+		// Also truncate ObjectVersions to match kept effects
+		keptKeys := make(map[string]bool)
+		for _, eff := range truncated {
+			if eff.OpType != event.GET && eff.OpType != event.LIST {
+				keptKeys[eff.Key.String()] = true
+			}
+		}
+		filteredVersions := make(ObjectVersions)
+		for k, v := range result.Changes.ObjectVersions {
+			if keptKeys[k.String()] {
+				filteredVersions[k] = v
+			}
+		}
+		result.Changes.ObjectVersions = filteredVersions
+		// Mark reconciler as crashed
+		if state.crashedReconcilers == nil {
+			state.crashedReconcilers = make(map[ReconcilerID]bool)
+		}
+		state.crashedReconcilers[reconcilerID] = true
+		logger.Info("fault injection: truncated reconcile effects",
+			"reconciler", reconcilerID,
+			"originalWrites", writeCount,
+			"keptWrites", fi.CrashAfterEffect,
+		)
+		break
+	}
+	return result
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {

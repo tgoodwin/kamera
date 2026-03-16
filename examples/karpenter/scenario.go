@@ -502,6 +502,7 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		StaleLookback:         cloneIntMap(input.Tuning.StaleLookback),
 		UserActionReadyDepths: cloneIntMap(input.Tuning.UserActionReadyDepths),
 		StalenessIntervals:    append([]coverage.InputStalenessInterval(nil), input.Tuning.StalenessIntervals...),
+		FaultInjection:        append([]coverage.InputFaultInjection(nil), input.Tuning.FaultInjection...),
 		Search:                cloneInputSearchTuning(input.Tuning.Search),
 	}
 	if input.Tuning.PermuteDepthRange != nil {

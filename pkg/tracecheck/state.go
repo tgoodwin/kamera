@@ -280,6 +280,10 @@ type StateNode struct {
 	// permutations has been satisfied on this branch. Once set to true it is
 	// inherited by all descendant states.
 	permuteTriggered bool
+
+	// crashedReconcilers tracks which reconcilers have been "crashed" via
+	// fault injection on this branch. Used for triggerOnce semantics.
+	crashedReconcilers map[ReconcilerID]bool
 }
 
 func (sn StateNode) ObserveAs(reconcilerID ReconcilerID) ObjectVersions {
@@ -422,6 +426,7 @@ func (sn StateNode) Clone() StateNode {
 		stuckReconcilerPositions: maps.Clone(sn.stuckReconcilerPositions),
 		stalenessIntervals:       sn.stalenessIntervals, // immutable config, share reference
 		permuteTriggered:         sn.permuteTriggered,
+		crashedReconcilers:       maps.Clone(sn.crashedReconcilers),
 	}
 }
 

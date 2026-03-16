@@ -95,6 +95,19 @@ func ApplyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 		cfg.Perturbations.StalenessIntervals = intervals
 	}
 
+	if len(tuning.FaultInjection) > 0 {
+		faults := make([]tracecheck.FaultInjectionConfig, 0, len(tuning.FaultInjection))
+		for _, fi := range tuning.FaultInjection {
+			faults = append(faults, tracecheck.FaultInjectionConfig{
+				ReconcilerID:     tracecheck.ReconcilerID(fi.Reconciler),
+				CrashAfterEffect: fi.CrashAfterEffect,
+				RecoverAtDepth:   fi.RecoverAtDepth,
+				TriggerOnce:      fi.TriggerOnce,
+			})
+		}
+		cfg.Perturbations.FaultInjection = faults
+	}
+
 	mode := strings.TrimSpace(tuning.Search.Mode)
 	if mode != "" {
 		parsed, err := tracecheck.ParseSearchMode(mode)
