@@ -1,6 +1,6 @@
 ---
 name: scenario-design
-description: Design Kamera workflow scenarios that target specific bug patterns in Kubernetes controllers. Use this when you have a control plane to test and need to produce perturbation-aware workflow inputs (environment state, user actions, staleness/ordering tuning) that maximize the chance of surfacing real bugs.
+description: Design Kamera workflow scenarios that target specific bug patterns in Kubernetes controllers. Use this when you have a control plane to test and need to produce perturbation-aware workflow inputs (environment state, external events, staleness/ordering/fault-injection tuning) that maximize the chance of surfacing real bugs.
 metadata:
   short-description: Design perturbation-aware test scenarios from controller analysis
 ---
@@ -141,8 +141,24 @@ For each read in Phase 1, ask two questions:
    - "Composition was updated between my Get and my List"
    - "Object was marked for deletion between my Get and my status update"
 
+3. **What external events could violate the assumption?**
+   Think about events originating **outside** the controller system:
+   - **User/operator actions**: spec changes, deletions, label updates
+   - **kube-scheduler decisions**: pod becomes Unschedulable, pod bound to node
+   - **Cloud provider changes**: instance terminated, AMI deleted, NodeClass
+     becomes not-Ready
+   - **Infrastructure events**: node becomes NotReady, network partition,
+     certificate expiry
+
+   These external events are modeled as `externalInputs` with `source:
+   EnvironmentEvent` or `source: UserAction`. The key question: **if this
+   external event arrives while the controller is mid-reconcile, does the
+   controller handle it correctly?**
+
 Each (assumption, violation condition) pair is a **vulnerability window**. These
-are the raw material for scenario construction.
+are the raw material for scenario construction. External events are often the
+most realistic violation triggers — they represent real-world scenarios that
+users encounter in production.
 
 **Decision-point detail matters.** The vulnerability isn't "stale
 CompositionRevision" in the abstract -- it's specifically that function X at
@@ -183,11 +199,19 @@ For each vulnerability window from Phase 3:
 2. **Design environment state**: pre-seed objects so the system reaches the
    vulnerable code path. Include only what's necessary -- every extra object
    adds noise
-3. **Design user inputs**: the sequence of CREATE/UPDATE/DELETE actions that
-   trigger the relevant controllers
+3. **Design external inputs**: the sequence of state changes that trigger the
+   vulnerability. Consider BOTH sources:
+   - **UserAction**: operator applies a new manifest, deletes a resource,
+     changes a policy. These are deliberate human actions.
+   - **EnvironmentEvent**: kube-scheduler binds a pod, cloud provider AMI is
+     deleted, a node goes NotReady. These are things that "happen" to the
+     cluster from external systems.
+   Use the UPDATE technique to stagger events: put the object in
+   environmentState with an initial state, then UPDATE it at a specific depth
+   via `userActionReadyDepths` to simulate the event arriving mid-execution.
 4. **Configure perturbation tuning**: staleness targets, lookback depths,
-   controller permutation -- chosen to maximize the chance of hitting the
-   vulnerability window
+   controller permutation, fault injection -- chosen to maximize the chance
+   of hitting the vulnerability window
 5. **Document the hypothesis**: what bug pattern this scenario targets and why
 
 ## Perturbation Dimensions

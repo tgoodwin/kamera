@@ -310,7 +310,8 @@ For each unverified hypothesis from Phase 4, determine which perturbation type c
 | Race only relevant after a specific event fires (e.g., CREATE of a revision) | `permuteAfterEvent` — optional scoping modifier |
 | Race only relevant within a bounded depth range | `permuteDepthRange` — optional scoping modifier |
 | Controller C sees stale data for kind K during window [A, B) | `stalenessIntervals` |
-| User action fires at the wrong point in the execution | `userActionReadyDepths` |
+| External event (user action or environment change) fires at a critical point | `userActionReadyDepths` + `externalInputs` |
+| Controller crashes mid-reconcile after N writes | `faultInjection` |
 | State space not fully sampled (non-determinism suspected) | `search.monteCarlo` |
 
 > **Permutation scoping:** `permuteControllers` is required to enable any ordering permutation —
@@ -331,9 +332,13 @@ Before running or re-running a scenario, verify:
    is the most common reason an ordering is never explored. Note: `permuteAfterEvent`
    and `permuteDepthRange` only scope *when* permutations are active — they have no
    effect if the relevant controllers are absent from `permuteControllers`.
-2. **Does the user action fire?** If `userInputs` is non-empty but `userActionReadyDepths`
-   is missing, the action fires at convergence. If the reference run cycles, the action
-   never fires. Add `"userActionReadyDepths": {"0": 0}` to fire immediately.
+2. **Does the external input fire?** If `externalInputs` is non-empty but
+   `userActionReadyDepths` is missing, the action fires at convergence. If the
+   reference run cycles, the action never fires. Add `"userActionReadyDepths":
+   {"0": 0}` to fire immediately. External inputs model both **user actions**
+   (operator changes a spec) and **environment events** (kube-scheduler binds a
+   pod, cloud provider AMI deleted). Use `"source": "UserAction"` or
+   `"source": "EnvironmentEvent"` to annotate the origin.
 3. **Is the staleness window active?** Check that `staleAt` < initial KindSequence <
    `catchUpAt` for the target kind. If the initial KindSequence is already >= `catchUpAt`,
    the staleness window is expired before the run starts.
@@ -359,9 +364,10 @@ and `catchUpAt` to the KindSeq value where staleness should resolve.
 - `lag: -1`: reconciler is frozen at the `staleAt` snapshot
 - `lag: N`: reconciler sees `frontier - N` (sliding window)
 
-For `userActionReadyDepths`, `{"0": N}` fires user action 0 at DFS depth N. Read the step
-index from the reference trace at which the action should fire to produce the hypothesized
-race.
+For `userActionReadyDepths`, `{"0": N}` fires external input 0 at DFS depth N. Read the
+step index from the reference trace at which the external event should fire to produce the
+hypothesized race. Use the UPDATE technique to stagger events: put the object in
+`environmentState` with an initial state, then UPDATE it at a specific depth.
 
 For `permuteAfterEvent`, find the event that opens the race window:
 
@@ -418,12 +424,38 @@ Edit the `tuning` section. All perturbation fields are supported:
       "lag": -1
     }
   ],
+  "faultInjection": [
+    {
+      "reconciler": "ControllerA",
+      "crashAfterEffect": 2,
+      "triggerOnce": true
+    }
+  ],
   "userActionReadyDepths": {"0": 5},
   "search": {
     "mode": "monte_carlo",
     "monteCarlo": {"seed": 42, "trials": 20}
   }
 }
+```
+
+And the `externalInputs` section for injecting external events:
+
+```json
+"externalInputs": [
+  {
+    "id": "pod-becomes-unschedulable",
+    "opType": "UPDATE",
+    "source": "EnvironmentEvent",
+    "object": { ... }
+  },
+  {
+    "id": "operator-changes-nodepool",
+    "opType": "UPDATE",
+    "source": "UserAction",
+    "object": { ... }
+  }
+]
 ```
 
 **`permuteControllers`** (required to enable ordering permutation): list of controller IDs
