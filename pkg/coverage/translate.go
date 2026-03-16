@@ -6,15 +6,12 @@ import (
 	"strings"
 
 	"github.com/tgoodwin/kamera/pkg/analyze"
-	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/util"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 const (
 	defaultNamespace = "default"
-	feedbackMaxDepth = 20
-	defaultLookback  = 1
 )
 
 // TranslateHotspots converts hotspot instances into concrete Inputs.
@@ -22,56 +19,57 @@ func TranslateHotspots(graph *analyze.Graph, hotspots []analyze.HotspotInstance,
 	if graph == nil {
 		return nil, fmt.Errorf("graph is nil")
 	}
+	return nil, fmt.Errorf("TranslateHotspots deprecated")
 
-	out := make([]Input, 0, len(hotspots))
-	for i, hotspot := range hotspots {
-		resourceIDs := collectResourceIDs(hotspot)
-		resourceList := sortedNodeIDs(resourceIDs)
+	// out := make([]Input, 0, len(hotspots))
+	// for i, hotspot := range hotspots {
+	// 	resourceIDs := collectResourceIDs(hotspot)
+	// 	resourceList := sortedNodeIDs(resourceIDs)
 
-		userInputs := make([]UserInput, 0, len(resourceList))
+	// 	userInputs := make([]UserInput, 0, len(resourceList))
 
-		for _, nodeID := range resourceList {
-			node, ok := graph.Nodes[nodeID]
-			if !ok {
-				return nil, fmt.Errorf("resource node %s not found in graph", nodeID)
-			}
-			if node.Kind != analyze.NodeResource {
-				return nil, fmt.Errorf("node %s is not a resource", nodeID)
-			}
+	// 	for _, nodeID := range resourceList {
+	// 		node, ok := graph.Nodes[nodeID]
+	// 		if !ok {
+	// 			return nil, fmt.Errorf("resource node %s not found in graph", nodeID)
+	// 		}
+	// 		if node.Kind != analyze.NodeResource {
+	// 			return nil, fmt.Errorf("node %s is not a resource", nodeID)
+	// 		}
 
-			gvk := gvkString(node.Resource)
-			templates, ok := inputMap.Mapping[gvk]
-			if !ok {
-				return nil, fmt.Errorf("input map missing template for %s", gvk)
-			}
-			if len(templates) != 1 {
-				return nil, fmt.Errorf("input map for %s must contain exactly one template", gvk)
-			}
-			if templates[0].Object == nil {
-				return nil, fmt.Errorf("input map for %s has nil template object", gvk)
-			}
+	// 		gvk := gvkString(node.Resource)
+	// 		templates, ok := inputMap.Mapping[gvk]
+	// 		if !ok {
+	// 			return nil, fmt.Errorf("input map missing template for %s", gvk)
+	// 		}
+	// 		if len(templates) != 1 {
+	// 			return nil, fmt.Errorf("input map for %s must contain exactly one template", gvk)
+	// 		}
+	// 		if templates[0].Object == nil {
+	// 			return nil, fmt.Errorf("input map for %s has nil template object", gvk)
+	// 		}
 
-			// make some unique name/namespace for the resource instance
-			name := normalizedName(hotspot.Type, i, node.Resource.Kind)
-			ns := namespaceForTemplate(templates[0].Object)
-			obj := NormalizeTemplate(templates[0].Object, name, ns)
-			userInputs = append(userInputs, UserInput{
-				ID:     fmt.Sprintf("user-input-%d", len(userInputs)),
-				Type:   event.CREATE,
-				Object: obj,
-			})
-		}
+	// 		// make some unique name/namespace for the resource instance
+	// 		name := normalizedName(hotspot.Type, i, node.Resource.Kind)
+	// 		ns := namespaceForTemplate(templates[0].Object)
+	// 		obj := NormalizeTemplate(templates[0].Object, name, ns)
+	// 		userInputs = append(userInputs, UserInput{
+	// 			ID:     fmt.Sprintf("user-input-%d", len(userInputs)),
+	// 			Type:   event.CREATE,
+	// 			Object: obj,
+	// 		})
+	// 	}
 
-		tuning := buildTuning(hotspot, graph)
-		input := Input{
-			Name: fmt.Sprintf("hotspot-%s-%d", hotspot.Type, i),
-			UserInputs: userInputs,
-			Tuning: tuning,
-		}
-		out = append(out, input)
-	}
+	// 	tuning := buildTuning(hotspot, graph)
+	// 	input := Input{
+	// 		Name:       fmt.Sprintf("hotspot-%s-%d", hotspot.Type, i),
+	// 		UserInputs: userInputs,
+	// 		Tuning:     tuning,
+	// 	}
+	// 	out = append(out, input)
+	// }
 
-	return out, nil
+	// return out, nil
 }
 
 func collectResourceIDs(hotspot analyze.HotspotInstance) map[analyze.NodeID]struct{} {
@@ -135,43 +133,6 @@ func namespaceForTemplate(obj *unstructured.Unstructured) string {
 	return defaultNamespace
 }
 
-func buildTuning(hotspot analyze.HotspotInstance, graph *analyze.Graph) InputTuning {
-	tuning := InputTuning{
-		StaleReads:    make(map[string][]string),
-		StaleLookback: make(map[string]int),
-	}
-
-	controllerNames := controllerNames(graph, hotspot.Controllers)
-	switch hotspot.Type {
-	case analyze.HotspotMultiWriter, analyze.HotspotDiamondPattern, analyze.HotspotFeedbackCycle:
-		tuning.PermuteControllers = controllerNames
-	}
-
-	switch hotspot.Type {
-	case analyze.HotspotMissingTrigger:
-		if len(controllerNames) > 0 {
-			reader := controllerNames[0]
-			kinds := groupKindsForResources(graph, hotspot.Resources)
-			if len(kinds) > 0 {
-				tuning.StaleReads[reader] = kinds
-				setLookbackDefaults(tuning.StaleLookback, kinds)
-			}
-		}
-	case analyze.HotspotReducer:
-		if len(controllerNames) > 0 {
-			inputs := groupKindsFromAttr(graph, hotspot.Attributes["inputs"])
-			if len(inputs) > 0 {
-				tuning.StaleReads[controllerNames[0]] = inputs
-				setLookbackDefaults(tuning.StaleLookback, inputs)
-			}
-		}
-	case analyze.HotspotFeedbackCycle:
-		tuning.MaxDepth = feedbackMaxDepth
-	}
-
-	return tuning
-}
-
 func controllerNames(graph *analyze.Graph, controllers []analyze.NodeID) []string {
 	out := make([]string, 0, len(controllers))
 	for _, id := range controllers {
@@ -199,18 +160,4 @@ func groupKindsForResources(graph *analyze.Graph, resources []analyze.NodeID) []
 	}
 	sort.Strings(out)
 	return out
-}
-
-func groupKindsFromAttr(graph *analyze.Graph, value string) []string {
-	ids := parseNodeIDList(value)
-	return groupKindsForResources(graph, ids)
-}
-
-func setLookbackDefaults(target map[string]int, kinds []string) {
-	for _, kind := range kinds {
-		if _, exists := target[kind]; exists {
-			continue
-		}
-		target[kind] = defaultLookback
-	}
 }
