@@ -25,6 +25,27 @@ was **observed in the trace** from what was **inferred from code analysis**.
 - Access to a harness binary for the system under test (e.g., `go run ./examples/crossplane/`)
 - Access to `campaign-metrics` and `inspect exploration` CLI tools
 
+**Verify harness fidelity.** Before running any scenario, confirm that the
+harness accurately models the controllers under test:
+
+- Are all controllers referenced in `permuteControllers` registered in the
+  harness? A missing controller means its reconcile never runs — scenarios
+  will silently produce false negatives.
+- Are cross-resource watch triggers wired up? If Controller A watches Kind B
+  changes to trigger reconciliation, that watch must be registered in the
+  harness (via `.Watches()` on the reconciler builder). Missing watch triggers
+  mean controllers don't get re-enqueued after relevant state changes.
+- Does the replay client support the query patterns the controllers use?
+  Field selectors (`MatchingFields`), subresource patches, and optimistic
+  locking are common patterns that the harness may or may not support.
+- Do pre-seeded objects in `environmentState` have the correct initial
+  conditions? (e.g., `observedGeneration` matching `generation` on status
+  conditions, finalizers present if expected, ProviderID set for launched
+  NodeClaims)
+
+A harness gap produces misleading results — scenarios appear negative when the
+controller simply isn't wired up correctly. Fix gaps before interpreting results.
+
 **Start with a clean reference run.** Before analyzing, get an unperturbed trace
 from the workflow JSON — regardless of what `permuteControllers` or `stalenessIntervals`
 are configured in it:
@@ -517,6 +538,35 @@ For each hypothesis, record the outcome explicitly:
 
 Iterate per-hypothesis until each one is resolved. There is no fixed limit on the number
 of hypotheses or iterations.
+
+### Step 6: Assess area saturation
+
+After resolving the current batch of hypotheses, explicitly assess the remaining
+attack surface for the subsystem under test:
+
+- **Which perturbation dimensions have been explored?** If you've only tried
+  ordering permutations, the subsystem isn't exhausted — staleness, external
+  events, and fault injection may surface bugs that ordering alone cannot.
+- **What code paths remain untested?** Cross-reference the scenario-design
+  Phase 0 subsystem map with scenarios run so far. Unexercised controllers,
+  write sequences, or cross-controller interactions are open territory.
+- **What is the confirmed bug density?** Multiple bugs from one root cause
+  (e.g., 5 bugs from a single missing resource check) signal a systemic gap
+  worth fully mapping. Isolated bugs followed by negatives suggest the area
+  is mostly sound.
+- **Would new hypotheses require harness changes?** If the remaining angles
+  need new controllers registered, watch triggers wired, or replay client
+  features added, weigh the investment against expected yield.
+
+This assessment is a judgment call. A subsystem with several negative results
+may still have unexplored angles worth pursuing — especially if you've only
+tried one or two perturbation dimensions. Conversely, a subsystem where you've
+exhausted all four dimensions across multiple code paths is likely saturated.
+
+Document the assessment in `ANALYSIS.md` with concrete reasoning: what was
+explored, what was found, what remains unexplored, and why you're continuing
+or pivoting. This helps future agents avoid re-treading exhausted ground or
+missing promising leads that were deferred.
 
 ## Quick Reference: Useful Commands
 

@@ -58,7 +58,49 @@ validated topology.
 
 ## Methodology
 
-The process has five phases. Each phase produces artifacts that feed the next.
+The process has six phases. Phase 0 establishes the landscape; Phases 1–5
+produce increasingly targeted scenario inputs.
+
+### Phase 0: Code Surface Mapping
+
+Before diving into individual controllers, map the full code surface to
+understand what you're working with and plan where to focus.
+
+**Map controller subsystems.** Identify logical groupings of controllers that
+collaborate on a shared workflow. For example, Karpenter has provisioning
+(provisioner, trigger, state informers), disruption (disruption, queue,
+nodeclaim.disruption), and lifecycle (lifecycle, hydration, registration).
+Understanding subsystem boundaries helps plan which areas to explore first
+and when to pivot between them.
+
+**Catalog multi-write reconciles.** For each controller, note how many API
+writes happen within a single `Reconcile()` call and in what sequence. A
+reconcile that does PATCH → PATCH → CREATE → UPDATE is a four-write sequence
+with three crash-vulnerability windows between writes. These are the primary
+targets for fault injection scenarios. Single-write reconciles have no
+intra-reconcile crash surface.
+
+**Identify shared in-memory state.** Caches, singletons, queues, and maps
+that multiple controllers read from or write to. These are the targets for
+ordering-sensitive bugs — if Controller A writes to a shared cache and
+Controller B reads from it, the ordering of A vs B affects B's behavior.
+Also note how this state is reset (e.g., on process restart) — this informs
+the `OnCrash` callback design for fault injection.
+
+**Verify harness capabilities.** Before designing scenarios, check that the
+harness (builder.go or equivalent) supports the controller's full API surface.
+Specifically verify:
+- Are all controllers registered? Missing controllers produce silent negatives.
+- Do watch triggers cover cross-resource dependencies? (e.g., if Controller A
+  watches Kind B, is that watch wired up in the harness?)
+- Does the replay client support the query patterns the controllers use?
+  (field selectors via `MatchingFields`, subresource patches, optimistic
+  locking)
+Fix harness gaps before designing scenarios — a gap produces misleading
+results that waste investigation time.
+
+**Output:** A subsystem map with controller groupings, multi-write catalogs,
+shared state inventory, and harness gap list. This feeds all subsequent phases.
 
 ### Phase 1: Read/Write Signature Extraction
 
@@ -213,6 +255,32 @@ For each vulnerability window from Phase 3:
    controller permutation, fault injection -- chosen to maximize the chance
    of hitting the vulnerability window
 5. **Document the hypothesis**: what bug pattern this scenario targets and why
+
+### Area Coverage Tracking
+
+After each batch of scenarios targeting a subsystem, explicitly assess the
+remaining attack surface:
+
+- **What perturbation dimensions have been tried?** If you've only explored
+  ordering, the area isn't exhausted — staleness, external events, and fault
+  injection may surface different bugs.
+- **What code paths remain untested?** Cross-reference the Phase 0 subsystem
+  map with scenarios run so far. Unexercised controllers or write sequences
+  are open territory.
+- **Are remaining hypotheses high-confidence or speculative?** A cluster of
+  bugs in one area (e.g., 5 bugs from one root cause) signals a systemic
+  issue worth exhausting. If remaining hypotheses are all speculative, the
+  area may be well-designed — consider pivoting.
+- **Would new hypotheses require harness changes?** If so, weigh the harness
+  investment against the expected bug yield.
+
+When pivoting to a new subsystem, document the reasoning in `ANALYSIS.md`:
+what was explored, what was found, why you're moving on, and what remains
+unexplored for future investigation. This prevents future agents from
+re-exploring exhausted areas or missing promising leads.
+
+This is a judgment call, not a mechanical rule. A subsystem with many negative
+results may still have unexplored angles worth pursuing.
 
 ## Perturbation Dimensions
 

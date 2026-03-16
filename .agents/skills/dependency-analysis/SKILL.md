@@ -53,6 +53,13 @@ For each analyzed project, produce:
 - Reads: `Get`, `List`, lister/cache reads
 - Writes: `Create`, `Update`, `Patch`, `Delete`, `Status().Update/Patch`
 - Set `surface` to one of: `spec`, `status`, `metadata`, `any`
+- **Multi-write sequences:** If a single `Reconcile()` call performs multiple
+  writes in sequence, record the full write sequence (e.g., "PATCH Node →
+  PATCH NodeClaim → CREATE replacement → UPDATE cluster state"). Each pair
+  of consecutive writes is a crash-vulnerability window for fault injection.
+  Also note in-memory side effects (channel sends, map updates, cache writes)
+  that happen between API writes — these are lost on crash but not captured
+  by API-level fault injection.
 
 5. Canonicalize resource IDs:
 - Resource IDs must be `group/version/kind`
