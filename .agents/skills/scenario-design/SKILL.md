@@ -190,7 +190,69 @@ For each vulnerability window from Phase 3:
    vulnerability window
 5. **Document the hypothesis**: what bug pattern this scenario targets and why
 
+## Perturbation Dimensions
+
+Kamera supports four independent perturbation dimensions that compose:
+
+1. **Ordering** (`permuteControllers`) — which controller runs next when
+   multiple have pending reconciles. Explores scheduling nondeterminism.
+2. **Staleness** (`stalenessIntervals`) — a controller reads stale data from
+   the API server, simulating informer cache lag.
+3. **External events** (`externalInputs`) — exogenous state changes injected
+   at configurable execution points. These originate outside the controller
+   system: user/operator actions, kube-scheduler decisions, cloud provider
+   state changes.
+4. **Fault injection** (`faultInjection`) — a controller crashes mid-reconcile
+   after N write effects. Simulates process failure with shared state reset.
+
+The most interesting bugs arise from combining dimensions. For example, D12
+(emptiness disruption deletes active workload) uses ordering + staleness +
+external events: the disruption controller runs before state.pod, with stale
+pod data, while a pod is being scheduled via an external event.
+
 ## Perturbation Tuning Guide
+
+### When External Events Are Fruitful
+
+Inject external events when an **infrastructure or user action** can change
+cluster state **while controllers are mid-reconcile**. The event represents
+something that happens outside the controller system.
+
+**Common external event patterns:**
+
+| Pattern | Source | Example |
+|---------|--------|---------|
+| Pod becomes Unschedulable | `EnvironmentEvent` (kube-scheduler) | Pod can't fit on any node → triggers provisioning |
+| NodeClass goes not-Ready | `EnvironmentEvent` (cloud provider) | AMI deleted → NodeClass controller sets Ready=False |
+| NodePool requirements change | `UserAction` (operator) | User tightens arch requirements mid-provisioning |
+| Pod scheduled to node | `EnvironmentEvent` (kube-scheduler) | spec.nodeName set → node appears occupied |
+
+**Key design pattern:** Use UPDATE (not CREATE) to stagger events. CREATE-type
+external inputs are seeded into the initial state at depth 0. To inject an event
+at a specific depth, put the object in `environmentState` with an initial state
+(e.g., pod with `PodScheduled=True`), then use an UPDATE external input with
+`userActionReadyDepths` to change it at the desired depth (e.g., set
+`PodScheduled=False, reason=Unschedulable`).
+
+### When Fault Injection Is Fruitful
+
+Inject faults when a controller's `Reconcile()` performs **multiple API writes
+in sequence** and a crash between writes could leave inconsistent state.
+
+**High-value crash targets:**
+
+| Controller | Writes | Crash point |
+|-----------|--------|-------------|
+| Disruption StartCommand | taint Node + set condition + create replacement + mark deletion | After taint but before replacement |
+| Lifecycle finalize | delete Node + delete cloud instance + remove finalizer | After Node delete but before instance delete |
+| Node termination | taint + drain + detach volumes + terminate | After taint but before drain |
+| Provisioner batching | CREATE NodeClaim × N | After creating K of N |
+
+**Crash semantics:** The `crashAfterEffect` count refers to write effects
+(CREATE, PATCH, DELETE). The Nth write IS applied; the (N+1)th triggers the
+crash error. The controller's error handling path runs, preventing subsequent
+in-memory side effects. `OnCrash` callbacks reset shared state (cluster caches,
+queues) to simulate a process restart.
 
 ### When Staleness Is Fruitful
 
@@ -243,13 +305,16 @@ simultaneously** and **their execution order affects the outcome**.
   output exists -- permutation will just cause B to error and retry, which
   is the normal path
 
-### Combining Staleness and Permutation
+### Combining Perturbation Dimensions
 
-The most interesting scenarios combine both:
+The most interesting scenarios combine multiple dimensions:
 
 1. **Permute** to force Controller C to run before Controller B
 2. **Inject staleness** so Controller C reads an older version of the resource
    that Controller B would have updated
+3. **External event** to inject a state change between two controllers' reconciles
+4. **Fault injection** to crash a controller mid-way through a multi-write
+   operation, then observe how other controllers handle the partial state
 
 This models the real-world scenario where cache lag and scheduling jitter
 conspire to create a window where a controller operates on stale data that
@@ -306,10 +371,11 @@ Produce workflow JSON matching the Kamera coverage input schema:
       "group/Kind": 1
     }
   },
-  "userInputs": [
+  "externalInputs": [
     {
       "id": "human-readable description of action",
-      "type": "CREATE|UPDATE|DELETE",
+      "opType": "CREATE|UPDATE|DELETE",
+      "source": "UserAction|EnvironmentEvent",
       "object": { ... }
     }
   ]
