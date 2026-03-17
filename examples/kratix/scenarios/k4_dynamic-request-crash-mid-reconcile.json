@@ -1,0 +1,114 @@
+[
+  {
+    "name": "k4/dynamic-request-crash-mid-reconcile",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "platform.kratix.io/v1alpha1",
+          "kind": "Promise",
+          "metadata": {
+            "name": "easyapp",
+            "namespace": "default",
+            "labels": {
+              "kratix.io/promise-version": "v1"
+            }
+          },
+          "spec": {
+            "api": {
+              "apiVersion": "apiextensions.k8s.io/v1",
+              "kind": "CustomResourceDefinition",
+              "metadata": {
+                "name": "easyapps.example.promise.syntasso.io"
+              },
+              "spec": {
+                "group": "example.promise.syntasso.io",
+                "names": {
+                  "kind": "EasyApp",
+                  "plural": "easyapps",
+                  "singular": "easyapp"
+                },
+                "scope": "Namespaced",
+                "versions": [
+                  {
+                    "name": "v1",
+                    "served": true,
+                    "storage": true,
+                    "schema": {
+                      "openAPIV3Schema": {
+                        "type": "object",
+                        "properties": {
+                          "spec": {
+                            "type": "object",
+                            "required": [
+                              "name",
+                              "image"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "image": {
+                                "type": "string"
+                              },
+                              "dbDriver": {
+                                "type": "string",
+                                "enum": [
+                                  "postgres",
+                                  "none"
+                                ]
+                              },
+                              "containsCreditCardData": {
+                                "type": "boolean"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 60,
+      "faultInjection": [
+        {
+          "reconciler": "DynamicResourceRequestController/easyapp",
+          "crashAfterEffect": 1,
+          "triggerOnce": true
+        }
+      ],
+      "search": {
+        "mode": "monte_carlo",
+        "monteCarlo": {
+          "seed": 400,
+          "trials": 5
+        }
+      }
+    },
+    "externalInputs": [
+      {
+        "id": "create easyapp request",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "example.promise.syntasso.io/v1",
+          "kind": "EasyApp",
+          "metadata": {
+            "name": "example",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "todo",
+            "image": "syntasso/sample-todo-app:v0.1.2",
+            "dbDriver": "postgres"
+          }
+        },
+        "source": "UserAction"
+      }
+    ]
+  }
+]
