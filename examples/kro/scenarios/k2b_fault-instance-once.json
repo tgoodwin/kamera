@@ -1,0 +1,110 @@
+[
+  {
+    "name": "K2b/fault-instance-once-after-2nd-write",
+    "tuning": {
+      "maxDepth": 50,
+      "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 2,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-instance-once-after-3rd-write",
+    "tuning": {
+      "maxDepth": 50,
+      "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 3,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-instance-once-after-4th-write",
+    "tuning": {
+      "maxDepth": 50,
+      "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 4,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  }
+]

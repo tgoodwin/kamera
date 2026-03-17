@@ -91,14 +91,24 @@ Key adapters:
 | `5n70ee14` | 1 | Rare |
 | `303e07hx` | 1 | Rare |
 
-**Root cause analysis**: The Instance Controller's applyset applies child resources (Deployment, Service, Ingress) and then updates parent ApplySet metadata and status. When the controller crashes mid-apply:
-1. Some children are applied, others are not
-2. The parent's ApplySet annotations may reflect an incomplete set
-3. On retry, the controller re-reads the instance and re-computes desired state
-4. But the ApplySet metadata mismatch can cause the prune logic to behave differently
-5. The combination of which children exist + which ApplySet labels are present + the controller's conflict detection logic produces multiple distinct final states
+**Root cause analysis**: The K2 scenario was configured WITHOUT `triggerOnce`, meaning the fault injection crashes the Instance Controller on **every reconcile** — the controller never gets a clean recovery run. This models a **persistent degradation** (e.g., recurring API server timeouts after N writes).
 
-**Vulnerability window**: Between the per-child `Apply()` calls (applyset.go line 393) and the parent metadata patch (resources.go line 54). The parallel apply means different subsets of children may be applied before crash.
+The write sequence per reconcile of the Instance Controller:
+1. [controller.go:257](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/controller.go#L257) — SSA Apply: Instance finalizer/labels (`kro.run/labeller`)
+2. [resources.go:54](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/resources.go#L54) → [resources.go:447](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/resources.go#L447) — SSA Apply: Instance ApplySet metadata (`applyset.FieldManager-parent`)
+3. [applyset.go:393](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/applyset/applyset.go#L393) — SSA Apply: Deployment (parallel)
+4. [applyset.go:393](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/applyset/applyset.go#L393) — SSA Apply: Service (parallel)
+5. [applyset.go:393](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/applyset/applyset.go#L393) — SSA Apply: Ingress (parallel)
+6. [resources.go:96](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/resources.go#L96) — Process results + state update
+7. [resources.go:161](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/resources.go#L161) — SSA Apply: Shrink Instance ApplySet annotations
+
+With `crashAfterEffect: 2`, writes 1-2 are committed, write 3 returns `ErrFaultInjectionCrash`. The controller's [applyset.applyResource](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/applyset/applyset.go#L347) catches the error in `item.Error`, `result.Errors()` returns non-nil, and the prune gate at [resources.go:85](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/resources.go#L85) blocks pruning. The reconcile returns with a requeue error.
+
+On subsequent reconciles, the crash fires again (no `triggerOnce`), so the controller accumulates partial writes. The Instance has ApplySet metadata from write 2 but children are never fully created. Different ordering of the parallel child applies (write 3-5) across different runs causes different subsets to be committed before crash, producing 12 distinct final states.
+
+**K2b (triggerOnce)**: Re-run with `triggerOnce: true` tests whether the controller correctly recovers after a single crash — pending results.
+
+**Vulnerability window**: Between [resources.go:54](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/resources.go#L54) (ApplySet metadata patch) and the parallel child applies at [applyset.go:297-305](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/applyset/applyset.go#L297). The parallel apply at [applyset.go:297](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/applyset/applyset.go#L297) uses `errgroup.WithContext`, so a crash during any goroutine's Apply causes all pending goroutines to see a cancelled context.
 
 **State characterization**:
 
