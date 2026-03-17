@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"reflect"
+
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
@@ -1675,9 +1677,22 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				oldObj := e.versionManager.Resolve(oldVersion)
 				newObj := e.versionManager.Resolve(effect.Version)
 				mergedObj := mergeStatusSubresourceObject(oldObj, newObj, effect.OpType == event.PATCH || effect.OpType == event.APPLY)
-				changes[effect.Key] = e.versionManager.Publish(mergedObj)
+				mergedHash := e.versionManager.Publish(mergedObj)
+				// No-op: if merged result is identical to current state, skip.
+				// Real K8s API server detects identical status patches and
+				// skips the etcd write — no resourceVersion bump, no watch event.
+				if mergedHash == oldVersion {
+					continue
+				}
+				changes[effect.Key] = mergedHash
 				nextState[effect.Key] = changes[effect.Key]
 				break
+			}
+			// No-op detection: if the effect produces the same content hash as
+			// what's already in state, skip it. This matches real API server
+			// behavior where a PATCH that doesn't change anything is a no-op.
+			if effect.Version == oldVersion {
+				continue
 			}
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
 			oldObj := e.versionManager.Resolve(oldVersion)
@@ -1751,13 +1766,17 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			// We compare spec (the primary content) — if spec is unchanged,
 			// skip the effect entirely so it doesn't trigger re-enqueue.
 			oldVersion := nextState[existingKey]
-			newVersion := changes[effect.Key]
 			oldObj := e.versionManager.Resolve(oldVersion)
-			newObj := e.versionManager.Resolve(newVersion)
+			newObj := e.versionManager.Resolve(effect.Version)
 			if oldObj != nil && newObj != nil {
+				// Real K8s API server (v1.21+) detects SSA no-op applies and
+				// skips the etcd write entirely — no resourceVersion bump, no
+				// watch event. Compare the full object content (not just spec)
+				// to match this behavior.
 				specChanged, _ := snapshot.CheckSpecChanged(oldObj, newObj)
-				if !specChanged {
-					stepLogger.V(2).WithValues("key", effect.Key).Info("no-op SSA Apply: spec unchanged, skipping effect")
+				metadataChanged := !metadataEqual(oldObj, newObj)
+				if !specChanged && !metadataChanged {
+					stepLogger.V(2).WithValues("key", effect.Key).Info("no-op SSA Apply: content unchanged, skipping effect")
 					continue
 				}
 			}
@@ -1853,6 +1872,28 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 	}
 
 	return nextState, nextSequences, newStateEvents
+}
+
+// metadataEqual compares the metadata of two unstructured objects, ignoring
+// fields that the API server manages automatically (resourceVersion,
+// managedFields, generation, creationTimestamp, uid).
+func metadataEqual(a, b *unstructured.Unstructured) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	aLabels := a.GetLabels()
+	bLabels := b.GetLabels()
+	aAnnotations := a.GetAnnotations()
+	bAnnotations := b.GetAnnotations()
+	aOwners := a.GetOwnerReferences()
+	bOwners := b.GetOwnerReferences()
+	aFinalizers := a.GetFinalizers()
+	bFinalizers := b.GetFinalizers()
+
+	return reflect.DeepEqual(aLabels, bLabels) &&
+		reflect.DeepEqual(aAnnotations, bAnnotations) &&
+		reflect.DeepEqual(aOwners, bOwners) &&
+		reflect.DeepEqual(aFinalizers, bFinalizers)
 }
 
 // mergeStatusSubresourceObject merges a status subresource write into an
