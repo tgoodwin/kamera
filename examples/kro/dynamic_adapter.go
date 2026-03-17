@@ -236,19 +236,27 @@ func (rc *replayResourceClient) Apply(ctx context.Context, name string, obj *uns
 	if rc.namespace != "" && obj.GetNamespace() == "" {
 		obj.SetNamespace(rc.namespace)
 	}
+	if obj.GetName() == "" {
+		obj.SetName(name)
+	}
+
 	patch := client.Apply
 	fo := client.ForceOwnership
 	fm := client.FieldOwner(opts.FieldManager)
+
 	if len(subresources) > 0 && subresources[0] == "status" {
 		if err := rc.inner.Status().Patch(ctx, obj, patch, fo, fm); err != nil {
 			return nil, err
 		}
-		return obj, nil
+		return rc.Get(ctx, name, metav1.GetOptions{})
 	}
+
+	// SSA Apply is an upsert: create if not exists, patch if exists.
 	if err := rc.inner.Patch(ctx, obj, patch, fo, fm); err != nil {
 		return nil, err
 	}
-	return obj, nil
+	// Re-read the full object since SSA Apply patches are partial.
+	return rc.Get(ctx, name, metav1.GetOptions{})
 }
 
 func (rc *replayResourceClient) ApplyStatus(ctx context.Context, name string, obj *unstructured.Unstructured, opts metav1.ApplyOptions) (*unstructured.Unstructured, error) {
