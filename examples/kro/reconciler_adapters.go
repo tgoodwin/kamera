@@ -6,11 +6,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"k8s.io/apiextensions-apiserver/pkg/generated/openapi"
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apiserver/pkg/cel/openapi/resolver"
-	"k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -111,13 +108,10 @@ func newRGDReconciler(c ctrlclient.Client) tracecheck.Reconciler {
 	mapper := staticRESTMapper()
 	clientSet := newReplayClientSet(c, mapper)
 
-	// Core-only schema resolver — resolves Deployment, Service, Ingress
-	// from compiled-in OpenAPI definitions. No network calls.
-	coreResolver := resolver.NewDefinitionsSchemaResolver(
-		openapi.GetOpenAPIDefinitions,
-		scheme.Scheme,
-	)
-	graphBuilder := graph.NewBuilderFromResolver(coreResolver, mapper)
+	// Pass nil schema resolver — the builder will use schemaless parsing,
+	// which walks the template JSON directly to extract CEL expressions.
+	// This skips type validation but correctly builds the dependency graph.
+	graphBuilder := graph.NewBuilderFromResolver(nil, mapper)
 
 	reconciler := resourcegraphdefinition.NewResourceGraphDefinitionReconciler(
 		clientSet,
@@ -149,3 +143,4 @@ func staticRESTMapper() meta.RESTMapper {
 	mapper.Add(schema.GroupVersionKind{Group: "apiextensions.k8s.io", Version: "v1", Kind: "CustomResourceDefinition"}, meta.RESTScopeRoot)
 	return mapper
 }
+

@@ -20,10 +20,7 @@ import (
 
 	v1alpha1 "github.com/kubernetes-sigs/kro/api/v1alpha1"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
-
-	"k8s.io/apiextensions-apiserver/pkg/generated/openapi"
-	"k8s.io/apiserver/pkg/cel/openapi/resolver"
-	"k8s.io/client-go/kubernetes/scheme"
+	"github.com/kubernetes-sigs/kro/pkg/testutil/generator"
 )
 
 const (
@@ -64,7 +61,7 @@ func newKROExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Wire real Instance (Application) controller
 	builder.WithReconciler(applicationControllerID, func(c client.Client) tracecheck.Reconciler {
 		log := ctrl.Log.WithName("application-controller")
-		appGraph := mustBuildGraph(buildQuickstartApplicationRGD())
+		appGraph := mustBuildGraph(buildQuickstartApplicationRGDTyped())
 		return newInstanceController(c, log, applicationGVR, appGraph)
 	}).For(kroDomainName+"/"+applicationKind).
 		Watches("apps/Deployment", enqueueApplicationFromManagedResource).
@@ -77,20 +74,11 @@ func newKROExplorerBuilder() *tracecheck.ExplorerBuilder {
 	return builder
 }
 
-// mustBuildGraph builds a graph.Graph from an RGD unstructured object
+// mustBuildGraph builds a graph.Graph from a typed RGD
 // using the core schema resolver (no API server needed).
-func mustBuildGraph(rgdObj *unstructured.Unstructured) *graph.Graph {
+func mustBuildGraph(rgd *v1alpha1.ResourceGraphDefinition) *graph.Graph {
 	mapper := staticRESTMapper()
-	coreResolver := resolver.NewDefinitionsSchemaResolver(
-		openapi.GetOpenAPIDefinitions,
-		scheme.Scheme,
-	)
-	graphBuilder := graph.NewBuilderFromResolver(coreResolver, mapper)
-
-	rgd := &v1alpha1.ResourceGraphDefinition{}
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(rgdObj.Object, rgd); err != nil {
-		panic(fmt.Sprintf("convert RGD to typed: %v", err))
-	}
+	graphBuilder := graph.NewBuilderFromResolver(nil, mapper)
 
 	g, err := graphBuilder.NewResourceGraphDefinition(rgd)
 	if err != nil {
@@ -264,131 +252,118 @@ func enqueueApplicationFromManagedResource(obj *unstructured.Unstructured) []rec
 	}}
 }
 
+// buildQuickstartApplicationRGDTyped returns the typed RGD used for graph building.
+func buildQuickstartApplicationRGDTyped() *v1alpha1.ResourceGraphDefinition {
+	return generator.NewResourceGraphDefinition(resourceGraphDefinitionName,
+		generator.WithSchema(
+			applicationKind, "v1alpha1",
+			map[string]interface{}{
+				"name":     "string",
+				"image":    `string | default="nginx"`,
+				"replicas": "integer | default=3",
+				"ingress": map[string]interface{}{
+					"enabled": "boolean | default=false",
+				},
+			},
+			nil, // no status schema — avoids needing OpenAPI schemas for CEL type inference
+		),
+		generator.WithResource("deployment", map[string]interface{}{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]interface{}{
+				"name": "${schema.spec.name}",
+			},
+			"spec": map[string]interface{}{
+				"replicas": "${schema.spec.replicas}",
+				"selector": map[string]interface{}{
+					"matchLabels": map[string]interface{}{
+						"app": "${schema.spec.name}",
+					},
+				},
+				"template": map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"labels": map[string]interface{}{
+							"app": "${schema.spec.name}",
+						},
+					},
+					"spec": map[string]interface{}{
+						"containers": []interface{}{
+							map[string]interface{}{
+								"name":  "${schema.spec.name}",
+								"image": "${schema.spec.image}",
+								"ports": []interface{}{
+									map[string]interface{}{
+										"containerPort": int64(80),
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}, nil, nil),
+		generator.WithResource("service", map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name": "${schema.spec.name}-svc",
+			},
+			"spec": map[string]interface{}{
+				"selector": map[string]interface{}{
+					"app": "${schema.spec.name}",
+				},
+				"ports": []interface{}{
+					map[string]interface{}{
+						"protocol":   "TCP",
+						"port":       int64(80),
+						"targetPort": int64(80),
+					},
+				},
+			},
+		}, nil, nil),
+		generator.WithResource("ingress", map[string]interface{}{
+			"apiVersion": "networking.k8s.io/v1",
+			"kind":       "Ingress",
+			"metadata": map[string]interface{}{
+				"name": "${schema.spec.name}-ingress",
+			},
+			"spec": map[string]interface{}{
+				"rules": []interface{}{
+					map[string]interface{}{
+						"http": map[string]interface{}{
+							"paths": []interface{}{
+								map[string]interface{}{
+									"path":     "/",
+									"pathType": "Prefix",
+									"backend": map[string]interface{}{
+										"service": map[string]interface{}{
+											"name": "${schema.spec.name}-svc",
+											"port": map[string]interface{}{
+												"number": int64(80),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}, nil, []string{`${schema.spec.ingress.enabled}`}),
+	)
+}
+
+// buildQuickstartApplicationRGD returns the RGD as unstructured for seeding state.
 func buildQuickstartApplicationRGD() *unstructured.Unstructured {
-	return &unstructured.Unstructured{
-		Object: map[string]any{
-			"apiVersion": applicationAPIVersion,
-			"kind":       resourceGraphDefinitionKind,
-			"metadata": map[string]any{
-				"name": resourceGraphDefinitionName,
-			},
-			"spec": map[string]any{
-				"schema": map[string]any{
-					"apiVersion": "v1alpha1",
-					"kind":       applicationKind,
-					"spec": map[string]any{
-						"name":     "string",
-						"image":    `string | default="nginx"`,
-						"replicas": "integer | default=3",
-						"ingress": map[string]any{
-							"enabled": "boolean | default=false",
-						},
-					},
-					"status": map[string]any{
-						"deploymentConditions": `${deployment.status.conditions}`,
-						"availableReplicas":    `${deployment.status.availableReplicas}`,
-					},
-				},
-				"resources": map[string]any{
-					"deployment": map[string]any{
-						"def": map[string]any{
-							"apiVersion": "apps/v1",
-							"kind":       "Deployment",
-							"metadata": map[string]any{
-								"name": "${schema.spec.name}",
-							},
-							"spec": map[string]any{
-								"replicas": "${schema.spec.replicas}",
-								"selector": map[string]any{
-									"matchLabels": map[string]any{
-										"app": "${schema.spec.name}",
-									},
-								},
-								"template": map[string]any{
-									"metadata": map[string]any{
-										"labels": map[string]any{
-											"app": "${schema.spec.name}",
-										},
-									},
-									"spec": map[string]any{
-										"containers": []any{
-											map[string]any{
-												"name":  "${schema.spec.name}",
-												"image": "${schema.spec.image}",
-												"ports": []any{
-													map[string]any{
-														"containerPort": int64(80),
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-					"service": map[string]any{
-						"def": map[string]any{
-							"apiVersion": "v1",
-							"kind":       "Service",
-							"metadata": map[string]any{
-								"name": "${schema.spec.name}-svc",
-							},
-							"spec": map[string]any{
-								"selector": map[string]any{
-									"app": "${schema.spec.name}",
-								},
-								"ports": []any{
-									map[string]any{
-										"protocol":   "TCP",
-										"port":       int64(80),
-										"targetPort": int64(80),
-									},
-								},
-							},
-						},
-					},
-					"ingress": map[string]any{
-						"includeWhen": []any{
-							map[string]any{
-								"fieldRef": "schema.spec.ingress.enabled",
-								"value":    "true",
-							},
-						},
-						"def": map[string]any{
-							"apiVersion": "networking.k8s.io/v1",
-							"kind":       "Ingress",
-							"metadata": map[string]any{
-								"name": "${schema.spec.name}-ingress",
-							},
-							"spec": map[string]any{
-								"rules": []any{
-									map[string]any{
-										"http": map[string]any{
-											"paths": []any{
-												map[string]any{
-													"path":     "/",
-													"pathType": "Prefix",
-													"backend": map[string]any{
-														"service": map[string]any{
-															"name": "${schema.spec.name}-svc",
-															"port": map[string]any{
-																"number": int64(80),
-															},
-														},
-													},
-												},
-											},
-										},
-									},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
+	rgd := buildQuickstartApplicationRGDTyped()
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(rgd)
+	if err != nil {
+		panic(fmt.Sprintf("convert typed RGD to unstructured: %v", err))
 	}
+	u := &unstructured.Unstructured{Object: obj}
+	u.SetAPIVersion(applicationAPIVersion)
+	u.SetKind(resourceGraphDefinitionKind)
+	return u
 }
 
 func buildQuickstartApplicationInstance() *unstructured.Unstructured {
