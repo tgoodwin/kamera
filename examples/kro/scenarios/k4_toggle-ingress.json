@@ -4,15 +4,12 @@
     "tuning": {
       "maxDepth": 45,
       "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
-      "stalenessIntervals": [
-        {
-          "reconciler": "ApplicationController",
-          "kind": "kro.run/Application",
-          "staleAt": 6,
-          "catchUpAt": 10,
-          "lag": 2
-        }
-      ]
+      "staleReads": {
+        "ApplicationController": ["kro.run/Application"]
+      },
+      "staleLookback": {
+        "kro.run/Application": 2
+      }
     },
     "externalInputs": [
       {
@@ -62,15 +59,12 @@
     "tuning": {
       "maxDepth": 45,
       "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
-      "stalenessIntervals": [
-        {
-          "reconciler": "ApplicationController",
-          "kind": "kro.run/Application",
-          "staleAt": 6,
-          "catchUpAt": 10,
-          "lag": 2
-        }
-      ]
+      "staleReads": {
+        "ApplicationController": ["kro.run/Application"]
+      },
+      "staleLookback": {
+        "kro.run/Application": 2
+      }
     },
     "externalInputs": [
       {

@@ -158,6 +158,45 @@ On subsequent reconciles, the crash fires again (no `triggerOnce`), so the contr
 
 ---
 
+### K6: Fault Injection — Instance Controller Crash During Deletion (CONFIRMED DIVERGENCE)
+
+**Hypothesis**: Crashing the Instance Controller during Application deletion leaves orphaned children or prevents cleanup.
+
+**Scenario**: `scenarios/k6_deletion-flow.json` — `K6/fault-instance-during-deletion`
+- Create Application with ingress, then DELETE it
+- `faultInjection`: ApplicationController crashes after 1st write, `triggerOnce: true`
+- Ordering perturbation enabled
+
+**Result**: **6 distinct final state hashes across 304 runs.**
+
+| Hash | Count | Objects | Issue |
+|------|-------|---------|-------|
+| `36xgyhsf` | 229 | CRD, RGD | Clean deletion (expected) |
+| `3o8rg2ij` | 28 | CRD, RGD | Clean but different CRD/RGD content |
+| `22413g8r` | 26 | **App**, CRD, RGD | Application survives deletion |
+| `i5gx6gaz` | 12 | CRD, RGD | Clean but different content |
+| `3su4u812` | 7 | RGD only | **CRD also deleted** (shouldn't happen) |
+| `1nuuwqs0` | 2 | ALL 9 objects | **Complete deletion failure** — all children survive |
+
+**Bugs found**:
+1. **26 runs (9%)**: Application instance survives deletion — crash during deletion prevents finalizer removal at [deletion.go:201](pkg/controller/instance/deletion.go#L201), and the retry path doesn't complete cleanup
+2. **2 runs (<1%)**: Complete deletion failure — Application + all children (Deployment, Service, Ingress, ReplicaSet, Pod, Endpoints) survive
+3. **7 runs (2%)**: CRD deleted despite `allowCRDDeletion=false` — the deletion crash may have corrupted the RGD controller's state
+
+**Vulnerability window**: The Instance Controller's deletion path at [deletion.go:30-50](pkg/controller/instance/deletion.go#L30) walks nodes in reverse topological order. A crash after the first delete write leaves the Instance in a partially-deleted state. The retry must correctly resume deletion from where it left off, but the `crashedReconcilers` state prevents the Instance Controller from running cleanly.
+
+---
+
+### K7: Rapid Spec Changes — Back-to-Back Updates
+
+**Hypothesis**: Rapid back-to-back spec changes (scale 1→3→5, toggle ingress + scale) under ordering perturbation cause inconsistent state.
+
+**Scenario**: `scenarios/k7_rapid-spec-changes.json`
+
+**Result**: **No divergence.** Only reference runs produced, both converge to `1bqct03q`. Ordering permutation didn't expand before external inputs applied. Controller handles rapid updates correctly in the reference path.
+
+---
+
 ### K1: Ordering — RGD vs Instance Controller
 
 **Hypothesis**: Controller execution order between RGD and Instance controllers affects final state.
@@ -219,6 +258,9 @@ This would unlock testing of:
 | Instance → Status update | Tested | Real controller applies status with conditions |
 | Instance → Finalizer/Labels | Tested | Real controller applies managed finalizer and KRO labels |
 | Ordering: RGD vs Instance | Tested | No divergence (K1) |
-| Staleness perturbation | Not yet tested | Next scenario batch |
-| External events (scale up/down) | Not yet tested | Next scenario batch |
-| Deletion flow | Not yet tested | Requires DELETE external input |
+| Fault: Instance crash mid-apply | Tested | **12+ way divergence (K2/K2b)** — Service never created |
+| Fault: RGD crash mid-reconcile | Tested | No divergence (K5) — fully idempotent |
+| Fault: Instance crash during deletion | Tested | **6-way divergence (K6)** — orphaned children, CRD deletion |
+| Ingress toggle (conditional resource) | Tested | No divergence (K4) |
+| Rapid spec changes (scale, toggle) | Tested | No divergence (K7) — reference only |
+| Staleness perturbation | Partial | K3 needs staleness branching tuning |

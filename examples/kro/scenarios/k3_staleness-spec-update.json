@@ -1,76 +1,15 @@
 [
   {
-    "name": "K3/staleness-replicas-lag1",
+    "name": "K3/staleness-replicas-scale-up",
     "tuning": {
       "maxDepth": 45,
       "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
-      "stalenessIntervals": [
-        {
-          "reconciler": "ApplicationController",
-          "kind": "kro.run/Application",
-          "staleAt": 5,
-          "catchUpAt": 8,
-          "lag": 2
-        }
-      ]
-    },
-    "externalInputs": [
-      {
-        "id": "create-application-instance",
-        "opType": "CREATE",
-        "object": {
-          "apiVersion": "kro.run/v1alpha1",
-          "kind": "Application",
-          "metadata": {
-            "name": "my-app-instance",
-            "namespace": "default"
-          },
-          "spec": {
-            "name": "my-app",
-            "image": "nginx",
-            "replicas": 1,
-            "ingress": {
-              "enabled": true
-            }
-          }
-        }
+      "staleReads": {
+        "ApplicationController": ["kro.run/Application"]
       },
-      {
-        "id": "scale-to-3-replicas",
-        "opType": "UPDATE",
-        "object": {
-          "apiVersion": "kro.run/v1alpha1",
-          "kind": "Application",
-          "metadata": {
-            "name": "my-app-instance",
-            "namespace": "default"
-          },
-          "spec": {
-            "name": "my-app",
-            "image": "nginx",
-            "replicas": 3,
-            "ingress": {
-              "enabled": true
-            }
-          }
-        }
+      "staleLookback": {
+        "kro.run/Application": 2
       }
-    ]
-  },
-  {
-    "name": "K3/staleness-replicas-lag3",
-    "tuning": {
-      "maxDepth": 50,
-      "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
-      "stalenessIntervals": [
-        {
-          "reconciler": "ApplicationController",
-          "kind": "kro.run/Application",
-          "staleAt": 5,
-          "catchUpAt": 12,
-          "lag": 4
-        }
-      ]
     },
     "externalInputs": [
       {
