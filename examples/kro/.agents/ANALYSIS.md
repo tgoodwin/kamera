@@ -100,6 +100,16 @@ Key adapters:
 
 **Vulnerability window**: Between the per-child `Apply()` calls (applyset.go line 393) and the parent metadata patch (resources.go line 54). The parallel apply means different subsets of children may be applied before crash.
 
+**State characterization**:
+
+| Pattern | Objects in final state | Child resources | Run count |
+|---------|----------------------|-----------------|-----------|
+| Ingress-only | CRD, App, RGD, Ingress | Ingress only (no Deployment, no Service) | 425 |
+| No children | CRD, App, RGD | None | 186 |
+| Varied App content | 3-4 objects | Varies | 17 (rare states) |
+
+**No final state includes Deployment or Service.** The crash recovery path fails to recreate the full child resource set. The applyset's parallel Apply means different children may be applied before crash; on recovery, the ApplySet metadata mismatch prevents correct re-creation.
+
 **Evidence**: `evidence/k2_fault_instance_crash_after_2nd_write_reference_0.jsonl`, `evidence/k2_fault_instance_crash_after_2nd_write_rerun_0.jsonl`
 
 ---
