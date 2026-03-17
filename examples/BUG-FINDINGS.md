@@ -12,11 +12,11 @@ Each project's detailed analysis is in `examples/<project>/.agents/ANALYSIS.md`.
 | **Karpenter** | 12 | 7×P1, 4×P2, 1×P3 | Exhausted (provisioning + disruption + lifecycle) |
 | **Crossplane** | 9 | See crossplane ANALYSIS.md | Partially explored (cycling blocks convergence analysis) |
 | **Kratix** | 6 | 5×P2, 1×P3 | Explored (Promise lifecycle clean, Work scheduling + Health monitoring) |
-| **KRO** | 0 | — | Analyzed, no bugs found |
+| **KRO** | 2 | 2×P1 | Explored (Instance Controller crash recovery + deletion) |
 | **Knative Serving** | — | — | Not yet explored |
 | **Cluster API** | — | — | Not yet explored |
 
-**Total confirmed bugs: 27** across 4 projects.
+**Total confirmed bugs: 29** across 4 projects.
 
 ---
 
@@ -89,13 +89,34 @@ K5-K10 all hit the same 4 states. The Promise lifecycle subsystem is clean.
 
 ---
 
-## KRO (0 bugs)
+## KRO (2 bugs)
 
-Source: `github.com/awslabs/kro`
+Source: `github.com/kubernetes-sigs/kro`
 Analysis: `examples/kro/.agents/ANALYSIS.md`
+Harness: Both real KRO controllers (RGD + Instance) wired in via adapters.
 
-Controller architecture analyzed (ResourceGraphDefinitionReconciler + Instance
-Controller). No ordering-dependent divergence found in explored scenarios.
+| ID | Description | Severity | Perturbation |
+|----|-------------|----------|-------------|
+| K2b | Instance Controller crash mid-apply: Service never created (15+ states, 2201 runs) | P1 | Fault injection + ordering |
+| K6 | Instance Controller crash during deletion: orphaned children, CRD incorrectly deleted (6 states, 304 runs) | P1 | Fault injection + ordering |
+
+**K2b detail:** A single mid-reconcile crash (`triggerOnce`) during the Instance
+Controller's applyset Apply loop permanently prevents Service creation. Across
+2201 runs: 1439 end with only Ingress, 406 with Deployment+Ingress (no Service),
+196 with no children at all. The applyset parallel Apply at
+`applyset.go:297-305` combined with the parent ApplySet metadata patch at
+`resources.go:54` creates a vulnerability window where partial child applies
+produce inconsistent ApplySet state that prevents correct recovery.
+
+**K6 detail:** Crashing the Instance Controller after the 1st write during
+Application deletion produces 6 distinct final states. In 26 runs (9%) the
+Application survives deletion entirely; in 2 runs all 9 objects (App +
+Deployment + Service + Ingress + ReplicaSet + Pod + Endpoints + CRD + RGD)
+survive; in 7 runs the CRD is incorrectly deleted despite
+`allowCRDDeletion=false`.
+
+**Clean scenarios:** Ordering (K1), ingress toggle (K4), RGD fault injection
+(K5), and rapid spec changes (K7) showed no divergence.
 
 ---
 
