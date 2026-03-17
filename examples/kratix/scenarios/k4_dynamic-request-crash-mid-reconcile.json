@@ -106,8 +106,24 @@
             "image": "syntasso/sample-todo-app:v0.1.2",
             "dbDriver": "postgres"
           }
-        },
-        "source": "UserAction"
+        }
+      },
+      {
+        "id": "update easyapp image",
+        "opType": "UPDATE",
+        "object": {
+          "apiVersion": "example.promise.syntasso.io/v1",
+          "kind": "EasyApp",
+          "metadata": {
+            "name": "example",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "todo",
+            "image": "syntasso/sample-todo-app:v0.1.3",
+            "dbDriver": "postgres"
+          }
+        }
       }
     ]
   }
