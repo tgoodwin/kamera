@@ -7,6 +7,11 @@ metadata:
 
 # Scenario Design Skill
 
+**Your role is to FIND bugs, not fix them.** You are analyzing third-party
+controller source code to identify vulnerabilities. Never modify, rewrite, or
+propose changes to the controller source code under test. Your only outputs are
+kamera scenario files, harness configuration, and analysis documentation.
+
 Use this skill to design Kamera workflow scenarios that target specific bug
 patterns in Kubernetes controller systems. The output is a set of workflow JSON
 inputs, each constructed backward from a concrete vulnerability hypothesis.

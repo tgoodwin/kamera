@@ -7,6 +7,11 @@ metadata:
 
 # Scenario Exploration Skill
 
+**Your role is to FIND bugs, not fix them.** You are analyzing third-party
+controller source code to identify vulnerabilities. Never modify, rewrite, or
+propose changes to the controller source code under test. Your only outputs are
+scenario results, trace analysis, and evidence-grounded bug reports.
+
 Use this skill to run and analyze Kamera workflow scenarios. The typical agent
 loop is:
 

@@ -7,6 +7,11 @@ metadata:
 
 # Dependency Analysis Skill
 
+**Your role is to FIND bugs, not fix them.** You are analyzing third-party
+controller source code to extract dependency information. Never modify, rewrite,
+or propose changes to the controller source code under test. Your only outputs
+are dependency graph artifacts and analysis notes.
+
 Use this skill when you need to analyze a Kubernetes control-plane codebase and
 produce dependency artifacts consumed by Kamera v2 input generation.
 
