@@ -1,5 +1,38 @@
 # KRO Harness Analysis
 
+## Executive Summary
+
+KRO has 2 controllers: ResourceGraphDefinitionReconciler and Instance Controller.
+Both are wired into the harness as real code (no simulations). 7 scenarios tested
+across ordering, fault injection, staleness, and external event perturbations.
+
+**2 confirmed bugs found, both P1:**
+
+| ID | Bug | Perturbation | Impact |
+|----|-----|-------------|--------|
+| **K2b** | Instance Controller crash mid-apply permanently loses child resources | Fault injection + ordering | Service is **never** created after recovery. 15+ distinct final states across 2201 runs. Deployment appears in only 18% of runs. |
+| **K6** | Instance Controller crash during deletion leaves orphaned children | Fault injection + ordering | In 9% of runs the Application survives deletion; in <1% all 9 objects survive; in 2% the CRD is incorrectly deleted. 6 distinct final states across 304 runs. |
+
+**5 scenarios clean:** Controller ordering (K1), ingress toggle (K4), RGD crash
+recovery (K5), and rapid spec changes (K7) showed no divergence.
+
+**Root cause (K2b):** The applyset's parallel Apply at
+[applyset.go:297](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/applyset/applyset.go#L297)
+combined with the parent ApplySet metadata patch at
+[resources.go:54](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/resources.go#L54)
+creates a vulnerability window. A crash between the metadata patch and the
+parallel child applies leaves the Instance with ApplySet annotations claiming
+ownership of children that were never created. On retry, the inconsistent
+metadata prevents correct recovery.
+
+**Root cause (K6):** The deletion path at
+[deletion.go:30-50](https://github.com/kubernetes-sigs/kro/blob/main/pkg/controller/instance/deletion.go#L30)
+walks nodes in reverse topological order, deleting one at a time. A crash after
+the first delete write leaves the Instance in a partially-deleted state with
+finalizer still present.
+
+---
+
 ## Phase 0: Controller Surface Map
 
 ### Controllers Under Test
