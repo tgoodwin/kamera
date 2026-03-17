@@ -1,0 +1,14 @@
+Each project evaluation follows this workflow:
+
+1. Clone the source in ~/projects
+2. Write a harness at ./examples/<project> that wires up the project's controllers to kamera
+3. Do initial web research to learn about the project and the types of workloads it supports
+4. Smoke test the harness with a simple scenario
+5. Start looking for bugs using established skills:
+   a) dependency-analysis
+   b) scenario-design
+   c) scenario-exploration
+
+Artifacts:
+- Findings and analysis go in examples/<project>/.agents/ANALYSIS.md
+- Traces supporting any bugs found go in examples/<project>/.agents/evidence/
