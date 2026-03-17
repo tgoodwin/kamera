@@ -37,6 +37,7 @@ const (
 	workPlacementControllerID   tracecheck.ReconcilerID = "WorkPlacementController"
 	promiseControllerID         tracecheck.ReconcilerID = "PromiseController"
 	promiseRevisionControllerID tracecheck.ReconcilerID = "PromiseRevisionController"
+	healthRecordControllerID    tracecheck.ReconcilerID = "HealthRecordController"
 )
 
 const (
@@ -47,6 +48,7 @@ const (
 	resourceBindingKind = "platform.kratix.io/ResourceBinding"
 	promiseKind         = "platform.kratix.io/Promise"
 	promiseRevisionKind = "platform.kratix.io/PromiseRevision"
+	healthRecordKind    = "platform.kratix.io/HealthRecord"
 )
 
 type dynamicControllerSpec struct {
@@ -127,6 +129,19 @@ func configureWorksReconcilers(eb *tracecheck.ExplorerBuilder) {
 	eb.WithResourceDep(stateStoreKind, workPlacementControllerID)
 }
 
+func configureHealthRecordReconciler(eb *tracecheck.ExplorerBuilder) {
+	eb.WithReconciler(healthRecordControllerID, func(c ctrlclient.Client) tracecheck.Reconciler {
+		nsClient := &defaultNamespaceClient{Client: c, namespace: "default"}
+		return &controller.HealthRecordReconciler{
+			Client:        nsClient,
+			Scheme:        c.Scheme(),
+			Log:           ctrl.Log.WithName("healthrecord"),
+			EventRecorder: record.NewFakeRecorder(32),
+		}
+	}).For(healthRecordKind)
+	eb.WithResourceDep(healthRecordKind, healthRecordControllerID)
+}
+
 func configurePromisesReconcilers(
 	eb *tracecheck.ExplorerBuilder,
 	preStarted map[string]*controller.DynamicResourceRequestController,
@@ -170,6 +185,7 @@ func buildInputDrivenBuilder(inputs []coverage.Input) (*tracecheck.ExplorerBuild
 	configureWorksReconcilers(eb)
 	configureDynamicRequestReconcilers(eb, specs)
 	configurePromisesReconcilers(eb, prestarted)
+	configureHealthRecordReconciler(eb)
 	return eb, nil
 }
 
@@ -408,6 +424,8 @@ func controllerForObject(obj ctrlclient.Object) (tracecheck.ReconcilerID, bool) 
 		return workControllerID, true
 	case "platform.kratix.io/WorkPlacement", "platform.kratix.io/Destination", "platform.kratix.io/BucketStateStore":
 		return workPlacementControllerID, true
+	case "platform.kratix.io/HealthRecord":
+		return healthRecordControllerID, true
 	default:
 		return "", false
 	}

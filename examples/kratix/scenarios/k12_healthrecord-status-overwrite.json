@@ -1,0 +1,196 @@
+[
+  {
+    "name": "k12/healthrecord-status-overwrite",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "platform.kratix.io/v1alpha1",
+          "kind": "Promise",
+          "metadata": {
+            "name": "easyapp",
+            "namespace": "default",
+            "labels": {
+              "kratix.io/promise-version": "v1"
+            },
+            "finalizers": [
+              "kratix.io/resource-request-cleanup",
+              "kratix.io/dynamic-controller-dependant-resources-cleanup",
+              "kratix.io/api-crd-cleanup",
+              "kratix.io/dependencies-cleanup",
+              "kratix.io/revision-cleanup"
+            ]
+          },
+          "spec": {
+            "api": {
+              "apiVersion": "apiextensions.k8s.io/v1",
+              "kind": "CustomResourceDefinition",
+              "metadata": {
+                "name": "easyapps.example.promise.syntasso.io"
+              },
+              "spec": {
+                "group": "example.promise.syntasso.io",
+                "names": {
+                  "kind": "EasyApp",
+                  "plural": "easyapps",
+                  "singular": "easyapp"
+                },
+                "scope": "Namespaced",
+                "versions": [
+                  {
+                    "name": "v1",
+                    "served": true,
+                    "storage": true,
+                    "schema": {
+                      "openAPIV3Schema": {
+                        "type": "object",
+                        "properties": {
+                          "spec": {
+                            "type": "object",
+                            "required": ["name", "image"],
+                            "properties": {
+                              "name": { "type": "string" },
+                              "image": { "type": "string" },
+                              "dbDriver": {
+                                "type": "string",
+                                "enum": ["postgres", "none"]
+                              },
+                              "containsCreditCardData": { "type": "boolean" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "apiVersion": "platform.kratix.io/v1alpha1",
+          "kind": "PromiseRevision",
+          "metadata": {
+            "name": "easyapp-v1",
+            "namespace": "default",
+            "labels": {
+              "kratix.io/promise-name": "easyapp"
+            }
+          },
+          "spec": {
+            "version": "v1",
+            "promiseSpec": {
+              "api": {
+                "apiVersion": "apiextensions.k8s.io/v1",
+                "kind": "CustomResourceDefinition",
+                "metadata": {
+                  "name": "easyapps.example.promise.syntasso.io"
+                },
+                "spec": {
+                  "group": "example.promise.syntasso.io",
+                  "names": {
+                    "kind": "EasyApp",
+                    "plural": "easyapps",
+                    "singular": "easyapp"
+                  },
+                  "scope": "Namespaced",
+                  "versions": [
+                    {
+                      "name": "v1",
+                      "served": true,
+                      "storage": true,
+                      "schema": {
+                        "openAPIV3Schema": {
+                          "type": "object",
+                          "properties": {
+                            "spec": {
+                              "type": "object",
+                              "required": ["name", "image"],
+                              "properties": {
+                                "name": { "type": "string" },
+                                "image": { "type": "string" },
+                                "dbDriver": {
+                                  "type": "string",
+                                  "enum": ["postgres", "none"]
+                                },
+                                "containsCreditCardData": { "type": "boolean" }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "status": {
+            "latest": true
+          }
+        },
+        {
+          "apiVersion": "example.promise.syntasso.io/v1",
+          "kind": "EasyApp",
+          "metadata": {
+            "name": "example",
+            "namespace": "default",
+            "labels": {
+              "kratix.io/promise-name": "easyapp"
+            },
+            "finalizers": [
+              "kratix.io/work-cleanup",
+              "kratix.io/workflows-cleanup",
+              "kratix.io/delete-workflows",
+              "kratix.io/resource-binding-cleanup"
+            ]
+          },
+          "spec": {
+            "name": "todo",
+            "image": "syntasso/sample-todo-app:v0.1.2",
+            "dbDriver": "postgres"
+          }
+        },
+        {
+          "apiVersion": "platform.kratix.io/v1alpha1",
+          "kind": "HealthRecord",
+          "metadata": {
+            "name": "easyapp-example-healthcheck",
+            "namespace": "default"
+          },
+          "data": {
+            "promiseRef": {
+              "name": "easyapp"
+            },
+            "resourceRef": {
+              "name": "example",
+              "namespace": "default"
+            },
+            "state": "healthy",
+            "lastRun": 1710000000
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 80,
+      "permuteControllers": [
+        "DynamicResourceRequestController/easyapp",
+        "HealthRecordController"
+      ],
+      "stalenessIntervals": [
+        {
+          "reconciler": "HealthRecordController",
+          "kind": "example.promise.syntasso.io/EasyApp",
+          "staleAt": 1,
+          "catchUpAt": 20,
+          "lag": -1
+        }
+      ],
+      "search": {
+        "mode": "monte_carlo",
+        "monteCarlo": { "seed": 1200, "trials": 10 }
+      }
+    },
+    "externalInputs": []
+  }
+]

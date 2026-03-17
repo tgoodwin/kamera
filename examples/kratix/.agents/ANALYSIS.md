@@ -11,6 +11,7 @@ Controllers registered in the kamera harness:
 | `DynamicResourceRequestController/<name>` | Custom CRD (per Promise) | Processes resource requests, creates Work + ResourceBinding |
 | `WorkController` | Work | Schedules work to Destinations via WorkPlacements |
 | `WorkPlacementController` | WorkPlacement | Writes workloads to state stores (S3/Git) |
+| `HealthRecordController` | HealthRecord | Monitors resource health, writes healthStatus to resource request status |
 
 ### Controller Subsystems
 
@@ -23,6 +24,10 @@ Controllers registered in the kamera harness:
 - Fault injection divergence (K6)
 - External event divergence (K7)
 - Scales with Work count (K11)
+
+**Health monitoring** (HealthRecordController → resource request status):
+- Multiple HealthRecords produce ordering-dependent healthStatus (K13)
+- Single HealthRecord + DRRController converges despite racing (K12 negative)
 
 ---
 
@@ -163,6 +168,57 @@ varies its status conditions based on ordering, and the combinations grow.
 
 ---
 
+### K13: CONFIRMED — Multiple HealthRecords produce ordering-dependent healthStatus
+
+**Scenario file:** `examples/kratix/scenarios/k13_multiple-healthrecords-race.json`
+**Evidence:** `examples/kratix/.agents/evidence/k13_multiple-healthrecords-race/`
+**Severity: P2** — Staleness produces 2 distinct EasyApp status variants.
+
+Two HealthRecords ("healthcheck-1" state=healthy, "healthcheck-2" state=degraded) for
+the same EasyApp resource request. With controller ordering permutation and staleness
+intervals on EasyApp reads, the EasyApp status diverges:
+
+| EasyApp hash | Trials | Percentage |
+|---|---|---|
+| `967603d4` (majority) | 13 | 65% |
+| `8c32a871` (minority) | 7 | 35% |
+
+**Root cause:** The `HealthRecordReconciler.updateResourceStatus()` method performs a
+read-modify-write on the resource request status. It:
+1. Lists ALL HealthRecords (unfiltered server-side)
+2. Filters by `resourceRef.name` and `resourceRef.namespace` in Go
+3. Computes aggregate state via priority (`unhealthy < degraded < unknown < healthy < ready`)
+4. Writes the complete `status.healthStatus` map to the resource request
+
+When two HealthRecord reconciles execute with staleness, the second reconcile reads a
+stale EasyApp (before the first's healthStatus write). Both compute potentially different
+aggregate states based on which HealthRecords they see in their List, and the second
+write overwrites the first. Since each reconcile sees the full HealthRecord list but
+may write to a stale version of the resource request, the final healthStatus depends
+on execution ordering.
+
+#### Reproduction
+
+```bash
+cd examples/kratix
+go build -o kratix .
+mkdir -p /tmp/k13-repro
+./kratix --inputs scenarios/k13_multiple-healthrecords-race.json \
+  --output /tmp/k13-repro --interactive=false --timeout 120s
+```
+
+Count distinct final states:
+```bash
+cd /tmp/k13-repro
+for f in *.jsonl; do
+  jq -r '.states[0].paths[0][-1].contentsHashAfter // "?"' "$f" 2>/dev/null
+done | sort | uniq -c | sort -rn
+```
+
+Expected: 2-3 distinct states. ~35% of trials diverge from majority.
+
+---
+
 ## Negative Results
 
 ### K2: PromiseRevision latest-label race (NEGATIVE)
@@ -188,6 +244,16 @@ under ordering permutation.
 
 5/5 trials converge to the same state with fault injection (`crashAfterEffect=1`). The
 controller handles partial writes gracefully — the recovery reconcile completes normally.
+
+### K12: HealthRecord + DynamicResourceRequest status overwrite (NEGATIVE)
+
+**Scenario file:** `examples/kratix/scenarios/k12_healthrecord-status-overwrite.json`
+
+Tested with ordering permutation AND staleness intervals on EasyApp reads between
+HealthRecordController and DynamicResourceRequestController/easyapp. The EasyApp
+resource request status converges to the same hash across all 20 trials. Both
+controllers write to different status subfields (healthStatus vs conditions), so
+their writes are non-conflicting even under staleness.
 
 ### K8-K10: Same 4-state divergence across perturbation dimensions
 
@@ -217,12 +283,34 @@ the same root cause from different angles. New bugs would require:
 - Testing Destination scheduling with multiple Destinations
 - Testing Work deletion/cleanup (finalizer interactions)
 
-### Harness gap fixed
+### Health monitoring subsystem: EXPLORED
 
-The DynamicResourceRequestController frame context issue was caused by the factory function
-returning a shared placeholder pointer across forks. Each fork overwrote the placeholder
-with a new replay client, but the previous fork's reconciler container still used the
-shared pointer. Fix: return a fresh pointer per factory invocation.
+HealthRecordController registered in harness. Two scenarios tested:
+- K12: Single HealthRecord + DRRController race on EasyApp status (NEGATIVE).
+  Both controllers write to non-overlapping status subfields, so writes converge.
+- K13: Multiple HealthRecords racing on same resource request (CONFIRMED).
+  The List-filter-aggregate-write pattern in updateResourceStatus() is ordering-sensitive
+  when multiple HealthRecords exist.
+
+### Unexplored controllers assessed (not registered)
+
+**ResourceBindingController**: Single conditional write (set ManualReconciliationLabel
+on resource request). Not enough multi-write sequences to warrant harness investment.
+
+**DestinationController**: Multi-write sequence on deletion (delete WorkPlacements,
+delete state store, remove finalizer). Already tested indirectly via K7 (Destination
+deletion during WorkPlacement processing). The DestinationController's Ready status
+update uses `meta.SetStatusCondition` which skips unchanged conditions, reducing race
+potential.
+
+### Harness gaps fixed
+
+1. DynamicResourceRequestController frame context issue (prior): factory function
+   returning shared placeholder pointer. Fix: fresh pointer per factory invocation.
+
+2. HealthRecordController namespace lookup (K12 investigation): the HealthRecordReconciler
+   embeds `client.Client` and looks up Promise with no namespace in the key. Required
+   wrapping with `defaultNamespaceClient` to add namespace "default" for Promise Gets.
 
 ---
 
@@ -235,3 +323,4 @@ shared pointer. Fix: return a fresh pointer per factory invocation.
 | **K6** | WorkController crash leaves Work uninitialized | Yes (2 states) | P2 |
 | **K7** | Destination deletion inconsistent final state | Yes (4 states) | P2 |
 | **K11** | Multiple Works amplify ordering divergence | Yes (5 states) | P2 |
+| **K13** | Multiple HealthRecords ordering-dependent healthStatus | Yes (2 EasyApp states) | P2 |
