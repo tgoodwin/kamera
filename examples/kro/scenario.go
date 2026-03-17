@@ -377,6 +377,7 @@ func buildQuickstartApplicationInstance() *unstructured.Unstructured {
 			},
 			"spec": map[string]any{
 				"name":     defaultApplicationName,
+				"image":    "nginx",
 				"replicas": int64(1),
 				"ingress": map[string]any{
 					"enabled": true,
