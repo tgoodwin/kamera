@@ -15,13 +15,24 @@
 
 ### Surgical KRO Changes (5 commits)
 
-All changes are non-behavioral and suitable for upstream contribution:
+All changes are non-behavioral and suitable for upstream contribution. They live
+in the local kro checkout at `~/projects/kro` and are required for the harness
+to import the real controllers. The harness's `go.mod` references them via:
+```
+replace github.com/kubernetes-sigs/kro => /Users/tgoodwin/projects/kro
+```
 
-1. **`NewBuilderFromResolver`** — alternate constructor accepting pre-built SchemaResolver + RESTMapper
-2. **`DynamicControllerRegistrar`** — interface extraction (Register/Deregister) for the RGD controller
-3. **Nil schemaResolver support** — uses schemaless parsing for all resources
-4. **Nil/empty status schema** — early return when status schema is absent
-5. **`skipCELValidation`** — skip CEL type checking when no OpenAPI schemas available
+These changes are necessary regardless of whether the harness lives inside or
+outside the kro repo — they address Go type system constraints (unexported
+fields, concrete types) that block test harness integration from any package.
+
+| # | Commit | File | Change | Why needed |
+|---|--------|------|--------|------------|
+| 1 | `67afb10` | `pkg/graph/builder.go` | Add `NewBuilderFromResolver(resolver.SchemaResolver, meta.RESTMapper) *Builder` | `Builder` fields `schemaResolver` and `restMapper` are unexported. The only existing constructor `NewBuilder(restConfig, httpClient)` requires an API server connection. This adds a 5-line alternate constructor. |
+| 2 | `62fb593` | `pkg/controller/resourcegraphdefinition/controller.go` | Extract `DynamicControllerRegistrar` interface (Register + Deregister); change field + constructor param from `*dynamiccontroller.DynamicController` to interface | RGD reconciler uses a concrete `*DynamicController` field. The harness needs to provide a no-op stub since kamera handles watch/enqueue natively. Classic interface extraction — the real `DynamicController` already satisfies the interface. |
+| 3 | `1801768` | `pkg/graph/builder.go` | When `schemaResolver` is nil, use `ParseSchemalessResource` for all resource types (not just CRDs) | The graph builder calls `schemaResolver.ResolveSchema(gvk)` for every resource. Without an API server, there's no way to get OpenAPI schemas for core types (Deployment, Service, Ingress). Schemaless parsing walks the template JSON directly — correctly extracts CEL expressions and dependency graph without type validation. |
+| 4 | `78d36c6` | `pkg/graph/builder.go` | Early return from `buildStatusSchema` when `rgSchema.Status.Raw` is empty/null | Without OpenAPI schemas, the status schema builder crashes on nil pointers when trying to infer CEL expression types. With nil status, return an empty `{type: "object"}` schema. |
+| 5 | `e635e4b` | `pkg/graph/builder.go` | Add `skipCELValidation` field to `Builder`; set automatically when `schemaResolver` is nil; skip CEL type checking and `collectNodeSchemas` when true | The CEL type checker (`TypedEnvironment`, `CreateDeclTypeProvider`) deeply assumes OpenAPI schemas exist for all resources. Without schemas, it crashes on nil `*spec.Schema` pointers. Skipping validation still builds the full dependency graph — only expression type checking is skipped. |
 
 ### Harness Architecture
 
