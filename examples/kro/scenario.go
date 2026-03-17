@@ -47,7 +47,7 @@ func newKROExplorerBuilder() *tracecheck.ExplorerBuilder {
 	utilruntime.Must(v1alpha1.AddToScheme(sch))
 
 	builder := tracecheck.NewExplorerBuilder(sch)
-	builder.WithMaxDepth(30)
+	builder.WithMaxDepth(60)
 
 	applicationGVR := schema.GroupVersionResource{
 		Group: "kro.run", Version: "v1alpha1", Resource: "applications",
