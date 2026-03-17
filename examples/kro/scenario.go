@@ -151,17 +151,11 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 		objects = append(objects, obj.DeepCopy())
 	}
 
+	// If no environment objects, use the default RGD state.
+	// This avoids requiring the full RGD with resources in JSON inputs.
 	if len(objects) == 0 {
-		for _, action := range input.ExternalInputs {
-			if action.OpType != event.CREATE || action.Object == nil {
-				continue
-			}
-			objects = append(objects, action.Object.DeepCopy())
-		}
-	}
-
-	if len(objects) == 0 {
-		return tracecheck.StateNode{}, nil, fmt.Errorf("input has no seedable objects")
+		rgd := buildQuickstartApplicationRGD()
+		return buildInitialKROState(builder), []client.Object{rgd}, nil
 	}
 
 	stateBuilder := builder.NewStateEventBuilder()

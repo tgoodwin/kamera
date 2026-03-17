@@ -1,0 +1,31 @@
+[
+  {
+    "name": "K1/ordering-rgd-instance-with-ingress",
+    "tuning": {
+      "maxDepth": 40,
+      "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  }
+]
