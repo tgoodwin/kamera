@@ -492,7 +492,7 @@ func configureDynamicRequestReconcilers(eb *tracecheck.ExplorerBuilder, specs []
 			enabled := true
 			canCreateResources := true
 
-			controllerValue := controller.DynamicResourceRequestController{
+			ctrl := &controller.DynamicResourceRequestController{
 				Client:                      nsClient,
 				GVK:                         spec.gvk,
 				Scheme:                      c.Scheme(),
@@ -508,8 +508,11 @@ func configureDynamicRequestReconcilers(eb *tracecheck.ExplorerBuilder, specs []
 				EventRecorder:               record.NewFakeRecorder(32),
 				PromiseUpgrade:              true,
 			}
-			*spec.placeholder = controllerValue
-			return spec.placeholder
+			// Update the shared placeholder so the Promise controller can find
+			// this controller via StartedDynamicControllers. Each fork gets a
+			// fresh controller with the correct replay client.
+			*spec.placeholder = *ctrl
+			return ctrl
 		}).For(rrKind)
 
 		eb.WithResourceDep(rrKind, spec.controllerID)
