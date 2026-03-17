@@ -3,6 +3,7 @@ package tracegen
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/runtime"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,4 +45,8 @@ func (s *SubResourceClient) Create(ctx context.Context, obj client.Object, sub c
 	s.logOperation(ctx, obj, event.CREATE)
 	s.client.tracker.propagateLabels(obj)
 	return s.writer.Create(ctx, obj, sub, opts...)
+}
+
+func (s *SubResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	return s.writer.Apply(ctx, obj, opts...)
 }
