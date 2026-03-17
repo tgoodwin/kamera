@@ -1650,7 +1650,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				panic("create effect object already exists in prev state: " + effect.Key.String())
 			}
 			// Mimic APIServer behavior: set Generation to 1 on CREATE if not already set
-			newObj := e.versionManager.Resolve(changes[effect.Key])
+			newObj := e.versionManager.Resolve(effect.Version)
 			if newObj != nil {
 				gen := util.GetObjectGeneration(newObj)
 				if gen == 0 {
@@ -1674,15 +1674,15 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			}
 			if effect.Subresource == "status" {
 				oldObj := e.versionManager.Resolve(oldVersion)
-				newObj := e.versionManager.Resolve(changes[effect.Key])
-				mergedObj := mergeStatusSubresourceObject(oldObj, newObj)
+				newObj := e.versionManager.Resolve(effect.Version)
+				mergedObj := mergeStatusSubresourceObject(oldObj, newObj, effect.OpType == event.PATCH || effect.OpType == event.APPLY)
 				changes[effect.Key] = e.versionManager.Publish(mergedObj)
 				nextState[effect.Key] = changes[effect.Key]
 				break
 			}
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
 			oldObj := e.versionManager.Resolve(oldVersion)
-			newObj := e.versionManager.Resolve(changes[effect.Key])
+			newObj := e.versionManager.Resolve(effect.Version)
 			if oldObj != nil && newObj != nil {
 				// Compare specs to determine if Generation should be incremented
 				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
@@ -1722,8 +1722,8 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				}
 
 				oldObj := e.versionManager.Resolve(oldVersion)
-				newObj := e.versionManager.Resolve(changes[effect.Key])
-				mergedObj := mergeStatusSubresourceObject(oldObj, newObj)
+				newObj := e.versionManager.Resolve(effect.Version)
+				mergedObj := mergeStatusSubresourceObject(oldObj, newObj, effect.OpType == event.PATCH || effect.OpType == event.APPLY)
 				changes[effect.Key] = e.versionManager.Publish(mergedObj)
 				nextState[effect.Key] = changes[effect.Key]
 				break
@@ -1732,7 +1732,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			// Server-side apply has upsert semantics (create if missing, update if present).
 			if !exists {
 				// Apply has upsert semantics; if the object doesn't exist, treat as CREATE.
-				newObj := e.versionManager.Resolve(changes[effect.Key])
+				newObj := e.versionManager.Resolve(effect.Version)
 				if newObj != nil {
 					gen := util.GetObjectGeneration(newObj)
 					if gen == 0 {
@@ -1753,7 +1753,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
 			oldObj := e.versionManager.Resolve(oldVersion)
-			newObj := e.versionManager.Resolve(changes[effect.Key])
+			newObj := e.versionManager.Resolve(effect.Version)
 			if oldObj != nil && newObj != nil {
 				// Compare specs to determine if Generation should be incremented
 				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
@@ -1839,7 +1839,16 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 	return nextState, nextSequences, newStateEvents
 }
 
-func mergeStatusSubresourceObject(oldObj, newObj *unstructured.Unstructured) *unstructured.Unstructured {
+// mergeStatusSubresourceObject merges a status subresource write into an
+// existing object. Only the "status" top-level field is taken from newObj;
+// all other fields (spec, metadata, etc.) are preserved from oldObj.
+//
+// When preserveOnMissing is true and newObj has no "status" field, the existing
+// status is preserved (no-op). This matches merge-patch semantics where the
+// absence of a field means "don't change". When false, a missing status in
+// newObj causes the status to be deleted from the merged result, matching
+// full-update semantics.
+func mergeStatusSubresourceObject(oldObj, newObj *unstructured.Unstructured, preserveOnMissing bool) *unstructured.Unstructured {
 	if oldObj == nil {
 		panic("status subresource update missing old object")
 	}
@@ -1855,6 +1864,9 @@ func mergeStatusSubresourceObject(oldObj, newObj *unstructured.Unstructured) *un
 		panic(fmt.Errorf("read status subresource: %w", err))
 	}
 	if !found {
+		if preserveOnMissing {
+			return mergedObj
+		}
 		delete(mergedObj.Object, "status")
 		return mergedObj
 	}

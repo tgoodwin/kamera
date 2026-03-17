@@ -46,6 +46,11 @@ type Client struct {
 	scheme *runtime.Scheme
 }
 
+// Scheme overrides the embedded dummyClient.Scheme to return the actual scheme.
+func (c *Client) Scheme() *runtime.Scheme {
+	return c.scheme
+}
+
 func (c *Client) objectGVK(obj runtime.Object) schema.GroupVersionKind {
 	if obj == nil {
 		return schema.GroupVersionKind{}
