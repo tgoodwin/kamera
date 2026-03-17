@@ -22,7 +22,6 @@ import (
 	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/util"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -1909,26 +1908,25 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "FrameID", frameID).V(2).Info("about to reconcile")
 
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
-	if err != nil && apierrors.IsAlreadyExists(err) {
-		// AlreadyExists errors happen when a stale read causes a controller to try creating
-		// an object that already exists. Treat this as a no-op and continue exploring.
-		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).Info("tolerating AlreadyExists error; treating reconcile as no-op")
-		tolerableErrResult := &ReconcileResult{
-			ControllerID: pr.ReconcilerID,
-			FrameID:      frameID,
-			FrameType:    FrameTypeExplore,
-			Changes:      Changes{ObjectVersions: make(ObjectVersions)},
-			Error:        err.Error(),
-		}
-		return tolerableErrResult, nil
-	}
 	if err != nil {
-		// Reconciler errors in real Kubernetes cause a requeue with backoff -- the
-		// reconciler will retry once other controllers advance the state. Treat
-		// the error as a no-op (no state change) and re-enqueue the reconciler so
-		// exploration continues through other pending reconciles.
-		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).
-			Info("tolerating reconcile error; treating as no-op with re-enqueue")
+		// Reconciler errors in real Kubernetes cause a requeue with backoff.
+		// Crucially, any API writes that occurred before the error are durable —
+		// they already landed on the API server. We preserve those effects in the
+		// result (reconcileResult contains them when non-nil) and re-enqueue the
+		// reconciler so exploration continues.
+		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request, "error", err.Error()).
+			Info("tolerating reconcile error; keeping effects and re-enqueuing")
+
+		if reconcileResult != nil {
+			// Use the result from doReconcile which includes any effects
+			// that were recorded before the error.
+			reconcileResult.Error = err.Error()
+			reconcileResult.ReenqueueRequest = &pr
+			return reconcileResult, nil
+		}
+
+		// reconcileResult is nil — the error occurred before any effects
+		// could be recorded (e.g., state preparation failure). Treat as no-op.
 		tolerableErrResult := &ReconcileResult{
 			ControllerID: pr.ReconcilerID,
 			FrameID:      frameID,
@@ -2037,7 +2035,10 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 	// convert the write set to object versions
 	result, err := container.doReconcile(ctx, objState, pr.Request)
 	if err != nil {
-		return nil, err
+		// Pass through both result and error. doReconcile may return a
+		// non-nil result with recorded effects alongside a reconcile error.
+		// The caller (takeReconcileStep) handles preserving those effects.
+		return result, err
 	}
 	return result, nil
 }

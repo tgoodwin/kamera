@@ -302,6 +302,24 @@ func (c *Client) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts
 }
 
 func applyConfigToUnstructured(obj runtime.ApplyConfiguration) (*unstructured.Unstructured, error) {
+	// Check if the apply configuration wraps an unstructured.Unstructured
+	// (e.g., controller-runtime's unstructuredApplyConfiguration used for SSA
+	// on unstructured objects). This is the most common case for CAPI controllers.
+	type unstructuredProvider interface {
+		GetUnstructured() *unstructured.Unstructured
+	}
+	if up, ok := obj.(unstructuredProvider); ok {
+		return up.GetUnstructured().DeepCopy(), nil
+	}
+
+	// Check for embedded *unstructured.Unstructured via the runtime.Object interface.
+	if ro, ok := obj.(interface{ DeepCopyObject() runtime.Object }); ok {
+		if u, ok := ro.DeepCopyObject().(*unstructured.Unstructured); ok {
+			return u, nil
+		}
+	}
+
+	// Fall back to the typed apply configuration interface.
 	ac, ok := obj.(interface {
 		GetName() *string
 		GetNamespace() *string
