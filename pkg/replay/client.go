@@ -371,3 +371,11 @@ func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub c
 	preconditions := ExtractSubResourceCreatePreconditions(opts)
 	return c.wrapped.handleEffect(ctx, obj, event.CREATE, &preconditions, nil)
 }
+
+func (c *subResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	u, err := applyConfigToUnstructured(obj)
+	if err != nil {
+		return err
+	}
+	return c.wrapped.handleEffect(ctx, u, event.APPLY, nil, &EffectOptions{Subresource: "status"})
+}

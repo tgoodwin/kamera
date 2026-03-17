@@ -1,0 +1,72 @@
+[
+  {
+    "name": "K5/fault-rgd-after-crd-create",
+    "tuning": {
+      "maxDepth": 45,
+      "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
+      "faultInjection": [
+        {
+          "reconciler": "ResourceGraphDefinitionController",
+          "crashAfterEffect": 1
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K5/fault-rgd-after-status-update",
+    "tuning": {
+      "maxDepth": 45,
+      "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
+      "faultInjection": [
+        {
+          "reconciler": "ResourceGraphDefinitionController",
+          "crashAfterEffect": 2
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  }
+]

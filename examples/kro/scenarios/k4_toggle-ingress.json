@@ -1,0 +1,112 @@
+[
+  {
+    "name": "K4/toggle-ingress-true-to-false",
+    "tuning": {
+      "maxDepth": 45,
+      "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
+      "staleReads": {
+        "ApplicationController": ["kro.run/Application"]
+      },
+      "staleLookback": {
+        "kro.run/Application": 2
+      }
+    },
+    "externalInputs": [
+      {
+        "id": "create-with-ingress",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      },
+      {
+        "id": "disable-ingress",
+        "opType": "UPDATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": false
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K4/toggle-ingress-false-to-true",
+    "tuning": {
+      "maxDepth": 45,
+      "permuteControllers": ["ResourceGraphDefinitionController", "ApplicationController"],
+      "staleReads": {
+        "ApplicationController": ["kro.run/Application"]
+      },
+      "staleLookback": {
+        "kro.run/Application": 2
+      }
+    },
+    "externalInputs": [
+      {
+        "id": "create-without-ingress",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      {
+        "id": "enable-ingress",
+        "opType": "UPDATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  }
+]

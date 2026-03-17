@@ -1744,15 +1744,32 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				break
 			}
 
-			// Capture the existing version before any key replacement.
+			// SSA idempotency: if the apply doesn't change the object content,
+			// treat it as a no-op. This prevents infinite reconcile cycles when
+			// controllers unconditionally re-apply the same desired state.
+			//
+			// We compare spec (the primary content) — if spec is unchanged,
+			// skip the effect entirely so it doesn't trigger re-enqueue.
 			oldVersion := nextState[existingKey]
+			newVersion := changes[effect.Key]
+			oldObj := e.versionManager.Resolve(oldVersion)
+			newObj := e.versionManager.Resolve(newVersion)
+			if oldObj != nil && newObj != nil {
+				specChanged, _ := snapshot.CheckSpecChanged(oldObj, newObj)
+				if !specChanged {
+					stepLogger.V(2).WithValues("key", effect.Key).Info("no-op SSA Apply: spec unchanged, skipping effect")
+					continue
+				}
+			}
+
+			// Capture the existing version before any key replacement.
 			if exists && existingKey != effect.Key {
 				delete(nextState, existingKey)
 			}
 
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
-			oldObj := e.versionManager.Resolve(oldVersion)
-			newObj := e.versionManager.Resolve(effect.Version)
+			oldObj = e.versionManager.Resolve(oldVersion)
+			newObj = e.versionManager.Resolve(effect.Version)
 			if oldObj != nil && newObj != nil {
 				// Compare specs to determine if Generation should be incremented
 				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
