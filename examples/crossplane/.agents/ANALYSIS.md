@@ -1,24 +1,50 @@
-# Crossplane Scenario Analysis (2026-03-12)
+# Crossplane Scenario Analysis
 
 This document presents evidence-grounded findings from Kamera's exploration of
-8 Crossplane controller scenarios. Each finding clearly distinguishes **trace
+Crossplane controller scenarios. Each finding clearly distinguishes **trace
 evidence** (observed in dump files) from **code analysis** (inferred from source
 code review).
 
-**Crossplane version:** v2.1.0
+**Crossplane version:** v2.2.0 (upgraded from v2.1.0 on 2026-03-17)
 **Kamera branch:** `staleness-fixing`
 **Default exploration depth:** 100
+**Controllers wired:** CompositionReconciler, CompositionRevisionReconciler,
+CompositeReconciler, ClaimReconciler
 
-> **TODO: All 8 scenarios cycle without converging.** The unconditional
-> `Status().Update()` pattern in CompositionRevisionReconciler creates infinite
-> reconcile loops that prevent any scenario from reaching a fixed point. Until
-> this is addressed (either in the harness via an idempotent-write filter or in
-> Crossplane itself), convergence-based analysis (comparing distinct converged
-> states across orderings) is blocked. The findings below are based on
-> partial-trace analysis and mid-trace observations.
->
-> **TODO: Re-run all scenarios** once the cycling issue is resolved to enable
-> proper convergence analysis and verify unverified hypotheses.
+## Cycling and Analysis Methodology
+
+**All scenarios cycle without converging** due to Finding 2 (unconditional
+`Status().Update()` in CompositionRevisionReconciler). Every scenario reaches
+max depth with `total/unique > 3`, meaning no scenario achieves a true fixed
+point. Despite this, we successfully found 7 bugs using three workarounds:
+
+### 1. Monte Carlo aborted-state comparison
+
+Even though scenarios don't converge, the *aborted* terminal states at max
+depth still have comparable per-object hashes. If 50 Monte Carlo trials all
+abort at depth 100 but produce different object hashes, that's divergence —
+the controllers reached different states depending on ordering. This works
+because the cycling is isolated to CompositionRevisionReconciler's status
+writes, while the divergent objects (ConfigMap ownership, XR resourceRefs,
+Claim lifecycle state) stabilize early and remain stable through the cycling.
+
+### 2. Fixed-depth external event injection
+
+External events (DELETE claim, UPDATE composition) fire at a fixed depth via
+`userActionReadyDepths` (e.g., depth 8) rather than waiting for convergence.
+This sidesteps the cycling problem — we don't need convergence to inject the
+perturbation.
+
+### 3. Divergence on non-cycling objects
+
+The cycling affects CompositionRevision status writes. Findings F6, C2, and C4
+diverge on objects the cycling doesn't touch (ConfigMap content/ownership, XR
+resourceRefs, Claim finalizer state). The cycling adds noise (more trace steps)
+but doesn't mask the divergence signal.
+
+**Limitation:** Convergence-based analysis would give cleaner results and might
+reveal additional bugs masked by cycling noise. Fixing F2 in the harness (via
+an idempotent-write filter) would unlock this for all existing scenarios.
 
 ## Campaign Metrics Summary
 
