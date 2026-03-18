@@ -10,13 +10,14 @@ Each project's detailed analysis is in `examples/<project>/.agents/ANALYSIS.md`.
 | Project | Confirmed Bugs | Severity Distribution | Status |
 |---------|---------------|----------------------|--------|
 | **Karpenter** | 12 | 7×P1, 4×P2, 1×P3 | Exhausted (provisioning + disruption + lifecycle) |
-| **Crossplane** | 9 | See crossplane ANALYSIS.md | Partially explored (cycling blocks convergence analysis) |
+| **Crossplane** | 7 | 1×P0, 1×P1, 4×P2, 1×P3 | Explored (25 scenarios, cycling blocks full convergence analysis) |
 | **Kratix** | 6 | 5×P2, 1×P3 | Explored (Promise lifecycle clean, Work scheduling + Health monitoring) |
 | **KRO** | 2 | 2×P1 | Explored (Instance Controller crash recovery + deletion) |
+| **KCP** | 4 | 1×P1, 3×P2 | In progress (endpoint discovery + workspace init) |
+| **Cluster API** | 0 | — | Explored (11 scenarios, 0 divergence — robust) |
 | **Knative Serving** | — | — | Not yet explored |
-| **Cluster API** | — | — | Not yet explored |
 
-**Total confirmed bugs: 29** across 4 projects.
+**Total confirmed bugs: 31** across 5 projects (+ 1 clean project).
 
 ---
 
@@ -50,22 +51,50 @@ on the finalization path self-heals in all tested configurations.
 
 ---
 
-## Crossplane (9 findings)
+## Crossplane (7 bugs)
 
-Source: `github.com/crossplane/crossplane` v2.1.0
+Source: `github.com/crossplane/crossplane` v2.2.0
 Analysis: `examples/crossplane/.agents/ANALYSIS.md`
-Bugs: `examples/crossplane/BUGS.md`
+Harness: CompositionReconciler + CompositionRevisionReconciler + CompositeReconciler +
+CleanupReconciler (real Crossplane code).
 
-Key findings include:
-- Unconditional `Status().Update()` in CompositionRevisionReconciler creates
-  infinite reconcile loops (all 8 scenarios cycle without converging)
-- Ordering-dependent divergence in composition update races
-- Stale ValidPipeline condition after FunctionRevision capability changes
-- Error ordering where CompositeReconciler selects unvalidated revision
+| ID | Description | Severity | Perturbation |
+|----|-------------|----------|-------------|
+| F1 | Manual update policy fetches revision from wrong Composition — silent data corruption | P0 | Pure logic |
+| F2 | Unconditional `Status().Update()` causes infinite reconcile cycling (all scenarios) | P3 | Pure logic |
+| F3 | Orphaned compositionRef after Composition deletion — permanent error loop | P1 | External event + ordering |
+| F5 | Stale ValidPipeline condition allows composition with invalidated functions (6/9 orderings) | P2 | Ordering |
+| F6 | Function switch to fatal leaves orphaned resources + stale Ready=True (7 states, 49 trials) | P2 | External event + ordering |
+| C2 | Claim deletion orphans XR + composed resources (2 states, 98 trials, 98% orphan rate) | P2 | External event + ordering |
+| C4 | Two XRs silently steal ownership of same composed resource (2 states, 98 trials) | P2 | Ordering |
 
-**Note:** All scenarios cycle due to the unconditional status write bug, which
-blocks convergence-based analysis. Findings are based on partial-trace and
-mid-trace observations.
+**F1 detail:** `APIRevisionFetcher.Fetch` in Manual policy mode does a bare
+`Get(current revision name)` with zero validation that the revision belongs to
+the Composition referenced by `compositionRef`. Switching `compositionRef` from
+alpha to beta while `compositionRevisionRef` still points to alpha-rev-1
+silently composes resources using the wrong Composition's revision. No error raised.
+
+**F3 detail:** Deleting a Composition while an XR is bound produces 2 ordering-
+dependent error paths: "Composition not found" (CleanupReconciler-first) vs
+"no compatible Compositions" (CompositeReconciler-first). Both are permanent
+error loops with no self-recovery. Different orderings also diverge on whether
+composed resources (ConfigMap) survive.
+
+**F6 detail:** Updating a Composition's pipeline from a working function to a
+SEVERITY_FATAL function produces 7 distinct terminal states. In 86% of orderings,
+the ConfigMap from the prior successful composition persists as an orphan (never
+cleaned up because SEVERITY_FATAL returns before GC). The XR shows a confusing
+`Ready=True` + `Synced=False` status. In 14% of orderings, the CompositeReconciler
+never composed before the switch, so no orphan exists. Two clean scenarios
+(resource switch, flap recovery) confirmed GC works correctly when the function
+changes output, and that transient failures recover.
+
+**Note:** All scenarios cycle due to F2 (unconditional status write), which
+blocks convergence-based analysis. One additional observation (CompositionRevision
+creation vs validation ordering) was investigated across 3 scenarios and confirmed
+as **not a bug** — the transient error self-resolves via retry in all orderings.
+Six further scenarios tested combinations of Findings 1/3/5 but produced no new
+outcome categories.
 
 ---
 
@@ -117,6 +146,61 @@ survive; in 7 runs the CRD is incorrectly deleted despite
 
 **Clean scenarios:** Ordering (K1), ingress toggle (K4), RGD fault injection
 (K5), and rapid spec changes (K7) showed no divergence.
+
+---
+
+## KCP (4 bugs)
+
+Source: `github.com/kcp-dev/kcp` (multi-tenant Kubernetes control plane)
+Analysis: `examples/kcp/kamera/ANALYSIS.md`
+Harness: 6 real KCP controllers wired via `//go:linkname` (workspace init + endpoint discovery).
+Status: In progress — 6 of ~50 controllers wired, staleness/fault injection not yet tested.
+
+| ID | Description | Severity | Perturbation |
+|----|-------------|----------|-------------|
+| KCP4 | Late APIExport: endpoint URLs unpopulated (2 states) | P2 | External event + ordering |
+| KCP5 | WorkspaceType change: condition divergence on LogicalCluster (2 states) | P2 | External event + ordering |
+| KCP7 | APIExport deletion: 10 distinct final states, 4/9 objects diverge (30% APIExport survives deletion) | P1 | External event + ordering |
+| KCP8 | Partition deletion: 4 endpoint configurations (4 states) | P2 | External event + ordering |
+
+**Key finding:** Ordering alone is clean (KCP1, KCP1b, KCP2, KCP3 all converge).
+External events + ordering exposes timing-dependent races in condition dependency
+chains between the APIExportEndpointSlice controller and the URLs controller.
+
+**Most severe:** KCP7 (APIExport deletion) produces 10 distinct final states
+affecting 4/9 objects, including the APIExport surviving its own deletion in
+30% of orderings. Requires manual intervention — the system does not self-heal.
+
+**Clean scenarios:** Single consumer (KCP1/KCP1b), multi-consumer (KCP2),
+multiple default bindings (KCP3), consumer deletion (KCP10b).
+
+---
+
+## Cluster API (0 bugs — clean)
+
+Source: `sigs.k8s.io/cluster-api` main (post-v1.12, pre-v1.13)
+Analysis: `examples/cluster-api/.agents/ANALYSIS.md`
+Harness: MachineDeploymentReconciler + MachineSetReconciler + MachineReconciler +
+MachineHealthCheckReconciler + provider stubs (InfraMachine, BootstrapConfig).
+
+**Result: zero divergence across 11 scenarios and all 4 perturbation dimensions.**
+
+Scenarios tested: ownership handoff races (D3), rolling updates (D2, D6),
+concurrent SSA vs strategic merge patch (D7), crash mid-create (D1), deletion
+cascade (D5), delete-during-update (D8), scale-down (D9), MHC condition
+contention (D10), MHC stale reads (D11), MHC during rolling update (D12).
+
+**Why CAPI is robust:**
+- **Condition ownership protocol** (`patch.WithOwnedConditions`) prevents lost
+  updates when 3 controllers write conditions to the same Machine object
+- **SSA field management** prevents metadata conflicts between MachineSet and
+  Machine controller
+- **Finalizer-based deletion** ensures cascade ordering is deterministic
+- **ManagedFields migration** settles correctly, not causing ongoing churn
+
+**Kamera platform finding:** This evaluation drove 5 platform bug fixes
+(K-CAPI-1 through K-CAPI-5) improving simulation fidelity for SSA, JSON
+patches, multi-write reconciles, and no-op detection.
 
 ---
 

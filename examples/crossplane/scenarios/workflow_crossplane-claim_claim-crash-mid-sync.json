@@ -1,0 +1,86 @@
+[
+  {
+    "name": "crossplane-claim/claim-crash-mid-sync",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "pkg.crossplane.io/v1",
+          "kind": "FunctionRevision",
+          "metadata": {
+            "name": "kamera-stub-rev",
+            "labels": {
+              "pkg.crossplane.io/package": "kamera-stub"
+            }
+          },
+          "spec": {
+            "desiredState": "Active"
+          },
+          "status": {
+            "capabilities": [
+              "composition"
+            ]
+          }
+        },
+        {
+          "apiVersion": "apiextensions.crossplane.io/v1",
+          "kind": "Composition",
+          "metadata": {
+            "name": "widget-composition"
+          },
+          "spec": {
+            "compositeTypeRef": {
+              "apiVersion": "example.org/v1",
+              "kind": "XWidget"
+            },
+            "mode": "Pipeline",
+            "pipeline": [
+              {
+                "step": "pipeline",
+                "functionRef": {
+                  "name": "kamera-stub"
+                }
+              }
+            ],
+            "writeConnectionSecretsToNamespace": "default"
+          }
+        },
+        {
+          "apiVersion": "example.org/v1",
+          "kind": "WidgetClaim",
+          "metadata": {
+            "name": "my-widget",
+            "namespace": "default"
+          },
+          "spec": {
+            "compositionRef": {
+              "name": "widget-composition"
+            }
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 100,
+      "permuteControllers": [
+        "ClaimReconciler",
+        "CompositeReconciler",
+        "CompositionReconciler",
+        "CompositionRevisionReconciler"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ClaimReconciler",
+          "crashAfterEffect": 1,
+          "triggerOnce": true
+        }
+      ],
+      "search": {
+        "mode": "monte_carlo",
+        "monteCarlo": {
+          "trials": 50
+        }
+      }
+    },
+    "externalInputs": []
+  }
+]

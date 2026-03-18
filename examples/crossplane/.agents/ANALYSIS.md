@@ -820,6 +820,251 @@ ValidPipeline race should be tracked under Finding 5.
 
 ---
 
+## Function Failure Exploration (2026-03-17)
+
+**Harness change:** `stubFunctionRunner` now supports multiple function behaviors
+keyed by function name: `kamera-stub` (default), `kamera-stub-fatal`
+(SEVERITY_FATAL), `kamera-stub-different-resources` (Secret instead of ConfigMap),
+`kamera-stub-partial` (partial readiness). Scenarios switch function behavior by
+updating the Composition's pipeline to reference a different function name.
+
+**Crossplane upgraded from v2.1.0 to v2.2.0** to resolve controller-runtime
+v0.23.0 compatibility (required by kamera root module).
+
+### Finding 6: Composition function switch leaves orphaned resources (DIVERGENCE)
+
+**Severity: P2** — orphaned resources + ordering-dependent XR status
+
+**Scenario:** `workflow_crossplane-function-failure_composition-switches-to-fatal.json`
+
+**Hypothesis:** After a successful composition (ConfigMap created), updating the
+Composition to reference a fatal function leaves the ConfigMap orphaned because
+SEVERITY_FATAL returns before composed resource GC runs.
+
+**Result: 7 distinct terminal states across 49 Monte Carlo trials.**
+
+| Category | XWidget hash | ConfigMap | Ready | Trials | Fraction |
+|----------|-------------|-----------|-------|--------|----------|
+| A (composed then failed) | 88115b88 | present (orphan) | True | 17 | 35% |
+| B (composed then failed, different status) | 47f80aa2 | present (orphan) | True | 17 | 35% |
+| C (composed then failed, variant) | 841a3d02 | present (orphan) | True | 6 | 12% |
+| D (never composed) | 58034af3 | missing | — | 3 | 6% |
+| E (never composed, variant) | dd2a95e9 | missing | — | 3 | 6% |
+| F (composed then failed, variant) | 45dbfa98 | present (orphan) | True | 2 | 4% |
+| G (never composed, variant) | e34d4646 | missing | — | 1 | 2% |
+
+**Key divergence:** ConfigMap present in 42/49 trials (86%), missing in 7/49 (14%).
+XWidget has 6 distinct hashes across 7 states.
+
+**ConfigMap-present states (86%):**
+```
+compositionRevisionRef: widget-composition-0905a1f (fatal revision)
+resourceRefs: [{ConfigMap/xr-config}]
+Synced=False reason=ReconcileError
+Ready=True reason=Available
+```
+The initial composition succeeded (ConfigMap created, Ready=True), then the
+function switched to fatal. SEVERITY_FATAL returns before GC, so the ConfigMap
+persists as an orphan. The XR shows `Ready=True` (stale from prior success) but
+`Synced=False` (current reconcile failed).
+
+**ConfigMap-missing states (14%):**
+```
+compositionRevisionRef: widget-composition-0905a1f (fatal revision)
+resourceRefs: None
+Synced=False reason=ReconcileError
+(no Ready condition)
+```
+The Composition was updated before CompositeReconciler ran, so the function was
+already fatal on the first compose attempt. No resources were ever created.
+
+**Mechanism:** The CompositeReconciler's error path (`composition_functions.go:404`)
+returns immediately on SEVERITY_FATAL without calling
+`GarbageCollectComposedResources`. Previously-composed resources referenced in
+`spec.resourceRefs` remain in the API server indefinitely. The XR's `Ready=True`
+condition from the prior successful composition is never cleared because the
+error path only sets `Synced=False`.
+
+**Production impact:** Users see `Ready=True` + `Synced=False` — a confusing
+mixed signal. The orphaned ConfigMap persists until the function is fixed and a
+successful reconcile runs GC. If the function is permanently broken, the ConfigMap
+leaks forever.
+
+### F7: Resource switch — GC works correctly (CLEAN)
+
+**Scenario:** `workflow_crossplane-function-failure_composition-switches-resources.json`
+
+**Hypothesis:** Updating the Composition to reference a function that returns
+Secret instead of ConfigMap may leave the old ConfigMap orphaned if GC doesn't
+handle cross-resource-type transitions.
+
+**Result: 1 terminal state across 49 trials. No divergence.**
+
+All trials end with Secret present and ConfigMap deleted. GC correctly identifies
+the ConfigMap as no longer in the `desired` set and removes it. Resource state
+exploration varied (9-13 states) confirming different orderings were tested.
+
+### F8: Function flap recovery (CLEAN)
+
+**Scenario:** `workflow_crossplane-function-failure_function-flap-fatal-recovery.json`
+
+**Hypothesis:** Function flaps normal → fatal → normal. After recovery, the final
+state may differ from a never-failed scenario depending on ordering around the
+fault window.
+
+**Result: 1 terminal state across 49 trials. No divergence.**
+
+All trials recover to identical state with ConfigMap present. The transient fatal
+window does not produce permanent divergence. Resource state exploration varied
+(12-16 states) confirming different orderings were tested.
+
+---
+
+## Claim Lifecycle Exploration (2026-03-17)
+
+**Harness change:** ClaimReconciler wired into harness with deterministic name
+generator (`my-widget-xr` suffix). No-op ConnectionPropagator (secret
+propagation not tested). Watches XR changes via `claimRef` field mapper.
+
+### C1: Claim-XR Binding Race (CLEAN)
+
+**Scenario:** `workflow_crossplane-claim_claim-xr-binding-race.json`
+
+**Hypothesis:** ClaimReconciler and CompositeReconciler both write to the XR
+object. Different orderings of the 4 controllers (Claim, Composite, Composition,
+CompositionRevision) may produce different XR states.
+
+**Result: 1 terminal state across 98 trials. No divergence.**
+
+All trials converge to identical state: Claim bound to XR, XR composed with
+ConfigMap. The claim binding + composition lifecycle is ordering-robust when
+4 controllers are permuted.
+
+### C2: Claim Deletion During Composition — DIVERGENCE FOUND
+
+**Severity: P2** — orphaned XR + composed resources after claim deletion
+
+**Scenario:** `workflow_crossplane-claim_claim-deleted-during-composition.json`
+
+**Hypothesis:** Deleting a Claim after composition has started may leave the XR
+and composed resources orphaned, depending on whether the ClaimReconciler's
+finalizer runs before or after the Claim is removed.
+
+**Result: 2 distinct terminal states across 98 Monte Carlo trials.**
+
+| Category | XR | ConfigMap | Trials | Fraction |
+|----------|----|-----------|--------|----------|
+| Orphaned (XR survives) | present | present | 96 | 98% |
+| Full cleanup | missing | missing | 2 | 2% |
+
+In both states, the WidgetClaim is successfully deleted. The divergence is
+whether the XR and its composed resources survive:
+
+- **98% of orderings**: XR and ConfigMap persist as orphans. The Claim is deleted
+  before the ClaimReconciler can add its finalizer and process the deletion
+  cascade. Without the finalizer, the XR is never deleted.
+- **2% of orderings**: The ClaimReconciler runs before the Claim is fully removed,
+  adds the finalizer, processes the deletion (deletes XR), and the CompositeReconciler
+  cleans up composed resources.
+
+**Production impact:** In production, controller-runtime's finalizer handling is
+slightly different (the DELETE sets `deletionTimestamp` but doesn't remove the
+object until all finalizers clear). However, this finding highlights a genuine
+ordering sensitivity in the claim deletion lifecycle — if the ClaimReconciler
+doesn't reconcile the Claim between the user DELETE and the finalizer being added,
+the XR can be orphaned.
+
+### C3: ClaimReconciler Crash Mid-Sync (CLEAN)
+
+**Scenario:** `workflow_crossplane-claim_claim-crash-mid-sync.json`
+
+**Hypothesis:** Crashing the ClaimReconciler after its first write effect (XR
+created but Claim's `resourceRef` not yet updated) could cause the Claim to
+create a second XR on the next reconcile, orphaning the first.
+
+**Result: 1 terminal state across 98 trials. No divergence.**
+
+The deterministic name generator means the re-created XR gets the same name
+(`my-widget-xr`), so the name collision prevents orphan creation. The crash
+recovery is clean — the ClaimReconciler re-reconciles, finds the existing XR
+by name, and binds to it.
+
+### C4: Two Claims Shared Composition — Composed Resource Ownership Race
+
+**Scenario:** `workflow_crossplane-claim_two-claims-shared-composition.json`
+
+**Result: 2 terminal states across 98 trials.**
+
+| Category | ConfigMap owner | Trials | Fraction |
+|----------|----------------|--------|----------|
+| A | `widget-beta-xr` | 54 | 55% |
+| B | `widget-alpha-xr` | 44 | 45% |
+
+Both Claims, both XRs, and all other objects are identical across all trials.
+The divergence is solely in the ConfigMap's `ownerReferences` and
+`crossplane.io/composite` label — whichever XR's CompositeReconciler writes
+last wins ownership.
+
+**Severity: P2** — silent ownership theft leads to data loss on XR deletion.
+
+The CompositeReconciler silently overwrites the ConfigMap's `ownerReferences`
+without detecting that it's already owned by a different XR. If the "winning"
+XR is deleted, Kubernetes GC cascade-deletes the ConfigMap, and the "losing"
+XR's `resourceRefs` now point to a missing resource. The reconciler should
+detect cross-XR ownership conflicts and error rather than silently stealing.
+
+### C5: Manual Policy Composition Switch via Claim (CLEAN)
+
+**Scenario:** `workflow_crossplane-claim_manual-policy-composition-switch.json`
+
+**Hypothesis:** Claim with `compositionUpdatePolicy: Manual` switches
+`compositionRef` from alpha to beta while keeping `compositionRevisionRef`
+pointing to alpha-rev-1. The F1 bug (wrong revision fetched) should compound
+through the Claim syncer.
+
+**Result: 1 terminal state across 98 trials. No divergence.**
+
+The Manual policy path converges despite the mismatched refs. The XR hash
+matches the baseline C1 scenario, suggesting the Claim syncer's field
+propagation normalizes the state regardless of ordering.
+
+---
+
+## Unexplored Areas (2026-03-17)
+
+### Priority 2: Wire ClaimReconciler
+
+Claims are the user-facing interface to XRs. The Claim → XR binding lifecycle
+adds a new interaction surface with the already-wired CompositeReconciler:
+
+- **Claim-XR ownership race**: ClaimReconciler creates XR, CompositeReconciler
+  starts composing it, ClaimReconciler updates binding status — all writing to
+  the same XR object
+- **Claim deletion while XR is mid-compose**: ClaimReconciler removes finalizer
+  vs CompositeReconciler mid-compose
+- **Manual policy + Claim**: Does the F1 bug (wrong revision fetched) compound
+  when claim-level compositionRef disagrees with XR-level?
+
+### Priority 3: Multiple Compositions competing
+
+Current scenarios use 1-2 Compositions. Explore:
+
+- **3+ Compositions with overlapping labels**: Is `SelectComposition` deterministic
+  when multiple Compositions have equal scores?
+- **Composition created while another is being deleted**: Race between
+  CleanupReconciler removing old and CompositionReconciler creating revision for new.
+
+### Priority 4: Wire UsageReconciler
+
+Usage protection prevents deletion of in-use resources:
+
+- **Delete XR while Usage protection active**: UsageReconciler blocks deletion,
+  CompositeReconciler tries to clean up — ordering-dependent outcome?
+- **Usage removed concurrent with XR deletion**: Race between protection removal
+  and delete cascade.
+
+---
+
 ## Artifact Index
 
 | Scenario | Workflow JSON | Old Report (stale) | Dump Location |

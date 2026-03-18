@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -11,9 +12,11 @@ import (
 	"github.com/crossplane/crossplane/v2/apis/apiextensions/v1"
 	pkgmetav1 "github.com/crossplane/crossplane/v2/apis/pkg/meta/v1"
 	pkgv1 "github.com/crossplane/crossplane/v2/apis/pkg/v1"
+	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/claim"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composite"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composition"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/revision"
+	xpresource "github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -33,6 +36,7 @@ import (
 
 const (
 	xrKind          = "XWidget"
+	claimKind       = "WidgetClaim"
 	xrAPIVersion    = "example.org/v1"
 	compositionName = "widget-composition"
 )
@@ -74,7 +78,69 @@ func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
 		)
 	}).ForGK(schema.GroupKind{Group: "example.org", Kind: xrKind})
 
+	claimGVK := schema.GroupVersionKind{Group: "example.org", Version: "v1", Kind: claimKind}
+	xrGVK := schema.GroupVersionKind{Group: "example.org", Version: "v1", Kind: xrKind}
+
+	builder.WithReconciler("ClaimReconciler", func(c client.Client) tracecheck.Reconciler {
+		return claim.NewReconciler(
+			c,
+			claimGVK,
+			xrGVK,
+			claim.WithCompositeSyncer(claim.NewClientSideCompositeSyncer(c, deterministicNameGenerator{})),
+			claim.WithConnectionPropagator(claim.ConnectionPropagatorFn(
+				func(_ context.Context, _ claim.LocalConnectionSecretOwner, _ claim.ConnectionSecretOwner) (bool, error) {
+					return false, nil // no-op: connection secret propagation not tested
+				},
+			)),
+			claim.WithLogger(log),
+			claim.WithRecorder(recorder),
+		)
+	}).ForGK(schema.GroupKind{Group: "example.org", Kind: claimKind}).
+		Watches("example.org/XWidget", claimXRToClaimMapper())
+
 	return builder
+}
+
+// deterministicNameGenerator generates a fixed name for XRs created by claims.
+// The real Crossplane NameGenerator uses random suffixes, which would make every
+// kamera trial produce a trivially-unique terminal state. This generator uses
+// a deterministic suffix derived from the claim name.
+type deterministicNameGenerator struct{}
+
+func (deterministicNameGenerator) GenerateName(_ context.Context, cd xpresource.Object) error {
+	if cd.GetGenerateName() != "" {
+		cd.SetName(cd.GetGenerateName() + "xr")
+		cd.SetGenerateName("")
+	}
+	return nil
+}
+
+// claimXRToClaimMapper creates a WatchMapper that enqueues the claim when an
+// XR changes. In real Crossplane, this uses the XR's claimRef. For the harness,
+// we use a naming convention: the claim name matches the XR's claimRef.name.
+func claimXRToClaimMapper() tracecheck.WatchMapper {
+	return func(obj *unstructured.Unstructured) []reconcile.Request {
+		if obj == nil {
+			return nil
+		}
+		// Read claimRef from XR spec
+		spec, ok := obj.Object["spec"].(map[string]any)
+		if !ok {
+			return nil
+		}
+		claimRef, ok := spec["claimRef"].(map[string]any)
+		if !ok {
+			return nil
+		}
+		name, _ := claimRef["name"].(string)
+		namespace, _ := claimRef["namespace"].(string)
+		if name == "" {
+			return nil
+		}
+		return []reconcile.Request{
+			{NamespacedName: types.NamespacedName{Name: name, Namespace: namespace}},
+		}
+	}
 }
 
 func buildInitialCrossplaneState(builder *tracecheck.ExplorerBuilder) tracecheck.StateNode {
