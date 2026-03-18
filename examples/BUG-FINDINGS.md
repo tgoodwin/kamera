@@ -13,11 +13,11 @@ Each project's detailed analysis is in `examples/<project>/.agents/ANALYSIS.md`.
 | **Crossplane** | 7 | 1×P0, 1×P1, 4×P2, 1×P3 | Explored (25 scenarios, cycling blocks full convergence analysis) |
 | **Kratix** | 6 | 5×P2, 1×P3 | Explored (Promise lifecycle clean, Work scheduling + Health monitoring) |
 | **KRO** | 2 | 2×P1 | Explored (Instance Controller crash recovery + deletion) |
-| **KCP** | 4 | 1×P1, 3×P2 | In progress (endpoint discovery + workspace init) |
+| **KCP** | 6 | 1×P1, 5×P2 | Explored (workspace init + API binding + endpoint discovery) |
 | **Cluster API** | 0 | — | Explored (11 scenarios, 0 divergence — robust) |
-| **Knative Serving** | — | — | Not yet explored |
+| **Knative Serving** | 1 | 1×P2 | Explored (ordering cycling blocks convergence analysis for staleness/events) |
 
-**Total confirmed bugs: 31** across 5 projects (+ 1 clean project).
+**Total confirmed bugs: 34** across 6 projects (+ 1 clean project).
 
 ---
 
@@ -149,12 +149,14 @@ survive; in 7 runs the CRD is incorrectly deleted despite
 
 ---
 
-## KCP (4 bugs)
+## KCP (6 bugs)
 
 Source: `github.com/kcp-dev/kcp` (multi-tenant Kubernetes control plane)
 Analysis: `examples/kcp/kamera/ANALYSIS.md`
-Harness: 6 real KCP controllers wired via `//go:linkname` (workspace init + endpoint discovery).
-Status: In progress — 6 of ~50 controllers wired, staleness/fault injection not yet tested.
+Harness: 9 real KCP controllers wired via `//go:linkname` (workspace init +
+API binding lifecycle + endpoint discovery). Uses fake KCP clientset, fake
+apiextensions clientset, and fake k8s clientset with typed bookmark watch
+reactors for informer sync.
 
 | ID | Description | Severity | Perturbation |
 |----|-------------|----------|-------------|
@@ -162,10 +164,24 @@ Status: In progress — 6 of ~50 controllers wired, staleness/fault injection no
 | KCP5 | WorkspaceType change: condition divergence on LogicalCluster (2 states) | P2 | External event + ordering |
 | KCP7 | APIExport deletion: 10 distinct final states, 4/9 objects diverge (30% APIExport survives deletion) | P1 | External event + ordering |
 | KCP8 | Partition deletion: 4 endpoint configurations (4 states) | P2 | External event + ordering |
+| KCP17 | Pure ordering divergence: apibinding reconciler triggers condition write conflict (2 states) | P2 | Ordering |
+| KCP18b | Crash recovery divergence: apibinding reconciler crash leaves inconsistent LogicalCluster (2 states) | P2 | Fault injection + ordering |
 
-**Key finding:** Ordering alone is clean (KCP1, KCP1b, KCP2, KCP3 all converge).
-External events + ordering exposes timing-dependent races in condition dependency
-chains between the APIExportEndpointSlice controller and the URLs controller.
+**Key finding:** Ordering alone is clean with 7 controllers (KCP1-3, KCP10b).
+Adding the 8th controller (apibinding reconciler) breaks ordering robustness —
+KCP17 is a pure ordering bug invisible with fewer controllers. This demonstrates
+that wiring more controllers reveals bugs that can't be found with fewer.
+
+**Three distinct root causes:**
+1. **Endpoint condition chain race** (KCP4, KCP7, KCP8, KCP13): The primary/
+   secondary endpoint slice controllers have no synchronization beyond watches.
+   External events (deletion, late arrival) leave inconsistent condition/URL state.
+2. **Concurrent condition write conflict** (KCP5, KCP14, KCP17): Multiple
+   controllers write conditions to LogicalCluster. The winner is ordering-
+   dependent, especially when the apibinding reconciler resets binding state.
+3. **Crash recovery divergence** (KCP18b): The apibinding reconciler's multi-write
+   reconcile (CRD creation + status commit) is crash-vulnerable. A mid-reconcile
+   crash leaves partial state that produces ordering-dependent recovery outcomes.
 
 **Most severe:** KCP7 (APIExport deletion) produces 10 distinct final states
 affecting 4/9 objects, including the APIExport surviving its own deletion in
@@ -173,6 +189,43 @@ affecting 4/9 objects, including the APIExport surviving its own deletion in
 
 **Clean scenarios:** Single consumer (KCP1/KCP1b), multi-consumer (KCP2),
 multiple default bindings (KCP3), consumer deletion (KCP10b).
+
+**Exploration scope:** 20 scenarios, 9 of ~50 controllers wired across 3 regions
+(workspace init, API binding lifecycle, endpoint discovery). Staleness injection
+not available (custom strategy bypasses replay client). See `LANDSCAPE.md` for
+the full controller map and exploration progress.
+
+---
+
+## Knative Serving (1 bug)
+
+Source: `knative.dev/serving` v0.46.5
+Analysis: `examples/knative-serving/.agents/ANALYSIS.md`
+Harness: ServiceReconciler + ConfigurationReconciler + RevisionReconciler +
+RouteReconciler + KPA + ServerlessServiceReconciler (all real Knative code),
+plus IngressStatusStub and RevisionDigestStub.
+
+| ID | Description | Severity | Perturbation |
+|----|-------------|----------|-------------|
+| N1 | Ordering-dependent state divergence: 4+ distinct final states (50 trials, 30% non-reference) | P2 | Ordering |
+
+**N1 detail:** When controller execution order is permuted (50 MC trials),
+the system converges to at least 4 distinct final states. The reference state
+appears in 70% of orderings; the remaining 30% settle into 3 alternative
+states. The divergence is traced to the ServiceReconciler's status propagation
+chain: it reads Configuration/Route status and propagates it to the Service.
+When controller ordering changes which runs first, the Service status
+propagation captures different intermediate states, leading to different
+terminal conditions.
+
+In production, this means the final Service status (conditions, latestReady,
+URL) can differ depending on which controller happened to process events
+first — a non-deterministic outcome for the same input.
+
+**Clean scenarios:** Multi-action scenarios (image update, deletion, rapid
+updates) have not yet been tested with ordering perturbation due to path
+depth/timeout constraints. Staleness, external events, and fault injection
+remain to be explored.
 
 ---
 
