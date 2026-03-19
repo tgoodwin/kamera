@@ -14,6 +14,7 @@ import (
 	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -90,6 +91,14 @@ func (rb *ReconcilerBuilder) Watches(kind string, mapper WatchMapper) *Reconcile
 
 func (rb *ReconcilerBuilder) WatchesGK(gk schema.GroupKind, mapper WatchMapper) *ReconcilerBuilder {
 	rb.parent.WithWatchGK(gk, mapper, rb.id)
+	return rb
+}
+
+// WatchesStateful registers a stateful watch mapper that receives a StateReader for
+// cross-referencing other objects. Use this when the mapper needs to list/query objects
+// beyond the changed object itself (e.g., Pod→Service selector matching).
+func (rb *ReconcilerBuilder) WatchesStateful(kind string, mapper StatefulWatchMapper) *ReconcilerBuilder {
+	rb.parent.WithStatefulWatch(kind, mapper, rb.id)
 	return rb
 }
 
@@ -321,6 +330,23 @@ func (b *ExplorerBuilder) WithWatchGK(gk schema.GroupKind, mapper WatchMapper, r
 	reg := WatchRegistration{
 		Mapper:       mapper,
 		ReconcilerID: reconcilerID,
+	}
+	b.watchers[key] = append(b.watchers[key], reg)
+	return b
+}
+
+func (b *ExplorerBuilder) WithStatefulWatch(kind string, mapper StatefulWatchMapper, reconcilerID ReconcilerID) *ExplorerBuilder {
+	if mapper == nil {
+		return b
+	}
+	if b.watchers == nil {
+		b.watchers = make(WatchRegistrations)
+	}
+	gk := parseKindString(kind)
+	key := util.CanonicalGroupKind(gk.Group, gk.Kind)
+	reg := WatchRegistration{
+		StatefulMapper: mapper,
+		ReconcilerID:   reconcilerID,
 	}
 	b.watchers[key] = append(b.watchers[key], reg)
 	return b
@@ -605,11 +631,51 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			Client: c,
 			Scheme: b.scheme,
 		}
-	}).For("Service")
+	}).For("Service").WatchesStateful("Pod", mapPodToServices)
 
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")
+}
+
+// mapPodToServices maps a Pod change to the Services whose selectors match the pod's labels.
+// This mirrors the real kube EndpointsController's Pod watch behavior.
+func mapPodToServices(pod *unstructured.Unstructured, reader StateReader) []reconcile.Request {
+	if pod == nil {
+		return nil
+	}
+	podLabels := pod.GetLabels()
+	if len(podLabels) == 0 {
+		return nil
+	}
+
+	services := reader.ListByKind(util.CanonicalGroupKind("", "Service"))
+	var requests []reconcile.Request
+	for _, svc := range services {
+		selector, found, err := unstructured.NestedStringMap(svc.Object, "spec", "selector")
+		if err != nil || !found || len(selector) == 0 {
+			continue
+		}
+		if labelsMatchSelector(podLabels, selector) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: svc.GetNamespace(),
+					Name:      svc.GetName(),
+				},
+			})
+		}
+	}
+	return requests
+}
+
+// labelsMatchSelector returns true if all selector key-value pairs are present in labels.
+func labelsMatchSelector(labels, selector map[string]string) bool {
+	for k, v := range selector {
+		if labels[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // getPodLifecycleFactory returns the PodStateMachineFactory to use for the

@@ -400,6 +400,7 @@ func Test_determineNewPendingReconciles(t *testing.T) {
 			defer ctrl.Finish()
 
 			mockTriggered := NewMockTriggerHandler(ctrl)
+			mockTriggered.EXPECT().SetStateReader(gomock.Any()).AnyTimes()
 			mockTriggered.EXPECT().GetTriggered(tt.result.Changes).Return(tt.triggered, nil).Times(1)
 			// TODO stop re-implementing the function under test...
 			for _, trig := range tt.triggered {
@@ -435,6 +436,7 @@ func Test_determineNewPendingReconciles_RequeueAfterUsesSimclockStepSize(t *test
 	defer ctrl.Finish()
 
 	mockTriggered := NewMockTriggerHandler(ctrl)
+	mockTriggered.EXPECT().SetStateReader(gomock.Any()).AnyTimes()
 	mockTriggered.EXPECT().GetTriggered(Changes{}).Return(nil, nil).Times(1)
 
 	e := &Explorer{
