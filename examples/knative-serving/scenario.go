@@ -166,7 +166,44 @@ func configureKnativeExplorer(builder *tracecheck.ExplorerBuilder) {
 		}
 		strategy.SetLogger(logf.Log.WithName("ServerlessServiceReconciler"))
 		return strategy
-	}).For("networking.internal.knative.dev/ServerlessService")
+	}).For("networking.internal.knative.dev/ServerlessService").Watches(
+		// In real Knative, SSReconciler watches Endpoints via two handlers:
+		// 1. Endpoints with SKS label → map to SSS name
+		// 2. Activator endpoints → global resync
+		// The private endpoints (e.g. demo-00001-private) don't have the SKS label,
+		// but they're critical for SSReconciler to complete. We match both labeled
+		// endpoints AND private endpoints (name ending in "-private" → strip suffix).
+		"Endpoints",
+		func(u *unstructured.Unstructured) []reconcile.Request {
+			labels := u.GetLabels()
+			// Labeled endpoints: direct SSS name from label
+			if sksName := labels["networking.internal.knative.dev/serverlessservice"]; sksName != "" {
+				return []reconcile.Request{
+					{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: sksName}},
+				}
+			}
+			// Private endpoints: name convention is "<sss-name>-private"
+			name := u.GetName()
+			if strings.HasSuffix(name, "-private") {
+				sksName := strings.TrimSuffix(name, "-private")
+				return []reconcile.Request{
+					{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: sksName}},
+				}
+			}
+			return nil
+		}).Watches(
+		// SSReconciler also watches Services it owns (via ownerRef).
+		"Service",
+		func(u *unstructured.Unstructured) []reconcile.Request {
+			for _, ref := range u.GetOwnerReferences() {
+				if ref.Kind == "ServerlessService" {
+					return []reconcile.Request{
+						{NamespacedName: client.ObjectKey{Namespace: u.GetNamespace(), Name: ref.Name}},
+					}
+				}
+			}
+			return nil
+		})
 
 	builder.WithResourceDep("networking.internal.knative.dev/ServerlessService", "ServerlessServiceReconciler", "KPA")
 

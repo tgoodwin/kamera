@@ -231,6 +231,7 @@ func (cfg ExploreConfig) OptimizationsEnabled() bool {
 type TriggerHandler interface {
 	GetTriggered(changes Changes) ([]PendingReconcile, error)
 	KindDepsForReconciler(reconcilerID ReconcilerID) ([]string, error)
+	SetStateReader(reader StateReader)
 }
 
 type Explorer struct {
@@ -1490,7 +1491,7 @@ func (e *Explorer) materializeNextState(
 	}
 
 	newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
-	triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes)
+	triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes, NewStateReaderFromObjectVersions(newContents, e.versionManager))
 	newPendingReconciles := e.determineNewPendingReconciles(stepCtx, stateView, consumed, stepResult)
 	e.maybePromoteStableRequeueAfter(stateView, consumed, stepResult, newPendingReconciles)
 	stepLogger.V(1).WithValues(
@@ -2161,7 +2162,12 @@ func (e *Explorer) selectPendingReconcile(state StateNode) (PendingReconcile, er
 	return ready[idx], nil
 }
 
-func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
+func (e *Explorer) getTriggeredReconcilers(changes Changes, stateReader ...StateReader) []PendingReconcile {
+	// If a state reader is provided, set it for stateful watch mappers.
+	if len(stateReader) > 0 && stateReader[0] != nil {
+		e.triggerManager.SetStateReader(stateReader[0])
+		defer e.triggerManager.SetStateReader(nil)
+	}
 	res, err := e.triggerManager.GetTriggered(changes)
 	if err != nil {
 		logger.Error(err, "getting triggered reconciles")
@@ -2313,7 +2319,7 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 
 	// after processing the reconcile, we need to determine which controllers
 	// were triggered by the changes in the state.
-	triggeredByChanges := e.getTriggeredReconcilers(result.Changes)
+	triggeredByChanges := e.getTriggeredReconcilers(result.Changes, NewStateReaderFromObjectVersions(state.Objects(), e.versionManager))
 
 	// Log which reconcilers were triggered for debugging, but only if verbosity at least 1 is enabled.
 	if logger.V(1).Enabled() && len(triggeredByChanges) > 0 {

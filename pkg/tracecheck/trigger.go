@@ -41,6 +41,17 @@ func (rd ResourceDeps) ForReconciler(reconcilerID ReconcilerID) ([]string, error
 // Given a changed object, it returns the reconcile requests that should be enqueued.
 type WatchMapper func(obj *unstructured.Unstructured) []reconcile.Request
 
+// StatefulWatchMapper is like WatchMapper but receives a StateReader for cross-referencing
+// other objects in the current state. This is needed for mappers like the EndpointsController's
+// Pod→Service mapping, which must list Services to find those whose selectors match a pod.
+type StatefulWatchMapper func(obj *unstructured.Unstructured, reader StateReader) []reconcile.Request
+
+// StateReader provides read-only access to the current exploration state for stateful watch mappers.
+type StateReader interface {
+	// ListByKind returns all objects of the given canonical group/kind in the current state.
+	ListByKind(canonicalGroupKind string) []*unstructured.Unstructured
+}
+
 func EnqueueRequestForObject() WatchMapper {
 	return func(obj *unstructured.Unstructured) []reconcile.Request {
 		if obj == nil {
@@ -60,8 +71,9 @@ func EnqueueRequestForObject() WatchMapper {
 }
 
 type WatchRegistration struct {
-	Mapper       WatchMapper
-	ReconcilerID ReconcilerID
+	Mapper         WatchMapper
+	StatefulMapper StatefulWatchMapper
+	ReconcilerID   ReconcilerID
 }
 
 // WatchRegistrations maps canonical group/kind strings to watch registrations.
@@ -174,10 +186,11 @@ type Resolver interface {
 // TriggerManager handles the dependency graph between resources and reconcilers
 // and models the event-driven mechanism that triggers reconcilers upon changes to resources
 type TriggerManager struct {
-	deps     ResourceDeps
-	owners   PrimariesByKind
-	watchers WatchRegistrations
-	resolver Resolver
+	deps        ResourceDeps
+	owners      PrimariesByKind
+	watchers    WatchRegistrations
+	resolver    Resolver
+	stateReader StateReader
 }
 
 // if an object has already been marked for deletion and undergoes a further update,
@@ -252,6 +265,12 @@ func (tm *TriggerManager) KindDepsForReconciler(reconcilerID ReconcilerID) ([]st
 	return tm.deps.ForReconciler(reconcilerID)
 }
 
+// SetStateReader updates the state reader used by stateful watch mappers.
+// Called before each getTriggered invocation with the current state.
+func (tm *TriggerManager) SetStateReader(reader StateReader) {
+	tm.stateReader = reader
+}
+
 // getTriggered returns a list of PendingReconcile items based on the provided changes
 // Returns an error if any object hash cannot be resolved
 func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, error) {
@@ -314,10 +333,14 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 		// Mapping from changed object -> reconcile requests is delegated to the mapper.
 		if watchRegs, exists := tm.watchers[ownerKey]; exists {
 			for _, reg := range watchRegs {
-				if reg.Mapper == nil {
+				var requests []reconcile.Request
+				if reg.StatefulMapper != nil && tm.stateReader != nil {
+					requests = reg.StatefulMapper(objectVal, tm.stateReader)
+				} else if reg.Mapper != nil {
+					requests = reg.Mapper(objectVal)
+				} else {
 					continue
 				}
-				requests := reg.Mapper(objectVal)
 				for _, req := range requests {
 					nsName := req.NamespacedName
 					if nsName.Name == "" {
@@ -395,6 +418,31 @@ func (tm *TriggerManager) GetTriggered(changes Changes) ([]PendingReconcile, err
 		return nil, err
 	}
 	return result, nil
+}
+
+// objectVersionsStateReader implements StateReader by resolving objects from an
+// ObjectVersions map using a Resolver.
+type objectVersionsStateReader struct {
+	objects  ObjectVersions
+	resolver Resolver
+}
+
+func NewStateReaderFromObjectVersions(objects ObjectVersions, resolver Resolver) StateReader {
+	return &objectVersionsStateReader{objects: objects, resolver: resolver}
+}
+
+func (r *objectVersionsStateReader) ListByKind(canonicalGroupKind string) []*unstructured.Unstructured {
+	var result []*unstructured.Unstructured
+	for key, hash := range r.objects {
+		objCanonical := util.CanonicalGroupKind(key.ResourceKey.Group, key.ResourceKey.Kind)
+		if objCanonical == canonicalGroupKind {
+			obj := r.resolver.Resolve(hash)
+			if obj != nil {
+				result = append(result, obj)
+			}
+		}
+	}
+	return result
 }
 
 func NewPendingReconciles(nsName types.NamespacedName, dependentControllers ...ReconcilerID) []PendingReconcile {
