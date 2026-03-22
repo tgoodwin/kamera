@@ -1,0 +1,112 @@
+[
+  {
+    "name": "S1/zk-stale-state-1-baseline",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "zookeeper.pravega.io/v1beta1",
+          "kind": "ZookeeperCluster",
+          "metadata": { "name": "zookeeper-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "persistence": { "reclaimPolicy": "Delete" }
+          }
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "delete-zk",
+        "opType": "DELETE",
+        "object": {
+          "apiVersion": "zookeeper.pravega.io/v1beta1",
+          "kind": "ZookeeperCluster",
+          "metadata": { "name": "zookeeper-cluster", "namespace": "default" }
+        }
+      },
+      {
+        "id": "recreate-zk",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "zookeeper.pravega.io/v1beta1",
+          "kind": "ZookeeperCluster",
+          "metadata": { "name": "zookeeper-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "persistence": { "reclaimPolicy": "Delete" }
+          }
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 200,
+      "permuteControllers": [],
+      "userActionReadyDepths": {
+        "0": 10,
+        "1": 80
+      }
+    }
+  },
+  {
+    "name": "S2/zk-stale-state-1-staleness",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "zookeeper.pravega.io/v1beta1",
+          "kind": "ZookeeperCluster",
+          "metadata": { "name": "zookeeper-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "persistence": { "reclaimPolicy": "Delete" }
+          }
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "delete-zk",
+        "opType": "DELETE",
+        "object": {
+          "apiVersion": "zookeeper.pravega.io/v1beta1",
+          "kind": "ZookeeperCluster",
+          "metadata": { "name": "zookeeper-cluster", "namespace": "default" }
+        }
+      },
+      {
+        "id": "recreate-zk",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "zookeeper.pravega.io/v1beta1",
+          "kind": "ZookeeperCluster",
+          "metadata": { "name": "zookeeper-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "persistence": { "reclaimPolicy": "Delete" }
+          }
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 200,
+      "permuteControllers": [],
+      "userActionReadyDepths": {
+        "0": 10,
+        "1": 80
+      },
+      "faultInjection": [{
+        "reconciler": "ZookeeperClusterReconciler",
+        "crashAfterEffect": 1,
+        "triggerOnce": true,
+        "triggerAfterDepth": 80
+      }],
+      "stalenessIntervals": [{
+        "reconciler": "ZookeeperClusterReconciler",
+        "kind": "zookeeper.pravega.io/ZookeeperCluster",
+        "staleAt": 32,
+        "catchUpAt": 200,
+        "lag": -1,
+        "freezeAt": 17
+      }]
+    }
+  }
+]
