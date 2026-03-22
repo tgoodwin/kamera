@@ -320,8 +320,17 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	// in the replay client, we're not actually interacting with the API server
-	// so the object won't take on a deletion timestamp unless we set it here.
+	// In real K8s, DELETE preserves the existing object and only adds
+	// metadata.deletionTimestamp. Read the current version from the cache
+	// so the published MARK_FOR_DELETION version retains all existing fields
+	// (spec, status, finalizers, labels, etc.).
+	current := obj.DeepCopyObject().(client.Object)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(obj), current); err == nil {
+		// Successfully read current state; set deletion timestamp on it.
+		obj = current
+	}
+	// If Get fails (object not in cache), fall through to the original object.
+
 	ts := v1.Time{Time: time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)}
 	obj.SetDeletionTimestamp(&ts)
 

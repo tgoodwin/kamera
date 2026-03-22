@@ -43,11 +43,12 @@ type EffectContextManager interface {
 // StalenessInterval defines a window during which a reconciler's view
 // of a specific resource kind lags behind the actual cluster state.
 type StalenessInterval struct {
-	ReconcilerID ReconcilerID `json:"reconciler"`
-	Kind         string       `json:"kind"`  // canonical group/kind
-	StaleAt      int64        `json:"staleAt"`
-	CatchUpAt    int64        `json:"catchUpAt"`
-	Lag          int64        `json:"lag"` // how far behind frontier; -1 = frozen at StaleAt sequence
+	ReconcilerID    ReconcilerID `json:"reconciler"`
+	Kind            string       `json:"kind"`  // canonical group/kind
+	StaleAt         int64        `json:"staleAt"`
+	CatchUpAt       int64        `json:"catchUpAt"`
+	Lag             int64        `json:"lag"`             // how far behind frontier; -1 = frozen
+	FreezeAtSequence int64       `json:"freezeAt,omitempty"` // when lag=-1 and set, freeze at this sequence instead of staleAt
 }
 
 // PermuteDepthRange constrains ordering permutations to a specific depth window.
@@ -94,10 +95,11 @@ type PerturbationConfig struct {
 
 // FaultInjectionConfig defines a mid-reconcile crash for a specific reconciler.
 type FaultInjectionConfig struct {
-	ReconcilerID     ReconcilerID `json:"reconciler"`
-	CrashAfterEffect int          `json:"crashAfterEffect"`
-	RecoverAtDepth   int          `json:"recoverAtDepth,omitempty"`
-	TriggerOnce      bool         `json:"triggerOnce,omitempty"`
+	ReconcilerID      ReconcilerID `json:"reconciler"`
+	CrashAfterEffect  int          `json:"crashAfterEffect"`
+	RecoverAtDepth    int          `json:"recoverAtDepth,omitempty"`
+	TriggerOnce       bool         `json:"triggerOnce,omitempty"`
+	TriggerAfterDepth int          `json:"triggerAfterDepth,omitempty"` // only fire when depth >= this value
 }
 
 type StalenessConfig struct {
@@ -2548,6 +2550,9 @@ func (e *Explorer) getFaultInjectionConfig(reconcilerID ReconcilerID, state *Sta
 			continue
 		}
 		if fi.TriggerOnce && state.crashedReconcilers != nil && state.crashedReconcilers[reconcilerID] {
+			continue
+		}
+		if fi.TriggerAfterDepth > 0 && state.depth < fi.TriggerAfterDepth {
 			continue
 		}
 		return fi, true

@@ -101,6 +101,7 @@ func (s *StateSnapshot) ObserveAt(staleSequences KindSequences) ObjectVersions {
 	}
 	filteredEvents := filterEventsAtSequence(s.stateEvents, staleSequences)
 	rollup := replayEventSequenceToState(filteredEvents)
+
 	return rollup.contents
 }
 
