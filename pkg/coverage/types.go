@@ -45,11 +45,12 @@ type UserInput = ExternalInput
 
 // InputStalenessInterval is the JSON-facing staleness interval configuration.
 type InputStalenessInterval struct {
-	Reconciler string `json:"reconciler"`
-	Kind       string `json:"kind"`
-	StaleAt    int64  `json:"staleAt"`
-	CatchUpAt  int64  `json:"catchUpAt"`
-	Lag        int64  `json:"lag"`
+	Reconciler       string `json:"reconciler"`
+	Kind             string `json:"kind"`
+	StaleAt          int64  `json:"staleAt"`
+	CatchUpAt        int64  `json:"catchUpAt"`
+	Lag              int64  `json:"lag"`
+	FreezeAtSequence int64  `json:"freezeAt,omitempty"`
 }
 
 // InputDepthRange constrains permutation expansion to a specific depth window.
@@ -81,10 +82,11 @@ type InputTuning struct {
 
 // InputFaultInjection specifies a mid-reconcile crash for a specific reconciler.
 type InputFaultInjection struct {
-	Reconciler       string `json:"reconciler"`
-	CrashAfterEffect int    `json:"crashAfterEffect"`
-	RecoverAtDepth   int    `json:"recoverAtDepth,omitempty"`
-	TriggerOnce      bool   `json:"triggerOnce,omitempty"`
+	Reconciler        string `json:"reconciler"`
+	CrashAfterEffect  int    `json:"crashAfterEffect"`
+	RecoverAtDepth    int    `json:"recoverAtDepth,omitempty"`
+	TriggerOnce       bool   `json:"triggerOnce,omitempty"`
+	TriggerAfterDepth int    `json:"triggerAfterDepth,omitempty"`
 }
 
 // InputSearchTuning carries optional per-input search-mode overrides.

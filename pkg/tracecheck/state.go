@@ -333,7 +333,11 @@ func (sn StateNode) evaluateStalenessIntervals(reconcilerID ReconcilerID) KindSe
 			result = make(KindSequences)
 		}
 		if interval.Lag == -1 {
-			result[interval.Kind] = interval.StaleAt
+			if interval.FreezeAtSequence > 0 {
+				result[interval.Kind] = interval.FreezeAtSequence
+			} else {
+				result[interval.Kind] = interval.StaleAt
+			}
 		} else {
 			staleSeq := frontier - interval.Lag
 			if staleSeq < interval.StaleAt {

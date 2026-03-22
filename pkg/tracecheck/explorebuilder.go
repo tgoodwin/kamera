@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	cleanupReconcilerID    ReconcilerID = "CleanupReconciler"
-	deploymentControllerID ReconcilerID = "DeploymentController"
+	cleanupReconcilerID          ReconcilerID = "CleanupReconciler"
+	garbageCollectorReconcilerID ReconcilerID = "GarbageCollectorController"
+	deploymentControllerID       ReconcilerID = "DeploymentController"
 )
 
 type ExplorerBuilder struct {
@@ -636,6 +637,16 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")
+
+	// GarbageCollector Controller — cascade-deletes dependents when a parent is REMOVED.
+	// Triggered by REMOVE events in trigger.go. Lists objects in the namespace and
+	// deletes those whose ownerReferences point to a non-existent owner.
+	b.WithReconciler(garbageCollectorReconcilerID, func(c client.Client) Reconciler {
+		return &controller.GarbageCollectorReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
 }
 
 // mapPodToServices maps a Pod change to the Services whose selectors match the pod's labels.

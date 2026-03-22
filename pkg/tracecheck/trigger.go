@@ -314,6 +314,20 @@ func (tm *TriggerManager) getTriggered(changes Changes) ([]PendingReconcile, err
 			}
 		}
 
+		// When an object is REMOVED, queue the GarbageCollectorController to
+		// find and delete any dependents whose ownerReferences point to the
+		// now-absent parent. This models K8s background cascade deletion.
+		if effect.OpType == event.REMOVE {
+			reconcileKey := fmt.Sprintf("%s:%s:%s", garbageCollectorReconcilerID, nsName.Namespace, nsName.Name)
+			uniqueReconciles[reconcileKey] = PendingReconcile{
+				ReconcilerID: garbageCollectorReconcilerID,
+				Request: reconcile.Request{
+					NamespacedName: nsName,
+				},
+				Source: SourceStateChange,
+			}
+		}
+
 		// Add primary reconcilers if available
 		ownerKey := canonicalKindKey(objKey.Group, objKey.Kind)
 		if primaries, exists := tm.owners[ownerKey]; exists {
