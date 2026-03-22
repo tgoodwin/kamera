@@ -4,11 +4,12 @@ Reproducing bugs from [Sieve](https://github.com/sieve-project/sieve) (OSDI '22)
 
 ## Summary
 
-| Bug | Controller | Type | Sieve Time | Kamera Time | Speedup |
-|-----|-----------|------|-----------|-------------|---------|
-| [zk stale-state-1](#zookeeper-operator-stale-state-1-issue-312) | zookeeper-operator | stale-state | 336s | 0.217s | 1,548x |
-| [zk stale-state-2](#zookeeper-operator-stale-state-2-issue-314) | zookeeper-operator | stale-state | 455s | 0.200s | 2,275x |
-| [zk unobserved-state-1](#zookeeper-operator-unobserved-state-1-issue-453) | zookeeper-operator | unobserved-state | 368s | 0.462s | 796x |
+| Bug | Type | Sieve | Kamera | Speedup | Depth | States |
+|-----|------|-------|--------|---------|-------|--------|
+| [stale-state-1](#zookeeper-operator-stale-state-1-issue-312) | stale-state | 336s | 0.208s | 1,615x | 78 | 31 |
+| [stale-state-2](#zookeeper-operator-stale-state-2-issue-314) | stale-state | 455s | 0.213s | 2,136x | 68 | 31 |
+| [unobserved-state-1](#zookeeper-operator-unobserved-state-1-issue-453) | unobserved-state | 368s | 0.504s | 730x | 168 | 43 |
+| [indirect-1](#zookeeper-operator-indirect-1-issue-410) | intermediate-state | 278s | 0.480s | 579x | 201 | 52 |
 
 All Sieve times measured on Apple M1 Pro, including kind cluster creation (3 control planes + 2 workers), image loading, workload execution, teardown, and oracle checking. All Kamera times measured on the same machine.
 
@@ -194,3 +195,56 @@ depth=  8 CREATE PVC/data-zookeeper-cluster-0  [StatefulSetController]
 depth=  8 CREATE PVC/data-zookeeper-cluster-1  [StatefulSetController]
 ```
 No PVC deletion. Controller never saw replicas=1, so `cleanupOrphanPVCs` never identified replica 1's PVC as an orphan. Resource leak: stale PVC persists and is reused by the new pod.
+
+---
+
+## zookeeper-operator indirect-1 (Issue #410)
+
+**Sieve bug ID:** `zookeeper-operator-indirect-1`
+**Upstream issue:** [pravega/zookeeper-operator#410](https://github.com/pravega/zookeeper-operator/issues/410)
+**Bug class:** Intermediate state (indirect)
+**Operator version:** v0.2.14 (commit `daac1bd`)
+
+### Bug description
+
+During deletion of a ZookeeperCluster, the controller removes the `cleanUpZookeeperPVC` finalizer and crashes mid-reconcile before completing the rest of its reconciliation pipeline. With the finalizer removed, the K8s garbage collector cascade-deletes all owned resources (StatefulSet, ConfigMap, Services, PDB). When the controller restarts and processes the recreated cluster, it faces an inconsistent intermediate state where some resources were partially cleaned up by GC while others were not.
+
+This causes extra reconcile churn (more UPDATE operations than baseline) and missing resource recreation (PodDisruptionBudget not re-created after GC deletion).
+
+### Kamera reproduction
+
+```
+go run . --inputs scenarios/indirect-1.json \
+  --output /tmp/zk-indirect-1 \
+  --interactive=false --closed-loop=false
+```
+
+**Scenario configuration (`indirect-1.json`, S2):**
+- Same `recreate` workload as stale-state-1
+- `faultInjection`: crash after 2nd write effect (PVC DELETE + finalizer UPDATE go through, rest truncated), `triggerOnce: true`, `triggerAfterDepth: 11`
+- No staleness needed: the bug is purely about crash timing and GC interaction
+
+**Sieve time:** 278 seconds
+**Kamera simulation time:** 498ms
+
+### Bug signal in trace
+
+**Baseline (S1):**
+```
+CREATE PodDisruptionBudget: 2 (initial + post-recreation)
+REMOVE PodDisruptionBudget: 1 (GC cleanup)
+UPDATE ConfigMap: 16
+UPDATE StatefulSet: 19
+UPDATE ZookeeperCluster: 38
+```
+
+**Crash mid-delete (S2):**
+```
+CREATE PodDisruptionBudget: 1 (initial only, NOT re-created after recreation)
+REMOVE PodDisruptionBudget: 0 (missing)
+UPDATE ConfigMap: 17 (+1)
+UPDATE StatefulSet: 21 (+2)
+UPDATE ZookeeperCluster: 41 (+3)
+```
+
+The crash mid-delete causes: (1) PDB not re-created after recreation (missing resource), (2) extra UPDATE churn across multiple resource types as the controller struggles to converge from the inconsistent intermediate state.
