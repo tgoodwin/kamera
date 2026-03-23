@@ -1,0 +1,116 @@
+[
+  {
+    "name": "S1/rmq-stale-state-1-baseline",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "image": "rabbitmq:3.8.12-management",
+            "persistence": { "storage": "10Gi" }
+          }
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "delete-rmq",
+        "opType": "DELETE",
+        "object": {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" }
+        }
+      },
+      {
+        "id": "recreate-rmq",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "image": "rabbitmq:3.8.12-management",
+            "persistence": { "storage": "10Gi" }
+          }
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 200,
+      "permuteControllers": [],
+      "userActionReadyDepths": {
+        "0": 15,
+        "1": 50
+      }
+    }
+  },
+  {
+    "name": "S2/rmq-stale-state-1-staleness",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "image": "rabbitmq:3.8.12-management",
+            "persistence": { "storage": "10Gi" }
+          }
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "delete-rmq",
+        "opType": "DELETE",
+        "object": {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" }
+        }
+      },
+      {
+        "id": "recreate-rmq",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "image": "rabbitmq:3.8.12-management",
+            "persistence": { "storage": "10Gi" }
+          }
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 200,
+      "permuteControllers": [],
+      "userActionReadyDepths": {
+        "0": 15,
+        "1": 100
+      },
+      "faultInjection": [{
+        "reconciler": "RabbitmqClusterReconciler",
+        "crashAfterEffect": 1,
+        "triggerOnce": true,
+        "triggerAfterDepth": 100
+      }],
+      "stalenessIntervals": [{
+        "reconciler": "RabbitmqClusterReconciler",
+        "kind": "rabbitmq.com/RabbitmqCluster",
+        "staleAt": 32,
+        "catchUpAt": 200,
+        "lag": -1,
+        "freezeAt": 17
+      }]
+    }
+  }
+]

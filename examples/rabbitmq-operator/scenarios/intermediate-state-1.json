@@ -1,0 +1,88 @@
+[
+  {
+    "name": "S1/rmq-intermediate-state-1-baseline",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "image": "rabbitmq:3.8.12-management",
+            "persistence": { "storage": "10Gi" }
+          }
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "resize-pvc",
+        "opType": "UPDATE",
+        "object": {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "image": "rabbitmq:3.8.12-management",
+            "persistence": { "storage": "15Gi" }
+          }
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 200,
+      "permuteControllers": [],
+      "userActionReadyDepths": {
+        "0": 30
+      }
+    }
+  },
+  {
+    "name": "S2/rmq-intermediate-state-1-crash",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "image": "rabbitmq:3.8.12-management",
+            "persistence": { "storage": "10Gi" }
+          }
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "resize-pvc",
+        "opType": "UPDATE",
+        "object": {
+          "apiVersion": "rabbitmq.com/v1beta1",
+          "kind": "RabbitmqCluster",
+          "metadata": { "name": "rabbitmq-cluster", "namespace": "default" },
+          "spec": {
+            "replicas": 1,
+            "image": "rabbitmq:3.8.12-management",
+            "persistence": { "storage": "15Gi" }
+          }
+        }
+      }
+    ],
+    "tuning": {
+      "maxDepth": 200,
+      "permuteControllers": [],
+      "userActionReadyDepths": {
+        "0": 30
+      },
+      "faultInjection": [{
+        "reconciler": "RabbitmqClusterReconciler",
+        "crashAfterEffect": 2,
+        "triggerOnce": true,
+        "triggerAfterDepth": 31
+      }]
+    }
+  }
+]
