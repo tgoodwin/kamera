@@ -55,6 +55,7 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 		versionStore: vStore,
 		effects:      make(map[string]reconcileEffects),
 		scheme:       scheme,
+		effectRVs:    make(map[string]map[string]int64),
 	}
 
 	return &TraceChecker{
@@ -142,7 +143,8 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		effects:       make(map[string]reconcileEffects),
 		converterImpl: converter,
 		// TODO handle scheme properly
-		scheme: nil,
+		scheme:    nil,
+		effectRVs: make(map[string]map[string]int64),
 	}
 
 	return &TraceChecker{
@@ -284,7 +286,8 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 		knowledgeManager.Load(tc.builder.Events())
 	}
 
-	return &Explorer{
+	rvMap := make(map[snapshot.VersionHash]int64)
+	explorer := &Explorer{
 		reconcilers:  reconcilers,
 		dependencies: tc.ResourceDeps,
 		Config: &ExploreConfig{
@@ -301,7 +304,14 @@ func (tc *TraceChecker) NewExplorer(maxDepth int) *Explorer {
 
 		knowledgeManager: knowledgeManager,
 		versionManager:   tc.manager.versionStore,
+		resourceVersions: rvMap,
 	}
+	for _, container := range reconcilers {
+		container.rvLookup = func(vh snapshot.VersionHash) int64 {
+			return rvMap[vh]
+		}
+	}
+	return explorer
 }
 
 func (tc *TraceChecker) SummarizeResults(result *Result) {
