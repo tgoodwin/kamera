@@ -56,3 +56,4 @@ examples/karpenter/karpenter
 examples/crossplane/crossplane
 examples/knative-serving/knative-serving
 examples/kratix/kratix
+examples/kro/kro
