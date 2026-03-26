@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -86,6 +87,69 @@ func NewClient(reconcilerID string, scheme *runtime.Scheme, frameReader frameRea
 }
 
 var _ client.Client = (*Client)(nil)
+
+// extractMergePatchRV checks if a merge-patch uses OptimisticLock (which embeds
+// resourceVersion in the patch payload). If so, it extracts the base object's
+// RV and sets it as a precondition for conflict checking.
+//
+// We use unsafe.Pointer to read the unexported opts.OptimisticLock and from
+// fields on controller-runtime's mergeFromPatch struct. This avoids calling
+// patch.Data() which is too expensive to run on every PATCH (DeepCopy + double
+// JSON marshal per call).
+//
+// The struct layout we rely on (controller-runtime v0.18.x):
+//
+//	type mergeFromPatch struct {
+//	    patchType   types.PatchType           // offset 0
+//	    createPatch func(...)                 // offset 1 (pointer-sized)
+//	    from        Object                    // offset 2 (interface = 2 words)
+//	    opts        MergeFromOptions          // offset 4
+//	}
+//	type MergeFromOptions struct {
+//	    OptimisticLock bool
+//	}
+func extractMergePatchRV(_ client.Object, patch client.Patch, preconditions *PreconditionInfo) {
+	if patch.Type() != types.MergePatchType && patch.Type() != types.StrategicMergePatchType {
+		return
+	}
+	// Use reflect to get the struct value, then read fields via unsafe offset.
+	v := reflect.ValueOf(patch)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return
+	}
+
+	// Find the "opts" field and read OptimisticLock
+	optsField := v.FieldByName("opts")
+	if !optsField.IsValid() {
+		return
+	}
+	// OptimisticLock is an exported field within the (unexported) opts struct,
+	// so we can read it even though opts itself is unexported.
+	lockField := optsField.FieldByName("OptimisticLock")
+	if !lockField.IsValid() || !lockField.Bool() {
+		return
+	}
+
+	// OptimisticLock is set. The base object's RV will be in the patch payload.
+	// Read the "from" field (client.Object interface) via unsafe pointer.
+	fromField := v.FieldByName("from")
+	if !fromField.IsValid() {
+		return
+	}
+	// Use unsafe to extract the interface value from the unexported field.
+	fromIface := unsafe.Pointer(fromField.UnsafeAddr())
+	fromObj := *(*client.Object)(fromIface)
+	if fromObj == nil {
+		return
+	}
+	rv := fromObj.GetResourceVersion()
+	if rv != "" {
+		preconditions.ResourceVersion = &rv
+	}
+}
 
 func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType, preconditions *PreconditionInfo, options *EffectOptions) error {
 	// TODO validate preconditions
@@ -287,6 +351,9 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 		// Server-side apply uses PATCH with apply semantics; model it separately.
 		op = event.APPLY
 	}
+	if op == event.PATCH {
+		extractMergePatchRV(obj, patch, &preconditions)
+	}
 	return c.handleEffect(ctx, obj, op, &preconditions, nil)
 }
 
@@ -363,6 +430,9 @@ func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch 
 	if patch.Type() == types.ApplyPatchType {
 		// Server-side apply uses PATCH with apply semantics; model it separately.
 		op = event.APPLY
+	}
+	if op == event.PATCH {
+		extractMergePatchRV(obj, patch, &preconditions)
 	}
 	return c.wrapped.handleEffect(ctx, obj, op, &preconditions, &EffectOptions{Subresource: "status"})
 }
