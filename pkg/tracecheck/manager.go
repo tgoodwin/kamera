@@ -3,6 +3,7 @@ package tracecheck
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 
 	"github.com/samber/lo"
@@ -81,6 +82,15 @@ type manager struct {
 	effectRKeys map[string]util.Set[string]
 	effectIKeys map[string]util.Set[snapshot.IdentityKey]
 
+	// effectRVs tracks the current integer resourceVersion for each resource key
+	// within a reconcile frame, used for optimistic concurrency conflict checking.
+	// frameID → resourceKey → current integer RV
+	effectRVs map[string]map[string]int64
+
+	// rvLookup maps VersionHash → integer resourceVersion.
+	// Set from the explorer's resourceVersions map.
+	rvLookup func(snapshot.VersionHash) int64
+
 	mu sync.RWMutex
 }
 
@@ -157,6 +167,12 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		reffects.reads = append(reffects.reads, eff)
 	} else {
 		reffects.writes = append(reffects.writes, eff)
+
+		// Note: we do NOT advance effectRVs here. The tracked RV stays at
+		// the pre-reconcile ground truth value. This means all writes within
+		// a single reconcile are checked against the same baseline. The conflict
+		// only fires when the controller was served a stale cache frame (RV=N)
+		// but the ground truth is already at RV=N+1 from a prior reconcile step.
 	}
 	m.effects[frameID] = reffects
 	logger.V(2).Info("recorded effects", "frameID", frameID, "numReads", len(reffects.reads), "numWrites", len(reffects.writes))
@@ -174,12 +190,20 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 
 	// holds kind/namespace/name
 	rKeySet := util.NewSet[string]()
-	for _, ck := range cKeys {
+	rvs := make(map[string]int64, len(ov))
+	for ck, vh := range ov {
 		primary := canonicalResourceKeyString(ck.ResourceKey.Group, ck.ResourceKey.Kind, ck.ResourceKey.Namespace, ck.ResourceKey.Name)
 		rKeySet.Add(primary)
+		// Look up the integer RV for this object version
+		if m.rvLookup != nil {
+			if rv := m.rvLookup(vh); rv > 0 {
+				rvs[primary] = rv
+			}
+		}
 	}
 	m.effectRKeys[frameID] = rKeySet
 	m.effectIKeys[frameID] = util.NewSet(iKeys...)
+	m.effectRVs[frameID] = rvs
 	return nil
 }
 
@@ -187,6 +211,7 @@ func (m *manager) CleanupEffectContext(ctx context.Context) {
 	frameID := replay.FrameIDFromContext(ctx)
 	delete(m.effectRKeys, frameID)
 	delete(m.effectIKeys, frameID)
+	delete(m.effectRVs, frameID)
 }
 
 func (m *manager) GetEffects(ctx context.Context) (Changes, error) {
@@ -282,7 +307,36 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 			logger.V(1).Info("UPDATE/PATCH miss", "key", resourceKey, "tracked", rKeys.List())
 			panic("Object not found for UPDATE/PATCH: probably a serious logic error in the tracecheck manager")
 		}
-		// No need to change tracking state for UPDATE/PATCH
+		// Optimistic concurrency check. The claimed RV comes from:
+		// - Update (PUT): metadata.resourceVersion on the object body
+		// - Patch with OptimisticLock: resourceVersion embedded in the patch
+		//   payload (extracted into preconditions.ResourceVersion by the client)
+		// - Patch without OptimisticLock: no RV check (matches real K8s)
+		var claimedRVStr string
+		if op == event.UPDATE {
+			claimedRVStr = obj.GetResourceVersion()
+		} else if precondition != nil && precondition.ResourceVersion != nil {
+			claimedRVStr = *precondition.ResourceVersion
+		}
+		if claimedRVStr != "" {
+			if rvs, ok := m.effectRVs[frameID]; ok {
+				currentRV, tracked := rvs[resourceKey]
+				if tracked {
+					claimedRV, err := strconv.ParseInt(claimedRVStr, 10, 64)
+					if err == nil && claimedRV != currentRV {
+						logger.V(1).Info("resourceVersion conflict",
+							"key", resourceKey,
+							"claimedRV", claimedRV,
+							"currentRV", currentRV)
+						return apierrors.NewConflict(
+							schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
+							obj.GetName(),
+							fmt.Errorf("the object has been modified; please apply your changes to the latest version"),
+						)
+					}
+				}
+			}
+		}
 
 	case event.MARK_FOR_DELETION:
 		// need to handle cases where:
