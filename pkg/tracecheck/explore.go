@@ -636,6 +636,19 @@ func (e *Explorer) enqueueState(queue []StateNode, state StateNode) []StateNode 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
 	logger.Info("starting!")
 
+	// Seed resourceVersions for all initial state objects so that RV conflict
+	// checking can detect stale writes. Without this, initial objects have no
+	// RV entry, and the conflict check is skipped (empty RV string).
+	if e.resourceVersions != nil {
+		var startRV int64 = 1
+		for _, hash := range initialState.Contents.All() {
+			if _, exists := e.resourceVersions[hash]; !exists {
+				e.resourceVersions[hash] = startRV
+				startRV++
+			}
+		}
+	}
+
 	// Stamp interval-based staleness config onto the initial state so it
 	// propagates to all descendant states via materializeNextState.
 	if len(e.Config.Perturbations.StalenessIntervals) > 0 {
