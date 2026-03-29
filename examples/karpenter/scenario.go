@@ -133,44 +133,11 @@ type karpenterParamOption struct {
 }
 
 func expandKarpenterParameterizedInput(input coverage.Input, fuzzCases int, fuzzSeed int64) ([]coverage.Input, error) {
-	baseName := strings.TrimSpace(input.Name)
-	if baseName == "" {
-		baseName = "scenario"
-	}
-
 	base := cloneCoverageInput(input)
-	base.Name = baseName + "/base"
-
-	podIdx := findKarpenterPodInUserInputs(base.ExternalInputs)
-	nodePoolIdx := findKarpenterNodePool(base.EnvironmentState.Objects)
-	if podIdx < 0 || nodePoolIdx < 0 {
-		return []coverage.Input{base}, nil
+	if strings.TrimSpace(base.Name) == "" {
+		base.Name = "scenario"
 	}
-
-	templatePod, err := unstructuredToPod(base.ExternalInputs[podIdx].Object)
-	if err != nil {
-		return nil, err
-	}
-	nodePoolObject := base.EnvironmentState.Objects[nodePoolIdx]
-	templateNodePool, err := unstructuredToNodePool(nodePoolObject)
-	if err != nil {
-		return nil, err
-	}
-
-	variants := []coverage.Input{base}
-	singleVariants, err := expandKarpenterSingleParamVariants(input, baseName, podIdx, nodePoolIdx, templatePod, templateNodePool)
-	if err != nil {
-		return nil, err
-	}
-	variants = append(variants, singleVariants...)
-
-	sampledVariants, err := expandKarpenterSampledParamVariants(input, baseName, podIdx, nodePoolIdx, templatePod, templateNodePool, fuzzCases, fuzzSeed)
-	if err != nil {
-		return nil, err
-	}
-	variants = append(variants, sampledVariants...)
-
-	return variants, nil
+	return []coverage.Input{base}, nil
 }
 
 func karpenterParamCatalog() []karpenterParamSpec {

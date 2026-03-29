@@ -9,7 +9,8 @@ var (
 	inputsPathFlag        = flag.String("inputs", "", `path to input JSON file`)
 	closedLoopFlag        = flag.Bool("closed-loop", true, "enable closed-loop rerun pipeline: runs a reference phase then auto-generated perturbation phases derived from the reference trace")
 	noPerturbationsFlag   = flag.Bool("no-perturbations", false, "force-disable all perturbations (ordering, staleness) for a clean reference run, regardless of what is configured in the inputs file")
-	parallelProcessesFlag = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
+	parallelProcessesFlag      = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
+	metricsOnlyStalenessFlag   = flag.Bool("metrics-only-staleness", false, "skip full JSONL dumps for staleness interval phases; write lightweight CSV metrics instead")
 	// these ones are internal flags used by child processes in --parallel-processes mode,
 	// not intended for manual setting
 	parallelChildIndexFlag = flag.Int(
@@ -83,4 +84,10 @@ func ParallelChildTrialIndex() int {
 // ParallelChildJobIndex returns the selected job index for process-isolated mode.
 func ParallelChildJobIndex() int {
 	return *parallelChildJobIndexFlag
+}
+
+// MetricsOnlyStalenessEnabled returns true when staleness phases should skip
+// full dumps and only record lightweight CSV metrics.
+func MetricsOnlyStalenessEnabled() bool {
+	return *metricsOnlyStalenessFlag
 }

@@ -322,8 +322,21 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 
 	selected = applyMonteCarloTrialConfig(selected, childIdx, trialIdx)
 
+	var accumulator *TrialMetricsAccumulator
+	if MetricsOnlyStalenessEnabled() {
+		accumulator = NewTrialMetricsAccumulator()
+	}
+
 	fmt.Printf("parallel-processes child: running input index %d trial %d as scenario %q\n", childIdx, trialIdx, selected.Name)
-	result := r.runScenario(ctx, selected, opts, jobIdxOrInput(jobIdx, childIdx), invocationID)
+	result := r.runScenario(ctx, selected, opts, jobIdxOrInput(jobIdx, childIdx), invocationID, accumulator)
+
+	if accumulator != nil && accumulator.Len() > 0 && opts.DumpDir != "" {
+		csvPath := filepath.Join(opts.DumpDir, fmt.Sprintf("staleness_metrics_child_%d_%d.csv", childIdx, trialIdx))
+		if err := accumulator.WriteCSV(csvPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: write child staleness metrics CSV: %v\n", err)
+		}
+	}
+
 	if result.Err != nil {
 		if result.DumpPath == "" {
 			dumpPath, dumpErr := writeChildFailureDump(opts, selected.Name, selected.Context, jobIdxOrInput(jobIdx, childIdx), "run_scenario", result.Err, invocationID)
@@ -341,6 +354,11 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario, opts ParallelOptions, invocationID string) ([]ScenarioResult, error) {
 	if err := ensureParallelOutputDirs(opts); err != nil {
 		return nil, err
+	}
+
+	var accumulator *TrialMetricsAccumulator
+	if MetricsOnlyStalenessEnabled() {
+		accumulator = NewTrialMetricsAccumulator()
 	}
 
 	jobsToRun := buildInProcessJobs(scenarios)
@@ -364,7 +382,7 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 	worker := func() {
 		defer wg.Done()
 		for job := range jobs {
-			res := r.runScenario(ctx, job.scenario, opts, job.idx, invocationID)
+			res := r.runScenario(ctx, job.scenario, opts, job.idx, invocationID, accumulator)
 			resCh <- scenarioResult{idx: job.idx, result: res}
 		}
 	}
@@ -388,6 +406,15 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 		results[item.idx] = item.result
 	}
 
+	if accumulator != nil && opts.DumpDir != "" {
+		csvPath := filepath.Join(opts.DumpDir, "staleness_metrics.csv")
+		if err := accumulator.WriteCSV(csvPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: write staleness metrics CSV: %v\n", err)
+		} else {
+			fmt.Printf("staleness metrics: %d trials written to %s\n", accumulator.Len(), csvPath)
+		}
+	}
+
 	return results, nil
 }
 
@@ -409,7 +436,7 @@ func buildInProcessJobs(scenarios []Scenario) []scenarioJob {
 	return jobs
 }
 
-func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opts ParallelOptions, idx int, invocationID string) ScenarioResult {
+func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opts ParallelOptions, idx int, invocationID string, accumulator *TrialMetricsAccumulator) ScenarioResult {
 	result := ScenarioResult{Name: scenario.Name}
 	if ctx.Err() != nil {
 		result.Err = ctx.Err()
@@ -445,7 +472,7 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		// This intentionally favors "get end-to-end scaffolding running" over
 		// precision/attribution. Harnesses can still override with ClosedLoop.Plan.
 		referenceConfig = disablePerturbations(scenario.Config)
-		hasExplicitStaleness := len(scenario.Config.Perturbations.Staleness) > 0
+		hasExplicitStaleness := len(scenario.Config.Perturbations.Staleness) > 0 || len(scenario.Config.Perturbations.StalenessIntervals) > 0
 		// TODO: The perturbation strategies below are orthogonal — plans mix
 		// either user-action interleaving or staleness, but never both simultaneously.
 		// A combined plan (e.g. inject stale reads while also interleaving a second
@@ -499,6 +526,14 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		if plan.Seed != nil {
 			runSeed = *plan.Seed
 		}
+
+		// When metrics-only mode is active and this is a staleness interval plan,
+		// skip the full dump and record lightweight metrics instead.
+		if accumulator != nil && isStalenessIntervalPlan(plan) {
+			r.runScenarioPhaseMetricsOnly(ctx, scenario, opts, idx, phaseName, plan.Config, runSeed, plan.Prefix, reference.VersionManager, phaseCtx, accumulator)
+			continue
+		}
+
 		phase := r.runScenarioPhase(ctx, scenario, opts, idx, phaseName, plan.Config, runSeed, plan.Prefix, reference.VersionManager, phaseCtx, invocationID)
 		result.Phases = append(result.Phases, phase)
 		applyPhaseSummary(&result, phase)
@@ -508,6 +543,13 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 	}
 
 	return result
+}
+
+func isStalenessIntervalPlan(plan ScenarioPhasePlan) bool {
+	if plan.Context == nil || plan.Context.Attributes == nil {
+		return false
+	}
+	return plan.Context.Attributes["perturbation.strategy"] == "staleness_interval"
 }
 
 func disablePerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig {
@@ -524,6 +566,7 @@ func disablePerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig
 	}
 	out.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
 	out.Perturbations.StalenessIntervals = nil
+	out.Perturbations.FaultInjection = nil
 	if out.Perturbations.UserActionReadyDepths == nil {
 		out.Perturbations.UserActionReadyDepths = make(map[int]int)
 	}
@@ -538,9 +581,20 @@ func buildDefaultScenarioRerunPlans(
 	// Naive v1 rerun strategy:
 	// - exactly one rerun phase
 	// - enable ordering permutation for all controllers observed in reference
+	// - preserve fault injection from the scenario config (it's the hypothesis)
 	// This is intentionally generic and high-recall; it is not a precise
 	// root-cause perturbation plan yet.
-	rerunCfg := disablePerturbations(base)
+	rerunCfg := base.Clone()
+	// Reset ordering (will be re-populated from reference trace below).
+	if rerunCfg.Perturbations.PermuteOrder == nil {
+		rerunCfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+	}
+	for id := range rerunCfg.Perturbations.PermuteOrder {
+		rerunCfg.Perturbations.PermuteOrder[id] = false
+	}
+	// Clear auto-derived staleness (explicit staleness is handled by buildExplicitStalenessPlans).
+	rerunCfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+	rerunCfg.Perturbations.StalenessIntervals = nil
 	seenControllers := observedControllersInReference(reference)
 	for _, controllerID := range seenControllers {
 		if controllerID == "" || controllerID == tracecheck.UserControllerID {
@@ -1004,6 +1058,62 @@ func (r *ParallelRunner) runScenarioPhase(
 	return phase
 }
 
+// runScenarioPhaseMetricsOnly runs a phase like runScenarioPhase but skips the
+// full JSONL dump. Instead it records lightweight metrics to the accumulator.
+func (r *ParallelRunner) runScenarioPhaseMetricsOnly(
+	ctx context.Context,
+	scenario Scenario,
+	opts ParallelOptions,
+	idx int,
+	phaseName string,
+	cfg tracecheck.ExploreConfig,
+	seed tracecheck.RestartSeed,
+	prefix tracecheck.ExecutionHistory,
+	prefixResolver tracecheck.VersionManager,
+	phaseCtx ScenarioContext,
+	accumulator *TrialMetricsAccumulator,
+) {
+	fork := r.builder.Fork()
+	if fork == nil {
+		return
+	}
+	fork.WithUserActions(cloneUserActions(scenario.ExternalInputs))
+	fork.SetConfig(cfg)
+	if len(prefix) > 0 && prefixResolver != nil {
+		if err := fork.PrimeVersionStoreFromHistory(prefix, prefixResolver); err != nil {
+			return
+		}
+	}
+
+	startState, err := tracecheck.SeedToStateNode(seed, fork)
+	if err != nil {
+		return
+	}
+	if len(prefix) > 0 {
+		startState.ExecutionHistory = slices.Clone(prefix)
+	}
+
+	explorer, err := fork.Build("standalone")
+	if err != nil {
+		return
+	}
+
+	runCtx := ctx
+	if explorer.Config.Timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, explorer.Config.Timeout)
+		defer cancel()
+	}
+
+	start := time.Now()
+	res := explorer.Explore(runCtx, startState)
+	duration := time.Since(start)
+
+	if accumulator != nil {
+		accumulator.Add(metricsFromPhase(scenario, phaseName, phaseCtx, explorer.Stats(), res, duration))
+	}
+}
+
 func ensureParallelOutputDirs(opts ParallelOptions) error {
 	if opts.DumpDir != "" {
 		if err := os.MkdirAll(opts.DumpDir, 0o755); err != nil {
@@ -1338,8 +1448,16 @@ func hasParallelProcessesFlag(args []string) bool {
 }
 
 func spawnGoRunChild(ctx context.Context, req childProcessRequest) childProcessResult {
-	goArgs := append([]string{"run", "."}, req.Args...)
-	cmd := exec.CommandContext(ctx, "go", goArgs...)
+	selfPath, err := os.Executable()
+	if err != nil {
+		return childProcessResult{
+			JobIndex:   req.JobIndex,
+			InputIndex: req.InputIndex,
+			TrialIndex: req.TrialIndex,
+			Err:        fmt.Errorf("resolve executable path: %w", err),
+		}
+	}
+	cmd := exec.CommandContext(ctx, selfPath, req.Args...)
 	cmd.Dir = req.CWD
 	cmd.Env = os.Environ()
 	if strings.TrimSpace(req.InvocationID) != "" {
@@ -1351,7 +1469,7 @@ func spawnGoRunChild(ctx context.Context, req childProcessRequest) childProcessR
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	return childProcessResult{
 		JobIndex:   req.JobIndex,
 		InputIndex: req.InputIndex,

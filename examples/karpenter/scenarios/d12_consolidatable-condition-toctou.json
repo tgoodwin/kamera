@@ -296,7 +296,7 @@
       ]
     },
     "tuning": {
-      "maxDepth": 60,
+      "maxDepth": 120,
       "permuteControllers": [
         "disruption",
         "disruption.queue",
