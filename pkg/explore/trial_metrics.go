@@ -1,10 +1,13 @@
 package explore
 
 import (
+	"crypto/sha256"
 	"encoding/csv"
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -25,6 +28,9 @@ type TrialMetric struct {
 	Kind           string
 	StaleAt        string
 	CatchUpAt      string
+	// ContentHashes contains the set of unique resource-state hashes observed
+	// during this trial (one per distinct StateAfter in the execution path).
+	ContentHashes []string
 }
 
 // TrialMetricsAccumulator collects TrialMetric records in a thread-safe manner.
@@ -70,6 +76,7 @@ func (a *TrialMetricsAccumulator) WriteCSV(path string) error {
 		"scenario_name", "phase_name", "duration_ns", "total_states",
 		"resource_states", "terminal_hash", "converged",
 		"reconciler", "kind", "stale_at", "catch_up_at",
+		"content_hashes",
 	}
 	if err := w.Write(header); err != nil {
 		return fmt.Errorf("write CSV header: %w", err)
@@ -88,6 +95,7 @@ func (a *TrialMetricsAccumulator) WriteCSV(path string) error {
 			m.Kind,
 			m.StaleAt,
 			m.CatchUpAt,
+			strings.Join(m.ContentHashes, ";"),
 		}
 		if err := w.Write(row); err != nil {
 			return fmt.Errorf("write CSV row: %w", err)
@@ -123,6 +131,23 @@ func metricsFromPhase(
 		} else if len(res.AbortedStates) > 0 {
 			m.TerminalHash = res.AbortedStates[0].ID
 		}
+		// Collect unique content hashes from all paths
+		seen := make(map[string]struct{})
+		allStates := append(res.ConvergedStates, res.AbortedStates...)
+		for _, rs := range allStates {
+			for _, path := range rs.Paths {
+				for _, step := range path {
+					if step == nil {
+						continue
+					}
+					h := hashObjectVersions(step.StateAfter)
+					if _, ok := seen[h]; !ok {
+						seen[h] = struct{}{}
+						m.ContentHashes = append(m.ContentHashes, h)
+					}
+				}
+			}
+		}
 	}
 
 	if phaseCtx.Attributes != nil {
@@ -133,4 +158,18 @@ func metricsFromPhase(
 	}
 
 	return m
+}
+
+// hashObjectVersions produces a short deterministic hash of an ObjectVersions map.
+func hashObjectVersions(ov tracecheck.ObjectVersions) string {
+	if len(ov) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(ov))
+	for k, v := range ov {
+		keys = append(keys, fmt.Sprintf("%s/%s=%s", k.ResourceKey.Group, k.Name, v.Value))
+	}
+	sort.Strings(keys)
+	h := sha256.Sum256([]byte(strings.Join(keys, "\n")))
+	return fmt.Sprintf("%x", h[:8])
 }
