@@ -44,6 +44,9 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Zero out retry backoff to avoid real-time sleeps during simulation.
 	retry.DefaultBackoff = wait.Backoff{Steps: 1, Duration: 0}
 
+	// Skip real-time validation sleeps (15s consolidation TTL) in disruption pipeline.
+	disruption.SimulationMode = true
+
 	// Disable generic pod lifecycle simulation for this harness.
 	// Karpenter provisioning should reason over unschedulable pods, and Pod lifecycle
 	// progression here can consume that signal before Karpenter-specific controllers run.

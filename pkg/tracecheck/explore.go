@@ -655,6 +655,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	e.stats = NewExploreStats()
 	e.stats.Start()
 
+	exploreStart := time.Now()
 	go func() {
 		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, abortedStateChan)
 		if err != nil {
@@ -682,6 +683,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	abortedCollected := make([]ResultState, 0)
 
+	chanLoopStart := time.Now()
 	for convergedStateChan != nil || executionHistoryChan != nil || abortedStateChan != nil {
 		select {
 		case convergedState, ok := <-convergedStateChan:
@@ -732,6 +734,9 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 			result.AbortedStates[i].Paths = GetUniquePaths(mergedPaths)
 		}
 	}
+	assembleEnd := time.Now()
+	fmt.Fprintf(os.Stderr, "EXPLORE-TIMING explore_goroutine=%v chan_loop=%v assemble=%v total=%v\n",
+		chanLoopStart.Sub(exploreStart), assembleEnd.Sub(chanLoopStart), time.Since(assembleEnd), time.Since(exploreStart))
 	summarize(result)
 	return result
 }
