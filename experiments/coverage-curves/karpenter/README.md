@@ -99,18 +99,54 @@ python3 experiments/coverage-curves/karpenter/plot_d12_exhaustive.py \
   experiments/coverage-curves/karpenter/exhaustive-output
 ```
 
-## Performance Notes
+## Experiment Results (2026-03-29)
 
-- Each staleness interval trial runs a single MC path to depth ~70-120 (~9s)
-- ~304 staleness intervals per variant (derived from reference trace reads)
-- ~45 minutes per variant with 10 MC trials (sequential staleness within child)
-- With `--parallel-processes` (10 children), throughput is ~1 variant per 45 min
-- In 2 hours: expect ~2-3 variants completed = ~600-900 staleness trials
+### Run 1: 15 controllers, 2h timeout
+
+All 15 harness controllers permuted. Each child's staleness sweep generated
+~719 intervals. None of 10 children completed within 2 hours. Each child
+accumulated ~1 minute of CPU time in 2 hours of wall time, indicating the
+per-trial exploration (with 15 controllers permuted) is extremely slow.
+
+### Run 2: 7 controllers (D12-relevant), 2h timeout
+
+Reduced to the 7 controllers from the original tuned D12 scenario. Each child's
+staleness sweep is smaller but still took >2 hours. Children accumulated ~1-2
+minutes of CPU time. No children completed their staleness sweep.
+
+### Analysis
+
+The exhaustive sweep is compute-bound, not I/O-bound. The `--metrics-only-staleness`
+flag eliminates disk I/O but doesn't help because the bottleneck is the sequential
+staleness exploration within each child process. Key numbers:
+
+- ~300-700 staleness intervals auto-derived per variant (depends on controller count)
+- Each interval = 1 Monte Carlo path to depth ~70-120
+- Each path takes several seconds of wall time
+- 10 MC trials per variant means the total per variant is 300-700 intervals per trial
+- With 10 parallel children, throughput is ~1 variant per 2-3 hours
+
+**For a full 120-variant sweep: ~240-360 hours.**
+
+### Next steps
+
+Options to make this tractable:
+1. **Reduce trial count** to 1 MC trial per variant (not 10)
+2. **Reduce depth** to find the minimal convergence depth
+3. **Reduce action depth range** from 0-119 to the interesting range (e.g., 5-40)
+4. **Run on a beefier machine** with more cores for parallel children
+5. **Let the agent tune it** (which is the whole point of the experiment)
+
+## Performance Notes
 
 ### Bottleneck analysis
 
-The primary bottleneck is not I/O but the sequential staleness sweep within
-each child process. The simclock package uses global mutable state, preventing
-concurrent in-process explorations. Each child must process its ~304 staleness
-intervals one at a time. The `--metrics-only-staleness` flag eliminates the
-secondary bottleneck (disk I/O) but does not parallelize the exploration itself.
+The primary bottleneck is the sequential staleness sweep within each child
+process. The simclock package uses global mutable state, preventing concurrent
+in-process explorations. Each child must process its staleness intervals one at
+a time. The `--metrics-only-staleness` flag eliminates the secondary bottleneck
+(disk I/O) but does not parallelize the exploration itself.
+
+With 7 controllers permuted, each MC path visits ~70-120 states and takes
+several seconds. The reference + rerun phases complete quickly (~20s each), but
+the staleness sweep dominates wall time.

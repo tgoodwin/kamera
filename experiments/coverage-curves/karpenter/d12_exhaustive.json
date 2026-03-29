@@ -298,21 +298,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 0
@@ -669,21 +661,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 1
@@ -1040,21 +1024,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 2
@@ -1411,21 +1387,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 3
@@ -1782,21 +1750,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 4
@@ -2153,21 +2113,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 5
@@ -2524,21 +2476,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 6
@@ -2895,21 +2839,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 7
@@ -3266,21 +3202,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 8
@@ -3637,21 +3565,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 9
@@ -4008,21 +3928,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 10
@@ -4379,21 +4291,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 11
@@ -4750,21 +4654,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 12
@@ -5121,21 +5017,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 13
@@ -5492,21 +5380,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 14
@@ -5863,21 +5743,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 15
@@ -6234,21 +6106,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 16
@@ -6605,21 +6469,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 17
@@ -6976,21 +6832,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 18
@@ -7347,21 +7195,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 19
@@ -7718,21 +7558,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 20
@@ -8089,21 +7921,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 21
@@ -8460,21 +8284,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 22
@@ -8831,21 +8647,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 23
@@ -9202,21 +9010,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 24
@@ -9573,21 +9373,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 25
@@ -9944,21 +9736,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 26
@@ -10315,21 +10099,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 27
@@ -10686,21 +10462,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 28
@@ -11057,21 +10825,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 29
@@ -11428,21 +11188,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 30
@@ -11799,21 +11551,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 31
@@ -12170,21 +11914,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 32
@@ -12541,21 +12277,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 33
@@ -12912,21 +12640,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 34
@@ -13283,21 +13003,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 35
@@ -13654,21 +13366,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 36
@@ -14025,21 +13729,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 37
@@ -14396,21 +14092,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 38
@@ -14767,21 +14455,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 39
@@ -15138,21 +14818,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 40
@@ -15509,21 +15181,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 41
@@ -15880,21 +15544,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 42
@@ -16251,21 +15907,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 43
@@ -16622,21 +16270,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 44
@@ -16993,21 +16633,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 45
@@ -17364,21 +16996,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 46
@@ -17735,21 +17359,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 47
@@ -18106,21 +17722,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 48
@@ -18477,21 +18085,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 49
@@ -18848,21 +18448,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 50
@@ -19219,21 +18811,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 51
@@ -19590,21 +19174,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 52
@@ -19961,21 +19537,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 53
@@ -20332,21 +19900,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 54
@@ -20703,21 +20263,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 55
@@ -21074,21 +20626,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 56
@@ -21445,21 +20989,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 57
@@ -21816,21 +21352,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 58
@@ -22187,21 +21715,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 59
@@ -22558,21 +22078,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 60
@@ -22929,21 +22441,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 61
@@ -23300,21 +22804,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 62
@@ -23671,21 +23167,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 63
@@ -24042,21 +23530,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 64
@@ -24413,21 +23893,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 65
@@ -24784,21 +24256,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 66
@@ -25155,21 +24619,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 67
@@ -25526,21 +24982,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 68
@@ -25897,21 +25345,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 69
@@ -26268,21 +25708,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 70
@@ -26639,21 +26071,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 71
@@ -27010,21 +26434,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 72
@@ -27381,21 +26797,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 73
@@ -27752,21 +27160,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 74
@@ -28123,21 +27523,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 75
@@ -28494,21 +27886,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 76
@@ -28865,21 +28249,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 77
@@ -29236,21 +28612,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 78
@@ -29607,21 +28975,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 79
@@ -29978,21 +29338,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 80
@@ -30349,21 +29701,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 81
@@ -30720,21 +30064,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 82
@@ -31091,21 +30427,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 83
@@ -31462,21 +30790,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 84
@@ -31833,21 +31153,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 85
@@ -32204,21 +31516,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 86
@@ -32575,21 +31879,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 87
@@ -32946,21 +32242,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 88
@@ -33317,21 +32605,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 89
@@ -33688,21 +32968,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 90
@@ -34059,21 +33331,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 91
@@ -34430,21 +33694,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 92
@@ -34801,21 +34057,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 93
@@ -35172,21 +34420,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 94
@@ -35543,21 +34783,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 95
@@ -35914,21 +35146,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 96
@@ -36285,21 +35509,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 97
@@ -36656,21 +35872,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 98
@@ -37027,21 +36235,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 99
@@ -37398,21 +36598,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 100
@@ -37769,21 +36961,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 101
@@ -38140,21 +37324,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 102
@@ -38511,21 +37687,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 103
@@ -38882,21 +38050,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 104
@@ -39253,21 +38413,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 105
@@ -39624,21 +38776,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 106
@@ -39995,21 +39139,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 107
@@ -40366,21 +39502,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 108
@@ -40737,21 +39865,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 109
@@ -41108,21 +40228,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 110
@@ -41479,21 +40591,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 111
@@ -41850,21 +40954,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 112
@@ -42221,21 +41317,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 113
@@ -42592,21 +41680,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 114
@@ -42963,21 +42043,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 115
@@ -43334,21 +42406,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 116
@@ -43705,21 +42769,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 117
@@ -44076,21 +43132,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 118
@@ -44447,21 +43495,13 @@
     "tuning": {
       "maxDepth": 120,
       "permuteControllers": [
-        "provisioner",
-        "provisioner.trigger.pod",
-        "state.pod",
-        "state.node",
-        "state.nodepool",
-        "state.nodeclaim",
-        "nodeclaim.hydration",
-        "nodeclaim.lifecycle",
-        "nodepool.readiness",
-        "node.hydration",
-        "node.registrar",
-        "nodeclaim.disruption",
         "disruption",
         "disruption.queue",
-        "node.termination"
+        "nodeclaim.disruption",
+        "state.pod",
+        "state.node",
+        "state.nodeclaim",
+        "state.nodepool"
       ],
       "userActionReadyDepths": {
         "0": 119
