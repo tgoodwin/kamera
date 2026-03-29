@@ -10,6 +10,8 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -38,6 +40,9 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// This lets the stable-requeue-after convergence mechanism build its
 	// streak (threshold=3) within a reasonable depth budget.
 	simclock.Configure(time.Unix(0, 0), 30*time.Second)
+
+	// Zero out retry backoff to avoid real-time sleeps during simulation.
+	retry.DefaultBackoff = wait.Backoff{Steps: 1, Duration: 0}
 
 	// Disable generic pod lifecycle simulation for this harness.
 	// Karpenter provisioning should reason over unschedulable pods, and Pod lifecycle
@@ -77,6 +82,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	getProvisioner := func() *provisioning.Provisioner {
 		provisionerOnce.Do(func() {
 			prov = provisioning.NewProvisioner(provisionerClient, newNoopRecorder(), cp, getCluster(provisionerClient), clk)
+			prov.SetSimulation(true)
 		})
 		return prov
 	}
@@ -134,6 +140,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 
 	b.WithReconciler("nodeclaim.lifecycle", func(c client.Client) tracecheck.Reconciler {
 		rec := lifecycle.NewController(clk, c, cp, recorder, getNpHealth())
+		rec.Simulation = true
 		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
 	}).For("karpenter.sh/NodeClaim")
 
