@@ -513,6 +513,15 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		return result
 	}
 
+	stalenessCount := 0
+	for _, p := range plans {
+		if isStalenessIntervalPlan(p) {
+			stalenessCount++
+		}
+	}
+	fmt.Fprintf(os.Stderr, "closed-loop: scenario %s generated %d plans (%d staleness intervals, accumulator=%v)\n",
+		scenario.Name, len(plans), stalenessCount, accumulator != nil)
+
 	for i, plan := range plans {
 		phaseName := strings.TrimSpace(plan.Name)
 		if phaseName == "" {
