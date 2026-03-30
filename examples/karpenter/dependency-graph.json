@@ -1,0 +1,93 @@
+{
+  "nodes": [
+    { "kind": "controller", "id": "provisioner" },
+    { "kind": "controller", "id": "provisioner.trigger.pod" },
+    { "kind": "controller", "id": "state.pod" },
+    { "kind": "controller", "id": "state.node" },
+    { "kind": "controller", "id": "state.nodepool" },
+    { "kind": "controller", "id": "state.nodeclaim" },
+    { "kind": "controller", "id": "nodeclaim.hydration" },
+    { "kind": "controller", "id": "nodeclaim.lifecycle" },
+    { "kind": "controller", "id": "nodepool.readiness" },
+    { "kind": "controller", "id": "node.hydration" },
+    { "kind": "controller", "id": "node.registrar" },
+    { "kind": "controller", "id": "nodeclaim.disruption" },
+    { "kind": "controller", "id": "disruption" },
+    { "kind": "controller", "id": "disruption.queue" },
+    { "kind": "controller", "id": "node.termination" },
+
+    { "kind": "resource", "id": "core/v1/Pod", "gvk": "core/v1/Pod", "role": "builtin" },
+    { "kind": "resource", "id": "core/v1/Node", "gvk": "core/v1/Node", "role": "builtin" },
+    { "kind": "resource", "id": "karpenter.sh/v1/NodePool", "gvk": "karpenter.sh/v1/NodePool", "role": "user-facing" },
+    { "kind": "resource", "id": "karpenter.sh/v1/NodeClaim", "gvk": "karpenter.sh/v1/NodeClaim", "role": "supporting" },
+    { "kind": "resource", "id": "karpenter.test.sh/v1alpha1/TestNodeClass", "gvk": "karpenter.test.sh/v1alpha1/TestNodeClass", "role": "supporting" }
+  ],
+  "edges": [
+    { "kind": "triggers", "from": "provisioner", "to": "core/v1/Pod", "trigger": "primary" },
+    { "kind": "reads", "from": "provisioner", "to": "core/v1/Pod", "surface": "spec" },
+    { "kind": "reads", "from": "provisioner", "to": "karpenter.sh/v1/NodePool", "surface": "spec" },
+    { "kind": "reads", "from": "provisioner", "to": "karpenter.sh/v1/NodeClaim", "surface": "status" },
+    { "kind": "reads", "from": "provisioner", "to": "core/v1/Node", "surface": "status" },
+    { "kind": "writes", "from": "provisioner", "to": "karpenter.sh/v1/NodeClaim", "surface": "spec" },
+
+    { "kind": "triggers", "from": "provisioner.trigger.pod", "to": "core/v1/Pod", "trigger": "primary" },
+    { "kind": "reads", "from": "provisioner.trigger.pod", "to": "core/v1/Pod", "surface": "status" },
+
+    { "kind": "triggers", "from": "state.pod", "to": "core/v1/Pod", "trigger": "primary" },
+    { "kind": "reads", "from": "state.pod", "to": "core/v1/Pod", "surface": "any" },
+
+    { "kind": "triggers", "from": "state.node", "to": "core/v1/Node", "trigger": "primary" },
+    { "kind": "reads", "from": "state.node", "to": "core/v1/Node", "surface": "any" },
+    { "kind": "reads", "from": "state.node", "to": "core/v1/Pod", "surface": "spec" },
+
+    { "kind": "triggers", "from": "state.nodepool", "to": "karpenter.sh/v1/NodePool", "trigger": "primary" },
+    { "kind": "reads", "from": "state.nodepool", "to": "karpenter.sh/v1/NodePool", "surface": "any" },
+
+    { "kind": "triggers", "from": "state.nodeclaim", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
+    { "kind": "reads", "from": "state.nodeclaim", "to": "karpenter.sh/v1/NodeClaim", "surface": "any" },
+
+    { "kind": "triggers", "from": "nodeclaim.hydration", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
+    { "kind": "reads", "from": "nodeclaim.hydration", "to": "karpenter.sh/v1/NodeClaim", "surface": "spec" },
+    { "kind": "writes", "from": "nodeclaim.hydration", "to": "karpenter.sh/v1/NodeClaim", "surface": "metadata" },
+
+    { "kind": "triggers", "from": "nodeclaim.lifecycle", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
+    { "kind": "reads", "from": "nodeclaim.lifecycle", "to": "karpenter.sh/v1/NodeClaim", "surface": "any" },
+    { "kind": "writes", "from": "nodeclaim.lifecycle", "to": "karpenter.sh/v1/NodeClaim", "surface": "status" },
+
+    { "kind": "triggers", "from": "nodepool.readiness", "to": "karpenter.sh/v1/NodePool", "trigger": "primary" },
+    { "kind": "triggers", "from": "nodepool.readiness", "to": "karpenter.test.sh/v1alpha1/TestNodeClass", "trigger": "secondary" },
+    { "kind": "reads", "from": "nodepool.readiness", "to": "karpenter.sh/v1/NodePool", "surface": "status" },
+    { "kind": "reads", "from": "nodepool.readiness", "to": "karpenter.test.sh/v1alpha1/TestNodeClass", "surface": "status" },
+    { "kind": "writes", "from": "nodepool.readiness", "to": "karpenter.sh/v1/NodePool", "surface": "status" },
+
+    { "kind": "triggers", "from": "node.hydration", "to": "core/v1/Node", "trigger": "primary" },
+    { "kind": "reads", "from": "node.hydration", "to": "core/v1/Node", "surface": "metadata" },
+    { "kind": "reads", "from": "node.hydration", "to": "karpenter.sh/v1/NodeClaim", "surface": "metadata" },
+    { "kind": "writes", "from": "node.hydration", "to": "core/v1/Node", "surface": "metadata" },
+
+    { "kind": "triggers", "from": "node.registrar", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
+    { "kind": "reads", "from": "node.registrar", "to": "karpenter.sh/v1/NodeClaim", "surface": "status" },
+    { "kind": "writes", "from": "node.registrar", "to": "core/v1/Node", "surface": "spec" },
+
+    { "kind": "triggers", "from": "nodeclaim.disruption", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
+    { "kind": "reads", "from": "nodeclaim.disruption", "to": "karpenter.sh/v1/NodeClaim", "surface": "any" },
+    { "kind": "reads", "from": "nodeclaim.disruption", "to": "karpenter.sh/v1/NodePool", "surface": "spec" },
+    { "kind": "writes", "from": "nodeclaim.disruption", "to": "karpenter.sh/v1/NodeClaim", "surface": "status" },
+
+    { "kind": "triggers", "from": "disruption", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
+    { "kind": "reads", "from": "disruption", "to": "karpenter.sh/v1/NodeClaim", "surface": "any" },
+    { "kind": "reads", "from": "disruption", "to": "core/v1/Node", "surface": "any" },
+    { "kind": "reads", "from": "disruption", "to": "core/v1/Pod", "surface": "spec" },
+    { "kind": "reads", "from": "disruption", "to": "karpenter.sh/v1/NodePool", "surface": "spec" },
+    { "kind": "writes", "from": "disruption", "to": "core/v1/Node", "surface": "spec" },
+    { "kind": "writes", "from": "disruption", "to": "karpenter.sh/v1/NodeClaim", "surface": "status" },
+
+    { "kind": "triggers", "from": "disruption.queue", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
+    { "kind": "reads", "from": "disruption.queue", "to": "karpenter.sh/v1/NodeClaim", "surface": "any" },
+    { "kind": "writes", "from": "disruption.queue", "to": "karpenter.sh/v1/NodeClaim", "surface": "any" },
+
+    { "kind": "triggers", "from": "node.termination", "to": "core/v1/Node", "trigger": "primary" },
+    { "kind": "reads", "from": "node.termination", "to": "core/v1/Node", "surface": "any" },
+    { "kind": "writes", "from": "node.termination", "to": "core/v1/Node", "surface": "any" }
+  ]
+}

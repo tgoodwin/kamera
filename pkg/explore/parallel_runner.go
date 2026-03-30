@@ -969,6 +969,10 @@ func (r *ParallelRunner) runScenarioPhase(
 		phaseLabel = "run"
 	}
 	phase := ScenarioPhaseResult{Name: phaseLabel}
+	phaseStart := time.Now()
+	defer func() {
+		fmt.Fprintf(os.Stderr, "PHASE-TIMING %s/%s total=%v\n", scenario.Name, phaseLabel, time.Since(phaseStart))
+	}()
 
 	fork := r.builder.Fork()
 	if fork == nil {
@@ -984,6 +988,7 @@ func (r *ParallelRunner) runScenarioPhase(
 		}
 	}
 
+	t0 := time.Now()
 	startState, err := tracecheck.SeedToStateNode(seed, fork)
 	if err != nil {
 		phase.Err = fmt.Errorf("seed to state: %w", err)
@@ -993,11 +998,13 @@ func (r *ParallelRunner) runScenarioPhase(
 		startState.ExecutionHistory = slices.Clone(prefix)
 	}
 
+	t1 := time.Now()
 	explorer, err := fork.Build("standalone")
 	if err != nil {
 		phase.Err = fmt.Errorf("build explorer: %w", err)
 		return phase
 	}
+	t2 := time.Now()
 
 	runCtx := ctx
 	if explorer.Config.Timeout > 0 {
@@ -1009,6 +1016,8 @@ func (r *ParallelRunner) runScenarioPhase(
 	start := time.Now()
 	res := explorer.Explore(runCtx, startState)
 	duration := time.Since(start)
+	t3 := time.Now()
+	fmt.Fprintf(os.Stderr, "PHASE-DETAIL %s/%s seed=%v build=%v explore=%v\n", scenario.Name, phaseLabel, t1.Sub(t0), t2.Sub(t1), t3.Sub(t2))
 	phase.Result = res
 	phase.VersionManager = explorer.VersionManager()
 	phase.Stats = explorer.Stats()
