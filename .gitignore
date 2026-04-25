@@ -78,10 +78,12 @@ experiments/coverage-curves/karpenter/exhaustive-output/
 experiments/coverage-curves/kro/k2b-exhaustive-output/
 experiments/coverage-curves/kro/k2b-exhaustive-output-7ctrl-permute/
 
-# Track only docs/scripts/figures under experiments/coverage-curves/.
-# Raw experimental data (.txt logs, .csv metrics, .json dumps, .jsonl evidence)
-# stays gitignored — see MANIFEST.md for provenance and how to regenerate.
+# Track only docs (.md), figures (.pdf, .png), and scripts (.py, .sh) under
+# experiments/coverage-curves/. Raw experimental data (.txt logs, .csv metrics,
+# .json dumps, .jsonl evidence) stays gitignored — see MANIFEST.md for
+# provenance and how to regenerate.
 !experiments/coverage-curves/**/*.md
 !experiments/coverage-curves/**/*.pdf
+!experiments/coverage-curves/**/*.png
 !experiments/coverage-curves/**/*.py
 !experiments/coverage-curves/**/*.sh
