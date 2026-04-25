@@ -57,3 +57,31 @@ examples/crossplane/crossplane
 examples/knative-serving/knative-serving
 examples/kratix/kratix
 examples/kro/kro
+
+# === Post-paper cleanup (2026-04-25) ===
+
+# Discarded experiment outputs
+examples/kro/ablation/
+
+# Agent-iteration scenario JSONs (intermediates) and exhaustive scenarios
+# that we don't want to track. Logs of running these are in
+# experiments/coverage-curves/<project>/tuning-runs*/.
+examples/karpenter/scenarios/d12-tuning-v2-*.json
+examples/karpenter/scenarios/d1_exhaustive.json
+examples/kro/scenarios/k2b-tuning-v*.json
+examples/kro/scenarios/k2b_exhaustive.json
+examples/kro/scenarios/k6_exhaustive.json
+
+# Raw exhaustive-sweep evidence dirs (deleted post-paper; preprocessed
+# *-accumulated.txt files in the same parent dir are sufficient for the figures).
+experiments/coverage-curves/karpenter/exhaustive-output/
+experiments/coverage-curves/kro/k2b-exhaustive-output/
+experiments/coverage-curves/kro/k2b-exhaustive-output-7ctrl-permute/
+
+# Track only docs/scripts/figures under experiments/coverage-curves/.
+# Raw experimental data (.txt logs, .csv metrics, .json dumps, .jsonl evidence)
+# stays gitignored — see MANIFEST.md for provenance and how to regenerate.
+!experiments/coverage-curves/**/*.md
+!experiments/coverage-curves/**/*.pdf
+!experiments/coverage-curves/**/*.py
+!experiments/coverage-curves/**/*.sh
