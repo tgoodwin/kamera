@@ -62,6 +62,7 @@ def main():
     parser.add_argument("--figheight", type=float, default=1.6)
     parser.add_argument("--annotate", nargs=4, action="append", metavar=("LABEL", "X", "Y", "OFFSET_X"),
                         help="Add annotation: LABEL X Y OFFSET_X (offset_x in points)")
+    parser.add_argument("--x-minutes", action="store_true", help="Force x-axis to show minutes")
     parser.add_argument("-o", "--output")
     args = parser.parse_args()
 
@@ -130,7 +131,7 @@ def main():
 
     # Adaptive tick spacing
     x_max = args.xlim or ax.get_xlim()[1]
-    if x_max > 600:
+    if x_max > 600 or args.x_minutes:
         # Show minutes — pick tick interval to get ~6-8 ticks
         minutes = x_max / 60
         if minutes > 600:
@@ -141,11 +142,13 @@ def main():
             tick_interval = 60 * 10   # every 10 min
         elif minutes > 20:
             tick_interval = 60 * 5    # every 5 min
-        else:
+        elif minutes > 5:
             tick_interval = 60 * 2    # every 2 min
+        else:
+            tick_interval = 60        # every 1 min
         ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
         ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x / 60:.0f}"))
-        ax.set_xlabel("Time (minutes)", fontsize=8)
+        ax.set_xlabel("Time (minutes)", fontsize=6)
     else:
         # Show seconds
         if x_max > 200:
@@ -155,8 +158,8 @@ def main():
         else:
             tick_interval = 10
         ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
-        ax.set_xlabel("Time (seconds)", fontsize=8)
-    ax.set_ylabel("States visited", fontsize=8)
+        ax.set_xlabel("Time (seconds)", fontsize=6)
+    ax.set_ylabel("States visited", fontsize=6)
     ax.set_yscale("log")
     ax.set_ylim(bottom=1)
     ax.yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=3))
@@ -171,7 +174,7 @@ def main():
                   bbox_to_anchor=(0.5, 0.0) if "lower" in args.legend_loc else (0.5, 1.0),
                   framealpha=0.9)
     else:
-        ax.legend(fontsize=5, loc=args.legend_loc, framealpha=0.9)
+        ax.legend(fontsize=5, loc=args.legend_loc, ncol=2, framealpha=0.9)
 
     plt.subplots_adjust(left=0.15, right=0.97, top=0.95, bottom=0.22)
     if args.output:

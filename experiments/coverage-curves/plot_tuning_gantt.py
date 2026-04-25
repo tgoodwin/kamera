@@ -56,7 +56,7 @@ def build_timing_data(runs_info, experiment_start):
 
 def plot_gantt_row(ax, data, title):
     y = 0.5
-    bar_height = 0.6
+    bar_height = 0.2
     total_time = data[-1]["exe_end"]
 
     for d in data:
@@ -82,13 +82,13 @@ def plot_gantt_row(ax, data, title):
         px_width = abs(inv.transform((1, 0))[0] - inv.transform((0, 0))[0])
         if exe_dur / 60 < px_width:
             ax.axvline(x=d["exe_start"] / 60, color=exe_color, linewidth=1,
-                       ymin=(1 - bar_height) / 2, ymax=1 - (1 - bar_height) / 2,
+                       ymin=0, ymax=1,
                        alpha=0.9)
 
     # Label inside the bar area
-    ax.text(0.01, 0.9, title, transform=ax.transAxes, fontsize=7, fontweight='bold', va='top')
+    ax.text(0.01, 0.5, title, transform=ax.transAxes, fontsize=5, fontweight='bold', va='center')
     ax.set_yticks([])
-    ax.set_ylim(0, 1)
+    ax.set_ylim(y - bar_height/2, y + bar_height/2)
     ax.set_xlim(left=0, right=total_time / 60 * 1.02)
 
 def main():
@@ -120,17 +120,20 @@ def main():
 
     # --- Stacked vertically, each row gets its own x axis ---
     # Column width for ACM sigplan two-column: ~3.33in
-    plt.rcParams.update({'font.size': 8})
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(3.33, 2.4))
+    plt.rcParams.update({'font.size': 6})
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(3.33, 1.35))
 
-    plot_gantt_row(ax1, kcp4_data, 'KCP4')
-    ax1.set_xlabel('Time (minutes)')
+    plot_gantt_row(ax1, kcp4_data, 'KCP-4')
+    ax1.set_xlabel('')
+    ax1.tick_params(axis='x', labelsize=6)
 
-    plot_gantt_row(ax2, k2b_data, 'KRO K2b')
-    ax2.set_xlabel('Time (minutes)')
+    plot_gantt_row(ax2, k2b_data, 'KRO-2')
+    ax2.set_xlabel('')
+    ax2.tick_params(axis='x', labelsize=6)
 
-    plot_gantt_row(ax3, d12_data, 'Karpenter D12')
-    ax3.set_xlabel('Time (minutes)')
+    plot_gantt_row(ax3, d12_data, 'KAR-12')
+    ax3.set_xlabel('Time (minutes)', fontsize=7)
+    ax3.tick_params(axis='x', labelsize=6)
 
     # Custom diagonal-split patch for kamera execution legend entry
     from matplotlib.offsetbox import AuxTransformBox, DrawingArea
@@ -167,10 +170,10 @@ def main():
 
     fig.legend(handles=[gray_patch, split_proxy],
                handler_map={split_proxy: DiagonalHandler()},
-               loc='upper center', ncol=2, fontsize=6,
-               bbox_to_anchor=(0.5, 1.06), frameon=False)
+               loc='upper center', ncol=2, fontsize=7,
+               bbox_to_anchor=(0.5, 1.12), frameon=False)
 
-    plt.subplots_adjust(left=0.02, right=0.98, top=0.85, bottom=0.15, hspace=1.2)
+    plt.subplots_adjust(left=0.02, right=0.98, top=0.92, bottom=0.05, hspace=1.5)
     out = os.path.join(base, "tuning-gantt.pdf")
     plt.savefig(out, bbox_inches='tight', pad_inches=0.01, dpi=600)
     print(f'Saved to {out}')

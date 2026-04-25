@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Plot agent tuning bar charts: states explored per iteration, colored by
-whether the trial reproduced the bug.
+whether the trial reproduced the bug. Three square panels side by side.
 
 Usage:
     python3 experiments/coverage-curves/plot_tuning_bars.py
@@ -53,11 +53,12 @@ def plot_bars(ax, data, title):
     x = np.arange(len(data))
     colors = ['#2ca02c' if d["reproduced"] else '#d62728' for d in data]
     ax.bar(x, [d["total_states"] for d in data], 0.6, color=colors, alpha=0.8)
-    ax.set_ylabel('States explored')
-    ax.text(0.01, 0.92, title, transform=ax.transAxes, fontsize=7, fontweight='bold', va='top')
+    ax.text(0.97, 0.93, title, transform=ax.transAxes, fontsize=6, fontweight='bold', va='top', ha='right')
     ax.set_xticks(x)
-    ax.set_xticklabels([d["label"] for d in data], fontsize=6)
-    ax.set_xlabel('Iteration')
+    ax.set_xticklabels([d["label"].replace("v","") for d in data], fontsize=5)
+    ax.set_xlabel('Iteration', fontsize=7)
+    ax.set_ylabel('States', fontsize=7)
+    ax.tick_params(axis='both', labelsize=6)
 
 def main():
     base = os.path.dirname(__file__)
@@ -86,29 +87,37 @@ def main():
                 for i in range(1, 11) if os.path.exists(os.path.join(d12_dir, f"d12-tuning-v{i}-log.txt"))]
     d12_data = build_data(d12_info, d12_t0)
 
-    plt.rcParams.update({'font.size': 8})
-    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(3.33, 2.8), sharex=True)
-    plot_bars(ax1, kcp4_data, 'KCP4')
-    plot_bars(ax2, k2b_data, 'KRO K2b')
-    plot_bars(ax3, d12_data, 'Karpenter D12')
+    plt.rcParams.update({'font.size': 6})
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(3.33, 1.1))
+    plot_bars(ax1, kcp4_data, 'KCP-4')
+    plot_bars(ax2, k2b_data, 'KRO-2')
+    plot_bars(ax3, d12_data, 'KAR-12')
 
-    # Only bottom panel gets x label, only middle gets y label
-    ax1.set_xlabel('')
-    ax2.set_xlabel('')
-    ax1.set_ylabel('')
+    # Only leftmost gets y label
+    ax2.set_ylabel('')
     ax3.set_ylabel('')
 
     legend_elements = [
         mpatches.Patch(facecolor='#2ca02c', alpha=0.8, label='Reproduced'),
         mpatches.Patch(facecolor='#d62728', alpha=0.8, label='Not reproduced'),
     ]
-    fig.legend(handles=legend_elements, loc='upper center', ncol=2, fontsize=6,
-               bbox_to_anchor=(0.5, 1.03), frameon=False)
+    fig.legend(handles=legend_elements, loc='upper center', ncol=2, fontsize=8,
+               bbox_to_anchor=(0.5, 1.18), frameon=False)
 
-    plt.subplots_adjust(hspace=0.3)
+    plt.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=0.92, wspace=0.45)
+    for ax in (ax1, ax2, ax3):
+        ax.margins(x=0.02)
+
     out = os.path.join(base, "tuning-bars.pdf")
-    plt.savefig(out, bbox_inches='tight', dpi=600)
+    plt.savefig(out, bbox_inches='tight', pad_inches=0.01, dpi=600)
     print(f'Saved to {out}')
+
+    # Copy to paper figures
+    paper_fig = os.path.join(base, "../../.worktrees/kamera-paper/papers/new/figures/tuning-bars.pdf")
+    if os.path.isdir(os.path.dirname(paper_fig)):
+        import shutil
+        shutil.copy2(out, paper_fig)
+        print(f'Copied to {paper_fig}')
 
 if __name__ == '__main__':
     main()

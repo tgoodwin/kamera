@@ -27,8 +27,8 @@
 #      --labels "Exhaustive" "Agent" \
 #      --offsets 0 <AGENT_INFERENCE_SECONDS> \   # if not using a padded log
 #      --milestones "Agent reproduces" <AGENT_TIME_S> "Exhaustive done" <EXHAUST_TIME_S> \
-#      --legend-loc "lower center" \
-#      --figwidth 3.33 --figheight 1.2 \
+#      --legend-loc "lower right" \
+#      --figwidth 3.33 --figheight 0.96 \
 #      --xlim <MAX_SECONDS> \
 #      --annotate "Agent reproduces bug (NS, Xms exec)" <X> <Y> <OFFSET_X> \  # optional
 #      --title "" \
@@ -65,46 +65,70 @@ PLOT_CMD="python3 scripts/plot_comparison.py"
 
 # --- Preprocess KRO K2b data if needed ---
 if [[ "$1" == "--preprocess" ]] || [[ ! -f experiments/coverage-curves/kro/k2b-exhaustive-accumulated.txt ]]; then
-  echo "Preprocessing KRO K2b exhaustive log..."
+  echo "Preprocessing KRO K2b exhaustive data (JSONL + CSV)..."
   python3 -c "
-import json
-from datetime import datetime
+import csv, json, glob, os
+from datetime import datetime, timedelta
 
-lines = []
-for line in open('experiments/coverage-curves/kro/kro-k2b-exhaustive-log.txt'):
-    line = line.strip()
-    if not line: continue
-    try: obj = json.loads(line)
-    except: continue
-    lines.append(obj)
+evidence_dir = 'experiments/coverage-curves/kro/k2b-exhaustive-output'
+jsonl_files = sorted(glob.glob(os.path.join(evidence_dir, '*.jsonl')))
+csv_file = os.path.join(evidence_dir, 'staleness_metrics.csv')
 
-cum_total = 0
-cum_unique = 0
-cum_resources = 0
-phase_max_total = 0
-phase_max_unique = 0
-phase_max_resources = 0
+phases = []
+for f in jsonl_files:
+    with open(f) as fh:
+        data = json.load(fh)
+    metrics = data.get('campaignMetrics', {})
+    content_hashes = set()
+    for state in data.get('states', []):
+        for path in state.get('paths', []):
+            for step in path:
+                if step is None: continue
+                ch = step.get('contentsHashAfter', '')
+                if ch: content_hashes.add(ch)
+    phases.append({
+        'total_states': metrics.get('totalNodeVisits', 0),
+        'resource_states': metrics.get('uniqueResourceStates', 0),
+        'duration_s': metrics.get('durationNs', 0) / 1e9,
+        'content_hashes': content_hashes,
+    })
 
-for obj in lines:
-    ts = obj.get('ts')
-    if obj.get('msg') == 'starting!':
-        cum_total += phase_max_total
-        cum_unique += phase_max_unique
-        cum_resources += phase_max_resources
-        phase_max_total = 0
-        phase_max_unique = 0
-        phase_max_resources = 0
-        continue
-    total = obj.get('Total States')
-    unique = obj.get('# Distinct States')
-    resources = obj.get('Resource States')
-    if ts and total is not None and unique is not None and resources is not None:
-        phase_max_total = max(phase_max_total, total)
-        phase_max_unique = max(phase_max_unique, unique)
-        phase_max_resources = max(phase_max_resources, resources)
-        print(json.dumps({'ts': ts, 'Total States': cum_total + total,
-              '# Distinct States': cum_unique + unique,
-              'Resource States': cum_resources + resources}))
+with open(csv_file) as fh:
+    reader = csv.DictReader(fh)
+    for row in reader:
+        hashes = set(row.get('content_hashes', '').split(';')) if row.get('content_hashes') else set()
+        hashes.discard('')
+        phases.append({
+            'total_states': int(row.get('total_states', 0)),
+            'resource_states': int(row.get('resource_states', 0)),
+            'duration_s': int(row.get('duration_ns', 0)) / 1e9,
+            'content_hashes': hashes,
+        })
+
+t0 = datetime.fromisoformat('2026-03-30T14:35:31-07:00')
+running_total = 0
+running_time = 0.0
+global_r_hashes = set()
+
+# Emit origin point so the curve starts at (0, 1)
+print(json.dumps({
+    'ts': t0.isoformat(),
+    'Total States': 1,
+    '# Distinct States': 1,
+    'Resource States': 1,
+}))
+
+for p in phases:
+    running_total += p['total_states']
+    running_time += p['duration_s']
+    global_r_hashes |= p['content_hashes']
+    ts = (t0 + timedelta(seconds=running_time)).isoformat()
+    print(json.dumps({
+        'ts': ts,
+        'Total States': running_total,
+        '# Distinct States': len(global_r_hashes),
+        'Resource States': len(global_r_hashes),
+    }))
 " > experiments/coverage-curves/kro/k2b-exhaustive-accumulated.txt
   echo "  -> experiments/coverage-curves/kro/k2b-exhaustive-accumulated.txt"
 fi
@@ -114,8 +138,8 @@ if [[ "$1" == "--preprocess" ]] || [[ ! -f experiments/coverage-curves/kro/k2b-a
   python3 -c "
 import json, datetime
 
-# Align agent to exhaustive t=0
-t0_str = '2026-03-28T15:20:57-07:00'
+# Align agent to exhaustive t=0 (new exhaustive run)
+t0_str = '2026-03-30T14:35:31-07:00'
 print(json.dumps({'ts': t0_str, 'Total States': 1, '# Distinct States': 1, 'Resource States': 1}))
 t99 = (datetime.datetime.fromisoformat(t0_str) + datetime.timedelta(seconds=98)).isoformat()
 print(json.dumps({'ts': t99, 'Total States': 1, '# Distinct States': 1, 'Resource States': 1}))
@@ -149,9 +173,9 @@ $PLOT_CMD \
   --labels "Exhaustive" "Agent" \
   --offsets 0 68 \
   --milestones "Agent bug found" 133 green "Exhaustive done" 1672 green \
-  --legend-loc "lower center" \
-  --figwidth 3.33 --figheight 1.2 \
-  --xlim 1720 \
+  --legend-loc "lower right" \
+  --figwidth 3.33 --figheight 0.96 \
+  --xlim 1760 \
   --title "" \
   -o "$PAPER_FIGURES/kcp4-exhaustive-vs-agent.pdf"
 
@@ -162,11 +186,12 @@ $PLOT_CMD \
     experiments/coverage-curves/kro/k2b-exhaustive-accumulated.txt \
     experiments/coverage-curves/kro/k2b-agent-v1-padded.txt \
   --labels "Exhaustive" "Agent" \
-  --milestones "Agent reproduces" 99 green "Exhaustive done" 105 green \
-  --legend-loc "lower center" \
-  --figwidth 3.33 --figheight 1.2 \
-  --xlim 110 \
-  --annotate "Agent reproduces bug (51S, 279ms exec)" 99 51 -55 \
+  --milestones "Agent reproduces" 99 green "Exhaustive done" 374 green \
+  --legend-loc "lower right" \
+  --figwidth 3.33 --figheight 0.96 \
+  --xlim 394 \
+  --x-minutes \
+  --annotate "Agent (102S, 279ms exec)" 99 51 55 \
   --title "" \
   -o "$PAPER_FIGURES/k2b-exhaustive-vs-agent.pdf"
 
@@ -180,10 +205,10 @@ $PLOT_CMD \
        experiments/coverage-curves/karpenter/d12-agent-v1-padded.txt \
   --labels "Exhaustive" "Agent" \
   --milestones "Agent reproduces" 133 green "Timeout" 7200 red \
-  --legend-loc "lower center" \
-  --figwidth 3.33 --figheight 1.2 \
+  --legend-loc "lower right" \
+  --figwidth 3.33 --figheight 0.96 \
   --xlim 7600 \
-  --annotate "Agent (1481S, 2min)" 133 1481 30 \
+  --annotate "Agent (1481S, 194ms exec)" 133 1481 30 \
   --title "" \
   -o "$PAPER_FIGURES/d12-exhaustive-vs-agent.pdf"
 
