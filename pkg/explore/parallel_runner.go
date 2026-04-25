@@ -594,22 +594,20 @@ func buildDefaultScenarioRerunPlans(
 	// This is intentionally generic and high-recall; it is not a precise
 	// root-cause perturbation plan yet.
 	rerunCfg := base.Clone()
-	// Reset ordering (will be re-populated from reference trace below).
-	if rerunCfg.Perturbations.PermuteOrder == nil {
-		rerunCfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-	}
-	for id := range rerunCfg.Perturbations.PermuteOrder {
-		rerunCfg.Perturbations.PermuteOrder[id] = false
-	}
 	// Clear auto-derived staleness (explicit staleness is handled by buildExplicitStalenessPlans).
 	rerunCfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
 	rerunCfg.Perturbations.StalenessIntervals = nil
-	seenControllers := observedControllersInReference(reference)
-	for _, controllerID := range seenControllers {
-		if controllerID == "" || controllerID == tracecheck.UserControllerID {
-			continue
+	// Ordering: if the base config specifies permuteOrder controllers, honor that
+	// scope. Otherwise fall back to all controllers observed in the reference.
+	if len(rerunCfg.Perturbations.PermuteOrder) == 0 {
+		seenControllers := observedControllersInReference(reference)
+		rerunCfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+		for _, controllerID := range seenControllers {
+			if controllerID == "" || controllerID == tracecheck.UserControllerID {
+				continue
+			}
+			rerunCfg.Perturbations.PermuteOrder[controllerID] = true
 		}
-		rerunCfg.Perturbations.PermuteOrder[controllerID] = true
 	}
 
 	rerunContext := scenarioCtx
@@ -833,10 +831,20 @@ func buildStalenessPerturbationPlans(
 	base tracecheck.ExploreConfig,
 	scenarioCtx ScenarioContext,
 ) []ScenarioPhasePlan {
-	if reference.Result == nil || len(reference.Result.ConvergedStates) == 0 {
+	if reference.Result == nil {
 		return nil
 	}
-	firstState := reference.Result.ConvergedStates[0]
+	// Prefer converged states for determining read kinds and frontiers,
+	// but fall back to aborted states (e.g. maxDepth reached) which still
+	// contain valid execution history for deriving staleness intervals.
+	var firstState tracecheck.ResultState
+	if len(reference.Result.ConvergedStates) > 0 {
+		firstState = reference.Result.ConvergedStates[0]
+	} else if len(reference.Result.AbortedStates) > 0 {
+		firstState = reference.Result.AbortedStates[0]
+	} else {
+		return nil
+	}
 	if len(firstState.Paths) == 0 {
 		return nil
 	}
@@ -864,8 +872,15 @@ func buildStalenessPerturbationPlans(
 		staleAt      int64
 		catchUpAt    int64
 	}
+	// If the base config specifies permuteOrder controllers, only generate
+	// staleness intervals for those controllers (scoping the search space).
+	permuteScope := base.Perturbations.PermuteOrder
+
 	var intervals []intervalKey
 	for controllerID, kinds := range readKinds {
+		if len(permuteScope) > 0 && !permuteScope[controllerID] {
+			continue
+		}
 		for _, kind := range kinds {
 			maxSeq, ok := maxFrontiers[kind]
 			if !ok || maxSeq < 1 {
@@ -907,11 +922,19 @@ func buildStalenessPerturbationPlans(
 	plans := make([]ScenarioPhasePlan, 0, len(intervals))
 	for i, iv := range intervals {
 		cfg := disablePerturbations(base)
-		for _, cid := range seenControllers {
-			if cid == "" || cid == tracecheck.UserControllerID {
-				continue
+		// Ordering: honor the base config's permuteOrder scope if set,
+		// otherwise fall back to all controllers observed in the reference.
+		if len(permuteScope) > 0 {
+			for cid, enabled := range permuteScope {
+				cfg.Perturbations.PermuteOrder[cid] = enabled
 			}
-			cfg.Perturbations.PermuteOrder[cid] = true
+		} else {
+			for _, cid := range seenControllers {
+				if cid == "" || cid == tracecheck.UserControllerID {
+					continue
+				}
+				cfg.Perturbations.PermuteOrder[cid] = true
+			}
 		}
 		cfg.Perturbations.StalenessIntervals = []tracecheck.StalenessInterval{{
 			ReconcilerID: iv.controllerID,
