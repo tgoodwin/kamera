@@ -4,12 +4,13 @@ go 1.25.5
 
 require (
 	github.com/awslabs/operatorpkg v0.0.0-20251222193911-34e9a1898737
+	github.com/samber/lo v1.52.0
 	github.com/tgoodwin/kamera v0.0.0
 	k8s.io/api v0.35.0
 	k8s.io/apimachinery v0.35.0
 	k8s.io/client-go v0.35.0
 	k8s.io/utils v0.0.0-20251222233032-718f0e51e6d2
-	sigs.k8s.io/controller-runtime v0.22.4
+	sigs.k8s.io/controller-runtime v0.23.0
 	sigs.k8s.io/karpenter v0.0.0
 )
 
@@ -79,7 +80,6 @@ require (
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/rs/xid v1.6.0 // indirect
-	github.com/samber/lo v1.52.0 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/tidwall/gjson v1.18.0 // indirect
