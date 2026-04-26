@@ -738,7 +738,7 @@ func cloneUserInputs(inputs []coverage.ExternalInput) []coverage.ExternalInput {
 	for _, input := range inputs {
 		clone := coverage.ExternalInput{
 			ID:     input.ID,
-			Type:   input.OpType,
+			OpType: input.OpType,
 			Object: nil,
 		}
 		if input.Object != nil {
