@@ -76,21 +76,6 @@ examples/kro/scenarios/k2b-tuning-v*.json
 examples/kro/scenarios/k2b_exhaustive.json
 examples/kro/scenarios/k6_exhaustive.json
 
-# Raw exhaustive-sweep evidence dirs (deleted post-paper; preprocessed
-# *-accumulated.txt files in the same parent dir are sufficient for the figures).
-experiments/coverage-curves/karpenter/exhaustive-output/
-experiments/coverage-curves/kro/k2b-exhaustive-output/
-experiments/coverage-curves/kro/k2b-exhaustive-output-7ctrl-permute/
-
-# Raw experimental data under experiments/coverage-curves/ (.json dumps,
-# .csv metrics) — .txt and .jsonl are already covered by the global rules above.
-experiments/coverage-curves/**/*.json
-experiments/coverage-curves/**/*.csv
-
-# Track only docs (.md), figures (.pdf, .png), and scripts (.py, .sh) under
-# experiments/coverage-curves/. See MANIFEST.md for data provenance.
-!experiments/coverage-curves/**/*.md
-!experiments/coverage-curves/**/*.pdf
-!experiments/coverage-curves/**/*.png
-!experiments/coverage-curves/**/*.py
-!experiments/coverage-curves/**/*.sh
+# Paper-figure scripts, data, and narrative docs.
+# Preserved on the `paper-data` branch.
+experiments/coverage-curves/
