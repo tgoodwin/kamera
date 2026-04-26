@@ -60,6 +60,10 @@ examples/kro/kro
 
 # === Post-paper cleanup (2026-04-25) ===
 
+# Local symlinks to out-of-tree harnesses (see examples/README.md).
+examples/cluster-api
+examples/kcp
+
 # Discarded experiment outputs
 examples/kro/ablation/
 
