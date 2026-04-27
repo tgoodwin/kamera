@@ -70,6 +70,7 @@ examples/kro/ablation/
 # Per-example .agents/ scratch dirs (paper-research analysis docs and evidence).
 # Preserved on the `paper-data` branch.
 examples/*/.agents/
+examples/BUG-FINDINGS.md
 
 # Agent-iteration scenario JSONs (intermediates) and exhaustive scenarios
 # that we don't want to track. Logs of running these are in
