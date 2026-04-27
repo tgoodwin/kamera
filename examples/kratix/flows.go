@@ -37,6 +37,7 @@ const (
 	workPlacementControllerID   tracecheck.ReconcilerID = "WorkPlacementController"
 	promiseControllerID         tracecheck.ReconcilerID = "PromiseController"
 	promiseRevisionControllerID tracecheck.ReconcilerID = "PromiseRevisionController"
+	healthRecordControllerID    tracecheck.ReconcilerID = "HealthRecordController"
 )
 
 const (
@@ -47,6 +48,7 @@ const (
 	resourceBindingKind = "platform.kratix.io/ResourceBinding"
 	promiseKind         = "platform.kratix.io/Promise"
 	promiseRevisionKind = "platform.kratix.io/PromiseRevision"
+	healthRecordKind    = "platform.kratix.io/HealthRecord"
 )
 
 type dynamicControllerSpec struct {
@@ -127,6 +129,19 @@ func configureWorksReconcilers(eb *tracecheck.ExplorerBuilder) {
 	eb.WithResourceDep(stateStoreKind, workPlacementControllerID)
 }
 
+func configureHealthRecordReconciler(eb *tracecheck.ExplorerBuilder) {
+	eb.WithReconciler(healthRecordControllerID, func(c ctrlclient.Client) tracecheck.Reconciler {
+		nsClient := &defaultNamespaceClient{Client: c, namespace: "default"}
+		return &controller.HealthRecordReconciler{
+			Client:        nsClient,
+			Scheme:        c.Scheme(),
+			Log:           ctrl.Log.WithName("healthrecord"),
+			EventRecorder: record.NewFakeRecorder(32),
+		}
+	}).For(healthRecordKind)
+	eb.WithResourceDep(healthRecordKind, healthRecordControllerID)
+}
+
 func configurePromisesReconcilers(
 	eb *tracecheck.ExplorerBuilder,
 	preStarted map[string]*controller.DynamicResourceRequestController,
@@ -170,6 +185,7 @@ func buildInputDrivenBuilder(inputs []coverage.Input) (*tracecheck.ExplorerBuild
 	configureWorksReconcilers(eb)
 	configureDynamicRequestReconcilers(eb, specs)
 	configurePromisesReconcilers(eb, prestarted)
+	configureHealthRecordReconciler(eb)
 	return eb, nil
 }
 
@@ -335,11 +351,15 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
 		}
 
+		cfg, err := explore.ApplyInputTuning(builder.Config(), input.Tuning)
+		if err != nil {
+			return nil, fmt.Errorf("apply tuning for input %d (%s): %w", idx, input.Name, err)
+		}
 		scenarios = append(scenarios, explore.Scenario{
 			Name:             input.Name,
 			EnvironmentState: state,
-			UserInputs:       userInputs,
-			Config:           applyInputTuning(builder.Config(), input.Tuning),
+			ExternalInputs:       userInputs,
+			Config:           cfg,
 		})
 	}
 
@@ -404,6 +424,8 @@ func controllerForObject(obj ctrlclient.Object) (tracecheck.ReconcilerID, bool) 
 		return workControllerID, true
 	case "platform.kratix.io/WorkPlacement", "platform.kratix.io/Destination", "platform.kratix.io/BucketStateStore":
 		return workPlacementControllerID, true
+	case "platform.kratix.io/HealthRecord":
+		return healthRecordControllerID, true
 	default:
 		return "", false
 	}
@@ -428,7 +450,7 @@ func dynamicControllerSpecsFromInputs(inputs []coverage.Input) []dynamicControll
 		for _, obj := range input.EnvironmentState.Objects {
 			add(obj)
 		}
-		for _, userInput := range input.UserInputs {
+		for _, userInput := range input.ExternalInputs {
 			add(userInput.Object)
 		}
 	}
@@ -488,7 +510,7 @@ func configureDynamicRequestReconcilers(eb *tracecheck.ExplorerBuilder, specs []
 			enabled := true
 			canCreateResources := true
 
-			controllerValue := controller.DynamicResourceRequestController{
+			ctrl := &controller.DynamicResourceRequestController{
 				Client:                      nsClient,
 				GVK:                         spec.gvk,
 				Scheme:                      c.Scheme(),
@@ -504,8 +526,11 @@ func configureDynamicRequestReconcilers(eb *tracecheck.ExplorerBuilder, specs []
 				EventRecorder:               record.NewFakeRecorder(32),
 				PromiseUpgrade:              true,
 			}
-			*spec.placeholder = controllerValue
-			return spec.placeholder
+			// Update the shared placeholder so the Promise controller can find
+			// this controller via StartedDynamicControllers. Each fork gets a
+			// fresh controller with the correct replay client.
+			*spec.placeholder = *ctrl
+			return ctrl
 		}).For(rrKind)
 
 		eb.WithResourceDep(rrKind, spec.controllerID)
@@ -527,52 +552,13 @@ func copyDynamicControllers(
 	return out
 }
 
-func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
-	cfg := base.Clone()
-	if tuning.MaxDepth > 0 {
-		cfg.MaxDepth = tuning.MaxDepth
-	}
-	if len(tuning.PermuteControllers) > 0 {
-		if cfg.Perturbations.PermuteOrder == nil {
-			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-		}
-		for _, controllerID := range tuning.PermuteControllers {
-			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
-		}
-	}
-	if len(tuning.StaleReads) > 0 {
-		if cfg.Perturbations.Staleness == nil {
-			cfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
-		}
-		for controllerID, kinds := range tuning.StaleReads {
-			id := tracecheck.ReconcilerID(controllerID)
-			staleness := cfg.Perturbations.Staleness[id]
-			if staleness.StaleReadBounds == nil {
-				staleness.StaleReadBounds = make(tracecheck.LookbackLimits)
-			}
-			for _, kind := range kinds {
-				trimmed := strings.TrimSpace(kind)
-				if trimmed == "" {
-					continue
-				}
-				lookback := tuning.StaleLookback[trimmed]
-				if lookback <= 0 {
-					lookback = 1
-				}
-				staleness.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
-			}
-			cfg.Perturbations.Staleness[id] = staleness
-		}
-	}
-	return cfg
-}
 
 func buildUserActionsFromCoverageInput(
 	input coverage.Input,
 	seededObjects []ctrlclient.Object,
 ) ([]tracecheck.UserAction, error) {
-	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
-	for idx, action := range input.UserInputs {
+	actions := make([]tracecheck.UserAction, 0, len(input.ExternalInputs))
+	for idx, action := range input.ExternalInputs {
 		if action.Object == nil {
 			return nil, fmt.Errorf("input user input %d has nil object", idx)
 		}
@@ -580,7 +566,7 @@ func buildUserActionsFromCoverageInput(
 		if id == "" {
 			id = fmt.Sprintf("user-input-%d", idx)
 		}
-		opType := action.Type
+		opType := action.OpType
 		if opType == event.CREATE && isInputObjectSeeded(action.Object, seededObjects) {
 			opType = event.UPDATE
 		}

@@ -22,7 +22,7 @@ func NewResourceConflictManager(keyStore map[snapshot.ResourceKey]struct{}) *Res
 	}
 }
 
-func ValidateAgainstKeys(op event.OperationType, obj client.Object, keys map[snapshot.ResourceKey]struct{}) error {
+func ValidateAgainstKeys(op event.OperationType, obj client.Object, keys map[snapshot.ResourceKey]struct{}, options *EffectOptions) error {
 	gvk := obj.GetObjectKind().GroupVersionKind()
 	key := snapshot.ResourceKey{
 		Group:     gvk.Group,
@@ -80,6 +80,15 @@ func ValidateAgainstKeys(op event.OperationType, obj client.Object, keys map[sna
 		delete(keys, key)
 
 	case event.APPLY:
+		if options != nil && options.Subresource == "status" {
+			if !exists {
+				return apierrors.NewNotFound(
+					schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
+					obj.GetName())
+			}
+			return nil
+		}
+
 		// APPLY implements upsert semantics - creates or updates as needed
 		if !exists {
 			// Add it for a new resource
@@ -93,8 +102,8 @@ func ValidateAgainstKeys(op event.OperationType, obj client.Object, keys map[sna
 
 // ValidateOperation checks if an operation would result in a conflict
 // and automatically updates the internal tracking state.
-func (v *ResourceConflictManager) ValidateOperation(op event.OperationType, obj client.Object) error {
+func (v *ResourceConflictManager) ValidateOperation(op event.OperationType, obj client.Object, options *EffectOptions) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return ValidateAgainstKeys(op, obj, v.resources)
+	return ValidateAgainstKeys(op, obj, v.resources, options)
 }

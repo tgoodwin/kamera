@@ -30,9 +30,10 @@ type VersionManager interface {
 }
 
 type Effect struct {
-	OpType  event.OperationType
-	Key     snapshot.CompositeKey
-	Version snapshot.VersionHash
+	OpType      event.OperationType
+	Key         snapshot.CompositeKey
+	Version     snapshot.VersionHash
+	Subresource string `json:"subresource,omitempty"`
 
 	Precondition *replay.PreconditionInfo
 }
@@ -50,11 +51,16 @@ func newEffect(key snapshot.CompositeKey, version snapshot.VersionHash, op event
 	}
 }
 
-func newEffectWithPrecondition(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType, precondition *replay.PreconditionInfo) Effect {
+func newEffectWithOptions(key snapshot.CompositeKey, version snapshot.VersionHash, op event.OperationType, precondition *replay.PreconditionInfo, options *replay.EffectOptions) Effect {
+	subresource := ""
+	if options != nil {
+		subresource = options.Subresource
+	}
 	return Effect{
 		OpType:       op,
 		Key:          key,
 		Version:      version,
+		Subresource:  subresource,
 		Precondition: precondition,
 	}
 }
@@ -100,12 +106,19 @@ var _ replay.EffectRecorder = (*manager)(nil)
 
 var DefaultHasher = snapshot.JSONHasher{}
 
-func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, precondition *replay.PreconditionInfo) error {
+func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType event.OperationType, precondition *replay.PreconditionInfo, options *replay.EffectOptions) error {
+	// Check fault injection crash threshold before recording.
+	if ci := getCrashInjector(ctx); ci != nil {
+		if err := ci.CheckWrite(opType); err != nil {
+			return err
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// this will insert a resourceKey into the resourceValidator store
-	if err := m.validateEffect(ctx, opType, obj, precondition); err != nil {
+	if err := m.validateEffect(ctx, opType, obj, precondition, options); err != nil {
 		return err
 	}
 
@@ -139,7 +152,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	}
 
 	key := snapshot.NewCompositeKeyWithGroup(gvk.Group, kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
-	eff := newEffectWithPrecondition(key, versionHash, opType, precondition)
+	eff := newEffectWithOptions(key, versionHash, opType, precondition, options)
 	if opType == event.GET || opType == event.LIST {
 		reffects.reads = append(reffects.reads, eff)
 	} else {
@@ -202,7 +215,7 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 }
 
 // validateEffect checks that the effect operation is valid given the current tracked state with respect to Kubernetes API semantics.
-func (m *manager) validateEffect(ctx context.Context, op event.OperationType, obj client.Object, precondition *replay.PreconditionInfo) error {
+func (m *manager) validateEffect(ctx context.Context, op event.OperationType, obj client.Object, precondition *replay.PreconditionInfo, options *replay.EffectOptions) error {
 	frameID := replay.FrameIDFromContext(ctx)
 	rKeys, ok := m.effectRKeys[frameID]
 	if !ok {
@@ -315,6 +328,16 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		}
 
 	case event.APPLY:
+		if options != nil && options.Subresource == "status" {
+			if !rKeyExists {
+				logger.V(1).Info("status APPLY miss", "key", resourceKey, "tracked", rKeys.List())
+				return apierrors.NewNotFound(
+					schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
+					obj.GetName())
+			}
+			return nil
+		}
+
 		// APPLY implements upsert semantics - creates or updates as needed
 		if !rKeyExists {
 			// Add it for a new resource

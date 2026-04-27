@@ -15,6 +15,10 @@ type nameGeneratingClient struct {
 	counter uint64
 }
 
+func (c *nameGeneratingClient) Reset() {
+	atomic.StoreUint64(&c.counter, 0)
+}
+
 func (c *nameGeneratingClient) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
 	if obj.GetName() == "" && obj.GetGenerateName() != "" {
 		id := atomic.AddUint64(&c.counter, 1)

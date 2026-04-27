@@ -177,12 +177,13 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 	}
 	defer cleanup()
 
-	res, err := r.Strategy.ReconcileAtState(ctx, req.NamespacedName)
-	if err != nil {
-		return nil, errors.Wrap(err, "executing reconcile")
-	}
+	res, reconcileErr := r.Strategy.ReconcileAtState(ctx, req.NamespacedName)
 
-	logger.V(2).Info("reconcile complete", "result", res)
+	// Always retrieve effects, even when the reconcile returned an error.
+	// In real Kubernetes, API writes that occurred before the error are
+	// durable — they already landed on the API server. Discarding them
+	// would be a simulation fidelity gap.
+	logger.V(2).Info("reconcile complete", "result", res, "crashed", reconcileErr != nil)
 	effects, err := r.effectReader.GetEffects(ctx)
 	if err != nil {
 		return nil, errors.Wrap(err, "retrieving reconcile effects")
@@ -191,6 +192,21 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 		panic(fmt.Sprintf("reconcile %s (%s) recorded %d object version(s) without effect metadata", frameID, r.Name, len(effects.ObjectVersions)))
 	}
 	deltas := r.computeDeltas(observableState, effects.ObjectVersions)
+
+	if reconcileErr != nil && !isFaultInjectionCrash(reconcileErr) {
+		// Return the error so the caller can handle re-enqueue semantics,
+		// but include any effects that were already recorded. The caller
+		// should apply these effects (they represent durable API writes)
+		// and also re-enqueue the reconciler.
+		return &ReconcileResult{
+			ControllerID: r.Name,
+			FrameID:      frameID,
+			FrameType:    FrameTypeExplore,
+			Changes:      effects,
+			Deltas:       deltas,
+			ctrlRes:      res,
+		}, errors.Wrap(reconcileErr, "executing reconcile")
+	}
 
 	return &ReconcileResult{
 		ControllerID: r.Name,

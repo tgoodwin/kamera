@@ -16,6 +16,7 @@ import (
 
 	"github.com/tgoodwin/kamera/pkg/analysis"
 	"github.com/tgoodwin/kamera/pkg/coverage"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
 	foov1 "github.com/tgoodwin/kamera/pkg/test/integration/api/v1"
 	"github.com/tgoodwin/kamera/pkg/test/integration/controller"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
@@ -52,6 +53,7 @@ func newTestBuilder(t *testing.T) (*tracecheck.ExplorerBuilder, tracecheck.State
 func TestParallelRunnerDoesNotLeakConfig(t *testing.T) {
 	ctx := context.Background()
 	builder, state := newTestBuilder(t)
+	withPerturbFlag(t, false)
 
 	runner, err := NewParallelRunner(builder)
 	if err != nil {
@@ -375,8 +377,8 @@ func TestParallelRunnerAutoClosedLoopRunsReferenceThenRerunWhenScenarioHasNoPlan
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if len(results[0].Phases) != 2 {
-		t.Fatalf("expected 2 phase results, got %d", len(results[0].Phases))
+	if len(results[0].Phases) < 2 {
+		t.Fatalf("expected at least 2 phase results (reference + rerun), got %d", len(results[0].Phases))
 	}
 	if results[0].Phases[0].Name != "reference" {
 		t.Fatalf("expected first phase to be reference, got %q", results[0].Phases[0].Name)
@@ -508,6 +510,256 @@ func TestBuildUserActionInterleavingPlans_MissingSubsequentActionReturnsNoPlans(
 	}
 }
 
+func TestObservedReadKindsPerControllerCollectsFromObservations(t *testing.T) {
+	reference := ScenarioPhaseResult{
+		Result: &tracecheck.Result{
+			ConvergedStates: []tracecheck.ResultState{
+				{
+					Paths: []tracecheck.ExecutionHistory{
+						{
+							{
+								ControllerID: "ControllerA",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("apps", "Deployment", "default", "web")},
+										{Key: testCompositeKey("", "Service", "default", "web-svc")},
+									},
+								},
+							},
+							{
+								ControllerID: "ControllerB",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("", "Service", "default", "web-svc")},
+										{Key: testCompositeKey("networking.k8s.io", "Ingress", "default", "web-ing")},
+									},
+								},
+							},
+							{
+								ControllerID: tracecheck.UserControllerID,
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("", "ConfigMap", "default", "cfg")},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	readKinds := observedReadKindsPerController(reference)
+	if len(readKinds) != 2 {
+		t.Fatalf("expected 2 controllers (UserControllerID excluded), got %d", len(readKinds))
+	}
+
+	aKinds := readKinds["ControllerA"]
+	if len(aKinds) != 2 || aKinds[0] != "apps/Deployment" || aKinds[1] != "core/Service" {
+		t.Fatalf("expected ControllerA to read [apps/Deployment, core/Service], got %v", aKinds)
+	}
+
+	bKinds := readKinds["ControllerB"]
+	if len(bKinds) != 2 || bKinds[0] != "core/Service" || bKinds[1] != "networking.k8s.io/Ingress" {
+		t.Fatalf("expected ControllerB to read [core/Service, networking.k8s.io/Ingress], got %v", bKinds)
+	}
+}
+
+func TestObservedReadKindsPerControllerReturnsNilOnNilResult(t *testing.T) {
+	result := observedReadKindsPerController(ScenarioPhaseResult{})
+	if result != nil {
+		t.Fatalf("expected nil, got %v", result)
+	}
+}
+
+func TestMaxKindFrontiers(t *testing.T) {
+	path := tracecheck.ExecutionHistory{
+		{
+			ControllerID: "A",
+			KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 1, "core/Service": 2},
+		},
+		{
+			ControllerID: "B",
+			KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 3, "core/Service": 2},
+		},
+		{
+			ControllerID: "A",
+			KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 3, "core/Service": 4},
+		},
+	}
+	maxSeqs := maxKindFrontiers(path)
+	if maxSeqs["apps/Deployment"] != 3 {
+		t.Fatalf("expected maxSeq=3 for apps/Deployment, got %d", maxSeqs["apps/Deployment"])
+	}
+	if maxSeqs["core/Service"] != 4 {
+		t.Fatalf("expected maxSeq=4 for core/Service, got %d", maxSeqs["core/Service"])
+	}
+}
+
+func TestMaxKindFrontiersSkipsNilSteps(t *testing.T) {
+	path := tracecheck.ExecutionHistory{
+		nil,
+		{ControllerID: "A", KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 2}},
+	}
+	maxSeqs := maxKindFrontiers(path)
+	if maxSeqs["apps/Deployment"] != 2 {
+		t.Fatalf("expected maxSeq=2, got %d", maxSeqs["apps/Deployment"])
+	}
+}
+
+func TestBuildStalenessPerturbationPlansProducesIntervalPlans(t *testing.T) {
+	// Reference: ControllerA reads apps/Deployment, frontier advances to 2.
+	// Expected intervals for (ControllerA, apps/Deployment) with maxSeq=2:
+	//   [0,1), [0,2), [1,2) → 3 plans
+	reference := ScenarioPhaseResult{
+		Result: &tracecheck.Result{
+			ConvergedStates: []tracecheck.ResultState{
+				{
+					Paths: []tracecheck.ExecutionHistory{
+						{
+							{
+								ControllerID: "ControllerA",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("apps", "Deployment", "default", "web")},
+									},
+								},
+								KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 1},
+							},
+							{
+								ControllerID: "ControllerA",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("apps", "Deployment", "default", "web")},
+									},
+								},
+								KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 2},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	base := tracecheck.ExploreConfig{MaxDepth: 20}
+	ctx := ScenarioContext{Attributes: map[string]string{"input": "test"}}
+
+	plans := buildStalenessPerturbationPlans(reference, base, ctx)
+	if len(plans) != 3 {
+		t.Fatalf("expected 3 interval plans, got %d", len(plans))
+	}
+
+	// Verify first plan uses StalenessIntervals, not old Staleness map.
+	plan := plans[0]
+	if plan.Name != "staleness_interval_0" {
+		t.Fatalf("expected plan name 'staleness_interval_0', got %q", plan.Name)
+	}
+	if len(plan.Config.Perturbations.StalenessIntervals) != 1 {
+		t.Fatalf("expected 1 staleness interval per plan, got %d", len(plan.Config.Perturbations.StalenessIntervals))
+	}
+	if len(plan.Config.Perturbations.Staleness) != 0 {
+		t.Fatalf("expected old Staleness map to be empty, got %d entries", len(plan.Config.Perturbations.Staleness))
+	}
+
+	// Verify interval values (sorted: staleAt=0,catchUpAt=1 first).
+	iv := plan.Config.Perturbations.StalenessIntervals[0]
+	if iv.ReconcilerID != "ControllerA" {
+		t.Fatalf("expected ReconcilerID=ControllerA, got %s", iv.ReconcilerID)
+	}
+	if iv.Kind != "apps/Deployment" {
+		t.Fatalf("expected Kind=apps/Deployment, got %s", iv.Kind)
+	}
+	if iv.StaleAt != 0 || iv.CatchUpAt != 1 {
+		t.Fatalf("expected first interval [0,1), got [%d,%d)", iv.StaleAt, iv.CatchUpAt)
+	}
+	if iv.Lag != -1 {
+		t.Fatalf("expected Lag=-1 (frozen), got %d", iv.Lag)
+	}
+
+	// Verify ordering permutation is enabled for observed controllers.
+	if !plan.Config.Perturbations.PermuteOrder["ControllerA"] {
+		t.Fatalf("expected ordering permutation enabled for ControllerA")
+	}
+
+	// Verify context attributes.
+	if plan.Context == nil {
+		t.Fatalf("expected plan context")
+	}
+	if plan.Context.Attributes["perturbation.strategy"] != "staleness_interval" {
+		t.Fatalf("expected perturbation.strategy=staleness_interval, got %q", plan.Context.Attributes["perturbation.strategy"])
+	}
+	if plan.Context.Attributes["perturbation.reconciler"] != "ControllerA" {
+		t.Fatalf("expected perturbation.reconciler=ControllerA")
+	}
+
+	// Verify remaining intervals cover [0,2) and [1,2).
+	iv1 := plans[1].Config.Perturbations.StalenessIntervals[0]
+	if iv1.StaleAt != 0 || iv1.CatchUpAt != 2 {
+		t.Fatalf("expected second interval [0,2), got [%d,%d)", iv1.StaleAt, iv1.CatchUpAt)
+	}
+	iv2 := plans[2].Config.Perturbations.StalenessIntervals[0]
+	if iv2.StaleAt != 1 || iv2.CatchUpAt != 2 {
+		t.Fatalf("expected third interval [1,2), got [%d,%d)", iv2.StaleAt, iv2.CatchUpAt)
+	}
+}
+
+func TestBuildStalenessPerturbationPlansNoIntervalsWhenMaxSeqZero(t *testing.T) {
+	// Kind frontier never advances past 0 → no intervals possible.
+	reference := ScenarioPhaseResult{
+		Result: &tracecheck.Result{
+			ConvergedStates: []tracecheck.ResultState{
+				{
+					Paths: []tracecheck.ExecutionHistory{
+						{
+							{
+								ControllerID: "ControllerA",
+								Changes: tracecheck.Changes{
+									Observations: []tracecheck.Effect{
+										{Key: testCompositeKey("apps", "Deployment", "default", "web")},
+									},
+								},
+								KindSeqAfter: tracecheck.KindSequences{"apps/Deployment": 0},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	plans := buildStalenessPerturbationPlans(reference, tracecheck.ExploreConfig{MaxDepth: 10}, ScenarioContext{})
+	if len(plans) != 0 {
+		t.Fatalf("expected no plans when maxSeq=0, got %d", len(plans))
+	}
+}
+
+func TestBuildStalenessPerturbationPlansReturnsNilOnNilResult(t *testing.T) {
+	plans := buildStalenessPerturbationPlans(
+		ScenarioPhaseResult{},
+		tracecheck.ExploreConfig{MaxDepth: 10},
+		ScenarioContext{},
+	)
+	if len(plans) != 0 {
+		t.Fatalf("expected no plans for nil result, got %d", len(plans))
+	}
+}
+
+func testCompositeKey(group, kind, namespace, name string) snapshot.CompositeKey {
+	return snapshot.CompositeKey{
+		IdentityKey: snapshot.IdentityKey{
+			Group: group,
+			Kind:  kind,
+		},
+		ResourceKey: snapshot.ResourceKey{
+			Group:     group,
+			Kind:      kind,
+			Namespace: namespace,
+			Name:      name,
+		},
+	}
+}
+
 func TestParallelRunnerAutoClosedLoopUsesInterleavingForMultiStepWorkflows(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
@@ -537,7 +789,7 @@ func TestParallelRunnerAutoClosedLoopUsesInterleavingForMultiStepWorkflows(t *te
 			Name:             "auto-multistep-interleaving",
 			EnvironmentState: state.Clone(),
 			Config:           tracecheck.ExploreConfig{MaxDepth: 10},
-			UserInputs: []tracecheck.UserAction{
+			ExternalInputs: []tracecheck.UserAction{
 				{
 					ID:     "create-target",
 					OpType: "CREATE",
@@ -569,8 +821,8 @@ func TestParallelRunnerAutoClosedLoopUsesInterleavingForMultiStepWorkflows(t *te
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))
 	}
-	if len(results[0].Phases) != 2 {
-		t.Fatalf("expected reference + one interleaving rerun phase, got %d", len(results[0].Phases))
+	if len(results[0].Phases) < 2 {
+		t.Fatalf("expected at least reference + interleaving phase, got %d", len(results[0].Phases))
 	}
 	if results[0].Phases[0].Name != "reference" {
 		t.Fatalf("expected first phase to be reference, got %q", results[0].Phases[0].Name)
@@ -586,10 +838,10 @@ func TestParallelRunnerAutoClosedLoopUsesInterleavingForMultiStepWorkflows(t *te
 func withPerturbFlag(t *testing.T, enabled bool) {
 	t.Helper()
 
-	oldValue := *perturbFlag
-	*perturbFlag = enabled
+	oldValue := *closedLoopFlag
+	*closedLoopFlag = enabled
 	t.Cleanup(func() {
-		*perturbFlag = oldValue
+		*closedLoopFlag = oldValue
 	})
 }
 
@@ -1025,6 +1277,7 @@ func TestParallelRunnerInProcessExpandsMonteCarloTrials(t *testing.T) {
 func TestParallelRunnerChildModeAnnotatesMonteCarloTrialMetadata(t *testing.T) {
 	ctx := context.Background()
 	builder, state := newTestBuilder(t)
+	withPerturbFlag(t, false)
 
 	runner, err := NewParallelRunner(builder)
 	if err != nil {

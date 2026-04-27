@@ -34,10 +34,10 @@ func TestScenariosFromInputsTranslatesQuickstartApplication(t *testing.T) {
 				buildQuickstartApplicationRGD(),
 			},
 		},
-		UserInputs: []coverage.UserInput{
+		ExternalInputs: []coverage.ExternalInput{
 			{
 				ID:     "create-application-instance",
-				Type:   event.CREATE,
+				OpType: event.CREATE,
 				Object: buildQuickstartApplicationInstance(),
 			},
 		},
@@ -68,19 +68,19 @@ func TestScenariosFromInputsTranslatesQuickstartApplication(t *testing.T) {
 	if len(sc.EnvironmentState.Objects()) == 0 {
 		t.Fatalf("expected seeded state objects, got empty state")
 	}
-	if len(sc.UserInputs) != 1 {
-		t.Fatalf("expected 1 user action, got %d", len(sc.UserInputs))
+	if len(sc.ExternalInputs) != 1 {
+		t.Fatalf("expected 1 user action, got %d", len(sc.ExternalInputs))
 	}
-	if sc.UserInputs[0].ID != "create-application-instance" {
-		t.Fatalf("expected user action id create-application-instance, got %q", sc.UserInputs[0].ID)
+	if sc.ExternalInputs[0].ID != "create-application-instance" {
+		t.Fatalf("expected user action id create-application-instance, got %q", sc.ExternalInputs[0].ID)
 	}
-	if sc.UserInputs[0].OpType != event.CREATE {
-		t.Fatalf("expected CREATE user action, got %q", sc.UserInputs[0].OpType)
+	if sc.ExternalInputs[0].OpType != event.CREATE {
+		t.Fatalf("expected CREATE user action, got %q", sc.ExternalInputs[0].OpType)
 	}
 
-	payload, ok := sc.UserInputs[0].Payload.(*unstructured.Unstructured)
+	payload, ok := sc.ExternalInputs[0].Payload.(*unstructured.Unstructured)
 	if !ok {
-		t.Fatalf("expected unstructured payload, got %T", sc.UserInputs[0].Payload)
+		t.Fatalf("expected unstructured payload, got %T", sc.ExternalInputs[0].Payload)
 	}
 	if payload.GetKind() != "Application" || payload.GetName() != "my-app-instance" {
 		t.Fatalf("unexpected payload identity: kind=%q name=%q", payload.GetKind(), payload.GetName())

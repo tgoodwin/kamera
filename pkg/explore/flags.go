@@ -7,8 +7,10 @@ var (
 	dumpPathFlag          = flag.String("output", "", "optional path to write exploration dump to disk (states, plus stats when --emit-stats is enabled)")
 	configPathFlag        = flag.String("explore-config", "", "optional JSON file to configure exploration")
 	inputsPathFlag        = flag.String("inputs", "", `path to input JSON file`)
-	perturbFlag           = flag.Bool("perturb", true, "enable closed-loop rerun pipeline for batch inputs when supported by scenario generation")
-	parallelProcessesFlag = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
+	closedLoopFlag        = flag.Bool("closed-loop", true, "enable closed-loop rerun pipeline: runs a reference phase then auto-generated perturbation phases derived from the reference trace")
+	noPerturbationsFlag   = flag.Bool("no-perturbations", false, "force-disable all perturbations (ordering, staleness) for a clean reference run, regardless of what is configured in the inputs file")
+	parallelProcessesFlag      = flag.Bool("parallel-processes", false, "run batch mode using process-isolated child executions")
+	metricsOnlyStalenessFlag   = flag.Bool("metrics-only-staleness", false, "skip full JSONL dumps for staleness interval phases; write lightweight CSV metrics instead")
 	// these ones are internal flags used by child processes in --parallel-processes mode,
 	// not intended for manual setting
 	parallelChildIndexFlag = flag.Int(
@@ -48,9 +50,20 @@ func InputsPath() string {
 	return *inputsPathFlag
 }
 
-// PerturbEnabled returns the parsed value for the perturb flag.
-func PerturbEnabled() bool {
-	return *perturbFlag
+// ClosedLoopEnabled returns true when the closed-loop rerun pipeline is active.
+// When true, runs a reference phase (perturbations stripped) followed by auto-generated
+// perturbation phases derived from the reference trace.
+// When false, runs a single phase with the config as specified in the inputs file.
+func ClosedLoopEnabled() bool {
+	return *closedLoopFlag
+}
+
+// NoPerturbationsEnabled returns true when --no-perturbations is set.
+// When true, all perturbation config (ordering, staleness) is stripped before running,
+// producing a clean reference run regardless of what is configured in the inputs file.
+// Use this to get a baseline trace from a JSON that already has permuteControllers configured.
+func NoPerturbationsEnabled() bool {
+	return *noPerturbationsFlag
 }
 
 // ParallelProcessesEnabled reports whether process-isolated parallel mode is enabled.
@@ -71,4 +84,10 @@ func ParallelChildTrialIndex() int {
 // ParallelChildJobIndex returns the selected job index for process-isolated mode.
 func ParallelChildJobIndex() int {
 	return *parallelChildJobIndexFlag
+}
+
+// MetricsOnlyStalenessEnabled returns true when staleness phases should skip
+// full dumps and only record lightweight CSV metrics.
+func MetricsOnlyStalenessEnabled() bool {
+	return *metricsOnlyStalenessFlag
 }

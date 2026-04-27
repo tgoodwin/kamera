@@ -10,10 +10,10 @@
       "staleReads": null,
       "staleLookback": null
     },
-    "userInputs": [
+    "externalInputs": [
       {
         "id": "initial create",
-        "type": "CREATE",
+        "opType": "CREATE",
         "object": {
           "apiVersion": "serving.knative.dev/v1",
           "kind": "Service",
@@ -45,7 +45,7 @@
       },
       {
         "id": "update to 2 replicas",
-        "type": "UPDATE",
+        "opType": "UPDATE",
         "object": {
           "apiVersion": "serving.knative.dev/v1",
           "kind": "Service",

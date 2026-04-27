@@ -14,6 +14,7 @@ import (
 	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -49,6 +50,21 @@ type ExplorerBuilder struct {
 	podCrashProbabilities map[controller.PodLifecycleStage]float64
 
 	userActions []UserAction
+
+	// resourceVersions maps each VersionHash to its global ResourceVersion.
+	// Owned by the builder so it is available during BuildStartStateFromObjects
+	// (before Build) and then transferred to the Explorer in Build().
+	resourceVersions map[snapshot.VersionHash]int64
+
+	// onForkFuncs are called at the beginning of Fork() to reset shared
+	// mutable state that lives outside the snapshot system (e.g. in-memory
+	// controller caches). This ensures each forked exploration (Monte Carlo
+	// trial, perturbation phase) starts from a clean slate.
+	onForkFuncs []func()
+
+	// onCrashFuncs are called when a fault injection crash is triggered.
+	// They reset shared in-memory state to simulate a process restart.
+	onCrashFuncs []func()
 }
 
 // ReconcilerBuilder enables chaining reconciler-specific configuration
@@ -78,6 +94,14 @@ func (rb *ReconcilerBuilder) WatchesGK(gk schema.GroupKind, mapper WatchMapper) 
 	return rb
 }
 
+// WatchesStateful registers a stateful watch mapper that receives a StateReader for
+// cross-referencing other objects. Use this when the mapper needs to list/query objects
+// beyond the changed object itself (e.g., Pod→Service selector matching).
+func (rb *ReconcilerBuilder) WatchesStateful(kind string, mapper StatefulWatchMapper) *ReconcilerBuilder {
+	rb.parent.WithStatefulWatch(kind, mapper, rb.id)
+	return rb
+}
+
 // PermuteOrder marks this reconciler as eligible for order permutation during exploration.
 func (rb *ReconcilerBuilder) PermuteOrder() *ReconcilerBuilder {
 	cfg := rb.parent.Config()
@@ -104,6 +128,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		emitter:                    event.NewInMemoryEmitter(),
 		snapStore:                  snapshot.NewStore(),
 		reconcilerToKind:           make(map[ReconcilerID]string),
+		resourceVersions:           make(map[snapshot.VersionHash]int64),
 
 		config: &ExploreConfig{
 			MaxDepth:        *searchDepth,
@@ -143,9 +168,30 @@ func (b *ExplorerBuilder) BuildRestartSeed(state StateNode) (RestartSeed, error)
 
 // Fork returns a new builder with shared configuration and fresh mutable state
 // (snapshot store, emitter). This is intended for isolated parallel runs.
+// OnFork registers a callback that runs at the start of each Fork() call.
+// Use this to reset shared mutable state (e.g. in-memory caches, counters)
+// that lives outside the explorer's snapshot system and must start fresh
+// for each independent trial.
+func (b *ExplorerBuilder) OnFork(fn func()) {
+	b.onForkFuncs = append(b.onForkFuncs, fn)
+}
+
+// OnCrash registers a callback that runs when a fault injection crash is
+// triggered during exploration. Use this to reset shared in-memory state
+// (e.g. caches, queues, counters) that would be lost in a real process crash.
+// All controllers share the same process in real Kubernetes, so a crash
+// resets ALL controller state — not just the crashed controller's.
+func (b *ExplorerBuilder) OnCrash(fn func()) {
+	b.onCrashFuncs = append(b.onCrashFuncs, fn)
+}
+
 func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 	if b == nil {
 		return nil
+	}
+
+	for _, fn := range b.onForkFuncs {
+		fn()
 	}
 
 	return &ExplorerBuilder{
@@ -162,6 +208,9 @@ func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 		builder:                    b.builder,
 		podCrashProbabilities:      maps.Clone(b.podCrashProbabilities),
 		userActions:                slices.Clone(b.userActions),
+		resourceVersions:           make(map[snapshot.VersionHash]int64),
+		onForkFuncs:                b.onForkFuncs,
+		onCrashFuncs:               b.onCrashFuncs,
 	}
 }
 
@@ -281,6 +330,23 @@ func (b *ExplorerBuilder) WithWatchGK(gk schema.GroupKind, mapper WatchMapper, r
 	reg := WatchRegistration{
 		Mapper:       mapper,
 		ReconcilerID: reconcilerID,
+	}
+	b.watchers[key] = append(b.watchers[key], reg)
+	return b
+}
+
+func (b *ExplorerBuilder) WithStatefulWatch(kind string, mapper StatefulWatchMapper, reconcilerID ReconcilerID) *ExplorerBuilder {
+	if mapper == nil {
+		return b
+	}
+	if b.watchers == nil {
+		b.watchers = make(WatchRegistrations)
+	}
+	gk := parseKindString(kind)
+	key := util.CanonicalGroupKind(gk.Group, gk.Kind)
+	reg := WatchRegistration{
+		StatefulMapper: mapper,
+		ReconcilerID:   reconcilerID,
 	}
 	b.watchers[key] = append(b.watchers[key], reg)
 	return b
@@ -565,11 +631,51 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 			Client: c,
 			Scheme: b.scheme,
 		}
-	}).For("Service")
+	}).For("Service").WatchesStateful("Pod", mapPodToServices)
 
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")
+}
+
+// mapPodToServices maps a Pod change to the Services whose selectors match the pod's labels.
+// This mirrors the real kube EndpointsController's Pod watch behavior.
+func mapPodToServices(pod *unstructured.Unstructured, reader StateReader) []reconcile.Request {
+	if pod == nil {
+		return nil
+	}
+	podLabels := pod.GetLabels()
+	if len(podLabels) == 0 {
+		return nil
+	}
+
+	services := reader.ListByKind(util.CanonicalGroupKind("", "Service"))
+	var requests []reconcile.Request
+	for _, svc := range services {
+		selector, found, err := unstructured.NestedStringMap(svc.Object, "spec", "selector")
+		if err != nil || !found || len(selector) == 0 {
+			continue
+		}
+		if labelsMatchSelector(podLabels, selector) {
+			requests = append(requests, reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: svc.GetNamespace(),
+					Name:      svc.GetName(),
+				},
+			})
+		}
+	}
+	return requests
+}
+
+// labelsMatchSelector returns true if all selector key-value pairs are present in labels.
+func labelsMatchSelector(labels, selector map[string]string) bool {
+	for k, v := range selector {
+		if labels[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // getPodLifecycleFactory returns the PodStateMachineFactory to use for the
@@ -761,7 +867,19 @@ func (b *ExplorerBuilder) PrimeVersionStoreFromHistory(history ExecutionHistory,
 
 // BuildStartStateFromObjects constructs a starting StateNode from concrete objects and an initial pending list.
 func (b *ExplorerBuilder) BuildStartStateFromObjects(objs []client.Object, pending []PendingReconcile) (StateNode, error) {
-	return buildStartStateFromObjects(b.snapStore, b.scheme, objs, pending)
+	return buildStartStateFromObjects(b.snapStore, b.scheme, objs, pending, b.resourceVersions)
+}
+
+// ReconcilerForGVK returns the reconciler ID that is primary for the given GVK,
+// or empty string if no reconciler is registered for it.
+func (b *ExplorerBuilder) ReconcilerForGVK(gvk schema.GroupVersionKind) ReconcilerID {
+	canonical := util.CanonicalGroupKind(gvk.Group, gvk.Kind)
+	for id, kind := range b.reconcilerToKind {
+		if kind == canonical {
+			return id
+		}
+	}
+	return ""
 }
 
 func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
@@ -876,8 +994,10 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		versionManager:       vStore,
 
 		// for prioritizing 'interesting' (potentially bug-causing) states to explore
-		priorityHandler: b.priorityBuilder.Build(b.snapStore),
-		userController:  userController,
+		priorityHandler:  b.priorityBuilder.Build(b.snapStore),
+		userController:   userController,
+		resourceVersions: b.resourceVersions,
+		onCrashFuncs:     b.onCrashFuncs,
 	}
 
 	return explorer, nil

@@ -36,9 +36,9 @@ func TestScenariosFromInputsTranslatesStateActionsAndTuning(t *testing.T) {
 		EnvironmentState: coverage.EnvironmentState{
 			Objects: []*unstructured.Unstructured{functionObj},
 		},
-		UserInputs: []coverage.UserInput{
+		ExternalInputs: []coverage.ExternalInput{
 			{
-				Type:   event.CREATE,
+				OpType: event.CREATE,
 				Object: xr,
 			},
 		},
@@ -69,18 +69,18 @@ func TestScenariosFromInputsTranslatesStateActionsAndTuning(t *testing.T) {
 	if len(sc.EnvironmentState.Objects()) == 0 {
 		t.Fatalf("expected seeded state objects, got empty state")
 	}
-	if len(sc.UserInputs) != 1 {
-		t.Fatalf("expected 1 user action, got %d", len(sc.UserInputs))
+	if len(sc.ExternalInputs) != 1 {
+		t.Fatalf("expected 1 user action, got %d", len(sc.ExternalInputs))
 	}
-	if sc.UserInputs[0].ID != "user-input-0" {
-		t.Fatalf("expected default action id user-input-0, got %q", sc.UserInputs[0].ID)
+	if sc.ExternalInputs[0].ID != "user-input-0" {
+		t.Fatalf("expected default action id user-input-0, got %q", sc.ExternalInputs[0].ID)
 	}
-	if sc.UserInputs[0].OpType != event.CREATE {
-		t.Fatalf("expected CREATE user action, got %q", sc.UserInputs[0].OpType)
+	if sc.ExternalInputs[0].OpType != event.CREATE {
+		t.Fatalf("expected CREATE user action, got %q", sc.ExternalInputs[0].OpType)
 	}
-	payload, ok := sc.UserInputs[0].Payload.(*unstructured.Unstructured)
+	payload, ok := sc.ExternalInputs[0].Payload.(*unstructured.Unstructured)
 	if !ok {
-		t.Fatalf("expected unstructured payload, got %T", sc.UserInputs[0].Payload)
+		t.Fatalf("expected unstructured payload, got %T", sc.ExternalInputs[0].Payload)
 	}
 	if payload == xr {
 		t.Fatalf("expected payload deep copy, got original pointer")
@@ -109,10 +109,10 @@ func TestScenariosFromInputsSeedsCreateOnlyInputs(t *testing.T) {
 
 	input := coverage.Input{
 		Name: "crossplane-create-only",
-		UserInputs: []coverage.UserInput{
+		ExternalInputs: []coverage.ExternalInput{
 			{
 				ID:     "create-xr",
-				Type:   event.CREATE,
+				OpType: event.CREATE,
 				Object: xr,
 			},
 		},
@@ -130,11 +130,11 @@ func TestScenariosFromInputsSeedsCreateOnlyInputs(t *testing.T) {
 	if len(sc.EnvironmentState.Objects()) == 0 {
 		t.Fatalf("expected state to be seeded from create inputs")
 	}
-	if len(sc.UserInputs) != 1 {
-		t.Fatalf("expected 1 user action, got %d", len(sc.UserInputs))
+	if len(sc.ExternalInputs) != 1 {
+		t.Fatalf("expected 1 user action, got %d", len(sc.ExternalInputs))
 	}
-	if sc.UserInputs[0].OpType != event.UPDATE {
-		t.Fatalf("expected seeded CREATE to translate to UPDATE, got %q", sc.UserInputs[0].OpType)
+	if sc.ExternalInputs[0].OpType != event.UPDATE {
+		t.Fatalf("expected seeded CREATE to translate to UPDATE, got %q", sc.ExternalInputs[0].OpType)
 	}
 }
 

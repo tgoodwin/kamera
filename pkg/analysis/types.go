@@ -87,7 +87,8 @@ type DumpReconcileResult struct {
 	StateAfter        []DumpObjectVersion      `json:"stateAfter,omitempty"`
 	KindSeqBefore     tracecheck.KindSequences `json:"kindSeqBefore,omitempty"`
 	KindSeqAfter      tracecheck.KindSequences `json:"kindSeqAfter,omitempty"`
-	Pending           []DumpPendingReconcile   `json:"pendingReconciles,omitempty"`
+	Pending           []DumpPendingReconcile       `json:"pendingReconciles,omitempty"`
+	StalenessInfo     []tracecheck.StaleReadInfo   `json:"stalenessInfo,omitempty"`
 }
 
 // DumpChanges represents the changes made during a reconcile step.

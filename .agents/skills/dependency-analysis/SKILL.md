@@ -1,11 +1,16 @@
 ---
 name: dependency-analysis
-description: Generate and validate controller-resource dependency graph artifacts for Kamera coverage strategy v2. Use this when extracting triggers/reads/writes from Kubernetes control planes, assigning resource roles, and producing contract-compliant dependency-graph.json plus schema-map.json outputs.
+description: Generate and validate controller-resource dependency graph artifacts for Kamera coverage strategy v2. Use this when extracting triggers/reads/writes from Kubernetes control planes by reading source code and consulting public docs, assigning resource roles, and producing a contract-compliant bipartite dependency-graph.json.
 metadata:
   short-description: Build contract-compliant dependency graphs
 ---
 
 # Dependency Analysis Skill
+
+**Your role is to FIND bugs, not fix them.** You are analyzing third-party
+controller source code to extract dependency information. Never modify, rewrite,
+or propose changes to the controller source code under test. Your only outputs
+are dependency graph artifacts and analysis notes.
 
 Use this skill when you need to analyze a Kubernetes control-plane codebase and
 produce dependency artifacts consumed by Kamera v2 input generation.
@@ -19,9 +24,7 @@ The graph artifact is valid only if it satisfies:
 Validation command:
 
 ```bash
-scripts/validate-dependency-graph.sh \
-  --graph dependency-graph.json \
-  --schema-map schema-map.json
+scripts/validate-dependency-graph.sh --graph dependency-graph.json
 ```
 
 If validation fails, do not proceed downstream. Fix or regenerate artifacts.
@@ -31,8 +34,7 @@ If validation fails, do not proceed downstream. Fix or regenerate artifacts.
 For each analyzed project, produce:
 
 1. `dependency-graph.json` (contract-compliant)
-2. `schema-map.json` (must include every graph resource ID)
-3. `analysis-notes.md` (human evidence summary for reviewers)
+2. `analysis-notes.md` (human evidence summary for reviewers)
 
 ## Workflow
 
@@ -56,6 +58,13 @@ For each analyzed project, produce:
 - Reads: `Get`, `List`, lister/cache reads
 - Writes: `Create`, `Update`, `Patch`, `Delete`, `Status().Update/Patch`
 - Set `surface` to one of: `spec`, `status`, `metadata`, `any`
+- **Multi-write sequences:** If a single `Reconcile()` call performs multiple
+  writes in sequence, record the full write sequence (e.g., "PATCH Node →
+  PATCH NodeClaim → CREATE replacement → UPDATE cluster state"). Each pair
+  of consecutive writes is a crash-vulnerability window for fault injection.
+  Also note in-memory side effects (channel sends, map updates, cache writes)
+  that happen between API writes — these are lost on crash but not captured
+  by API-level fault injection.
 
 5. Canonicalize resource IDs:
 - Resource IDs must be `group/version/kind`
@@ -96,7 +105,6 @@ Decision cues:
 
 7. Build artifacts:
 - Emit `dependency-graph.json` using contract field names and enums.
-- Emit `schema-map.json` with complete resource-key coverage.
 
 8. Validate and gate:
 - Run validator script.
@@ -106,40 +114,35 @@ Decision cues:
 
 Use this template when delegating artifact creation to an LLM:
 
-> Analyze `<project-path>` and produce `dependency-graph.json`,
-> `schema-map.json`, and `analysis-notes.md`.
+> Analyze `<project-path>` and produce `dependency-graph.json` and
+> `analysis-notes.md`.
 >
 > Requirements:
-> 1. `dependency-graph.json` MUST satisfy
+> 1. Read the source code directly — find controller/reconciler wiring,
+>    reconcile call chains, and resource interactions.
+> 2. Consult official project documentation and public API references to
+>    confirm resource roles and resolve ambiguity.
+> 3. `dependency-graph.json` MUST satisfy
 >    `docs/design/dependency-graph-contract.md` exactly.
-> 2. Use contract field names/enums exactly (`nodes`, `edges`, `id`, `gvk`,
+> 4. Use contract field names/enums exactly (`nodes`, `edges`, `id`, `gvk`,
 >    `role`, `kind=triggers|reads|writes`, `trigger`, `surface`).
-> 3. Verify controller registration from entrypoints, not grep-only discovery.
-> 4. Traverse reconcile helper call chains for read/write extraction.
-> 5. Assign explicit `role` to every resource node.
-> 6. For ambiguous role assignments, run web search against official project
+> 5. Verify controller registration from entrypoints, not grep-only discovery.
+> 6. Traverse reconcile helper call chains for read/write extraction.
+> 7. Assign explicit `role` to every resource node.
+> 8. For ambiguous role assignments, run web search against official project
 >    docs and include citations in `analysis-notes.md`.
-> 7. Ensure every graph resource ID exists in `schema-map.json`.
 >
 > Reject output if any required field is missing, any edge endpoint is dangling,
-> any controller lacks `primary` trigger, any role decision lacks evidence, or
-> schema-map coverage is incomplete.
+> any controller lacks `primary` trigger, or any role decision lacks evidence.
 
 ## Reviewer Checks
 
 ```bash
 # one-command gate
-scripts/validate-dependency-graph.sh \
-  --graph dependency-graph.json \
-  --schema-map schema-map.json
+scripts/validate-dependency-graph.sh --graph dependency-graph.json
 
 # role evidence sanity check (should list each resource role rationale)
 rg "role rationale" analysis-notes.md
-
-# resource coverage spot-check (should be empty)
-comm -23 \
-  <(jq -r '.nodes[] | select(.kind=="resource") | .id' dependency-graph.json | sort -u) \
-  <(jq -r '.mapping | keys[]' schema-map.json | sort -u)
 ```
 
 ## Non-Goals

@@ -29,8 +29,8 @@ func TestScenariosFromInputsRequiresBuilder(t *testing.T) {
 func TestKarpenterBuilderConfiguresSimclockStepSize(t *testing.T) {
 	simclock.Configure(time.Unix(0, 0), 2*time.Second)
 	newKarpenterExplorerBuilder()
-	if got := simclock.StepDuration(); got != time.Second {
-		t.Fatalf("expected karpenter builder to configure simclock step to 1s, got %v", got)
+	if got := simclock.StepDuration(); got != 30*time.Second {
+		t.Fatalf("expected karpenter builder to configure simclock step to 30s, got %v", got)
 	}
 }
 
@@ -146,11 +146,11 @@ func TestExpandKarpenterParameterizedInputAddsNoFitNodeSelectorVariant(t *testin
 		if variant.Name != target {
 			continue
 		}
-		podIdx := findKarpenterPodInUserInputs(variant.UserInputs)
+		podIdx := findKarpenterPodInUserInputs(variant.ExternalInputs)
 		if podIdx < 0 {
 			t.Fatalf("variant %q missing pod user input", target)
 		}
-		pod, err := unstructuredToPod(variant.UserInputs[podIdx].Object)
+		pod, err := unstructuredToPod(variant.ExternalInputs[podIdx].Object)
 		if err != nil {
 			t.Fatalf("convert pod variant: %v", err)
 		}
@@ -497,10 +497,10 @@ func mustKarpenterInput(t *testing.T, name string) coverage.Input {
 		EnvironmentState: coverage.EnvironmentState{
 			Objects: objects,
 		},
-		UserInputs: []coverage.UserInput{
+		ExternalInputs: []coverage.ExternalInput{
 			{
 				ID:     "create-pending-pod",
-				Type:   event.CREATE,
+				OpType: event.CREATE,
 				Object: podObj,
 			},
 		},

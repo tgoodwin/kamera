@@ -179,6 +179,49 @@ lifecycle := analysis.AnalyzeObjectLifecycle(dump, stateIdx, pathIdx, key, targe
 4. **Use Go API** to compare StateBefore across paths - this reveals what each controller saw when it made its write
 5. **Check lifecycle** if needed - does the differing hash appear earlier in one path but not another?
 
+## Scenario Run Tuning
+
+After every scenario run, **always** run `campaign-metrics` to check convergence:
+```bash
+go run ./cmd/kamera analyze campaign-metrics <dump.jsonl>
+```
+This shows the true breakdown of converged vs aborted states. Do NOT rely on `analyze diff` alone — it treats aborted (max-depth) states as converged, which produces misleading "divergence" results. The `campaign-metrics` output distinguishes `aborted states` from `max-depth aborted states` and actual converged states.
+
+If **all** states are max-depth aborted (i.e., zero truly converged states), the `maxDepth` is too low for the scenario. In that case:
+
+1. Double the `maxDepth` value (2x the current setting).
+2. Re-run the scenario with the increased depth.
+3. If the scenario is still not converging after doubling 2 or 3 times, inspect the executions to diagnose what's going on.
+
+This applies to both reference and rerun phases. A run where every path hits max depth produces no converged states and therefore no usable divergence analysis.
+
+## Measuring Pipeline Changes with Campaign Metrics
+
+When modifying perturbation strategies, plan builders, or other parts of the exploration pipeline, use `campaign-metrics` as a before/after measurement tool to validate that changes improve state space coverage.
+
+### Workflow
+
+1. **Before the change**: Run the scenario on a representative input and save the dump:
+   ```bash
+   # run scenario, note the dump path
+   go run ./cmd/kamera analyze campaign-metrics /path/to/before-dump.jsonl
+   ```
+   Record: unique node visits, total node visits, unique resource states, converged/aborted counts.
+
+2. **After the change**: Run the same scenario on the same input with the modified pipeline:
+   ```bash
+   go run ./cmd/kamera analyze campaign-metrics /path/to/after-dump.jsonl
+   ```
+
+3. **Compare the key metrics**:
+   - **Unique node visits increasing** = good. The change explores states that weren't reached before.
+   - **Total node visits increasing while unique stays flat** = bad. The change creates more work (redundant exploration) without gaining coverage.
+   - **Converged states changing** = worth investigating. More converged states may mean better convergence; more unique converged states means unearthing potential bugs (good!); fewer may mean the change disrupts settling.
+
+### Why this matters
+
+Campaign metrics ensure that we are modifying the Kamera pipeline in alignment with our goal of exploring the state space to find bugs: if a strategy change doesn't move the unique-node-visits needle on a representative input, it isn't earning its cost. Be measurement-driven when iterating on the pipeline.
+
 ## Dependency Graph Analysis (pkg/analyze)
 
 The `pkg/analyze` package (and associated `cmd/analyze` tool) relies on static dependency graphs of Kubernetes operators to identify interaction hotspots.

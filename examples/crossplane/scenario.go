@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -11,9 +12,11 @@ import (
 	"github.com/crossplane/crossplane/v2/apis/apiextensions/v1"
 	pkgmetav1 "github.com/crossplane/crossplane/v2/apis/pkg/meta/v1"
 	pkgv1 "github.com/crossplane/crossplane/v2/apis/pkg/v1"
+	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/claim"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composite"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composition"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/revision"
+	xpresource "github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -26,11 +29,14 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
 	xrKind          = "XWidget"
+	claimKind       = "WidgetClaim"
 	xrAPIVersion    = "example.org/v1"
 	compositionName = "widget-composition"
 )
@@ -56,7 +62,8 @@ func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
 			revision.WithLogger(log),
 			revision.WithRecorder(recorder),
 		)
-	}).For("apiextensions.crossplane.io/CompositionRevision")
+	}).For("apiextensions.crossplane.io/CompositionRevision").
+		Watches("pkg.crossplane.io/FunctionRevision", functionRevisionToCompositionRevisionMapper())
 
 	builder.WithReconciler("CompositeReconciler", func(c client.Client) tracecheck.Reconciler {
 		runner := stubFunctionRunner{}
@@ -71,7 +78,69 @@ func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
 		)
 	}).ForGK(schema.GroupKind{Group: "example.org", Kind: xrKind})
 
+	claimGVK := schema.GroupVersionKind{Group: "example.org", Version: "v1", Kind: claimKind}
+	xrGVK := schema.GroupVersionKind{Group: "example.org", Version: "v1", Kind: xrKind}
+
+	builder.WithReconciler("ClaimReconciler", func(c client.Client) tracecheck.Reconciler {
+		return claim.NewReconciler(
+			c,
+			claimGVK,
+			xrGVK,
+			claim.WithCompositeSyncer(claim.NewClientSideCompositeSyncer(c, deterministicNameGenerator{})),
+			claim.WithConnectionPropagator(claim.ConnectionPropagatorFn(
+				func(_ context.Context, _ claim.LocalConnectionSecretOwner, _ claim.ConnectionSecretOwner) (bool, error) {
+					return false, nil // no-op: connection secret propagation not tested
+				},
+			)),
+			claim.WithLogger(log),
+			claim.WithRecorder(recorder),
+		)
+	}).ForGK(schema.GroupKind{Group: "example.org", Kind: claimKind}).
+		Watches("example.org/XWidget", claimXRToClaimMapper())
+
 	return builder
+}
+
+// deterministicNameGenerator generates a fixed name for XRs created by claims.
+// The real Crossplane NameGenerator uses random suffixes, which would make every
+// kamera trial produce a trivially-unique terminal state. This generator uses
+// a deterministic suffix derived from the claim name.
+type deterministicNameGenerator struct{}
+
+func (deterministicNameGenerator) GenerateName(_ context.Context, cd xpresource.Object) error {
+	if cd.GetGenerateName() != "" {
+		cd.SetName(cd.GetGenerateName() + "xr")
+		cd.SetGenerateName("")
+	}
+	return nil
+}
+
+// claimXRToClaimMapper creates a WatchMapper that enqueues the claim when an
+// XR changes. In real Crossplane, this uses the XR's claimRef. For the harness,
+// we use a naming convention: the claim name matches the XR's claimRef.name.
+func claimXRToClaimMapper() tracecheck.WatchMapper {
+	return func(obj *unstructured.Unstructured) []reconcile.Request {
+		if obj == nil {
+			return nil
+		}
+		// Read claimRef from XR spec
+		spec, ok := obj.Object["spec"].(map[string]any)
+		if !ok {
+			return nil
+		}
+		claimRef, ok := spec["claimRef"].(map[string]any)
+		if !ok {
+			return nil
+		}
+		name, _ := claimRef["name"].(string)
+		namespace, _ := claimRef["namespace"].(string)
+		if name == "" {
+			return nil
+		}
+		return []reconcile.Request{
+			{NamespacedName: types.NamespacedName{Name: name, Namespace: namespace}},
+		}
+	}
 }
 
 func buildInitialCrossplaneState(builder *tracecheck.ExplorerBuilder) tracecheck.StateNode {
@@ -127,6 +196,37 @@ func buildCompositeResource() *unstructured.Unstructured {
 		},
 	}
 	return xr
+}
+
+// functionRevisionToCompositionRevisionMapper creates a WatchMapper that
+// models the Crossplane EnqueueCompositionRevisionsForFunctionRevision handler.
+// When a FunctionRevision changes, the real handler lists all CompositionRevisions
+// and enqueues those whose pipeline references the function. Since the Kamera
+// WatchMapper doesn't have store access, this mapper uses the known
+// CompositionRevision naming convention from the scenario.
+func functionRevisionToCompositionRevisionMapper() tracecheck.WatchMapper {
+	return func(obj *unstructured.Unstructured) []reconcile.Request {
+		if obj == nil {
+			return nil
+		}
+		labels := obj.GetLabels()
+		if labels == nil {
+			return nil
+		}
+		// Only trigger for functions that have the parent package label
+		pkgName := labels[pkgv1.LabelParentPackage]
+		if pkgName == "" {
+			return nil
+		}
+		// In the real controller, this would List all CompositionRevisions
+		// and find those whose pipeline references this function.
+		// For the Kamera harness, we use the known CompositionRevision name
+		// from the scenario. The rev-1 naming follows the convention used
+		// in the workflow JSON.
+		return []reconcile.Request{
+			{NamespacedName: types.NamespacedName{Name: compositionName + "-rev-1"}},
+		}
+	}
 }
 
 func buildFunctionRevision() *pkgv1.FunctionRevision {
@@ -243,11 +343,15 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
 		}
 
+		cfg, err := explore.ApplyInputTuning(baseCfg, input.Tuning)
+		if err != nil {
+			return nil, fmt.Errorf("apply tuning for input %d (%s): %w", idx, input.Name, err)
+		}
 		scenarios = append(scenarios, explore.Scenario{
 			Name:             input.Name,
 			EnvironmentState: state,
-			UserInputs:       userInputs,
-			Config:           applyInputTuning(baseCfg, input.Tuning),
+			ExternalInputs:       userInputs,
+			Config:           cfg,
 		})
 	}
 
@@ -268,8 +372,8 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 	}
 
 	if len(objects) == 0 {
-		for _, action := range input.UserInputs {
-			if action.Type != event.CREATE || action.Object == nil {
+		for _, action := range input.ExternalInputs {
+			if action.OpType != event.CREATE || action.Object == nil {
 				continue
 			}
 			objects = append(objects, action.Object.DeepCopy())
@@ -280,16 +384,48 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 		return tracecheck.StateNode{}, nil, fmt.Errorf("input has no seedable objects")
 	}
 
-	state, err := builder.BuildStartStateFromObjects(objects, nil)
+	// Compute initial pending reconciles for environment state objects.
+	// Each object whose GVK has a registered primary reconciler gets an
+	// initial pending reconcile so the reconciler processes it at startup.
+	pending := initialPendingForObjects(builder, objects)
+
+	state, err := builder.BuildStartStateFromObjects(objects, pending)
 	if err != nil {
 		return tracecheck.StateNode{}, nil, err
 	}
 	return state, objects, nil
 }
 
+// initialPendingForObjects returns initial pending reconciles for environment
+// state objects that have a registered primary reconciler.
+func initialPendingForObjects(builder *tracecheck.ExplorerBuilder, objects []client.Object) []tracecheck.PendingReconcile {
+	var pending []tracecheck.PendingReconcile
+	for _, obj := range objects {
+		gvk := obj.GetObjectKind().GroupVersionKind()
+		if gvk.Kind == "" {
+			continue
+		}
+		reconcilerID := builder.ReconcilerForGVK(gvk)
+		if reconcilerID == "" {
+			continue
+		}
+		pending = append(pending, tracecheck.PendingReconcile{
+			ReconcilerID: reconcilerID,
+			Request: reconcile.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: obj.GetNamespace(),
+					Name:      obj.GetName(),
+				},
+			},
+			Source: tracecheck.SourceStateChange,
+		})
+	}
+	return pending
+}
+
 func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
-	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
-	for idx, action := range input.UserInputs {
+	actions := make([]tracecheck.UserAction, 0, len(input.ExternalInputs))
+	for idx, action := range input.ExternalInputs {
 		if action.Object == nil {
 			return nil, fmt.Errorf("input user input %d has nil object", idx)
 		}
@@ -299,7 +435,7 @@ func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []cli
 			id = fmt.Sprintf("user-input-%d", idx)
 		}
 
-		opType := action.Type
+		opType := action.OpType
 		if opType == event.CREATE && isInputObjectSeeded(action.Object, seededObjects) {
 			opType = event.UPDATE
 		}
@@ -337,42 +473,3 @@ func sameObjectIdentity(a, b client.Object) bool {
 	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
 }
 
-func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
-	cfg := base.Clone()
-	if tuning.MaxDepth > 0 {
-		cfg.MaxDepth = tuning.MaxDepth
-	}
-	if len(tuning.PermuteControllers) > 0 {
-		if cfg.Perturbations.PermuteOrder == nil {
-			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-		}
-		for _, controllerID := range tuning.PermuteControllers {
-			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
-		}
-	}
-	if len(tuning.StaleReads) > 0 {
-		if cfg.Perturbations.Staleness == nil {
-			cfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
-		}
-		for controllerID, kinds := range tuning.StaleReads {
-			id := tracecheck.ReconcilerID(controllerID)
-			st := cfg.Perturbations.Staleness[id]
-			if st.StaleReadBounds == nil {
-				st.StaleReadBounds = make(tracecheck.LookbackLimits)
-			}
-			for _, kind := range kinds {
-				trimmed := strings.TrimSpace(kind)
-				if trimmed == "" {
-					continue
-				}
-				lookback := tuning.StaleLookback[trimmed]
-				if lookback <= 0 {
-					lookback = 1
-				}
-				st.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
-			}
-			cfg.Perturbations.Staleness[id] = st
-		}
-	}
-	return cfg
-}

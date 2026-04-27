@@ -53,7 +53,7 @@ func replayEventSequenceToState(events []StateEvent) *StateSnapshot {
 			}
 			delete(resourceIndex, resourceKey)
 			delete(deletions, resourceKey)
-		case event.CREATE, event.UPDATE, event.PATCH:
+		case event.CREATE, event.UPDATE, event.PATCH, event.APPLY:
 			version := e.Effect.Version
 			contents[e.Effect.Key] = version
 			resourceIndex[resourceKey] = e.Effect.Key

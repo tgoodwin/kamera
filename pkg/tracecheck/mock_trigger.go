@@ -62,3 +62,15 @@ func (mr *MockTriggerHandlerMockRecorder) KindDepsForReconciler(arg0 interface{}
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "KindDepsForReconciler", reflect.TypeOf((*MockTriggerHandler)(nil).KindDepsForReconciler), arg0)
 }
+
+// SetStateReader mocks base method.
+func (m *MockTriggerHandler) SetStateReader(arg0 StateReader) {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "SetStateReader", arg0)
+}
+
+// SetStateReader indicates an expected call of SetStateReader.
+func (mr *MockTriggerHandlerMockRecorder) SetStateReader(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SetStateReader", reflect.TypeOf((*MockTriggerHandler)(nil).SetStateReader), arg0)
+}

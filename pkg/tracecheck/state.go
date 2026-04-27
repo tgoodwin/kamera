@@ -98,7 +98,26 @@ type ReconcileResult struct {
 
 	PendingReconciles []PendingReconcile // Pending reconciles produced by this step
 
+	// StalenessInfo records per-object staleness for reads taken during this step.
+	// Only populated when the controller observed a stale view.
+	StalenessInfo []StaleReadInfo `json:"stalenessInfo,omitempty"`
+
+	// ReenqueueRequest, when non-nil, causes the reconciler to be re-enqueued
+	// after the step completes. Used to model controller-runtime's error-driven
+	// requeue behavior: the reconciler errored, but exploration should continue
+	// through other pending reconciles before retrying.
+	ReenqueueRequest *PendingReconcile `json:"-"`
+
 	ctrlRes reconcile.Result
+}
+
+// StaleReadInfo records the ResourceVersion gap for one object that was
+// observed at an older version than the current state at the time of the read.
+type StaleReadInfo struct {
+	Key        string `json:"key"`        // canonical group/kind/namespace/name
+	ObservedRV int64  `json:"observedRV"` // RV of the version the controller saw
+	CurrentRV  int64  `json:"currentRV"`  // RV of the latest version at time of read
+	Lag        int64  `json:"lag"`        // CurrentRV - ObservedRV
 }
 
 func (r *ReconcileResult) wasNoOp() bool {
@@ -252,9 +271,35 @@ type StateNode struct {
 	// tracks what KindSequences a controller may be "stuck" on
 	// e.g. if a controller's watches are connected to a partitioned APIServer
 	stuckReconcilerPositions map[ReconcilerID]KindSequences
+
+	// stalenessIntervals carries immutable interval config from ExploreConfig.
+	// When non-nil, ObserveAs uses interval evaluation instead of stuckReconcilerPositions.
+	stalenessIntervals []StalenessInterval
+
+	// permuteTriggered records whether the event-trigger condition for ordering
+	// permutations has been satisfied on this branch. Once set to true it is
+	// inherited by all descendant states.
+	permuteTriggered bool
+
+	// crashedReconcilers tracks which reconcilers have been "crashed" via
+	// fault injection on this branch. Used for triggerOnce semantics.
+	crashedReconcilers map[ReconcilerID]bool
 }
 
 func (sn StateNode) ObserveAs(reconcilerID ReconcilerID) ObjectVersions {
+	// Interval-based staleness takes precedence when configured.
+	if len(sn.stalenessIntervals) > 0 {
+		staleSeqs := sn.evaluateStalenessIntervals(reconcilerID)
+		if len(staleSeqs) == 0 {
+			return sn.Contents.All()
+		}
+		kindSequences := maps.Clone(sn.Contents.KindSequences)
+		for k, seq := range staleSeqs {
+			kindSequences[k] = seq
+		}
+		return sn.Contents.ObserveAt(kindSequences)
+	}
+
 	if sn.stuckReconcilerPositions == nil {
 		return sn.Contents.All()
 	}
@@ -267,6 +312,37 @@ func (sn StateNode) ObserveAs(reconcilerID ReconcilerID) ObjectVersions {
 		return sn.Contents.ObserveAt(kindSequences)
 	}
 	return sn.Contents.All()
+}
+
+// evaluateStalenessIntervals returns stale KindSequences for the given reconciler
+// based on configured staleness intervals and the current frontier sequences.
+func (sn StateNode) evaluateStalenessIntervals(reconcilerID ReconcilerID) KindSequences {
+	if len(sn.stalenessIntervals) == 0 {
+		return nil
+	}
+	var result KindSequences
+	for _, interval := range sn.stalenessIntervals {
+		if interval.ReconcilerID != reconcilerID {
+			continue
+		}
+		frontier := sn.Contents.KindSequences[interval.Kind]
+		if frontier < interval.StaleAt || frontier >= interval.CatchUpAt {
+			continue // not in stale window
+		}
+		if result == nil {
+			result = make(KindSequences)
+		}
+		if interval.Lag == -1 {
+			result[interval.Kind] = interval.StaleAt
+		} else {
+			staleSeq := frontier - interval.Lag
+			if staleSeq < interval.StaleAt {
+				staleSeq = interval.StaleAt
+			}
+			result[interval.Kind] = staleSeq
+		}
+	}
+	return result
 }
 
 func (sn StateNode) DumpPending() {
@@ -348,6 +424,9 @@ func (sn StateNode) Clone() StateNode {
 		divergenceKey:     sn.divergenceKey,
 
 		stuckReconcilerPositions: maps.Clone(sn.stuckReconcilerPositions),
+		stalenessIntervals:       sn.stalenessIntervals, // immutable config, share reference
+		permuteTriggered:         sn.permuteTriggered,
+		crashedReconcilers:       maps.Clone(sn.crashedReconcilers),
 	}
 }
 
@@ -437,6 +516,10 @@ func (sn StateNode) serialize(reconcileOrderSensitive bool) string {
 
 	builder.WriteString("|u:")
 	builder.WriteString(strconv.Itoa(sn.nextUserActionIdx))
+
+	if sn.permuteTriggered {
+		builder.WriteString("|pt:1")
+	}
 
 	return builder.String()
 }

@@ -16,13 +16,15 @@ import (
 )
 
 type recordingRecorder struct {
-	opType event.OperationType
-	obj    client.Object
+	opType  event.OperationType
+	obj     client.Object
+	options *EffectOptions
 }
 
-func (r *recordingRecorder) RecordEffect(_ context.Context, obj client.Object, opType event.OperationType, _ *PreconditionInfo) error {
+func (r *recordingRecorder) RecordEffect(_ context.Context, obj client.Object, opType event.OperationType, _ *PreconditionInfo, options *EffectOptions) error {
 	r.opType = opType
 	r.obj = obj.DeepCopyObject().(client.Object)
+	r.options = options
 	return nil
 }
 
@@ -60,6 +62,25 @@ func TestClientStatusPatchApplyUsesApplyOp(t *testing.T) {
 	err := c.Status().Patch(context.Background(), obj, client.Apply)
 	assert.NoError(t, err)
 	assert.Equal(t, event.APPLY, recorder.opType)
+	require.NotNil(t, recorder.options)
+	assert.Equal(t, "status", recorder.options.Subresource)
+}
+
+func TestClientStatusUpdateUsesStatusSubresource(t *testing.T) {
+	recorder := &recordingRecorder{}
+	c := NewClient("test", nil, noopFrameReader{}, recorder)
+
+	obj := &unstructured.Unstructured{}
+	obj.SetAPIVersion("v1")
+	obj.SetKind("ConfigMap")
+	obj.SetNamespace("default")
+	obj.SetName("example")
+
+	err := c.Status().Update(context.Background(), obj)
+	assert.NoError(t, err)
+	assert.Equal(t, event.UPDATE, recorder.opType)
+	require.NotNil(t, recorder.options)
+	assert.Equal(t, "status", recorder.options.Subresource)
 }
 
 func TestClientCreateAssignsDeterministicUIDWhenMissing(t *testing.T) {

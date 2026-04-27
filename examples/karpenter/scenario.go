@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"sort"
@@ -109,7 +110,7 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 			scenarios = append(scenarios, explore.Scenario{
 				Name:             variant.Name,
 				EnvironmentState: state,
-				UserInputs:       userActions,
+				ExternalInputs:       userActions,
 				Config:           cfg,
 			})
 		}
@@ -132,44 +133,11 @@ type karpenterParamOption struct {
 }
 
 func expandKarpenterParameterizedInput(input coverage.Input, fuzzCases int, fuzzSeed int64) ([]coverage.Input, error) {
-	baseName := strings.TrimSpace(input.Name)
-	if baseName == "" {
-		baseName = "scenario"
-	}
-
 	base := cloneCoverageInput(input)
-	base.Name = baseName + "/base"
-
-	podIdx := findKarpenterPodInUserInputs(base.UserInputs)
-	nodePoolIdx := findKarpenterNodePool(base.EnvironmentState.Objects)
-	if podIdx < 0 || nodePoolIdx < 0 {
-		return []coverage.Input{base}, nil
+	if strings.TrimSpace(base.Name) == "" {
+		base.Name = "scenario"
 	}
-
-	templatePod, err := unstructuredToPod(base.UserInputs[podIdx].Object)
-	if err != nil {
-		return nil, err
-	}
-	nodePoolObject := base.EnvironmentState.Objects[nodePoolIdx]
-	templateNodePool, err := unstructuredToNodePool(nodePoolObject)
-	if err != nil {
-		return nil, err
-	}
-
-	variants := []coverage.Input{base}
-	singleVariants, err := expandKarpenterSingleParamVariants(input, baseName, podIdx, nodePoolIdx, templatePod, templateNodePool)
-	if err != nil {
-		return nil, err
-	}
-	variants = append(variants, singleVariants...)
-
-	sampledVariants, err := expandKarpenterSampledParamVariants(input, baseName, podIdx, nodePoolIdx, templatePod, templateNodePool, fuzzCases, fuzzSeed)
-	if err != nil {
-		return nil, err
-	}
-	variants = append(variants, sampledVariants...)
-
-	return variants, nil
+	return []coverage.Input{base}, nil
 }
 
 func karpenterParamCatalog() []karpenterParamSpec {
@@ -298,7 +266,7 @@ func buildKarpenterVariantInput(input coverage.Input, podIdx int, nodePoolIdx in
 	if err != nil {
 		return coverage.Input{}, fmt.Errorf("convert nodepool for %q: %w", name, err)
 	}
-	updated.UserInputs[podIdx].Object = podObj
+	updated.ExternalInputs[podIdx].Object = podObj
 	if nodePoolIdx < 0 || nodePoolIdx >= len(updated.EnvironmentState.Objects) {
 		return coverage.Input{}, fmt.Errorf("nodepool environment index %d out of range", nodePoolIdx)
 	}
@@ -378,10 +346,10 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 		if obj == nil {
 			continue
 		}
-		objects = append(objects, obj.DeepCopy())
+		objects = append(objects, safeDeepCopyUnstructured(obj))
 	}
-	for _, userInput := range input.UserInputs {
-		if userInput.Type != event.CREATE || userInput.Object == nil || !isKarpenterPod(userInput.Object) {
+	for _, userInput := range input.ExternalInputs {
+		if userInput.OpType != event.CREATE || userInput.Object == nil || !isKarpenterPod(userInput.Object) {
 			continue
 		}
 		if isInputObjectSeeded(userInput.Object, objects) {
@@ -470,52 +438,17 @@ func initialDependentControllers(obj client.Object) []tracecheck.ReconcilerID {
 	if isKarpenterNodePool(obj) {
 		return []tracecheck.ReconcilerID{"state.nodepool"}
 	}
+	if isKarpenterNodeClaim(obj) {
+		return []tracecheck.ReconcilerID{"state.nodeclaim", "nodeclaim.hydration", "nodeclaim.lifecycle", "node.registrar"}
+	}
+	if isKarpenterNode(obj) {
+		return []tracecheck.ReconcilerID{"state.node", "node.hydration"}
+	}
 	return nil
 }
 
 func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) (tracecheck.ExploreConfig, error) {
-	cfg := base.Clone()
-	if tuning.MaxDepth > 0 {
-		cfg.MaxDepth = tuning.MaxDepth
-	}
-	if len(tuning.PermuteControllers) > 0 {
-		if cfg.Perturbations.PermuteOrder == nil {
-			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-		}
-		for _, controllerID := range tuning.PermuteControllers {
-			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
-		}
-	}
-	mode := strings.TrimSpace(tuning.Search.Mode)
-	if mode != "" {
-		parsed, err := tracecheck.ParseSearchMode(mode)
-		if err != nil {
-			return cfg, fmt.Errorf("parse tuning.search.mode: %w", err)
-		}
-		cfg.SearchMode = parsed
-	}
-
-	mc := tuning.Search.MonteCarlo
-	if cfg.SearchMode != tracecheck.SearchModeMonteCarlo {
-		if mc.Seed != nil || mc.Trials != nil || mc.TrialIndex != nil || mc.ScenarioGroup != nil {
-			cfg.SearchMode = tracecheck.SearchModeMonteCarlo
-		}
-	}
-	if cfg.SearchMode == tracecheck.SearchModeMonteCarlo {
-		if mc.Seed != nil {
-			cfg.MonteCarlo.Seed = *mc.Seed
-		}
-		if mc.Trials != nil {
-			cfg.MonteCarlo.Trials = *mc.Trials
-		}
-		if mc.TrialIndex != nil {
-			cfg.MonteCarlo.TrialIndex = *mc.TrialIndex
-		}
-		if mc.ScenarioGroup != nil {
-			cfg.MonteCarlo.ScenarioGroup = *mc.ScenarioGroup
-		}
-	}
-	return cfg, nil
+	return explore.ApplyInputTuning(base, tuning)
 }
 
 func cloneCoverageInput(input coverage.Input) coverage.Input {
@@ -528,18 +461,29 @@ func cloneCoverageInput(input coverage.Input) coverage.Input {
 		objects = append(objects, obj.DeepCopy())
 	}
 
-	userInputs := cloneUserInputs(input.UserInputs)
+	userInputs := cloneUserInputs(input.ExternalInputs)
 	tuning := coverage.InputTuning{
-		MaxDepth:           input.Tuning.MaxDepth,
-		PermuteControllers: append([]string(nil), input.Tuning.PermuteControllers...),
-		StaleReads:         cloneStringSliceMap(input.Tuning.StaleReads),
-		StaleLookback:      cloneIntMap(input.Tuning.StaleLookback),
-		Search:             cloneInputSearchTuning(input.Tuning.Search),
+		MaxDepth:              input.Tuning.MaxDepth,
+		PermuteControllers:    append([]string(nil), input.Tuning.PermuteControllers...),
+		StaleReads:            cloneStringSliceMap(input.Tuning.StaleReads),
+		StaleLookback:         cloneIntMap(input.Tuning.StaleLookback),
+		UserActionReadyDepths: cloneIntMap(input.Tuning.UserActionReadyDepths),
+		StalenessIntervals:    append([]coverage.InputStalenessInterval(nil), input.Tuning.StalenessIntervals...),
+		FaultInjection:        append([]coverage.InputFaultInjection(nil), input.Tuning.FaultInjection...),
+		Search:                cloneInputSearchTuning(input.Tuning.Search),
+	}
+	if input.Tuning.PermuteDepthRange != nil {
+		cpy := *input.Tuning.PermuteDepthRange
+		tuning.PermuteDepthRange = &cpy
+	}
+	if input.Tuning.PermuteAfterEvent != nil {
+		cpy := *input.Tuning.PermuteAfterEvent
+		tuning.PermuteAfterEvent = &cpy
 	}
 	return coverage.Input{
 		Name:             input.Name,
 		EnvironmentState: coverage.EnvironmentState{Objects: objects},
-		UserInputs:       userInputs,
+		ExternalInputs:       userInputs,
 		Tuning:           tuning,
 	}
 }
@@ -568,12 +512,12 @@ func cloneInputSearchTuning(search coverage.InputSearchTuning) coverage.InputSea
 }
 
 func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
-	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
-	for idx, userInput := range input.UserInputs {
+	actions := make([]tracecheck.UserAction, 0, len(input.ExternalInputs))
+	for idx, userInput := range input.ExternalInputs {
 		if userInput.Object == nil {
 			return nil, fmt.Errorf("user input %d (%s) missing object", idx, input.Name)
 		}
-		opType := userInput.Type
+		opType := userInput.OpType
 		if opType == event.CREATE && isInputObjectSeeded(userInput.Object, seededObjects) {
 			opType = event.UPDATE
 		}
@@ -615,23 +559,42 @@ func sameObjectIdentity(a, b client.Object) bool {
 	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
 }
 
-func cloneUserInputs(inputs []coverage.UserInput) []coverage.UserInput {
+func cloneUserInputs(inputs []coverage.ExternalInput) []coverage.ExternalInput {
 	if len(inputs) == 0 {
 		return nil
 	}
 
-	out := make([]coverage.UserInput, 0, len(inputs))
+	out := make([]coverage.ExternalInput, 0, len(inputs))
 	for _, input := range inputs {
-		cloned := coverage.UserInput{
+		cloned := coverage.ExternalInput{
 			ID:   input.ID,
-			Type: input.Type,
+			OpType: input.OpType,
 		}
 		if input.Object != nil {
-			cloned.Object = input.Object.DeepCopy()
+			cloned.Object = safeDeepCopyUnstructured(input.Object)
 		}
 		out = append(out, cloned)
 	}
 	return out
+}
+
+// safeDeepCopyUnstructured copies an Unstructured object via JSON round-trip.
+// The standard DeepCopy panics on []uint8 values that appear when Go's JSON
+// unmarshaler encounters null fields in unstructured data.
+func safeDeepCopyUnstructured(obj *unstructured.Unstructured) *unstructured.Unstructured {
+	if obj == nil {
+		return nil
+	}
+	data, err := json.Marshal(obj.Object)
+	if err != nil {
+		// Fall back to standard deep copy if marshal fails.
+		return obj.DeepCopy()
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return obj.DeepCopy()
+	}
+	return &unstructured.Unstructured{Object: m}
 }
 
 func cloneStringSliceMap(in map[string][]string) map[string][]string {
@@ -656,7 +619,7 @@ func cloneIntMap(in map[string]int) map[string]int {
 	return out
 }
 
-func findKarpenterPodInUserInputs(userInputs []coverage.UserInput) int {
+func findKarpenterPodInUserInputs(userInputs []coverage.ExternalInput) int {
 	for idx, input := range userInputs {
 		if input.Object == nil {
 			continue
@@ -704,6 +667,34 @@ func isKarpenterNodePool(obj client.Object) bool {
 	}
 	if u, ok := obj.(*unstructured.Unstructured); ok {
 		return u.GetKind() == "NodePool" && strings.HasPrefix(u.GetAPIVersion(), "karpenter.sh/")
+	}
+	return false
+}
+
+func isKarpenterNodeClaim(obj client.Object) bool {
+	if obj == nil {
+		return false
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Kind == "NodeClaim" && gvk.Group == "karpenter.sh" {
+		return true
+	}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return u.GetKind() == "NodeClaim" && strings.HasPrefix(u.GetAPIVersion(), "karpenter.sh/")
+	}
+	return false
+}
+
+func isKarpenterNode(obj client.Object) bool {
+	if obj == nil {
+		return false
+	}
+	gvk := obj.GetObjectKind().GroupVersionKind()
+	if gvk.Kind == "Node" && (gvk.Group == "" || gvk.Group == "core") {
+		return true
+	}
+	if u, ok := obj.(*unstructured.Unstructured); ok {
+		return u.GetKind() == "Node"
 	}
 	return false
 }

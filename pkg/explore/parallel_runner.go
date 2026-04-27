@@ -322,8 +322,21 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 
 	selected = applyMonteCarloTrialConfig(selected, childIdx, trialIdx)
 
+	var accumulator *TrialMetricsAccumulator
+	if MetricsOnlyStalenessEnabled() {
+		accumulator = NewTrialMetricsAccumulator()
+	}
+
 	fmt.Printf("parallel-processes child: running input index %d trial %d as scenario %q\n", childIdx, trialIdx, selected.Name)
-	result := r.runScenario(ctx, selected, opts, jobIdxOrInput(jobIdx, childIdx), invocationID)
+	result := r.runScenario(ctx, selected, opts, jobIdxOrInput(jobIdx, childIdx), invocationID, accumulator)
+
+	if accumulator != nil && accumulator.Len() > 0 && opts.DumpDir != "" {
+		csvPath := filepath.Join(opts.DumpDir, fmt.Sprintf("staleness_metrics_child_%d_%d.csv", childIdx, trialIdx))
+		if err := accumulator.WriteCSV(csvPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: write child staleness metrics CSV: %v\n", err)
+		}
+	}
+
 	if result.Err != nil {
 		if result.DumpPath == "" {
 			dumpPath, dumpErr := writeChildFailureDump(opts, selected.Name, selected.Context, jobIdxOrInput(jobIdx, childIdx), "run_scenario", result.Err, invocationID)
@@ -341,6 +354,11 @@ func (r *ParallelRunner) runChildMode(ctx context.Context, scenarios []Scenario,
 func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario, opts ParallelOptions, invocationID string) ([]ScenarioResult, error) {
 	if err := ensureParallelOutputDirs(opts); err != nil {
 		return nil, err
+	}
+
+	var accumulator *TrialMetricsAccumulator
+	if MetricsOnlyStalenessEnabled() {
+		accumulator = NewTrialMetricsAccumulator()
 	}
 
 	jobsToRun := buildInProcessJobs(scenarios)
@@ -364,7 +382,7 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 	worker := func() {
 		defer wg.Done()
 		for job := range jobs {
-			res := r.runScenario(ctx, job.scenario, opts, job.idx, invocationID)
+			res := r.runScenario(ctx, job.scenario, opts, job.idx, invocationID, accumulator)
 			resCh <- scenarioResult{idx: job.idx, result: res}
 		}
 	}
@@ -388,6 +406,15 @@ func (r *ParallelRunner) runInProcess(ctx context.Context, scenarios []Scenario,
 		results[item.idx] = item.result
 	}
 
+	if accumulator != nil && opts.DumpDir != "" {
+		csvPath := filepath.Join(opts.DumpDir, "staleness_metrics.csv")
+		if err := accumulator.WriteCSV(csvPath); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: write staleness metrics CSV: %v\n", err)
+		} else {
+			fmt.Printf("staleness metrics: %d trials written to %s\n", accumulator.Len(), csvPath)
+		}
+	}
+
 	return results, nil
 }
 
@@ -409,7 +436,7 @@ func buildInProcessJobs(scenarios []Scenario) []scenarioJob {
 	return jobs
 }
 
-func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opts ParallelOptions, idx int, invocationID string) ScenarioResult {
+func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opts ParallelOptions, idx int, invocationID string, accumulator *TrialMetricsAccumulator) ScenarioResult {
 	result := ScenarioResult{Name: scenario.Name}
 	if ctx.Err() != nil {
 		result.Err = ctx.Err()
@@ -422,8 +449,12 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		return result
 	}
 
-	if !PerturbEnabled() {
-		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", scenario.Config, seed, nil, nil, scenario.Context, invocationID)
+	if !ClosedLoopEnabled() {
+		cfg := scenario.Config
+		if NoPerturbationsEnabled() {
+			cfg = disablePerturbations(cfg)
+		}
+		phase := r.runScenarioPhase(ctx, scenario, opts, idx, "", cfg, seed, nil, nil, scenario.Context, invocationID)
 		result.Phases = []ScenarioPhaseResult{phase}
 		applyPhaseSummary(&result, phase)
 		return result
@@ -441,11 +472,29 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		// This intentionally favors "get end-to-end scaffolding running" over
 		// precision/attribution. Harnesses can still override with ClosedLoop.Plan.
 		referenceConfig = disablePerturbations(scenario.Config)
+		hasExplicitStaleness := len(scenario.Config.Perturbations.Staleness) > 0 || len(scenario.Config.Perturbations.StalenessIntervals) > 0
+		// TODO: The perturbation strategies below are orthogonal — plans mix
+		// either user-action interleaving or staleness, but never both simultaneously.
+		// A combined plan (e.g. inject stale reads while also interleaving a second
+		// user action) could expose bugs that only manifest when both perturbations
+		// are active together. A future cross-product or compositional planner would
+		// enumerate these combinations.
 		planFn = func(reference ScenarioPhaseResult) ([]ScenarioPhasePlan, error) {
-			if len(scenario.UserInputs) >= 2 {
-				return buildUserActionInterleavingPlans(reference, scenario.Config, scenario.Context, scenario.UserInputs), nil
+			var plans []ScenarioPhasePlan
+			if len(scenario.ExternalInputs) >= 2 {
+				plans = append(plans, buildUserActionInterleavingPlans(reference, scenario.Config, scenario.Context, scenario.ExternalInputs)...)
+			} else {
+				plans = append(plans, buildDefaultScenarioRerunPlans(reference, scenario.Config, scenario.Context)...)
 			}
-			return buildDefaultScenarioRerunPlans(reference, scenario.Config, scenario.Context), nil
+			if hasExplicitStaleness {
+				// Workflow JSON specified targeted staleness config; honor it
+				// in a dedicated rerun phase.
+				plans = append(plans, buildExplicitStalenessPlans(reference, scenario.Config, scenario.Context)...)
+			} else {
+				// No explicit staleness; auto-derive from reference trace reads.
+				plans = append(plans, buildStalenessPerturbationPlans(reference, scenario.Config, scenario.Context)...)
+			}
+			return plans, nil
 		}
 	} else if scenario.ClosedLoop.Plan != nil {
 		planFn = scenario.ClosedLoop.Plan
@@ -464,6 +513,15 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		return result
 	}
 
+	stalenessCount := 0
+	for _, p := range plans {
+		if isStalenessIntervalPlan(p) {
+			stalenessCount++
+		}
+	}
+	fmt.Fprintf(os.Stderr, "closed-loop: scenario %s generated %d plans (%d staleness intervals, accumulator=%v)\n",
+		scenario.Name, len(plans), stalenessCount, accumulator != nil)
+
 	for i, plan := range plans {
 		phaseName := strings.TrimSpace(plan.Name)
 		if phaseName == "" {
@@ -477,6 +535,14 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 		if plan.Seed != nil {
 			runSeed = *plan.Seed
 		}
+
+		// When metrics-only mode is active and this is a staleness interval plan,
+		// skip the full dump and record lightweight metrics instead.
+		if accumulator != nil && isStalenessIntervalPlan(plan) {
+			r.runScenarioPhaseMetricsOnly(ctx, scenario, opts, idx, phaseName, plan.Config, runSeed, plan.Prefix, reference.VersionManager, phaseCtx, accumulator)
+			continue
+		}
+
 		phase := r.runScenarioPhase(ctx, scenario, opts, idx, phaseName, plan.Config, runSeed, plan.Prefix, reference.VersionManager, phaseCtx, invocationID)
 		result.Phases = append(result.Phases, phase)
 		applyPhaseSummary(&result, phase)
@@ -488,9 +554,18 @@ func (r *ParallelRunner) runScenario(ctx context.Context, scenario Scenario, opt
 	return result
 }
 
+func isStalenessIntervalPlan(plan ScenarioPhasePlan) bool {
+	if plan.Context == nil || plan.Context.Attributes == nil {
+		return false
+	}
+	return plan.Context.Attributes["perturbation.strategy"] == "staleness_interval"
+}
+
 func disablePerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig {
 	// Naive baseline utility used by v1 auto closed-loop:
 	// treat reference runs as "control" by clearing all perturbation knobs.
+	// UserActionReadyDepths is preserved because it is scheduling metadata,
+	// not a perturbation that should be toggled for controlled experiments.
 	out := cfg.Clone()
 	if out.Perturbations.PermuteOrder == nil {
 		out.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
@@ -499,7 +574,11 @@ func disablePerturbations(cfg tracecheck.ExploreConfig) tracecheck.ExploreConfig
 		out.Perturbations.PermuteOrder[id] = false
 	}
 	out.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
-	out.Perturbations.UserActionReadyDepths = make(map[int]int)
+	out.Perturbations.StalenessIntervals = nil
+	out.Perturbations.FaultInjection = nil
+	if out.Perturbations.UserActionReadyDepths == nil {
+		out.Perturbations.UserActionReadyDepths = make(map[int]int)
+	}
 	return out
 }
 
@@ -511,15 +590,24 @@ func buildDefaultScenarioRerunPlans(
 	// Naive v1 rerun strategy:
 	// - exactly one rerun phase
 	// - enable ordering permutation for all controllers observed in reference
+	// - preserve fault injection from the scenario config (it's the hypothesis)
 	// This is intentionally generic and high-recall; it is not a precise
 	// root-cause perturbation plan yet.
-	rerunCfg := disablePerturbations(base)
-	seenControllers := observedControllersInReference(reference)
-	for _, controllerID := range seenControllers {
-		if controllerID == "" || controllerID == tracecheck.UserControllerID {
-			continue
+	rerunCfg := base.Clone()
+	// Clear auto-derived staleness (explicit staleness is handled by buildExplicitStalenessPlans).
+	rerunCfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
+	rerunCfg.Perturbations.StalenessIntervals = nil
+	// Ordering: if the base config specifies permuteOrder controllers, honor that
+	// scope. Otherwise fall back to all controllers observed in the reference.
+	if len(rerunCfg.Perturbations.PermuteOrder) == 0 {
+		seenControllers := observedControllersInReference(reference)
+		rerunCfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+		for _, controllerID := range seenControllers {
+			if controllerID == "" || controllerID == tracecheck.UserControllerID {
+				continue
+			}
+			rerunCfg.Perturbations.PermuteOrder[controllerID] = true
 		}
-		rerunCfg.Perturbations.PermuteOrder[controllerID] = true
 	}
 
 	rerunContext := scenarioCtx
@@ -645,6 +733,235 @@ func observedControllersInReference(reference ScenarioPhaseResult) []tracecheck.
 	return out
 }
 
+func observedReadKindsPerController(reference ScenarioPhaseResult) map[tracecheck.ReconcilerID][]string {
+	if reference.Result == nil {
+		return nil
+	}
+	seen := make(map[tracecheck.ReconcilerID]map[string]struct{})
+	collect := func(states []tracecheck.ResultState) {
+		for _, state := range states {
+			for _, path := range state.Paths {
+				for _, step := range path {
+					if step == nil || step.ControllerID == "" || step.ControllerID == tracecheck.UserControllerID {
+						continue
+					}
+					for _, obs := range step.Changes.Observations {
+						kind := obs.Key.CanonicalGroupKind()
+						if kind == "" {
+							continue
+						}
+						if seen[step.ControllerID] == nil {
+							seen[step.ControllerID] = make(map[string]struct{})
+						}
+						seen[step.ControllerID][kind] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+	collect(reference.Result.ConvergedStates)
+	collect(reference.Result.AbortedStates)
+
+	out := make(map[tracecheck.ReconcilerID][]string, len(seen))
+	for id, kinds := range seen {
+		sorted := make([]string, 0, len(kinds))
+		for k := range kinds {
+			sorted = append(sorted, k)
+		}
+		sort.Strings(sorted)
+		out[id] = sorted
+	}
+	return out
+}
+
+// maxKindFrontiers returns the maximum KindSequence frontier value observed for
+// each kind across all steps in the reference path. This gives the upper bound
+// of each kind's sequence space, used to exhaustively enumerate staleness intervals.
+func maxKindFrontiers(path tracecheck.ExecutionHistory) map[string]int64 {
+	maxSeqs := make(map[string]int64)
+	for _, step := range path {
+		if step == nil {
+			continue
+		}
+		for kind, seq := range step.KindSeqAfter {
+			if seq > maxSeqs[kind] {
+				maxSeqs[kind] = seq
+			}
+		}
+	}
+	return maxSeqs
+}
+
+// buildExplicitStalenessPlans creates a rerun phase using the staleness config
+// from the workflow JSON directly, rather than auto-deriving from the reference
+// trace. This honors targeted staleness tuning (specific controllers, kinds,
+// and lookback values) specified by the workflow author. Ordering permutation
+// for all controllers observed in the reference is also enabled.
+func buildExplicitStalenessPlans(
+	reference ScenarioPhaseResult,
+	base tracecheck.ExploreConfig,
+	scenarioCtx ScenarioContext,
+) []ScenarioPhasePlan {
+	cfg := base.Clone()
+	// Enable ordering permutation for all controllers observed in the reference.
+	seenControllers := observedControllersInReference(reference)
+	if cfg.Perturbations.PermuteOrder == nil {
+		cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
+	}
+	for _, controllerID := range seenControllers {
+		if controllerID == "" || controllerID == tracecheck.UserControllerID {
+			continue
+		}
+		cfg.Perturbations.PermuteOrder[controllerID] = true
+	}
+	// Staleness config is already set from applyInputTuning via scenario.Config.
+
+	rerunContext := scenarioCtx
+	return []ScenarioPhasePlan{
+		{
+			Name:    "rerun",
+			Config:  cfg,
+			Context: &rerunContext,
+		},
+	}
+}
+
+func buildStalenessPerturbationPlans(
+	reference ScenarioPhaseResult,
+	base tracecheck.ExploreConfig,
+	scenarioCtx ScenarioContext,
+) []ScenarioPhasePlan {
+	if reference.Result == nil {
+		return nil
+	}
+	// Prefer converged states for determining read kinds and frontiers,
+	// but fall back to aborted states (e.g. maxDepth reached) which still
+	// contain valid execution history for deriving staleness intervals.
+	var firstState tracecheck.ResultState
+	if len(reference.Result.ConvergedStates) > 0 {
+		firstState = reference.Result.ConvergedStates[0]
+	} else if len(reference.Result.AbortedStates) > 0 {
+		firstState = reference.Result.AbortedStates[0]
+	} else {
+		return nil
+	}
+	if len(firstState.Paths) == 0 {
+		return nil
+	}
+	path := firstState.Paths[0]
+	if len(path) == 0 {
+		return nil
+	}
+
+	// Collect (controller, kind) pairs and per-kind frontier upper bounds.
+	readKinds := observedReadKindsPerController(reference)
+	if len(readKinds) == 0 {
+		return nil
+	}
+	maxFrontiers := maxKindFrontiers(path)
+
+	// Collect observed controllers for ordering permutation.
+	seenControllers := observedControllersInReference(reference)
+
+	// Enumerate intervals exhaustively over [0, maxSeq] for each (controller, kind).
+	// This is decoupled from specific execution ordering so intervals remain valid
+	// when composed with other perturbation strategies.
+	type intervalKey struct {
+		controllerID tracecheck.ReconcilerID
+		kind         string
+		staleAt      int64
+		catchUpAt    int64
+	}
+	// If the base config specifies permuteOrder controllers, only generate
+	// staleness intervals for those controllers (scoping the search space).
+	permuteScope := base.Perturbations.PermuteOrder
+
+	var intervals []intervalKey
+	for controllerID, kinds := range readKinds {
+		if len(permuteScope) > 0 && !permuteScope[controllerID] {
+			continue
+		}
+		for _, kind := range kinds {
+			maxSeq, ok := maxFrontiers[kind]
+			if !ok || maxSeq < 1 {
+				continue // need at least frontier range [0, 1) for a window
+			}
+			for staleAt := int64(0); staleAt < maxSeq; staleAt++ {
+				for catchUpAt := staleAt + 1; catchUpAt <= maxSeq; catchUpAt++ {
+					intervals = append(intervals, intervalKey{
+						controllerID: controllerID,
+						kind:         kind,
+						staleAt:      staleAt,
+						catchUpAt:    catchUpAt,
+					})
+				}
+			}
+		}
+	}
+
+	if len(intervals) == 0 {
+		return nil
+	}
+
+	// Sort for deterministic output.
+	sort.Slice(intervals, func(i, j int) bool {
+		a, b := intervals[i], intervals[j]
+		if a.controllerID != b.controllerID {
+			return a.controllerID < b.controllerID
+		}
+		if a.kind != b.kind {
+			return a.kind < b.kind
+		}
+		if a.staleAt != b.staleAt {
+			return a.staleAt < b.staleAt
+		}
+		return a.catchUpAt < b.catchUpAt
+	})
+
+	// One plan per interval.
+	plans := make([]ScenarioPhasePlan, 0, len(intervals))
+	for i, iv := range intervals {
+		cfg := disablePerturbations(base)
+		// Ordering: honor the base config's permuteOrder scope if set,
+		// otherwise fall back to all controllers observed in the reference.
+		if len(permuteScope) > 0 {
+			for cid, enabled := range permuteScope {
+				cfg.Perturbations.PermuteOrder[cid] = enabled
+			}
+		} else {
+			for _, cid := range seenControllers {
+				if cid == "" || cid == tracecheck.UserControllerID {
+					continue
+				}
+				cfg.Perturbations.PermuteOrder[cid] = true
+			}
+		}
+		cfg.Perturbations.StalenessIntervals = []tracecheck.StalenessInterval{{
+			ReconcilerID: iv.controllerID,
+			Kind:         iv.kind,
+			StaleAt:      iv.staleAt,
+			CatchUpAt:    iv.catchUpAt,
+			Lag:          -1,
+		}}
+
+		attrs := copyAttributes(scenarioCtx.Attributes)
+		attrs["perturbation.strategy"] = "staleness_interval"
+		attrs["perturbation.reconciler"] = string(iv.controllerID)
+		attrs["perturbation.kind"] = iv.kind
+		attrs["perturbation.stale_at"] = strconv.FormatInt(iv.staleAt, 10)
+		attrs["perturbation.catch_up_at"] = strconv.FormatInt(iv.catchUpAt, 10)
+		ctxCopy := scenarioCtx
+		ctxCopy.Attributes = attrs
+
+		plans = append(plans, ScenarioPhasePlan{
+			Name:    fmt.Sprintf("staleness_interval_%d", i),
+			Config:  cfg,
+			Context: &ctxCopy,
+		})
+	}
+	return plans
+}
+
 func applyPhaseSummary(result *ScenarioResult, phase ScenarioPhaseResult) {
 	if result == nil {
 		return
@@ -675,13 +992,17 @@ func (r *ParallelRunner) runScenarioPhase(
 		phaseLabel = "run"
 	}
 	phase := ScenarioPhaseResult{Name: phaseLabel}
+	phaseStart := time.Now()
+	defer func() {
+		fmt.Fprintf(os.Stderr, "PHASE-TIMING %s/%s total=%v\n", scenario.Name, phaseLabel, time.Since(phaseStart))
+	}()
 
 	fork := r.builder.Fork()
 	if fork == nil {
 		phase.Err = fmt.Errorf("fork builder: nil")
 		return phase
 	}
-	fork.WithUserActions(cloneUserActions(scenario.UserInputs))
+	fork.WithUserActions(cloneUserActions(scenario.ExternalInputs))
 	fork.SetConfig(cfg)
 	if len(prefix) > 0 && prefixResolver != nil {
 		if err := fork.PrimeVersionStoreFromHistory(prefix, prefixResolver); err != nil {
@@ -690,6 +1011,7 @@ func (r *ParallelRunner) runScenarioPhase(
 		}
 	}
 
+	t0 := time.Now()
 	startState, err := tracecheck.SeedToStateNode(seed, fork)
 	if err != nil {
 		phase.Err = fmt.Errorf("seed to state: %w", err)
@@ -699,11 +1021,13 @@ func (r *ParallelRunner) runScenarioPhase(
 		startState.ExecutionHistory = slices.Clone(prefix)
 	}
 
+	t1 := time.Now()
 	explorer, err := fork.Build("standalone")
 	if err != nil {
 		phase.Err = fmt.Errorf("build explorer: %w", err)
 		return phase
 	}
+	t2 := time.Now()
 
 	runCtx := ctx
 	if explorer.Config.Timeout > 0 {
@@ -715,6 +1039,8 @@ func (r *ParallelRunner) runScenarioPhase(
 	start := time.Now()
 	res := explorer.Explore(runCtx, startState)
 	duration := time.Since(start)
+	t3 := time.Now()
+	fmt.Fprintf(os.Stderr, "PHASE-DETAIL %s/%s seed=%v build=%v explore=%v\n", scenario.Name, phaseLabel, t1.Sub(t0), t2.Sub(t1), t3.Sub(t2))
 	phase.Result = res
 	phase.VersionManager = explorer.VersionManager()
 	phase.Stats = explorer.Stats()
@@ -771,6 +1097,62 @@ func (r *ParallelRunner) runScenarioPhase(
 	}
 
 	return phase
+}
+
+// runScenarioPhaseMetricsOnly runs a phase like runScenarioPhase but skips the
+// full JSONL dump. Instead it records lightweight metrics to the accumulator.
+func (r *ParallelRunner) runScenarioPhaseMetricsOnly(
+	ctx context.Context,
+	scenario Scenario,
+	opts ParallelOptions,
+	idx int,
+	phaseName string,
+	cfg tracecheck.ExploreConfig,
+	seed tracecheck.RestartSeed,
+	prefix tracecheck.ExecutionHistory,
+	prefixResolver tracecheck.VersionManager,
+	phaseCtx ScenarioContext,
+	accumulator *TrialMetricsAccumulator,
+) {
+	fork := r.builder.Fork()
+	if fork == nil {
+		return
+	}
+	fork.WithUserActions(cloneUserActions(scenario.ExternalInputs))
+	fork.SetConfig(cfg)
+	if len(prefix) > 0 && prefixResolver != nil {
+		if err := fork.PrimeVersionStoreFromHistory(prefix, prefixResolver); err != nil {
+			return
+		}
+	}
+
+	startState, err := tracecheck.SeedToStateNode(seed, fork)
+	if err != nil {
+		return
+	}
+	if len(prefix) > 0 {
+		startState.ExecutionHistory = slices.Clone(prefix)
+	}
+
+	explorer, err := fork.Build("standalone")
+	if err != nil {
+		return
+	}
+
+	runCtx := ctx
+	if explorer.Config.Timeout > 0 {
+		var cancel context.CancelFunc
+		runCtx, cancel = context.WithTimeout(ctx, explorer.Config.Timeout)
+		defer cancel()
+	}
+
+	start := time.Now()
+	res := explorer.Explore(runCtx, startState)
+	duration := time.Since(start)
+
+	if accumulator != nil {
+		accumulator.Add(metricsFromPhase(scenario, phaseName, phaseCtx, explorer.Stats(), res, duration))
+	}
 }
 
 func ensureParallelOutputDirs(opts ParallelOptions) error {
@@ -1107,8 +1489,16 @@ func hasParallelProcessesFlag(args []string) bool {
 }
 
 func spawnGoRunChild(ctx context.Context, req childProcessRequest) childProcessResult {
-	goArgs := append([]string{"run", "."}, req.Args...)
-	cmd := exec.CommandContext(ctx, "go", goArgs...)
+	selfPath, err := os.Executable()
+	if err != nil {
+		return childProcessResult{
+			JobIndex:   req.JobIndex,
+			InputIndex: req.InputIndex,
+			TrialIndex: req.TrialIndex,
+			Err:        fmt.Errorf("resolve executable path: %w", err),
+		}
+	}
+	cmd := exec.CommandContext(ctx, selfPath, req.Args...)
 	cmd.Dir = req.CWD
 	cmd.Env = os.Environ()
 	if strings.TrimSpace(req.InvocationID) != "" {
@@ -1120,7 +1510,7 @@ func spawnGoRunChild(ctx context.Context, req childProcessRequest) childProcessR
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
-	err := cmd.Run()
+	err = cmd.Run()
 	return childProcessResult{
 		JobIndex:   req.JobIndex,
 		InputIndex: req.InputIndex,

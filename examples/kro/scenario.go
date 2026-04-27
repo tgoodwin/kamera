@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
 
@@ -9,60 +8,61 @@ import (
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/explore"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
-	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	apiequality "k8s.io/apimachinery/pkg/api/equality"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+
+	v1alpha1 "github.com/kubernetes-sigs/kro/api/v1alpha1"
+	"github.com/kubernetes-sigs/kro/pkg/graph"
+	"github.com/kubernetes-sigs/kro/pkg/testutil/generator"
 )
 
 const (
 	resourceGraphDefinitionControllerID tracecheck.ReconcilerID = "ResourceGraphDefinitionController"
 	applicationControllerID             tracecheck.ReconcilerID = "ApplicationController"
 
-	kroDomainName                 = "kro.run"
-	applicationAPIVersion         = "kro.run/v1alpha1"
-	applicationKind               = "Application"
-	resourceGraphDefinitionKind   = "ResourceGraphDefinition"
-	resourceGraphDefinitionName   = "my-application"
-	applicationCRDName            = "applications.kro.run"
-	defaultApplicationName        = "my-app"
-	defaultApplicationInstance    = "my-app-instance"
-	defaultApplicationNamespace   = "default"
-	managedByLabelKey             = "app.kubernetes.io/managed-by"
-	instanceNameLabelKey          = "kro.run/instance-name"
-	instanceNamespaceLabelKey     = "kro.run/instance-namespace"
-	nodeIDLabelKey                = "kro.run/node-id"
-	ownedLabelKey                 = "kro.run/owned"
-	reconciliationLabelKey        = "kro.run/reconcile"
-	reconciliationDisabledValue   = "disabled"
-	resourceGraphDefinitionStatus = "Active"
-	applicationStateActive        = "Active"
-	applicationStateInProgress    = "InProgress"
+	kroDomainName               = "kro.run"
+	applicationAPIVersion       = "kro.run/v1alpha1"
+	applicationKind             = "Application"
+	resourceGraphDefinitionKind = "ResourceGraphDefinition"
+	resourceGraphDefinitionName = "my-application"
+	applicationCRDName          = "applications.kro.run"
+	defaultApplicationName      = "my-app"
+	defaultApplicationInstance  = "my-app-instance"
+	defaultApplicationNamespace = "default"
+	instanceNameLabelKey        = "kro.run/instance-name"
+	instanceNamespaceLabelKey   = "kro.run/instance-namespace"
 )
 
 func newKROExplorerBuilder() *tracecheck.ExplorerBuilder {
-	scheme := runtime.NewScheme()
-	utilruntime.Must(extv1.AddToScheme(scheme))
-	utilruntime.Must(networkingv1.AddToScheme(scheme))
+	sch := runtime.NewScheme()
+	utilruntime.Must(extv1.AddToScheme(sch))
+	utilruntime.Must(networkingv1.AddToScheme(sch))
+	utilruntime.Must(v1alpha1.AddToScheme(sch))
 
-	builder := tracecheck.NewExplorerBuilder(scheme)
-	builder.WithMaxDepth(30)
+	builder := tracecheck.NewExplorerBuilder(sch)
+	builder.WithMaxDepth(60)
 
+	applicationGVR := schema.GroupVersionResource{
+		Group: "kro.run", Version: "v1alpha1", Resource: "applications",
+	}
+
+	// Wire real RGD controller
 	builder.WithReconciler(resourceGraphDefinitionControllerID, func(c client.Client) tracecheck.Reconciler {
-		return &resourceGraphDefinitionController{Client: c}
+		return newRGDReconciler(c)
 	}).For(kroDomainName + "/" + resourceGraphDefinitionKind)
 
+	// Wire real Instance (Application) controller
 	builder.WithReconciler(applicationControllerID, func(c client.Client) tracecheck.Reconciler {
-		return &applicationController{Client: c}
+		log := ctrl.Log.WithName("application-controller")
+		appGraph := mustBuildGraph(buildQuickstartApplicationRGDTyped())
+		return newInstanceController(c, log, applicationGVR, appGraph)
 	}).For(kroDomainName+"/"+applicationKind).
 		Watches("apps/Deployment", enqueueApplicationFromManagedResource).
 		Watches("Service", enqueueApplicationFromManagedResource).
@@ -72,6 +72,19 @@ func newKROExplorerBuilder() *tracecheck.ExplorerBuilder {
 	builder.WithResourceDep(kroDomainName+"/"+applicationKind, applicationControllerID)
 
 	return builder
+}
+
+// mustBuildGraph builds a graph.Graph from a typed RGD
+// using the core schema resolver (no API server needed).
+func mustBuildGraph(rgd *v1alpha1.ResourceGraphDefinition) *graph.Graph {
+	mapper := staticRESTMapper()
+	graphBuilder := graph.NewBuilderFromResolver(nil, mapper)
+
+	g, err := graphBuilder.NewResourceGraphDefinition(rgd)
+	if err != nil {
+		panic(fmt.Sprintf("build graph from RGD: %v", err))
+	}
+	return g
 }
 
 func buildInitialKROState(builder *tracecheck.ExplorerBuilder) tracecheck.StateNode {
@@ -110,11 +123,15 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
 		}
 
+		cfg, err := explore.ApplyInputTuning(baseCfg, input.Tuning)
+		if err != nil {
+			return nil, fmt.Errorf("apply tuning for input %d (%s): %w", idx, input.Name, err)
+		}
 		scenarios = append(scenarios, explore.Scenario{
 			Name:             input.Name,
 			EnvironmentState: state,
-			UserInputs:       userInputs,
-			Config:           applyInputTuning(baseCfg, input.Tuning),
+			ExternalInputs:   userInputs,
+			Config:           cfg,
 		})
 	}
 
@@ -134,17 +151,11 @@ func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input cove
 		objects = append(objects, obj.DeepCopy())
 	}
 
+	// If no environment objects, use the default RGD state.
+	// This avoids requiring the full RGD with resources in JSON inputs.
 	if len(objects) == 0 {
-		for _, action := range input.UserInputs {
-			if action.Type != event.CREATE || action.Object == nil {
-				continue
-			}
-			objects = append(objects, action.Object.DeepCopy())
-		}
-	}
-
-	if len(objects) == 0 {
-		return tracecheck.StateNode{}, nil, fmt.Errorf("input has no seedable objects")
+		rgd := buildQuickstartApplicationRGD()
+		return buildInitialKROState(builder), []client.Object{rgd}, nil
 	}
 
 	stateBuilder := builder.NewStateEventBuilder()
@@ -168,8 +179,8 @@ func addSeedObject(builder *tracecheck.StateEventBuilder, obj client.Object) tra
 }
 
 func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
-	actions := make([]tracecheck.UserAction, 0, len(input.UserInputs))
-	for idx, action := range input.UserInputs {
+	actions := make([]tracecheck.UserAction, 0, len(input.ExternalInputs))
+	for idx, action := range input.ExternalInputs {
 		if action.Object == nil {
 			return nil, fmt.Errorf("input user input %d has nil object", idx)
 		}
@@ -179,7 +190,7 @@ func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []cli
 			id = fmt.Sprintf("user-input-%d", idx)
 		}
 
-		opType := action.Type
+		opType := action.OpType
 		if opType == event.CREATE && isInputObjectSeeded(action.Object, seededObjects) {
 			opType = event.UPDATE
 		}
@@ -217,254 +228,6 @@ func sameObjectIdentity(a, b client.Object) bool {
 	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
 }
 
-func applyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning) tracecheck.ExploreConfig {
-	cfg := base.Clone()
-	if tuning.MaxDepth > 0 {
-		cfg.MaxDepth = tuning.MaxDepth
-	}
-	if len(tuning.PermuteControllers) > 0 {
-		if cfg.Perturbations.PermuteOrder == nil {
-			cfg.Perturbations.PermuteOrder = make(map[tracecheck.ReconcilerID]bool)
-		}
-		for _, controllerID := range tuning.PermuteControllers {
-			cfg.Perturbations.PermuteOrder[tracecheck.ReconcilerID(controllerID)] = true
-		}
-	}
-	if len(tuning.StaleReads) > 0 {
-		if cfg.Perturbations.Staleness == nil {
-			cfg.Perturbations.Staleness = make(map[tracecheck.ReconcilerID]tracecheck.StalenessConfig)
-		}
-		for controllerID, kinds := range tuning.StaleReads {
-			id := tracecheck.ReconcilerID(controllerID)
-			st := cfg.Perturbations.Staleness[id]
-			if st.StaleReadBounds == nil {
-				st.StaleReadBounds = make(tracecheck.LookbackLimits)
-			}
-			for _, kind := range kinds {
-				trimmed := strings.TrimSpace(kind)
-				if trimmed == "" {
-					continue
-				}
-				lookback := tuning.StaleLookback[trimmed]
-				if lookback <= 0 {
-					lookback = 1
-				}
-				st.StaleReadBounds[trimmed] = tracecheck.LookbackLimit(lookback)
-			}
-			cfg.Perturbations.Staleness[id] = st
-		}
-	}
-	return cfg
-}
-
-type resourceGraphDefinitionController struct {
-	client.Client
-}
-
-func (c *resourceGraphDefinitionController) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	rgd := &unstructured.Unstructured{}
-	rgd.SetAPIVersion(applicationAPIVersion)
-	rgd.SetKind(resourceGraphDefinitionKind)
-	if err := c.Get(ctx, req.NamespacedName, rgd); err != nil {
-		return reconcile.Result{}, client.IgnoreNotFound(err)
-	}
-
-	crd := buildApplicationCRD()
-	current := &extv1.CustomResourceDefinition{}
-	err := c.Get(ctx, client.ObjectKey{Name: crd.Name}, current)
-	switch {
-	case apierrors.IsNotFound(err):
-		if err := c.Create(ctx, crd); err != nil {
-			return reconcile.Result{}, err
-		}
-	case err != nil:
-		return reconcile.Result{}, err
-	default:
-		if !updateCRDIfChanged(current, crd) {
-			break
-		}
-		if err := c.Update(ctx, current); err != nil {
-			return reconcile.Result{}, err
-		}
-	}
-
-	if !setResourceGraphDefinitionStatus(rgd) {
-		return reconcile.Result{}, nil
-	}
-	return reconcile.Result{}, c.Update(ctx, rgd)
-}
-
-func setResourceGraphDefinitionStatus(rgd *unstructured.Unstructured) bool {
-	original := rgd.DeepCopy()
-	setNestedField(rgd.Object, resourceGraphDefinitionStatus, "status", "state")
-	setNestedStringSlice(rgd.Object, []string{"deployment", "service", "ingress"}, "status", "topologicalOrder")
-	setNestedField(rgd.Object, []any{
-		map[string]any{"id": "deployment"},
-		map[string]any{"id": "service", "dependencies": []any{map[string]any{"id": "deployment"}}},
-		map[string]any{"id": "ingress", "dependencies": []any{map[string]any{"id": "service"}}},
-	}, "status", "resources")
-	return !apiequality.Semantic.DeepEqual(original.Object, rgd.Object)
-}
-
-type applicationController struct {
-	client.Client
-}
-
-func (c *applicationController) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-	app := &unstructured.Unstructured{}
-	app.SetAPIVersion(applicationAPIVersion)
-	app.SetKind(applicationKind)
-	if err := c.Get(ctx, req.NamespacedName, app); err != nil {
-		return reconcile.Result{}, client.IgnoreNotFound(err)
-	}
-
-	if strings.EqualFold(app.GetLabels()[reconciliationLabelKey], reconciliationDisabledValue) {
-		return reconcile.Result{}, nil
-	}
-
-	spec := applicationSpecFromObject(app)
-	deployment := buildApplicationDeployment(app, spec)
-	service := buildApplicationService(app, spec)
-	if err := c.reconcileDeployment(ctx, deployment); err != nil {
-		return reconcile.Result{}, err
-	}
-	if err := c.reconcileService(ctx, service); err != nil {
-		return reconcile.Result{}, err
-	}
-	if spec.IngressEnabled {
-		if err := c.reconcileIngress(ctx, buildApplicationIngress(app, spec)); err != nil {
-			return reconcile.Result{}, err
-		}
-	} else if err := c.deleteIngressIfPresent(ctx, buildApplicationIngress(app, spec)); err != nil {
-		return reconcile.Result{}, err
-	}
-
-	if err := c.updateApplicationStatus(ctx, app, deployment.Namespace, deployment.Name, spec.Replicas); err != nil {
-		return reconcile.Result{}, err
-	}
-	return reconcile.Result{}, nil
-}
-
-func (c *applicationController) reconcileDeployment(ctx context.Context, desired *appsv1.Deployment) error {
-	current := &appsv1.Deployment{}
-	err := c.Get(ctx, client.ObjectKeyFromObject(desired), current)
-	if apierrors.IsNotFound(err) {
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-
-	if apiequality.Semantic.DeepEqual(current.Labels, desired.Labels) &&
-		apiequality.Semantic.DeepEqual(current.Annotations, desired.Annotations) &&
-		apiequality.Semantic.DeepEqual(current.Spec, desired.Spec) {
-		return nil
-	}
-	current.Labels = desired.Labels
-	current.Annotations = desired.Annotations
-	current.Spec = desired.Spec
-	return c.Update(ctx, current)
-}
-
-func (c *applicationController) reconcileService(ctx context.Context, desired *corev1.Service) error {
-	current := &corev1.Service{}
-	err := c.Get(ctx, client.ObjectKeyFromObject(desired), current)
-	if apierrors.IsNotFound(err) {
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-
-	if apiequality.Semantic.DeepEqual(current.Labels, desired.Labels) &&
-		apiequality.Semantic.DeepEqual(current.Annotations, desired.Annotations) &&
-		apiequality.Semantic.DeepEqual(current.Spec.Selector, desired.Spec.Selector) &&
-		apiequality.Semantic.DeepEqual(current.Spec.Ports, desired.Spec.Ports) &&
-		current.Spec.Type == desired.Spec.Type {
-		return nil
-	}
-	current.Labels = desired.Labels
-	current.Annotations = desired.Annotations
-	current.Spec.Selector = desired.Spec.Selector
-	current.Spec.Ports = desired.Spec.Ports
-	current.Spec.Type = desired.Spec.Type
-	return c.Update(ctx, current)
-}
-
-func (c *applicationController) reconcileIngress(ctx context.Context, desired *networkingv1.Ingress) error {
-	current := &networkingv1.Ingress{}
-	err := c.Get(ctx, client.ObjectKeyFromObject(desired), current)
-	if apierrors.IsNotFound(err) {
-		return c.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-
-	if apiequality.Semantic.DeepEqual(current.Labels, desired.Labels) &&
-		apiequality.Semantic.DeepEqual(current.Annotations, desired.Annotations) &&
-		apiequality.Semantic.DeepEqual(current.Spec, desired.Spec) {
-		return nil
-	}
-	current.Labels = desired.Labels
-	current.Annotations = desired.Annotations
-	current.Spec = desired.Spec
-	return c.Update(ctx, current)
-}
-
-func (c *applicationController) deleteIngressIfPresent(ctx context.Context, ingress *networkingv1.Ingress) error {
-	current := &networkingv1.Ingress{}
-	err := c.Get(ctx, client.ObjectKeyFromObject(ingress), current)
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	return c.Delete(ctx, current)
-}
-
-func (c *applicationController) updateApplicationStatus(ctx context.Context, app *unstructured.Unstructured, namespace, name string, desiredReplicas int32) error {
-	original := app.DeepCopy()
-	// Use float64 for numeric status fields so that the value matches what
-	// the store returns after JSON round-tripping (JSON numbers decode as float64
-	// in unstructured maps).
-	availableReplicas := float64(0)
-	state := applicationStateInProgress
-
-	deployment := &appsv1.Deployment{}
-	if err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment); err != nil && !apierrors.IsNotFound(err) {
-		return err
-	} else if err == nil {
-		availableReplicas = float64(deployment.Status.AvailableReplicas)
-		if deployment.Status.AvailableReplicas >= desiredReplicas && desiredReplicas > 0 {
-			state = applicationStateActive
-		}
-		if deployment.Status.AvailableReplicas == 0 && desiredReplicas == 0 {
-			state = applicationStateActive
-		}
-	}
-
-	setNestedField(app.Object, state, "status", "state")
-	setNestedField(app.Object, availableReplicas, "status", "availableReplicas")
-	if apiequality.Semantic.DeepEqual(original.Object, app.Object) {
-		return nil
-	}
-	return c.Update(ctx, app)
-}
-
-func updateCRDIfChanged(current, desired *extv1.CustomResourceDefinition) bool {
-	if apiequality.Semantic.DeepEqual(current.Labels, desired.Labels) &&
-		apiequality.Semantic.DeepEqual(current.Annotations, desired.Annotations) &&
-		apiequality.Semantic.DeepEqual(current.Spec, desired.Spec) {
-		return false
-	}
-	current.Labels = desired.Labels
-	current.Annotations = desired.Annotations
-	current.Spec = desired.Spec
-	return true
-}
-
 func enqueueApplicationFromManagedResource(obj *unstructured.Unstructured) []reconcile.Request {
 	if obj == nil {
 		return nil
@@ -483,158 +246,118 @@ func enqueueApplicationFromManagedResource(obj *unstructured.Unstructured) []rec
 	}}
 }
 
-type applicationSpec struct {
-	Name           string
-	Image          string
-	Replicas       int32
-	IngressEnabled bool
-}
-
-func applicationSpecFromObject(app *unstructured.Unstructured) applicationSpec {
-	name := getNestedString(app.Object, "spec", "name")
-	if name == "" {
-		name = defaultApplicationName
-	}
-	image := getNestedString(app.Object, "spec", "image")
-	if image == "" {
-		image = "nginx"
-	}
-	replicas := getNestedInt32(app.Object, 3, "spec", "replicas")
-	return applicationSpec{
-		Name:           name,
-		Image:          image,
-		Replicas:       replicas,
-		IngressEnabled: getNestedBool(app.Object, false, "spec", "ingress", "enabled"),
-	}
-}
-
-func buildApplicationDeployment(app *unstructured.Unstructured, spec applicationSpec) *appsv1.Deployment {
-	labels := managedResourceLabels(app, "deployment", spec.Name)
-	return &appsv1.Deployment{
-		TypeMeta: metav1.TypeMeta{APIVersion: appsv1.SchemeGroupVersion.String(), Kind: "Deployment"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      spec.Name,
-			Namespace: defaultNamespace(app.GetNamespace()),
-			Labels:    labels,
-		},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &spec.Replicas,
-			Selector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"app": spec.Name},
-			},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"app": spec.Name},
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Name:  spec.Name,
-						Image: spec.Image,
-						Ports: []corev1.ContainerPort{{ContainerPort: 80}},
-					}},
+// buildQuickstartApplicationRGDTyped returns the typed RGD used for graph building.
+func buildQuickstartApplicationRGDTyped() *v1alpha1.ResourceGraphDefinition {
+	return generator.NewResourceGraphDefinition(resourceGraphDefinitionName,
+		generator.WithSchema(
+			applicationKind, "v1alpha1",
+			map[string]interface{}{
+				"name":     "string",
+				"image":    `string | default="nginx"`,
+				"replicas": "integer | default=3",
+				"ingress": map[string]interface{}{
+					"enabled": "boolean | default=false",
 				},
 			},
-		},
-	}
-}
-
-func buildApplicationService(app *unstructured.Unstructured, spec applicationSpec) *corev1.Service {
-	return &corev1.Service{
-		TypeMeta: metav1.TypeMeta{APIVersion: corev1.SchemeGroupVersion.String(), Kind: "Service"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      spec.Name + "-svc",
-			Namespace: defaultNamespace(app.GetNamespace()),
-			Labels:    managedResourceLabels(app, "service", spec.Name),
-		},
-		Spec: corev1.ServiceSpec{
-			Type:     corev1.ServiceTypeClusterIP,
-			Selector: map[string]string{"app": spec.Name},
-			Ports: []corev1.ServicePort{{
-				Protocol:   corev1.ProtocolTCP,
-				Port:       80,
-				TargetPort: intstr.FromInt(80),
-			}},
-		},
-	}
-}
-
-func buildApplicationIngress(app *unstructured.Unstructured, spec applicationSpec) *networkingv1.Ingress {
-	pathType := networkingv1.PathTypePrefix
-	return &networkingv1.Ingress{
-		TypeMeta: metav1.TypeMeta{APIVersion: networkingv1.SchemeGroupVersion.String(), Kind: "Ingress"},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      spec.Name + "-ingress",
-			Namespace: defaultNamespace(app.GetNamespace()),
-			Labels:    managedResourceLabels(app, "ingress", spec.Name),
-			Annotations: map[string]string{
-				"kubernetes.io/ingress.class":                       "alb",
-				"alb.ingress.kubernetes.io/scheme":                  "internet-facing",
-				"alb.ingress.kubernetes.io/target-type":             "ip",
-				"alb.ingress.kubernetes.io/healthcheck-path":        "/health",
-				"alb.ingress.kubernetes.io/listen-ports":            `[{"HTTP": 80}]`,
-				"alb.ingress.kubernetes.io/target-group-attributes": "stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=60",
+			nil, // no status schema — avoids needing OpenAPI schemas for CEL type inference
+		),
+		generator.WithResource("deployment", map[string]interface{}{
+			"apiVersion": "apps/v1",
+			"kind":       "Deployment",
+			"metadata": map[string]interface{}{
+				"name": "${schema.spec.name}",
 			},
-		},
-		Spec: networkingv1.IngressSpec{
-			Rules: []networkingv1.IngressRule{{
-				IngressRuleValue: networkingv1.IngressRuleValue{
-					HTTP: &networkingv1.HTTPIngressRuleValue{
-						Paths: []networkingv1.HTTPIngressPath{{
-							Path:     "/",
-							PathType: &pathType,
-							Backend: networkingv1.IngressBackend{
-								Service: &networkingv1.IngressServiceBackend{
-									Name: spec.Name + "-svc",
-									Port: networkingv1.ServiceBackendPort{Number: 80},
-								},
-							},
-						}},
+			"spec": map[string]interface{}{
+				"replicas": "${schema.spec.replicas}",
+				"selector": map[string]interface{}{
+					"matchLabels": map[string]interface{}{
+						"app": "${schema.spec.name}",
 					},
 				},
-			}},
-		},
-	}
-}
-
-func managedResourceLabels(app *unstructured.Unstructured, nodeID, appName string) map[string]string {
-	return map[string]string{
-		managedByLabelKey:         "kro",
-		ownedLabelKey:             "true",
-		instanceNameLabelKey:      app.GetName(),
-		instanceNamespaceLabelKey: defaultNamespace(app.GetNamespace()),
-		nodeIDLabelKey:            nodeID,
-		"app":                     appName,
-	}
-}
-
-func buildQuickstartApplicationRGD() *unstructured.Unstructured {
-	return &unstructured.Unstructured{
-		Object: map[string]any{
-			"apiVersion": applicationAPIVersion,
-			"kind":       resourceGraphDefinitionKind,
-			"metadata": map[string]any{
-				"name": resourceGraphDefinitionName,
-			},
-			"spec": map[string]any{
-				"schema": map[string]any{
-					"apiVersion": "v1alpha1",
-					"kind":       applicationKind,
-					"spec": map[string]any{
-						"name":     "string",
-						"image":    `string | default="nginx"`,
-						"replicas": "integer | default=3",
-						"ingress": map[string]any{
-							"enabled": "boolean | default=false",
+				"template": map[string]interface{}{
+					"metadata": map[string]interface{}{
+						"labels": map[string]interface{}{
+							"app": "${schema.spec.name}",
 						},
 					},
-					"status": map[string]any{
-						"deploymentConditions": `${deployment.status.conditions}`,
-						"availableReplicas":    `${deployment.status.availableReplicas}`,
+					"spec": map[string]interface{}{
+						"containers": []interface{}{
+							map[string]interface{}{
+								"name":  "${schema.spec.name}",
+								"image": "${schema.spec.image}",
+								"ports": []interface{}{
+									map[string]interface{}{
+										"containerPort": int64(80),
+									},
+								},
+							},
+						},
 					},
 				},
 			},
-		},
+		}, nil, nil),
+		generator.WithResource("service", map[string]interface{}{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]interface{}{
+				"name": "${schema.spec.name}-svc",
+			},
+			"spec": map[string]interface{}{
+				"selector": map[string]interface{}{
+					"app": "${schema.spec.name}",
+				},
+				"ports": []interface{}{
+					map[string]interface{}{
+						"protocol":   "TCP",
+						"port":       int64(80),
+						"targetPort": int64(80),
+					},
+				},
+			},
+		}, nil, nil),
+		generator.WithResource("ingress", map[string]interface{}{
+			"apiVersion": "networking.k8s.io/v1",
+			"kind":       "Ingress",
+			"metadata": map[string]interface{}{
+				"name": "${schema.spec.name}-ingress",
+			},
+			"spec": map[string]interface{}{
+				"rules": []interface{}{
+					map[string]interface{}{
+						"http": map[string]interface{}{
+							"paths": []interface{}{
+								map[string]interface{}{
+									"path":     "/",
+									"pathType": "Prefix",
+									"backend": map[string]interface{}{
+										"service": map[string]interface{}{
+											"name": "${schema.spec.name}-svc",
+											"port": map[string]interface{}{
+												"number": int64(80),
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}, nil, []string{`${schema.spec.ingress.enabled}`}),
+	)
+}
+
+// buildQuickstartApplicationRGD returns the RGD as unstructured for seeding state.
+func buildQuickstartApplicationRGD() *unstructured.Unstructured {
+	rgd := buildQuickstartApplicationRGDTyped()
+	obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(rgd)
+	if err != nil {
+		panic(fmt.Sprintf("convert typed RGD to unstructured: %v", err))
 	}
+	u := &unstructured.Unstructured{Object: obj}
+	u.SetAPIVersion(applicationAPIVersion)
+	u.SetKind(resourceGraphDefinitionKind)
+	return u
 }
 
 func buildQuickstartApplicationInstance() *unstructured.Unstructured {
@@ -648,6 +371,7 @@ func buildQuickstartApplicationInstance() *unstructured.Unstructured {
 			},
 			"spec": map[string]any{
 				"name":     defaultApplicationName,
+				"image":    "nginx",
 				"replicas": int64(1),
 				"ingress": map[string]any{
 					"enabled": true,
@@ -655,125 +379,6 @@ func buildQuickstartApplicationInstance() *unstructured.Unstructured {
 			},
 		},
 	}
-}
-
-func buildApplicationCRD() *extv1.CustomResourceDefinition {
-	scope := extv1.NamespaceScoped
-	return &extv1.CustomResourceDefinition{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: extv1.SchemeGroupVersion.String(),
-			Kind:       "CustomResourceDefinition",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name: applicationCRDName,
-			Labels: map[string]string{
-				managedByLabelKey: "kro",
-				ownedLabelKey:     "true",
-			},
-		},
-		Spec: extv1.CustomResourceDefinitionSpec{
-			Group: kroDomainName,
-			Names: extv1.CustomResourceDefinitionNames{
-				Plural:     "applications",
-				Singular:   "application",
-				Kind:       applicationKind,
-				ShortNames: []string{"app"},
-			},
-			Scope: scope,
-			Versions: []extv1.CustomResourceDefinitionVersion{{
-				Name:    "v1alpha1",
-				Served:  true,
-				Storage: true,
-				Schema: &extv1.CustomResourceValidation{
-					OpenAPIV3Schema: &extv1.JSONSchemaProps{
-						Type: "object",
-						Properties: map[string]extv1.JSONSchemaProps{
-							"spec": {
-								Type: "object",
-								Properties: map[string]extv1.JSONSchemaProps{
-									"name":     {Type: "string"},
-									"image":    {Type: "string"},
-									"replicas": {Type: "integer"},
-									"ingress": {
-										Type: "object",
-										Properties: map[string]extv1.JSONSchemaProps{
-											"enabled": {Type: "boolean"},
-										},
-									},
-								},
-							},
-							"status": {
-								Type: "object",
-								Properties: map[string]extv1.JSONSchemaProps{
-									"state":             {Type: "string"},
-									"availableReplicas": {Type: "integer"},
-								},
-							},
-						},
-					},
-				},
-				Subresources: &extv1.CustomResourceSubresources{
-					Status: &extv1.CustomResourceSubresourceStatus{},
-				},
-			}},
-		},
-		Status: extv1.CustomResourceDefinitionStatus{
-			Conditions: []extv1.CustomResourceDefinitionCondition{{
-				Type:   extv1.Established,
-				Status: extv1.ConditionTrue,
-				Reason: "KameraSimulated",
-			}},
-			AcceptedNames: extv1.CustomResourceDefinitionNames{
-				Plural:   "applications",
-				Singular: "application",
-				Kind:     applicationKind,
-			},
-		},
-	}
-}
-
-func getNestedString(obj map[string]any, fields ...string) string {
-	value, found, err := unstructured.NestedString(obj, fields...)
-	if err != nil || !found {
-		return ""
-	}
-	return value
-}
-
-func getNestedBool(obj map[string]any, fallback bool, fields ...string) bool {
-	value, found, err := unstructured.NestedBool(obj, fields...)
-	if err != nil || !found {
-		return fallback
-	}
-	return value
-}
-
-func getNestedInt32(obj map[string]any, fallback int32, fields ...string) int32 {
-	value, found, err := unstructured.NestedInt64(obj, fields...)
-	if err == nil && found {
-		return int32(value)
-	}
-	// JSON round-tripping converts int64 to float64; handle that gracefully.
-	raw, rawFound, rawErr := unstructured.NestedFieldNoCopy(obj, fields...)
-	if rawErr != nil || !rawFound {
-		return fallback
-	}
-	if f, ok := raw.(float64); ok {
-		return int32(f)
-	}
-	return fallback
-}
-
-func setNestedStringSlice(obj map[string]any, value []string, fields ...string) {
-	items := make([]any, 0, len(value))
-	for _, item := range value {
-		items = append(items, item)
-	}
-	_ = unstructured.SetNestedSlice(obj, items, fields...)
-}
-
-func setNestedField(obj map[string]any, value any, fields ...string) {
-	_ = unstructured.SetNestedField(obj, value, fields...)
 }
 
 func defaultNamespace(namespace string) string {

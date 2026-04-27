@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"reflect"
+
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/samber/lo"
@@ -22,7 +24,6 @@ import (
 	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
 	"github.com/tgoodwin/kamera/pkg/util"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -39,6 +40,30 @@ type EffectContextManager interface {
 	CleanupEffectContext(ctx context.Context)
 }
 
+// StalenessInterval defines a window during which a reconciler's view
+// of a specific resource kind lags behind the actual cluster state.
+type StalenessInterval struct {
+	ReconcilerID ReconcilerID `json:"reconciler"`
+	Kind         string       `json:"kind"`  // canonical group/kind
+	StaleAt      int64        `json:"staleAt"`
+	CatchUpAt    int64        `json:"catchUpAt"`
+	Lag          int64        `json:"lag"` // how far behind frontier; -1 = frozen at StaleAt sequence
+}
+
+// PermuteDepthRange constrains ordering permutations to a specific depth window.
+// When set, permutations are only expanded for states within [Min, Max] (inclusive).
+type PermuteDepthRange struct {
+	Min int
+	Max int
+}
+
+// PermuteEventTrigger specifies an event (opType + canonical kind) that must
+// be observed in a path's effects before ordering permutations activate.
+type PermuteEventTrigger struct {
+	OpType event.OperationType
+	Kind   string // canonical group/kind, e.g. "apiextensions.crossplane.io/CompositionRevision"
+}
+
 type PerturbationConfig struct {
 	PermuteOrder map[ReconcilerID]bool
 	Staleness    map[ReconcilerID]StalenessConfig
@@ -47,6 +72,32 @@ type PerturbationConfig struct {
 	// triggered reactively by prior controller output, so the explorer needs an
 	// explicit depth-based scheduler for them.
 	UserActionReadyDepths map[int]int
+
+	// StalenessIntervals defines declarative windows during which a reconciler's
+	// view of a specific resource kind lags behind actual cluster state. When
+	// configured, this replaces the per-step branching approach of the Staleness map.
+	StalenessIntervals []StalenessInterval `json:"stalenessIntervals,omitempty"`
+
+	// PermuteDepthRange, when non-nil, restricts ordering permutations to states
+	// whose depth falls within [Min, Max] inclusive.
+	PermuteDepthRange *PermuteDepthRange
+
+	// PermuteAfterEvent, when non-nil, requires the specified event to have
+	// occurred before ordering permutations activate on a branch.
+	PermuteAfterEvent *PermuteEventTrigger
+
+	// FaultInjection defines mid-reconcile crash injection rules. When
+	// configured, a reconciler's write effects are truncated after
+	// CrashAfterEffect writes, simulating a controller crash mid-reconcile.
+	FaultInjection []FaultInjectionConfig `json:"faultInjection,omitempty"`
+}
+
+// FaultInjectionConfig defines a mid-reconcile crash for a specific reconciler.
+type FaultInjectionConfig struct {
+	ReconcilerID     ReconcilerID `json:"reconciler"`
+	CrashAfterEffect int          `json:"crashAfterEffect"`
+	RecoverAtDepth   int          `json:"recoverAtDepth,omitempty"`
+	TriggerOnce      bool         `json:"triggerOnce,omitempty"`
 }
 
 type StalenessConfig struct {
@@ -159,6 +210,16 @@ func (cfg ExploreConfig) Clone() ExploreConfig {
 		copied.StaleReadBounds = maps.Clone(st.StaleReadBounds)
 		out.Perturbations.Staleness[id] = copied
 	}
+	out.Perturbations.StalenessIntervals = slices.Clone(cfg.Perturbations.StalenessIntervals)
+	if cfg.Perturbations.PermuteDepthRange != nil {
+		copied := *cfg.Perturbations.PermuteDepthRange
+		out.Perturbations.PermuteDepthRange = &copied
+	}
+	if cfg.Perturbations.PermuteAfterEvent != nil {
+		copied := *cfg.Perturbations.PermuteAfterEvent
+		out.Perturbations.PermuteAfterEvent = &copied
+	}
+	out.Perturbations.FaultInjection = slices.Clone(cfg.Perturbations.FaultInjection)
 	return out
 }
 
@@ -170,6 +231,7 @@ func (cfg ExploreConfig) OptimizationsEnabled() bool {
 type TriggerHandler interface {
 	GetTriggered(changes Changes) ([]PendingReconcile, error)
 	KindDepsForReconciler(reconcilerID ReconcilerID) ([]string, error)
+	SetStateReader(reader StateReader)
 }
 
 type Explorer struct {
@@ -195,6 +257,16 @@ type Explorer struct {
 	stats         *ExploreStats
 	optimizations *optimizations
 	randomSource  *rand.Rand
+
+	// resourceVersions maps each VersionHash to the global ResourceVersion at
+	// which it was created. This mirrors K8s/etcd semantics where every write
+	// increments a global revision counter. Used for staleness observability:
+	// comparing a controller's observed RV against the current RV reveals lag.
+	resourceVersions map[snapshot.VersionHash]int64
+
+	// onCrashFuncs are called when fault injection truncates a reconcile.
+	// They reset shared in-memory state to simulate a process restart.
+	onCrashFuncs []func()
 }
 
 // VersionManager returns the shared version manager used during exploration.
@@ -564,6 +636,12 @@ func (e *Explorer) enqueueState(queue []StateNode, state StateNode) []StateNode 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
 	logger.Info("starting!")
 
+	// Stamp interval-based staleness config onto the initial state so it
+	// propagates to all descendant states via materializeNextState.
+	if len(e.Config.Perturbations.StalenessIntervals) > 0 {
+		initialState.stalenessIntervals = e.Config.Perturbations.StalenessIntervals
+	}
+
 	exploreCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -578,6 +656,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	e.stats = NewExploreStats()
 	e.stats.Start()
 
+	exploreStart := time.Now()
 	go func() {
 		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, abortedStateChan)
 		if err != nil {
@@ -605,6 +684,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	abortedCollected := make([]ResultState, 0)
 
+	chanLoopStart := time.Now()
 	for convergedStateChan != nil || executionHistoryChan != nil || abortedStateChan != nil {
 		select {
 		case convergedState, ok := <-convergedStateChan:
@@ -655,6 +735,9 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 			result.AbortedStates[i].Paths = GetUniquePaths(mergedPaths)
 		}
 	}
+	assembleEnd := time.Now()
+	fmt.Fprintf(os.Stderr, "EXPLORE-TIMING explore_goroutine=%v chan_loop=%v assemble=%v total=%v\n",
+		chanLoopStart.Sub(exploreStart), assembleEnd.Sub(chanLoopStart), time.Since(assembleEnd), time.Since(exploreStart))
 	summarize(result)
 	return result
 }
@@ -1135,7 +1218,34 @@ func (e *Explorer) explore(
 			}
 
 			stepLogger.Info("Taking reconcile step")
+
+			// Set up fault injection crash injector if configured.
+			var crashInjectorInst *crashInjector
+			if fi, ok := e.getFaultInjectionConfig(pendingReconcile.ReconcilerID, &stateView); ok {
+				crashInjectorInst = newCrashInjector(fi.CrashAfterEffect)
+				stepCtx = withCrashInjector(stepCtx, crashInjectorInst)
+			}
+
 			stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+
+			// Handle fault injection crash: if the reconcile was aborted by crash
+			// injection, clear the error (it's expected) and call crash callbacks.
+			if crashInjectorInst != nil && crashInjectorInst.DidCrash() {
+				err = nil // crash is not a real error
+				// Mark reconciler as crashed for triggerOnce
+				if stateView.crashedReconcilers == nil {
+					stateView.crashedReconcilers = make(map[ReconcilerID]bool)
+				}
+				stateView.crashedReconcilers[pendingReconcile.ReconcilerID] = true
+				// Call crash callbacks to reset shared in-memory state
+				for _, fn := range e.onCrashFuncs {
+					fn()
+				}
+				stepLogger.Info("fault injection: controller crashed mid-reconcile",
+					"reconciler", pendingReconcile.ReconcilerID,
+					"crashAfterEffect", crashInjectorInst.crashThreshold,
+				)
+			}
 
 			// Diagnostic logging for non-determinism investigation:
 			// Log the effects order to detect if Knative reconcilers produce effects in different orders across runs.
@@ -1369,8 +1479,19 @@ func (e *Explorer) materializeNextState(
 	stepResult.StateBefore = maps.Clone(stateView.Objects())
 	stepResult.KindSeqBefore = maps.Clone(stateView.Contents.KindSequences)
 
+	// Compute staleness info when the controller observed a stale view.
+	if consumed != nil {
+		if staleSeqs := stateView.evaluateStalenessIntervals(consumed.ReconcilerID); len(staleSeqs) > 0 {
+			stepResult.StalenessInfo = e.computeStalenessInfo(stateView, consumed.ReconcilerID, staleSeqs)
+		} else if stateView.stuckReconcilerPositions != nil {
+			if stuckSeqs, stuck := stateView.stuckReconcilerPositions[consumed.ReconcilerID]; stuck {
+				stepResult.StalenessInfo = e.computeStalenessInfo(stateView, consumed.ReconcilerID, stuckSeqs)
+			}
+		}
+	}
+
 	newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
-	triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes)
+	triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes, NewStateReaderFromObjectVersions(newContents, e.versionManager))
 	newPendingReconciles := e.determineNewPendingReconciles(stepCtx, stateView, consumed, stepResult)
 	e.maybePromoteStableRequeueAfter(stateView, consumed, stepResult, newPendingReconciles)
 	stepLogger.V(1).WithValues(
@@ -1383,6 +1504,18 @@ func (e *Explorer) materializeNextState(
 	stepResult.KindSeqAfter = newSequences
 	stepResult.PendingReconciles = newPendingReconciles
 
+	// Propagate permuteTriggered from parent; check step effects against trigger condition.
+	triggered := stateView.permuteTriggered
+	if !triggered && e.Config != nil && e.Config.Perturbations.PermuteAfterEvent != nil {
+		trigger := e.Config.Perturbations.PermuteAfterEvent
+		for _, eff := range stepResult.Changes.Effects {
+			if eff.OpType == trigger.OpType && eff.Key.CanonicalGroupKind() == trigger.Kind {
+				triggered = true
+				break
+			}
+		}
+	}
+
 	newState := StateNode{
 		Contents:                 NewStateSnapshot(newContents, newSequences, newStateEvents),
 		PendingReconciles:        newPendingReconciles,
@@ -1390,12 +1523,48 @@ func (e *Explorer) materializeNextState(
 		action:                   stepResult,
 		divergenceKey:            stateView.divergenceKey,
 		stuckReconcilerPositions: maps.Clone(stateView.stuckReconcilerPositions),
+		stalenessIntervals:       stateView.stalenessIntervals, // immutable config, share reference
 		ExecutionHistory:         append(slices.Clone(stateView.ExecutionHistory), stepResult),
 		nextUserActionIdx:        nextUserActionIdx,
+		permuteTriggered:         triggered,
+		crashedReconcilers:       maps.Clone(stateView.crashedReconcilers),
 	}
 	newState.ID = string(newState.Hash())
 
 	return newState, triggeredByStep
+}
+
+// computeStalenessInfo compares the stale objects a controller would observe
+// against the real current objects and records per-object ResourceVersion gaps.
+func (e *Explorer) computeStalenessInfo(stateView StateNode, reconcilerID ReconcilerID, stuckSeqs KindSequences) []StaleReadInfo {
+	currentObjects := stateView.Contents.All()
+	observedObjects := stateView.ObserveAs(reconcilerID)
+
+	var info []StaleReadInfo
+	for key, currentHash := range currentObjects {
+		observedHash, exists := observedObjects[key]
+		if !exists {
+			continue
+		}
+		kind := key.CanonicalGroupKind()
+		if _, staleKind := stuckSeqs[kind]; !staleKind {
+			continue
+		}
+		if observedHash == currentHash {
+			continue
+		}
+		currentRV := e.resourceVersions[currentHash]
+		observedRV := e.resourceVersions[observedHash]
+		if currentRV > observedRV {
+			info = append(info, StaleReadInfo{
+				Key:        fmt.Sprintf("%s/%s/%s", kind, key.ResourceKey.Namespace, key.ResourceKey.Name),
+				ObservedRV: observedRV,
+				CurrentRV:  currentRV,
+				Lag:        currentRV - observedRV,
+			})
+		}
+	}
+	return info
 }
 
 func (e *Explorer) maybePromoteStableRequeueAfter(
@@ -1488,7 +1657,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				panic("create effect object already exists in prev state: " + effect.Key.String())
 			}
 			// Mimic APIServer behavior: set Generation to 1 on CREATE if not already set
-			newObj := e.versionManager.Resolve(changes[effect.Key])
+			newObj := e.versionManager.Resolve(effect.Version)
 			if newObj != nil {
 				gen := util.GetObjectGeneration(newObj)
 				if gen == 0 {
@@ -1510,9 +1679,30 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			if exists && existingKey != effect.Key {
 				delete(nextState, existingKey)
 			}
+			if effect.Subresource == "status" {
+				oldObj := e.versionManager.Resolve(oldVersion)
+				newObj := e.versionManager.Resolve(effect.Version)
+				mergedObj := mergeStatusSubresourceObject(oldObj, newObj, effect.OpType == event.PATCH || effect.OpType == event.APPLY)
+				mergedHash := e.versionManager.Publish(mergedObj)
+				// No-op: if merged result is identical to current state, skip.
+				// Real K8s API server detects identical status patches and
+				// skips the etcd write — no resourceVersion bump, no watch event.
+				if mergedHash == oldVersion {
+					continue
+				}
+				changes[effect.Key] = mergedHash
+				nextState[effect.Key] = changes[effect.Key]
+				break
+			}
+			// No-op detection: if the effect produces the same content hash as
+			// what's already in state, skip it. This matches real API server
+			// behavior where a PATCH that doesn't change anything is a no-op.
+			if effect.Version == oldVersion {
+				continue
+			}
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
 			oldObj := e.versionManager.Resolve(oldVersion)
-			newObj := e.versionManager.Resolve(changes[effect.Key])
+			newObj := e.versionManager.Resolve(effect.Version)
 			if oldObj != nil && newObj != nil {
 				// Compare specs to determine if Generation should be incremented
 				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
@@ -1541,10 +1731,28 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			}
 			nextState[effect.Key] = changes[effect.Key]
 		case event.APPLY:
+			if effect.Subresource == "status" {
+				if !exists {
+					panic("status apply effect object not found in prev state: " + effect.Key.String())
+				}
+
+				oldVersion := nextState[existingKey]
+				if exists && existingKey != effect.Key {
+					delete(nextState, existingKey)
+				}
+
+				oldObj := e.versionManager.Resolve(oldVersion)
+				newObj := e.versionManager.Resolve(effect.Version)
+				mergedObj := mergeStatusSubresourceObject(oldObj, newObj, effect.OpType == event.PATCH || effect.OpType == event.APPLY)
+				changes[effect.Key] = e.versionManager.Publish(mergedObj)
+				nextState[effect.Key] = changes[effect.Key]
+				break
+			}
+
 			// Server-side apply has upsert semantics (create if missing, update if present).
 			if !exists {
 				// Apply has upsert semantics; if the object doesn't exist, treat as CREATE.
-				newObj := e.versionManager.Resolve(changes[effect.Key])
+				newObj := e.versionManager.Resolve(effect.Version)
 				if newObj != nil {
 					gen := util.GetObjectGeneration(newObj)
 					if gen == 0 {
@@ -1557,15 +1765,36 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				break
 			}
 
-			// Capture the existing version before any key replacement.
+			// SSA idempotency: if the apply doesn't change the object content,
+			// treat it as a no-op. This prevents infinite reconcile cycles when
+			// controllers unconditionally re-apply the same desired state.
+			//
+			// We compare spec (the primary content) — if spec is unchanged,
+			// skip the effect entirely so it doesn't trigger re-enqueue.
 			oldVersion := nextState[existingKey]
+			oldObj := e.versionManager.Resolve(oldVersion)
+			newObj := e.versionManager.Resolve(effect.Version)
+			if oldObj != nil && newObj != nil {
+				// Real K8s API server (v1.21+) detects SSA no-op applies and
+				// skips the etcd write entirely — no resourceVersion bump, no
+				// watch event. Compare the full object content (not just spec)
+				// to match this behavior.
+				specChanged, _ := snapshot.CheckSpecChanged(oldObj, newObj)
+				metadataChanged := !metadataEqual(oldObj, newObj)
+				if !specChanged && !metadataChanged {
+					stepLogger.V(2).WithValues("key", effect.Key).Info("no-op SSA Apply: content unchanged, skipping effect")
+					continue
+				}
+			}
+
+			// Capture the existing version before any key replacement.
 			if exists && existingKey != effect.Key {
 				delete(nextState, existingKey)
 			}
 
 			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
-			oldObj := e.versionManager.Resolve(oldVersion)
-			newObj := e.versionManager.Resolve(changes[effect.Key])
+			oldObj = e.versionManager.Resolve(oldVersion)
+			newObj = e.versionManager.Resolve(effect.Version)
 			if oldObj != nil && newObj != nil {
 				// Compare specs to determine if Generation should be incremented
 				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
@@ -1626,10 +1855,22 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 
 		// increment resourceversion for the kind
 		nextSequences[effect.Key.IdentityKey.CanonicalGroupKind()] = newRV
+
+		// Record the global ResourceVersion for this object version so that
+		// staleness analysis can compare observed vs current RV.
+		if vHash := changes[effect.Key]; vHash.Value != "" && e.resourceVersions != nil {
+			e.resourceVersions[vHash] = newRV
+		}
+
+		// Use the post-modification version hash (after Generation bumps, etc.)
+		// rather than the original effect's version, so that stateEvent hashes
+		// stay consistent with Contents.contents for staleness replay.
+		recordedEffect := effect
+		recordedEffect.Version = changes[effect.Key]
 		stateEvent := StateEvent{
 			ReconcileID: stepResult.FrameID,
 			Sequence:    newRV,
-			Effect:      effect,
+			Effect:      recordedEffect,
 			// TODO handle time info
 			Timestamp: "",
 		}
@@ -1637,6 +1878,64 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 	}
 
 	return nextState, nextSequences, newStateEvents
+}
+
+// metadataEqual compares the metadata of two unstructured objects, ignoring
+// fields that the API server manages automatically (resourceVersion,
+// managedFields, generation, creationTimestamp, uid).
+func metadataEqual(a, b *unstructured.Unstructured) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	aLabels := a.GetLabels()
+	bLabels := b.GetLabels()
+	aAnnotations := a.GetAnnotations()
+	bAnnotations := b.GetAnnotations()
+	aOwners := a.GetOwnerReferences()
+	bOwners := b.GetOwnerReferences()
+	aFinalizers := a.GetFinalizers()
+	bFinalizers := b.GetFinalizers()
+
+	return reflect.DeepEqual(aLabels, bLabels) &&
+		reflect.DeepEqual(aAnnotations, bAnnotations) &&
+		reflect.DeepEqual(aOwners, bOwners) &&
+		reflect.DeepEqual(aFinalizers, bFinalizers)
+}
+
+// mergeStatusSubresourceObject merges a status subresource write into an
+// existing object. Only the "status" top-level field is taken from newObj;
+// all other fields (spec, metadata, etc.) are preserved from oldObj.
+//
+// When preserveOnMissing is true and newObj has no "status" field, the existing
+// status is preserved (no-op). This matches merge-patch semantics where the
+// absence of a field means "don't change". When false, a missing status in
+// newObj causes the status to be deleted from the merged result, matching
+// full-update semantics.
+func mergeStatusSubresourceObject(oldObj, newObj *unstructured.Unstructured, preserveOnMissing bool) *unstructured.Unstructured {
+	if oldObj == nil {
+		panic("status subresource update missing old object")
+	}
+	if newObj == nil {
+		panic("status subresource update missing new object")
+	}
+
+	mergedObj := oldObj.DeepCopy()
+	sourceObj := newObj.DeepCopy()
+
+	status, found, err := unstructured.NestedFieldNoCopy(sourceObj.Object, "status")
+	if err != nil {
+		panic(fmt.Errorf("read status subresource: %w", err))
+	}
+	if !found {
+		if preserveOnMissing {
+			return mergedObj
+		}
+		delete(mergedObj.Object, "status")
+		return mergedObj
+	}
+
+	mergedObj.Object["status"] = status
+	return mergedObj
 }
 
 // takeReconcileStep transitions the execution from one StateNode to another StateNode
@@ -1673,29 +1972,34 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "FrameID", frameID).V(2).Info("about to reconcile")
 
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
-	if err != nil && apierrors.IsAlreadyExists(err) {
-		// AlreadyExists errors happen when a stale read causes a controller to try creating
-		// an object that already exists. Treat this as a no-op and continue exploring.
-		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request).Info("tolerating AlreadyExists error; treating reconcile as no-op")
+	if err != nil {
+		// Reconciler errors in real Kubernetes cause a requeue with backoff.
+		// Crucially, any API writes that occurred before the error are durable —
+		// they already landed on the API server. We preserve those effects in the
+		// result (reconcileResult contains them when non-nil) and re-enqueue the
+		// reconciler so exploration continues.
+		stepLog.WithValues("ReconcilerID", pr.ReconcilerID, "Request", pr.Request, "error", err.Error()).
+			Info("tolerating reconcile error; keeping effects and re-enqueuing")
+
+		if reconcileResult != nil {
+			// Use the result from doReconcile which includes any effects
+			// that were recorded before the error.
+			reconcileResult.Error = err.Error()
+			reconcileResult.ReenqueueRequest = &pr
+			return reconcileResult, nil
+		}
+
+		// reconcileResult is nil — the error occurred before any effects
+		// could be recorded (e.g., state preparation failure). Treat as no-op.
 		tolerableErrResult := &ReconcileResult{
 			ControllerID: pr.ReconcilerID,
 			FrameID:      frameID,
 			FrameType:    FrameTypeExplore,
 			Changes:      Changes{ObjectVersions: make(ObjectVersions)},
 			Error:        err.Error(),
+			ReenqueueRequest: &pr,
 		}
 		return tolerableErrResult, nil
-	}
-	if err != nil {
-		// Other errors cause the branch to be abandoned. Return a minimal result for history tracking.
-		stepLog.WithValues("ReconcilerID", pr.ReconcilerID).Error(err, "error reconciling")
-		failure := &ReconcileResult{
-			ControllerID: pr.ReconcilerID,
-			FrameID:      frameID,
-			FrameType:    FrameTypeExplore,
-			Error:        err.Error(),
-		}
-		return failure, err
 	}
 
 	return reconcileResult, nil
@@ -1795,7 +2099,10 @@ func (e *Explorer) reconcileAtState(ctx context.Context, objState ObjectVersions
 	// convert the write set to object versions
 	result, err := container.doReconcile(ctx, objState, pr.Request)
 	if err != nil {
-		return nil, err
+		// Pass through both result and error. doReconcile may return a
+		// non-nil result with recorded effects alongside a reconcile error.
+		// The caller (takeReconcileStep) handles preserving those effects.
+		return result, err
 	}
 	return result, nil
 }
@@ -1805,7 +2112,7 @@ func (e *Explorer) monteCarloEnabled() bool {
 }
 
 func (e *Explorer) initialStatesToEnqueue(initialState StateNode) []StateNode {
-	if len(initialState.PendingReconciles) > 1 && !e.monteCarloEnabled() {
+	if e.shouldExpandPendingOrder(initialState) {
 		initialStateVariants := e.expandStateByReconcileOrder(initialState, initialState.PendingReconciles)
 		return append(initialStateVariants, initialState)
 	}
@@ -1813,7 +2120,22 @@ func (e *Explorer) initialStatesToEnqueue(initialState StateNode) []StateNode {
 }
 
 func (e *Explorer) shouldExpandPendingOrder(state StateNode) bool {
-	return !e.monteCarloEnabled() && len(state.PendingReconciles) > 1
+	if e.monteCarloEnabled() || len(state.PendingReconciles) <= 1 {
+		return false
+	}
+	if e.Config != nil {
+		// Depth-range gate: if configured, only permute within [Min, Max].
+		if dr := e.Config.Perturbations.PermuteDepthRange; dr != nil {
+			if state.depth < dr.Min || state.depth > dr.Max {
+				return false
+			}
+		}
+		// Event-trigger gate: if configured, only permute after trigger event has been observed.
+		if e.Config.Perturbations.PermuteAfterEvent != nil && !state.permuteTriggered {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Explorer) selectionRNG() *rand.Rand {
@@ -1840,7 +2162,12 @@ func (e *Explorer) selectPendingReconcile(state StateNode) (PendingReconcile, er
 	return ready[idx], nil
 }
 
-func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
+func (e *Explorer) getTriggeredReconcilers(changes Changes, stateReader ...StateReader) []PendingReconcile {
+	// If a state reader is provided, set it for stateful watch mappers.
+	if len(stateReader) > 0 && stateReader[0] != nil {
+		e.triggerManager.SetStateReader(stateReader[0])
+		defer e.triggerManager.SetStateReader(nil)
+	}
 	res, err := e.triggerManager.GetTriggered(changes)
 	if err != nil {
 		logger.Error(err, "getting triggered reconciles")
@@ -1850,6 +2177,12 @@ func (e *Explorer) getTriggeredReconcilers(changes Changes) []PendingReconcile {
 }
 
 func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerID ReconcilerID, currDepth int) ([]StateNode, error) {
+	// When interval-based staleness is configured, staleness is deterministic
+	// (handled transparently by ObserveAs) — no branching needed.
+	if len(e.Config.Perturbations.StalenessIntervals) > 0 {
+		return []StateNode{currState}, nil
+	}
+
 	currSnapshot := currState.Contents
 	config, ok := e.Config.Perturbations.Staleness[reconcilerID]
 	if !ok {
@@ -1857,12 +2190,9 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 		// no staleness bounds configured for this reconciler, so dont compute stale states
 		return []StateNode{currState}, nil
 	}
-	maxRestarts := config.MaxRestarts
-	currRestarts := e.stats.RestartsPerReconciler[reconcilerID]
-	if currRestarts >= maxRestarts {
-		logger.V(2).Info("max restarts reached for reconciler", "ReconcilerID", reconcilerID, "CurrRestarts", currRestarts, "MaxRestarts", maxRestarts)
-		return []StateNode{currState}, nil
-	}
+	// TODO: revisit MaxRestarts as a staleness budget mechanism.
+	// For now, disabled so that stale views are always generated when
+	// staleness bounds are configured for a reconciler.
 
 	logger.V(2).Info("getting possible views for reconciler", "ReconcilerID", reconcilerID, "CurrDepth", currDepth, "MaxDepth", e.Config.MaxDepth)
 	possiblePastViews, err := getAllViewsForController(&currSnapshot, reconcilerID, e.dependencies, config.StaleReadBounds)
@@ -1873,10 +2203,17 @@ func (e *Explorer) getPossibleViewsForReconcile(currState StateNode, reconcilerI
 	possiblePastViews = e.priorityHandler.AssignPriorities(possiblePastViews)
 	possiblePastViews = e.priorityHandler.PrioritizeViews(possiblePastViews)
 
-	// When we generate possible stale views for a controller at a certain depth in the execution,
-	// we're modeling a controller restarting and reconnecting to a network-partitioned APIServer.
-	e.stats.RestartsPerReconciler[reconcilerID]++
-	logger.V(1).Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(possiblePastViews))
+	// Only count a restart when actual stale views were generated (more than
+	// just the current state). At early depths, objects may not have been
+	// written enough times to produce stale alternatives. Deferring the
+	// restart count lets the controller be checked again at a later depth
+	// when more write history has accumulated.
+	if len(possiblePastViews) > 1 {
+		e.stats.RestartsPerReconciler[reconcilerID]++
+	}
+	if len(possiblePastViews) > 1 {
+		logger.V(1).Info("produced stale views for controller", "ReconcilerID", reconcilerID, "NumViews", len(possiblePastViews), "CurrDepth", currDepth)
+	}
 
 	divergenceHash := currState.Hash()
 	asStateNodes := lo.Map(possiblePastViews, func(staleState *StateSnapshot, _ int) StateNode {
@@ -1982,7 +2319,7 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 
 	// after processing the reconcile, we need to determine which controllers
 	// were triggered by the changes in the state.
-	triggeredByChanges := e.getTriggeredReconcilers(result.Changes)
+	triggeredByChanges := e.getTriggeredReconcilers(result.Changes, NewStateReaderFromObjectVersions(state.Objects(), e.versionManager))
 
 	// Log which reconcilers were triggered for debugging, but only if verbosity at least 1 is enabled.
 	if logger.V(1).Enabled() && len(triggeredByChanges) > 0 {
@@ -1996,10 +2333,28 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 		).V(1).Info("reconcilers triggered by changes")
 	}
 
-	// for those that would have been triggered but have been configured as "stuck",
-	// filter them out of the triggered list if the changes are contained within the
-	// kinds their watch streams are "stuck" on.
-	if state.stuckReconcilerPositions != nil {
+	// For interval-based staleness: filter out triggers for kinds the reconciler
+	// is currently stale on (its informer hasn't seen those changes yet).
+	if len(state.stalenessIntervals) > 0 {
+		filtered := lo.Filter(triggeredByChanges, func(pending PendingReconcile, _ int) bool {
+			staleSeqs := state.evaluateStalenessIntervals(pending.ReconcilerID)
+			if len(staleSeqs) == 0 {
+				return true // not in any stale window
+			}
+			resourceDeps, _ := e.triggerManager.KindDepsForReconciler(pending.ReconcilerID)
+			for changeKey := range result.Changes.ObjectVersions {
+				canonicalKind := util.CanonicalGroupKind(changeKey.ResourceKey.Group, changeKey.ResourceKey.Kind)
+				if _, staleOnKind := staleSeqs[canonicalKind]; !staleOnKind {
+					if slices.Contains(resourceDeps, canonicalKind) {
+						return true
+					}
+				}
+			}
+			return false
+		})
+		triggeredByChanges = filtered
+	} else if state.stuckReconcilerPositions != nil {
+		// Legacy stuck-reconciler filtering for non-interval staleness.
 		filtered := lo.Filter(triggeredByChanges, func(pending PendingReconcile, _ int) bool {
 			stuckKinds, stuck := state.stuckReconcilerPositions[pending.ReconcilerID]
 			if !stuck {
@@ -2037,6 +2392,17 @@ func (e *Explorer) determineNewPendingReconciles(ctx context.Context, state Stat
 			Request:      consumed.Request,
 			Source:       source,
 			ReadyAtDepth: readyAtDepth,
+		}
+		triggeredByChanges = append(triggeredByChanges, requeued)
+	}
+
+	// If the reconciler errored and requested re-enqueue, add it back so it can
+	// retry after other controllers have had a chance to advance the state.
+	if result.ReenqueueRequest != nil {
+		requeued := PendingReconcile{
+			ReconcilerID: result.ReenqueueRequest.ReconcilerID,
+			Request:      result.ReenqueueRequest.Request,
+			Source:       SourceRequeue,
 		}
 		triggeredByChanges = append(triggeredByChanges, requeued)
 	}
@@ -2157,6 +2523,98 @@ func (e *Explorer) computeSubtreeKey(state StateNode) string {
 	})
 	// NOT sorted - order matters for subtree identity
 	return fmt.Sprintf("%s|%s", state.ContentsHash(), strings.Join(pendingStrs, ","))
+}
+
+// getFaultInjectionConfig returns the fault injection config for a reconciler, if any.
+func (e *Explorer) getFaultInjectionConfig(reconcilerID ReconcilerID, state *StateNode) (FaultInjectionConfig, bool) {
+	if e.Config == nil || len(e.Config.Perturbations.FaultInjection) == 0 {
+		return FaultInjectionConfig{}, false
+	}
+	for _, fi := range e.Config.Perturbations.FaultInjection {
+		if fi.ReconcilerID != reconcilerID {
+			continue
+		}
+		if fi.TriggerOnce && state.crashedReconcilers != nil && state.crashedReconcilers[reconcilerID] {
+			continue
+		}
+		return fi, true
+	}
+	return FaultInjectionConfig{}, false
+}
+
+// applyFaultInjection checks if the given reconciler has a fault injection config
+// and truncates its write effects if so. This simulates a mid-reconcile crash where
+// only the first N write effects are applied to the object store.
+func (e *Explorer) applyFaultInjection(result *ReconcileResult, reconcilerID ReconcilerID, state *StateNode) *ReconcileResult {
+	if e.Config == nil || len(e.Config.Perturbations.FaultInjection) == 0 {
+		return result
+	}
+	for _, fi := range e.Config.Perturbations.FaultInjection {
+		if fi.ReconcilerID != reconcilerID {
+			continue
+		}
+		// Check triggerOnce: skip if already crashed
+		if fi.TriggerOnce && state.crashedReconcilers != nil && state.crashedReconcilers[reconcilerID] {
+			continue
+		}
+		// Count write effects (CREATE, PATCH, DELETE, UPDATE, APPLY, MARK_FOR_DELETION, REMOVE)
+		writeCount := 0
+		for _, eff := range result.Changes.Effects {
+			if eff.OpType != event.GET && eff.OpType != event.LIST {
+				writeCount++
+			}
+		}
+		if writeCount <= fi.CrashAfterEffect {
+			continue // not enough effects to trigger crash
+		}
+		// Truncate: keep only the first CrashAfterEffect write effects
+		truncated := make([]Effect, 0, fi.CrashAfterEffect+len(result.Changes.Observations))
+		writesSeen := 0
+		for _, eff := range result.Changes.Effects {
+			if eff.OpType == event.GET || eff.OpType == event.LIST {
+				truncated = append(truncated, eff) // observations always kept
+			} else {
+				writesSeen++
+				if writesSeen <= fi.CrashAfterEffect {
+					truncated = append(truncated, eff) // keep this write
+				}
+				// else: discard (crashed before this write)
+			}
+		}
+		result.Changes.Effects = truncated
+		// Also truncate ObjectVersions to match kept effects
+		keptKeys := make(map[string]bool)
+		for _, eff := range truncated {
+			if eff.OpType != event.GET && eff.OpType != event.LIST {
+				keptKeys[eff.Key.String()] = true
+			}
+		}
+		filteredVersions := make(ObjectVersions)
+		for k, v := range result.Changes.ObjectVersions {
+			if keptKeys[k.String()] {
+				filteredVersions[k] = v
+			}
+		}
+		result.Changes.ObjectVersions = filteredVersions
+		// Mark reconciler as crashed
+		if state.crashedReconcilers == nil {
+			state.crashedReconcilers = make(map[ReconcilerID]bool)
+		}
+		state.crashedReconcilers[reconcilerID] = true
+		logger.Info("fault injection: truncated reconcile effects",
+			"reconciler", reconcilerID,
+			"originalWrites", writeCount,
+			"keptWrites", fi.CrashAfterEffect,
+		)
+		// Call crash callbacks to reset shared in-memory state.
+		// In real Kubernetes, all controllers share a process — a crash
+		// resets ALL controller state, not just the crashed one.
+		for _, fn := range e.onCrashFuncs {
+			fn()
+		}
+		break
+	}
+	return result
 }
 
 func sendWithCancel[T any](ctx context.Context, ch chan<- T, val T) bool {

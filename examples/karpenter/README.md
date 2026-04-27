@@ -4,10 +4,16 @@ This example wires a minimal Karpenter provisioning flow into Kamera:
 Pending Pod → Provisioner → NodeClaim → Node registration.
 
 ## Approximations
-- We simulate API server generateName for NodeClaims in the harness.
-- We simulate Node registration by creating a Node from NodeClaim status.
-- We map Node→NodeClaim via a label set by the simulator (to approximate providerID matching).
-- We avoid multi-object list filtering by keeping a single NodePool/NodeClaim/Node.
+- We simulate API server `generateName` for NodeClaims via `nameGeneratingClient`.
+- We wrap the fake CloudProvider with `deterministicCloudProvider` so that ProviderIDs
+  are derived from the NodeClaim name (deterministic across runs), rather than using
+  the time-seeded `test.RandomProviderID()`.
+- We simulate Node registration via `nodeRegistrar`, which creates a ready Node from
+  the NodeClaim's ProviderID with labels, allocatable/capacity, and `NodeReady` condition.
+- Karpenter's full `nodeclaim.lifecycle` and `nodeclaim.consistency` controllers are
+  **not** used. They rely on `MatchingFields` queries (unsupported by the replay client)
+  and generate `RequeueAfter` results that create unbounded exploration depth. Instead,
+  a lightweight `nodeClaimLauncher` handles only the launch stage (`cp.Create()`).
 
 ## Usage
 
@@ -78,12 +84,32 @@ pending work from simulation semantics (subscriptions/watches/dependencies).
 1. `state.pod` records the seeded pending pod in cluster state.
 2. `provisioner.trigger.pod` marks the pod for provisioning (batcher trigger).
 3. `provisioner` drains the batch and creates a `NodeClaim`.
-4. `nodeclaim.hydration` and `nodeclaim.lifecycle` launch the claim via the fake cloud provider.
-5. `node.registrar` creates a `Node` with the provider ID (simulated kubelet registration).
-6. `nodeclaim.lifecycle` registers the nodeclaim to the node and removes startup taints.
-7. `nodeclaim.consistency` validates node/claim shape.
-8. `node.hydration` copies NodeClass labels onto the Node.
-9. `External User` later appears as the replayed user input action.
+4. `nodeclaim.launcher` calls `cp.Create()` to assign a ProviderID and populate instance details.
+5. `nodeclaim.hydration` adds NodeClass labels to the NodeClaim.
+6. `node.registrar` creates a ready `Node` with the ProviderID, labels, and allocatable/capacity.
+7. State informers (`state.node`, `state.nodeclaim`) update the in-memory cluster state.
+8. `External User` later appears as the replayed user input action.
+
+## Monte Carlo mode
+
+`inputs-mc.json` runs 60 independent trials (seed 4242, maxDepth 150).
+Shared in-memory state (`state.Cluster`, `deterministicCloudProvider`,
+`nameGeneratingClient` counter) is reset between trials via `ExplorerBuilder.OnFork()`.
+
+```bash
+go run . --interactive=false --inputs inputs-mc.json
+```
+
+## Known limitations
+
+- **Cluster sync delay:** `Cluster.Synced()` returns false while the state informers
+  haven't yet processed a newly created NodeClaim's ProviderID. The provisioner
+  short-circuits until informers catch up, producing no-op reconcile steps.
+- **No fixed-point convergence:** The provisioner is a singleton controller that always
+  returns `RequeueAfter`, so the system never reaches a quiescent state. The `maxDepth`
+  bound is the termination mechanism.
+- **`node.hydration` MatchingFields:** `NodeClaimForNode` uses field selectors
+  unsupported by the replay client, so NodeClass labels are not hydrated onto Nodes.
 
 ## Next scopes
 - **Medium:** add nodepool validation/readiness/registration-health + nodeclaim GC/expiration/disruption.

@@ -11,9 +11,9 @@ func TestInputsPathDefault(t *testing.T) {
 	}
 }
 
-func TestPerturbEnabledDefault(t *testing.T) {
-	if !PerturbEnabled() {
-		t.Fatalf("expected perturb enabled by default")
+func TestClosedLoopEnabledDefault(t *testing.T) {
+	if !ClosedLoopEnabled() {
+		t.Fatalf("expected closed-loop enabled by default")
 	}
 }
 

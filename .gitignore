@@ -50,3 +50,37 @@ graph-experiment/
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Built binaries
+examples/karpenter/karpenter
+examples/crossplane/crossplane
+examples/knative-serving/knative-serving
+examples/kratix/kratix
+examples/kro/kro
+
+# === Post-paper cleanup (2026-04-25) ===
+
+# Local symlinks to out-of-tree harnesses (see examples/README.md).
+examples/cluster-api
+examples/kcp
+
+# Discarded experiment outputs
+examples/kro/ablation/
+
+# Per-example .agents/ scratch dirs (paper-research analysis docs and evidence).
+# Preserved on the `paper-data` branch.
+examples/*/.agents/
+examples/BUG-FINDINGS.md
+
+# Agent-iteration scenario JSONs (intermediates) and exhaustive scenarios
+# that we don't want to track. Logs of running these are in
+# experiments/coverage-curves/<project>/tuning-runs*/.
+examples/karpenter/scenarios/d12-tuning-v2-*.json
+examples/karpenter/scenarios/d1_exhaustive.json
+examples/kro/scenarios/k2b-tuning-v*.json
+examples/kro/scenarios/k2b_exhaustive.json
+examples/kro/scenarios/k6_exhaustive.json
+
+# Paper-figure scripts, data, and narrative docs.
+# Preserved on the `paper-data` branch.
+experiments/coverage-curves/
