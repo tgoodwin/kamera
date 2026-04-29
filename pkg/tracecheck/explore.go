@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -641,9 +642,26 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 	// Seed resourceVersions for all initial state objects so that RV conflict
 	// checking can detect stale writes. Without this, initial objects have no
 	// RV entry, and the conflict check is skipped (empty RV string).
+	//
+	// Iteration order over a map is non-deterministic, but two MC trials of the
+	// same scenario must see identical initial RVs for divergence comparisons
+	// to be meaningful (the F5 staleness re-eval depends on this). We sort the
+	// hashes lexicographically before assigning sequential RVs so the seeding
+	// is reproducible across runs.
 	if e.resourceVersions != nil {
+		all := initialState.Contents.All()
+		hashes := make([]snapshot.VersionHash, 0, len(all))
+		for _, h := range all {
+			hashes = append(hashes, h)
+		}
+		sort.Slice(hashes, func(i, j int) bool {
+			if hashes[i].Value != hashes[j].Value {
+				return hashes[i].Value < hashes[j].Value
+			}
+			return hashes[i].Strategy < hashes[j].Strategy
+		})
 		var startRV int64 = 1
-		for _, hash := range initialState.Contents.All() {
+		for _, hash := range hashes {
 			if _, exists := e.resourceVersions[hash]; !exists {
 				e.resourceVersions[hash] = startRV
 				startRV++
