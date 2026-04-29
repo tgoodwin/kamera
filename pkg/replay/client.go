@@ -88,6 +88,43 @@ func NewClient(reconcilerID string, scheme *runtime.Scheme, frameReader frameRea
 
 var _ client.Client = (*Client)(nil)
 
+// init asserts that controller-runtime's mergeFromPatch struct has the field
+// layout extractMergePatchRV depends on. If a future controller-runtime upgrade
+// reorders or renames these fields, this panics at startup with a clear message
+// instead of silently going false-negative on RV conflict detection.
+//
+// Verified layout (controller-runtime v0.23.0, sigs.k8s.io/.../pkg/client/patch.go):
+//
+//	type mergeFromPatch struct {
+//	    patchType   types.PatchType
+//	    createPatch func(originalJSON, modifiedJSON []byte, dataStruct any) ([]byte, error)
+//	    from        Object
+//	    opts        MergeFromOptions
+//	}
+//	type MergeFromOptions struct { OptimisticLock bool }
+func init() {
+	probe := client.MergeFromWithOptions(
+		&unstructured.Unstructured{},
+		client.MergeFromWithOptimisticLock{},
+	)
+	v := reflect.ValueOf(probe)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		panic(fmt.Sprintf("kamera/replay: unexpected MergeFromWithOptions kind %s; controller-runtime layout changed", v.Kind()))
+	}
+	for _, name := range []string{"patchType", "createPatch", "from", "opts"} {
+		if !v.FieldByName(name).IsValid() {
+			panic(fmt.Sprintf("kamera/replay: mergeFromPatch missing field %q; extractMergePatchRV will silently skip RV checks. Re-verify controller-runtime layout in pkg/client/patch.go", name))
+		}
+	}
+	opts := v.FieldByName("opts")
+	if !opts.FieldByName("OptimisticLock").IsValid() {
+		panic("kamera/replay: MergeFromOptions missing OptimisticLock field; controller-runtime layout changed")
+	}
+}
+
 // extractMergePatchRV checks if a merge-patch uses OptimisticLock (which embeds
 // resourceVersion in the patch payload). If so, it extracts the base object's
 // RV and sets it as a precondition for conflict checking.
@@ -95,19 +132,7 @@ var _ client.Client = (*Client)(nil)
 // We use unsafe.Pointer to read the unexported opts.OptimisticLock and from
 // fields on controller-runtime's mergeFromPatch struct. This avoids calling
 // patch.Data() which is too expensive to run on every PATCH (DeepCopy + double
-// JSON marshal per call).
-//
-// The struct layout we rely on (controller-runtime v0.18.x):
-//
-//	type mergeFromPatch struct {
-//	    patchType   types.PatchType           // offset 0
-//	    createPatch func(...)                 // offset 1 (pointer-sized)
-//	    from        Object                    // offset 2 (interface = 2 words)
-//	    opts        MergeFromOptions          // offset 4
-//	}
-//	type MergeFromOptions struct {
-//	    OptimisticLock bool
-//	}
+// JSON marshal per call). The required struct layout is asserted in init().
 func extractMergePatchRV(_ client.Object, patch client.Patch, preconditions *PreconditionInfo) {
 	if patch.Type() != types.MergePatchType && patch.Type() != types.StrategicMergePatchType {
 		return
