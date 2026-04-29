@@ -1,25 +1,25 @@
 # SPRINT-0001: Crossplane Bug Re-Evaluation on Fidelity-Hardened Kamera
 
 Intent: re-evaluate the open Crossplane findings against the `crossplane-reeval`
-harness state at `89acd8a`, using the scenario inputs already verified under
+harness code state at `89acd8a`, using the scenario inputs already verified under
 `/Users/tgoodwin/projects/kamera/.claude/worktrees/endpoints-pod-watch/examples/crossplane/scenarios/`.
 The sprint has no fixed timebox. The output is not upstream posting; it is a
 set of evidence-backed draft issue updates for manual review and posting.
 
 ## Goals
 
-- [ ] Re-run #7220 / F1 manual update policy scenarios at depth 100 on `crossplane-reeval` HEAD `89acd8a` and classify the finding as `still-reproduces`, `shifts`, or `retracts`.
-- [ ] Re-run #7222 / F3 Composition deletion scenarios at depth 100 on `crossplane-reeval` HEAD `89acd8a` and classify the finding as `still-reproduces`, `shifts`, or `retracts`.
-- [ ] Re-run #7223 / F5 stale `ValidPipeline` scenarios at depth 100 on `crossplane-reeval` HEAD `89acd8a` and classify the finding as `still-reproduces`, `shifts`, or `retracts`.
-- [ ] Re-run #7223 / F6 fatal-function orphan and stale `Ready=True` scenarios at depth 100 on `crossplane-reeval` HEAD `89acd8a` and classify the finding as `still-reproduces`, `shifts`, or `retracts`.
+- [ ] Re-run #7220 / F1 manual update policy scenarios at depth 100 on `crossplane-reeval` harness code commit `89acd8a` and classify the finding as `still-reproduces`, `shifts`, or `retracts`.
+- [ ] Re-run #7222 / F3 Composition deletion scenarios at depth 100 on `crossplane-reeval` harness code commit `89acd8a` and classify the finding as `still-reproduces`, `shifts`, or `retracts`.
+- [ ] Re-run #7223 / F5 stale `ValidPipeline` scenarios at depth 100 on `crossplane-reeval` harness code commit `89acd8a` and classify the finding as `still-reproduces`, `shifts`, or `retracts`.
+- [ ] Re-run #7223 / F6 fatal-function orphan and stale `Ready=True` scenarios at depth 100 on `crossplane-reeval` harness code commit `89acd8a` and classify the finding as `still-reproduces`, `shifts`, or `retracts`.
 - [ ] Re-run C2 claim deletion on the hardened harness to validate that `6cd7396` / cherry-pick `e4daf33` closes the false positive, staged only and not posted to closed issue #7224.
 - [ ] Produce review-ready draft GitHub issue updates under `docs/upstream-updates/` for #7220, #7222, and #7223, plus a staged non-posting C2 validation note.
 
 ## Scope Boundaries
 
 In scope: reruns, campaign metrics, terminal-state hash comparison, issue
-classification, and draft upstream update text. The harness state is fixed to
-`crossplane-reeval` HEAD `89acd8a`, which includes PR #76 resourceVersion
+classification, and draft upstream update text. The harness code state is fixed
+to `89acd8a`, which includes PR #76 resourceVersion
 conflict checking commits, `e4daf33` as the cherry-pick of `6cd7396` DELETE
 semantics plus GC controller, `b12542d` mergeFromPatch layout assertion, and
 `89acd8a` deterministic initial resourceVersion seeding.
@@ -49,7 +49,7 @@ from `examples/crossplane/.agents/ANALYSIS.md`.
 
 ### Phase 0: Run Hygiene
 
-- [ ] Confirm the working tree is on `crossplane-reeval` and `git rev-parse --short HEAD` returns `89acd8a`.
+- [ ] Confirm the working tree is on `crossplane-reeval` and the harness code under test is commit `89acd8a`; if the branch tip contains doc-only sprint commits, confirm there are no code diffs from `89acd8a` before running scenarios.
 - [ ] Record the fidelity SHAs in the sprint notes: `89acd8a`, `b12542d`, `e4daf33` / upstream `6cd7396`, `1def992`, `7ba2045`, `cb1c43e`, and `911b3bd`.
 - [ ] Build the analyzer with `go build -o bin/kamera ./cmd/kamera`.
 - [ ] Build or smoke-test the Crossplane harness from `examples/crossplane` before the campaign runs.
@@ -118,9 +118,9 @@ from `examples/crossplane/.agents/ANALYSIS.md`.
 
 ### Phase 6: Draft Upstream Updates
 
-- [ ] Write `docs/upstream-updates/7220-f1-manual-policy.md` with the new run date, harness HEAD `89acd8a`, relevant fidelity SHAs, depth-100 output path, campaign metrics, trace-step evidence, classification, and suggested #7220 comment text.
-- [ ] Write `docs/upstream-updates/7222-f3-composition-deletion.md` with the new run date, harness HEAD `89acd8a`, `e4daf33` / `6cd7396` DELETE+GC context, depth-100 output paths, campaign metrics, terminal hash comparison, classification, and suggested #7222 comment text.
-- [ ] Write `docs/upstream-updates/7223-f5-f6-reframe.md` with the new run date, harness HEAD `89acd8a`, F5 terminal category comparison, F6 stale `Ready=True` evidence, explicit removal of the unsafe GC-on-fatal proposal, classification for F5 and F6, and suggested #7223 comment text.
+- [ ] Write `docs/upstream-updates/7220-f1-manual-policy.md` with the new run date, harness code commit `89acd8a`, relevant fidelity SHAs, depth-100 output path, campaign metrics, trace-step evidence, classification, and suggested #7220 comment text.
+- [ ] Write `docs/upstream-updates/7222-f3-composition-deletion.md` with the new run date, harness code commit `89acd8a`, `e4daf33` / `6cd7396` DELETE+GC context, depth-100 output paths, campaign metrics, terminal hash comparison, classification, and suggested #7222 comment text.
+- [ ] Write `docs/upstream-updates/7223-f5-f6-reframe.md` with the new run date, harness code commit `89acd8a`, F5 terminal category comparison, F6 stale `Ready=True` evidence, explicit removal of the unsafe GC-on-fatal proposal, classification for F5 and F6, and suggested #7223 comment text.
 - [ ] Include a short "not posted by sprint executor" note in every file under `docs/upstream-updates/`.
 - [ ] Include exact scenario JSON filenames and dump paths in every upstream update draft.
 - [ ] Include the `campaign-metrics` output summary in every upstream update draft.
