@@ -5,7 +5,7 @@ package kamera
 // whenever the kamera package is imported, so callers don't need to remember to
 // add these everywhere.
 import (
-	clientgofeatures "k8s.io/client-go/features"
+	"k8s.io/client-go/features"
 	_ "knative.dev/caching/pkg/client/injection/informers/caching/v1alpha1/image/fake"
 	_ "knative.dev/networking/pkg/client/injection/informers/networking/v1alpha1/certificate/fake"
 	_ "knative.dev/networking/pkg/client/injection/informers/networking/v1alpha1/ingress/fake"
@@ -31,10 +31,10 @@ import (
 
 func init() {
 	type featureSetter interface {
-		clientgofeatures.Gates
-		Set(clientgofeatures.Feature, bool) error
+		features.Gates
+		Set(features.Feature, bool) error
 	}
-	if fs, ok := clientgofeatures.FeatureGates().(featureSetter); ok {
-		_ = fs.Set(clientgofeatures.WatchListClient, false)
+	if fs, ok := features.FeatureGates().(featureSetter); ok {
+		_ = fs.Set(features.WatchListClient, false)
 	}
 }
