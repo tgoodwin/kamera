@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -43,11 +44,12 @@ type EffectContextManager interface {
 // StalenessInterval defines a window during which a reconciler's view
 // of a specific resource kind lags behind the actual cluster state.
 type StalenessInterval struct {
-	ReconcilerID ReconcilerID `json:"reconciler"`
-	Kind         string       `json:"kind"`  // canonical group/kind
-	StaleAt      int64        `json:"staleAt"`
-	CatchUpAt    int64        `json:"catchUpAt"`
-	Lag          int64        `json:"lag"` // how far behind frontier; -1 = frozen at StaleAt sequence
+	ReconcilerID    ReconcilerID `json:"reconciler"`
+	Kind            string       `json:"kind"`  // canonical group/kind
+	StaleAt         int64        `json:"staleAt"`
+	CatchUpAt       int64        `json:"catchUpAt"`
+	Lag             int64        `json:"lag"`             // how far behind frontier; -1 = frozen
+	FreezeAtSequence int64       `json:"freezeAt,omitempty"` // when lag=-1 and set, freeze at this sequence instead of staleAt
 }
 
 // PermuteDepthRange constrains ordering permutations to a specific depth window.
@@ -94,10 +96,11 @@ type PerturbationConfig struct {
 
 // FaultInjectionConfig defines a mid-reconcile crash for a specific reconciler.
 type FaultInjectionConfig struct {
-	ReconcilerID     ReconcilerID `json:"reconciler"`
-	CrashAfterEffect int          `json:"crashAfterEffect"`
-	RecoverAtDepth   int          `json:"recoverAtDepth,omitempty"`
-	TriggerOnce      bool         `json:"triggerOnce,omitempty"`
+	ReconcilerID      ReconcilerID `json:"reconciler"`
+	CrashAfterEffect  int          `json:"crashAfterEffect"`
+	RecoverAtDepth    int          `json:"recoverAtDepth,omitempty"`
+	TriggerOnce       bool         `json:"triggerOnce,omitempty"`
+	TriggerAfterDepth int          `json:"triggerAfterDepth,omitempty"` // only fire when depth >= this value
 }
 
 type StalenessConfig struct {
@@ -635,6 +638,36 @@ func (e *Explorer) enqueueState(queue []StateNode, state StateNode) []StateNode 
 
 func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result {
 	logger.Info("starting!")
+
+	// Seed resourceVersions for all initial state objects so that RV conflict
+	// checking can detect stale writes. Without this, initial objects have no
+	// RV entry, and the conflict check is skipped (empty RV string).
+	//
+	// Iteration order over a map is non-deterministic, but two MC trials of the
+	// same scenario must see identical initial RVs for divergence comparisons
+	// to be meaningful (the F5 staleness re-eval depends on this). We sort the
+	// hashes lexicographically before assigning sequential RVs so the seeding
+	// is reproducible across runs.
+	if e.resourceVersions != nil {
+		all := initialState.Contents.All()
+		hashes := make([]snapshot.VersionHash, 0, len(all))
+		for _, h := range all {
+			hashes = append(hashes, h)
+		}
+		sort.Slice(hashes, func(i, j int) bool {
+			if hashes[i].Value != hashes[j].Value {
+				return hashes[i].Value < hashes[j].Value
+			}
+			return hashes[i].Strategy < hashes[j].Strategy
+		})
+		var startRV int64 = 1
+		for _, hash := range hashes {
+			if _, exists := e.resourceVersions[hash]; !exists {
+				e.resourceVersions[hash] = startRV
+				startRV++
+			}
+		}
+	}
 
 	// Stamp interval-based staleness config onto the initial state so it
 	// propagates to all descendant states via materializeNextState.
@@ -2535,6 +2568,9 @@ func (e *Explorer) getFaultInjectionConfig(reconcilerID ReconcilerID, state *Sta
 			continue
 		}
 		if fi.TriggerOnce && state.crashedReconcilers != nil && state.crashedReconcilers[reconcilerID] {
+			continue
+		}
+		if fi.TriggerAfterDepth > 0 && state.depth < fi.TriggerAfterDepth {
 			continue
 		}
 		return fi, true

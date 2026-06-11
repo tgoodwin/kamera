@@ -24,8 +24,9 @@ import (
 )
 
 const (
-	cleanupReconcilerID    ReconcilerID = "CleanupReconciler"
-	deploymentControllerID ReconcilerID = "DeploymentController"
+	cleanupReconcilerID          ReconcilerID = "CleanupReconciler"
+	garbageCollectorReconcilerID ReconcilerID = "GarbageCollectorController"
+	deploymentControllerID       ReconcilerID = "DeploymentController"
 )
 
 type ExplorerBuilder struct {
@@ -636,6 +637,16 @@ func (b *ExplorerBuilder) registerCoreControllers() {
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Endpoints"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Service"}, "EndpointsController")
 	b.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "Pod"}, "EndpointsController")
+
+	// GarbageCollector Controller — cascade-deletes dependents when a parent is REMOVED.
+	// Triggered by REMOVE events in trigger.go. Lists objects in the namespace and
+	// deletes those whose ownerReferences point to a non-existent owner.
+	b.WithReconciler(garbageCollectorReconcilerID, func(c client.Client) Reconciler {
+		return &controller.GarbageCollectorReconciler{
+			Client: c,
+			Scheme: b.scheme,
+		}
+	})
 }
 
 // mapPodToServices maps a Pod change to the Services whose selectors match the pod's labels.
@@ -948,12 +959,9 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		// during a reconcile operation.
 		effectIKeys: make(map[string]util.Set[snapshot.IdentityKey]),
 
-		// resourceValdiator mimics the behavior of the API
-		// server in terms of rejecting operations that conflict
-		// with the current state of the world.
-		// It needs to be hydrated with the current state of the world
-		// before it can be used and uses the snapshot store as the source of truth.
-		// resourceValidator: replay.NewResourceConflictManager(b.snapStore.ResourceKeys()),
+		// effectRVs tracks the current integer resourceVersion per resource key
+		// per frame, for optimistic concurrency conflict checking.
+		effectRVs: make(map[string]map[string]int64),
 	}
 
 	// Initialize reconcilers with appropriate clients
@@ -1000,6 +1008,17 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 		onCrashFuncs:     b.onCrashFuncs,
 	}
 
+	// Wire resourceVersion lookup into reconciler containers and manager
+	// so they can stamp and validate metadata.resourceVersion.
+	rvMap := explorer.resourceVersions
+	rvLookupFn := func(vh snapshot.VersionHash) int64 {
+		return rvMap[vh]
+	}
+	for _, container := range reconcilers {
+		container.rvLookup = rvLookupFn
+	}
+	mgr.rvLookup = rvLookupFn
+
 	return explorer, nil
 }
 
@@ -1017,6 +1036,7 @@ func (b *ExplorerBuilder) BuildLensManager(traceFilePath string) (*LensManager, 
 		scheme:       b.scheme,
 		effectRKeys:  make(map[string]util.Set[string]),
 		effectIKeys:  make(map[string]util.Set[snapshot.IdentityKey]),
+		effectRVs:    make(map[string]map[string]int64),
 	}
 
 	return NewLensManager(

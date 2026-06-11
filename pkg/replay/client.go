@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unsafe"
 
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -86,6 +87,94 @@ func NewClient(reconcilerID string, scheme *runtime.Scheme, frameReader frameRea
 }
 
 var _ client.Client = (*Client)(nil)
+
+// init asserts that controller-runtime's mergeFromPatch struct has the field
+// layout extractMergePatchRV depends on. If a future controller-runtime upgrade
+// reorders or renames these fields, this panics at startup with a clear message
+// instead of silently going false-negative on RV conflict detection.
+//
+// Verified layout (controller-runtime v0.23.0, sigs.k8s.io/.../pkg/client/patch.go):
+//
+//	type mergeFromPatch struct {
+//	    patchType   types.PatchType
+//	    createPatch func(originalJSON, modifiedJSON []byte, dataStruct any) ([]byte, error)
+//	    from        Object
+//	    opts        MergeFromOptions
+//	}
+//	type MergeFromOptions struct { OptimisticLock bool }
+func init() {
+	probe := client.MergeFromWithOptions(
+		&unstructured.Unstructured{},
+		client.MergeFromWithOptimisticLock{},
+	)
+	v := reflect.ValueOf(probe)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		panic(fmt.Sprintf("kamera/replay: unexpected MergeFromWithOptions kind %s; controller-runtime layout changed", v.Kind()))
+	}
+	for _, name := range []string{"patchType", "createPatch", "from", "opts"} {
+		if !v.FieldByName(name).IsValid() {
+			panic(fmt.Sprintf("kamera/replay: mergeFromPatch missing field %q; extractMergePatchRV will silently skip RV checks. Re-verify controller-runtime layout in pkg/client/patch.go", name))
+		}
+	}
+	opts := v.FieldByName("opts")
+	if !opts.FieldByName("OptimisticLock").IsValid() {
+		panic("kamera/replay: MergeFromOptions missing OptimisticLock field; controller-runtime layout changed")
+	}
+}
+
+// extractMergePatchRV checks if a merge-patch uses OptimisticLock (which embeds
+// resourceVersion in the patch payload). If so, it extracts the base object's
+// RV and sets it as a precondition for conflict checking.
+//
+// We use unsafe.Pointer to read the unexported opts.OptimisticLock and from
+// fields on controller-runtime's mergeFromPatch struct. This avoids calling
+// patch.Data() which is too expensive to run on every PATCH (DeepCopy + double
+// JSON marshal per call). The required struct layout is asserted in init().
+func extractMergePatchRV(_ client.Object, patch client.Patch, preconditions *PreconditionInfo) {
+	if patch.Type() != types.MergePatchType && patch.Type() != types.StrategicMergePatchType {
+		return
+	}
+	// Use reflect to get the struct value, then read fields via unsafe offset.
+	v := reflect.ValueOf(patch)
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return
+	}
+
+	// Find the "opts" field and read OptimisticLock
+	optsField := v.FieldByName("opts")
+	if !optsField.IsValid() {
+		return
+	}
+	// OptimisticLock is an exported field within the (unexported) opts struct,
+	// so we can read it even though opts itself is unexported.
+	lockField := optsField.FieldByName("OptimisticLock")
+	if !lockField.IsValid() || !lockField.Bool() {
+		return
+	}
+
+	// OptimisticLock is set. The base object's RV will be in the patch payload.
+	// Read the "from" field (client.Object interface) via unsafe pointer.
+	fromField := v.FieldByName("from")
+	if !fromField.IsValid() {
+		return
+	}
+	// Use unsafe to extract the interface value from the unexported field.
+	fromIface := unsafe.Pointer(fromField.UnsafeAddr())
+	fromObj := *(*client.Object)(fromIface)
+	if fromObj == nil {
+		return
+	}
+	rv := fromObj.GetResourceVersion()
+	if rv != "" {
+		preconditions.ResourceVersion = &rv
+	}
+}
 
 func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType, preconditions *PreconditionInfo, options *EffectOptions) error {
 	// TODO validate preconditions
@@ -256,8 +345,17 @@ func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.C
 }
 
 func (c *Client) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	// in the replay client, we're not actually interacting with the API server
-	// so the object won't take on a deletion timestamp unless we set it here.
+	// In real K8s, DELETE preserves the existing object and only adds
+	// metadata.deletionTimestamp. Read the current version from the cache
+	// so the published MARK_FOR_DELETION version retains all existing fields
+	// (spec, status, finalizers, labels, etc.).
+	current := obj.DeepCopyObject().(client.Object)
+	if err := c.Get(ctx, client.ObjectKeyFromObject(obj), current); err == nil {
+		// Successfully read current state; set deletion timestamp on it.
+		obj = current
+	}
+	// If Get fails (object not in cache), fall through to the original object.
+
 	ts := v1.Time{Time: time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)}
 	obj.SetDeletionTimestamp(&ts)
 
@@ -286,6 +384,9 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 	if patch.Type() == types.ApplyPatchType {
 		// Server-side apply uses PATCH with apply semantics; model it separately.
 		op = event.APPLY
+	}
+	if op == event.PATCH {
+		extractMergePatchRV(obj, patch, &preconditions)
 	}
 	return c.handleEffect(ctx, obj, op, &preconditions, nil)
 }
@@ -363,6 +464,9 @@ func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch 
 	if patch.Type() == types.ApplyPatchType {
 		// Server-side apply uses PATCH with apply semantics; model it separately.
 		op = event.APPLY
+	}
+	if op == event.PATCH {
+		extractMergePatchRV(obj, patch, &preconditions)
 	}
 	return c.wrapped.handleEffect(ctx, obj, op, &preconditions, &EffectOptions{Subresource: "status"})
 }

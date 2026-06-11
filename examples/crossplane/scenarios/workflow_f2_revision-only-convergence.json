@@ -1,0 +1,61 @@
+[
+  {
+    "name": "f2/revision-only-convergence",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "pkg.crossplane.io/v1",
+          "kind": "FunctionRevision",
+          "metadata": {
+            "name": "kamera-stub-rev",
+            "labels": {
+              "pkg.crossplane.io/package": "kamera-stub"
+            }
+          },
+          "spec": {
+            "desiredState": "Active"
+          },
+          "status": {
+            "capabilities": [
+              "composition"
+            ]
+          }
+        },
+        {
+          "apiVersion": "apiextensions.crossplane.io/v1",
+          "kind": "CompositionRevision",
+          "metadata": {
+            "name": "widget-composition-rev-1",
+            "labels": {
+              "crossplane.io/composition-name": "widget-composition"
+            }
+          },
+          "spec": {
+            "compositeTypeRef": {
+              "apiVersion": "example.org/v1",
+              "kind": "XWidget"
+            },
+            "mode": "Pipeline",
+            "pipeline": [
+              {
+                "step": "pipeline",
+                "functionRef": {
+                  "name": "kamera-stub"
+                }
+              }
+            ],
+            "writeConnectionSecretsToNamespace": "default",
+            "revision": 1
+          }
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 0,
+      "permuteControllers": [
+        "CompositionRevisionReconciler"
+      ]
+    },
+    "externalInputs": []
+  }
+]

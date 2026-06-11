@@ -215,10 +215,19 @@ func (r *StatefulSetReconciler) Reconcile(ctx context.Context, req ctrl.Request)
 					loggr.Error(err, "Failed to create pod for StatefulSet", "pod", podName)
 					return ctrl.Result{}, err
 				}
-				mountName := "server-data"
-				if err := createPVCIfNotExists(ctx, r.Client, mountName, pod); err != nil {
-					loggr.Error(err, "Failed to create PVC for pod", "pod", pod.Name)
-					return ctrl.Result{}, err
+				// Create PVCs for each VolumeClaimTemplate, matching real K8s behavior.
+				for _, vct := range statefulSet.Spec.VolumeClaimTemplates {
+					if err := createPVCIfNotExists(ctx, r.Client, vct.Name, pod, statefulSet); err != nil {
+						loggr.Error(err, "Failed to create PVC for pod", "pod", pod.Name, "vct", vct.Name)
+						return ctrl.Result{}, err
+					}
+				}
+				// Fall back to hardcoded mount name if no VCTs defined (backward compat).
+				if len(statefulSet.Spec.VolumeClaimTemplates) == 0 {
+					if err := createPVCIfNotExists(ctx, r.Client, "server-data", pod, statefulSet); err != nil {
+						loggr.Error(err, "Failed to create PVC for pod", "pod", pod.Name)
+						return ctrl.Result{}, err
+					}
 				}
 			}
 
@@ -411,12 +420,11 @@ func (r *StatefulSetReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-// TODO These should be created to test certain decommission features also
-func createPVCIfNotExists(ctx context.Context, cli client.Client, mountName string, pod *corev1.Pod) error {
-	volumeMode := new(corev1.PersistentVolumeMode)
-	*volumeMode = corev1.PersistentVolumeFilesystem
-	storageClassName := "standard"
-
+// createPVCIfNotExists creates a PVC for a StatefulSet pod if it doesn't already exist.
+// Labels are sourced from the matching VolumeClaimTemplate's metadata merged with the
+// StatefulSet's selector matchLabels, matching real K8s StatefulSet controller behavior
+// (see k8s.io/kubernetes/pkg/controller/statefulset/stateful_set_utils.go getPersistentVolumeClaims).
+func createPVCIfNotExists(ctx context.Context, cli client.Client, mountName string, pod *corev1.Pod, sts *appsv1.StatefulSet) error {
 	pvcName := types.NamespacedName{
 		Name:      fmt.Sprintf("%s-%s", mountName, pod.Name),
 		Namespace: pod.Namespace,
@@ -426,16 +434,54 @@ func createPVCIfNotExists(ctx context.Context, cli client.Client, mountName stri
 	existingPVC := &corev1.PersistentVolumeClaim{}
 	if err := cli.Get(ctx, pvcName, existingPVC); err == nil {
 		existingPVC.SetGroupVersionKind(corev1.SchemeGroupVersion.WithKind("PersistentVolumeClaim"))
-		// PVC already exists, no need to create
 		return nil
 	} else if client.IgnoreNotFound(err) != nil {
-		// Return error if it's not a "not found" error
 		return err
 	}
 
 	loggr.Info("Creating PVC", "pvc", pvcName)
 
-	// Create a new PVC
+	// Build labels: start with VolumeClaimTemplate labels, merge selector matchLabels on top.
+	labels := make(map[string]string)
+	var templateSpec *corev1.PersistentVolumeClaimSpec
+	for _, vct := range sts.Spec.VolumeClaimTemplates {
+		if vct.Name == mountName {
+			for k, v := range vct.Labels {
+				labels[k] = v
+			}
+			templateSpec = &vct.Spec
+			break
+		}
+	}
+	// Merge selector matchLabels (selector wins on collision, matching real K8s behavior).
+	if sts.Spec.Selector != nil {
+		for k, v := range sts.Spec.Selector.MatchLabels {
+			labels[k] = v
+		}
+	}
+	// Fall back to pod labels if no template matched (backward compat for simple cases).
+	if len(labels) == 0 {
+		labels = pod.Labels
+	}
+
+	// Build PVC spec from template if available, otherwise use defaults.
+	pvcSpec := corev1.PersistentVolumeClaimSpec{
+		AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+		Resources: corev1.VolumeResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceStorage: resource.MustParse("1Gi"),
+			},
+		},
+	}
+	if templateSpec != nil {
+		pvcSpec = *templateSpec.DeepCopy()
+	}
+	// Ensure volume mode is set.
+	if pvcSpec.VolumeMode == nil {
+		volumeMode := corev1.PersistentVolumeFilesystem
+		pvcSpec.VolumeMode = &volumeMode
+	}
+
 	pvc := &corev1.PersistentVolumeClaim{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: corev1.SchemeGroupVersion.String(),
@@ -444,21 +490,9 @@ func createPVCIfNotExists(ctx context.Context, cli client.Client, mountName stri
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      pvcName.Name,
 			Namespace: pvcName.Namespace,
-			Labels:    pod.Labels,
+			Labels:    labels,
 		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{
-				corev1.ReadWriteOnce,
-			},
-			Resources: corev1.VolumeResourceRequirements{
-				Requests: corev1.ResourceList{
-					// TODO Hardcoded not real value
-					corev1.ResourceStorage: resource.MustParse("1Gi"),
-				},
-			},
-			StorageClassName: &storageClassName,
-			VolumeMode:       volumeMode,
-		},
+		Spec: pvcSpec,
 	}
 
 	return cli.Create(ctx, pvc)

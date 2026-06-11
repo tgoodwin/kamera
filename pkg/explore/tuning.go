@@ -85,11 +85,12 @@ func ApplyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 		intervals := make([]tracecheck.StalenessInterval, 0, len(tuning.StalenessIntervals))
 		for _, si := range tuning.StalenessIntervals {
 			intervals = append(intervals, tracecheck.StalenessInterval{
-				ReconcilerID: tracecheck.ReconcilerID(si.Reconciler),
-				Kind:         si.Kind,
-				StaleAt:      si.StaleAt,
-				CatchUpAt:    si.CatchUpAt,
-				Lag:          si.Lag,
+				ReconcilerID:     tracecheck.ReconcilerID(si.Reconciler),
+				Kind:             si.Kind,
+				StaleAt:          si.StaleAt,
+				CatchUpAt:        si.CatchUpAt,
+				Lag:              si.Lag,
+				FreezeAtSequence: si.FreezeAtSequence,
 			})
 		}
 		cfg.Perturbations.StalenessIntervals = intervals
@@ -99,10 +100,11 @@ func ApplyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 		faults := make([]tracecheck.FaultInjectionConfig, 0, len(tuning.FaultInjection))
 		for _, fi := range tuning.FaultInjection {
 			faults = append(faults, tracecheck.FaultInjectionConfig{
-				ReconcilerID:     tracecheck.ReconcilerID(fi.Reconciler),
-				CrashAfterEffect: fi.CrashAfterEffect,
-				RecoverAtDepth:   fi.RecoverAtDepth,
-				TriggerOnce:      fi.TriggerOnce,
+				ReconcilerID:      tracecheck.ReconcilerID(fi.Reconciler),
+				CrashAfterEffect:  fi.CrashAfterEffect,
+				RecoverAtDepth:    fi.RecoverAtDepth,
+				TriggerOnce:       fi.TriggerOnce,
+				TriggerAfterDepth: fi.TriggerAfterDepth,
 			})
 		}
 		cfg.Perturbations.FaultInjection = faults

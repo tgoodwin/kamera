@@ -346,6 +346,95 @@ func Test_GetUniquePaths_PreservesConvergenceSteps(t *testing.T) {
 	}
 }
 
+// Test_GetUniquePaths_DropsPrefixSubsumed verifies that when the explorer
+// records a single non-converging execution as a series of progressively
+// longer prefixes (e.g., depth-1, depth-2, depth-3, ..., depth-N), only
+// the longest prefix survives deduplication. This is the F2 demo
+// regression: every step of a no-op-write loop was previously surfacing
+// as its own "path" because UniqueKey strings differed in length.
+func Test_GetUniquePaths_DropsPrefixSubsumed(t *testing.T) {
+	mkStep := func(controllerID, frameID string) *ReconcileResult {
+		return &ReconcileResult{
+			ControllerID: ReconcilerID(controllerID),
+			FrameID:      frameID,
+			Changes: Changes{ObjectVersions: ObjectVersions{
+				snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
+			}},
+			Deltas: map[snapshot.CompositeKey]Delta{
+				snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
+			},
+			// All non-converged: every step has at least one pending reconcile.
+			PendingReconciles: []PendingReconcile{{
+				ReconcilerID: ReconcilerID("X"),
+				Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "x"}},
+			}},
+		}
+	}
+
+	// Build 5 paths where path N has N steps, all the same controller/effects
+	// shape - i.e., 5 strict prefixes of one underlying execution.
+	var testPaths []ExecutionHistory
+	for n := 1; n <= 5; n++ {
+		var p ExecutionHistory
+		for i := 0; i < n; i++ {
+			p = append(p, mkStep("A", "frame"))
+		}
+		testPaths = append(testPaths, p)
+	}
+
+	unique := GetUniquePaths(testPaths)
+
+	if len(unique) != 1 {
+		t.Errorf("expected 1 unique path after prefix-subsumption, got %d", len(unique))
+		for i, p := range unique {
+			t.Logf("  surviving path %d (len=%d): key=%q", i, len(p), p.UniqueKey())
+		}
+	}
+	if len(unique) > 0 && len(unique[0]) != 5 {
+		t.Errorf("expected the surviving path to be the longest (5 steps), got length %d", len(unique[0]))
+	}
+}
+
+// Test_GetUniquePaths_PreservesConvergedShorterPath verifies that a converged
+// shorter path is not subsumed by a longer non-converged path with the same
+// controller-id sequence. The :converged suffix on UniqueKey's last segment
+// is what keeps the two distinguishable.
+func Test_GetUniquePaths_PreservesConvergedShorterPath(t *testing.T) {
+	mkStep := func(converged bool) *ReconcileResult {
+		var pending []PendingReconcile
+		if !converged {
+			pending = []PendingReconcile{{
+				ReconcilerID: "X",
+				Request:      reconcile.Request{NamespacedName: types.NamespacedName{Namespace: "default", Name: "x"}},
+			}}
+		}
+		return &ReconcileResult{
+			ControllerID: ReconcilerID("A"),
+			FrameID:      "frame",
+			Changes: Changes{ObjectVersions: ObjectVersions{
+				snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): snapshot.NewDefaultHash("Hash"),
+			}},
+			Deltas: map[snapshot.CompositeKey]Delta{
+				snapshot.NewCompositeKey("Pod", "default", "pod1", "1"): "delta",
+			},
+			PendingReconciles: pending,
+		}
+	}
+
+	// Converged at length 2: A, A(converged).
+	converged := ExecutionHistory{mkStep(false), mkStep(true)}
+	// Non-converged at length 4: A, A, A, A(non-converged).
+	nonConverged := ExecutionHistory{mkStep(false), mkStep(false), mkStep(false), mkStep(false)}
+
+	unique := GetUniquePaths([]ExecutionHistory{converged, nonConverged})
+	if len(unique) != 2 {
+		t.Errorf("expected both paths preserved (converged + non-converged), got %d", len(unique))
+		for i, p := range unique {
+			t.Logf("  surviving path %d: key=%q", i, p.UniqueKey())
+		}
+	}
+}
+
 func TestExpandStateByReconcileOrder(t *testing.T) {
 	type testCase struct {
 		name                 string
