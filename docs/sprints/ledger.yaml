@@ -1,7 +1,0 @@
-sprints:
-  - id: SPRINT-0001
-    title: Crossplane bug re-evaluation against fidelity-hardened harness
-    status: done
-    executor: opus
-    created: "2026-04-29T03:20:19+00:00"
-    updated: "2026-04-29T04:41:11+00:00"

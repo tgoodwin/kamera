@@ -60,9 +60,16 @@ examples/knative-serving/knative-serving
 examples/kratix/kratix
 examples/kro/kro
 
-# Checked-in audit evidence can include kubectl text/log captures.
-!docs/crossplane-audits/artifacts/tier3/**/*.txt
-!docs/crossplane-audits/artifacts/tier3/**/*.log
+# === Internal research artifacts (not for main; preserved on the paper-data branch) ===
+# Staging area for plans, sprints, audits, talk notes, specs, and other
+# research/dev docs that external users don't need. Files live on disk but
+# are not tracked on main.
+docs/internal/
+
+# Internal dev tooling and agent/issue-tracker scratch (kept local, off main).
+.beads/
+.agents/
+experiments/knative-8539/
 
 # === Post-paper cleanup (2026-04-25) ===
 

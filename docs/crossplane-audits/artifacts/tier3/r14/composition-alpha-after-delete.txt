@@ -1,1 +1,0 @@
-Error from server (NotFound): compositions.apiextensions.crossplane.io "widget-composition-alpha" not found
