@@ -1,0 +1,35 @@
+
+--- T+0s (10:16:03) ---
+compositionRef=widget-composition-beta  compositionRevisionRef=widget-composition-alpha-a39f01a
+Synced=True  reason=ReconcileSuccess
+alpha-output: data={"source":"alpha"}, rv=3086
+Error from server (NotFound): configmaps "beta-output" not found
+beta-output: absent
+
+--- T+15s (10:16:18) ---
+compositionRef=widget-composition-beta  compositionRevisionRef=widget-composition-alpha-a39f01a
+Synced=True  reason=ReconcileSuccess
+alpha-output: data={"source":"alpha"}, rv=3086
+Error from server (NotFound): configmaps "beta-output" not found
+beta-output: absent
+
+--- T+30s (10:16:33) ---
+compositionRef=widget-composition-beta  compositionRevisionRef=widget-composition-alpha-a39f01a
+Synced=True  reason=ReconcileSuccess
+alpha-output: data={"source":"alpha"}, rv=3086
+Error from server (NotFound): configmaps "beta-output" not found
+beta-output: absent
+
+--- T+45s (10:16:49) ---
+compositionRef=widget-composition-beta  compositionRevisionRef=widget-composition-alpha-a39f01a
+Synced=True  reason=ReconcileSuccess
+alpha-output: data={"source":"alpha"}, rv=3086
+Error from server (NotFound): configmaps "beta-output" not found
+beta-output: absent
+
+--- T+60s (10:17:04) ---
+compositionRef=widget-composition-beta  compositionRevisionRef=widget-composition-alpha-a39f01a
+Synced=True  reason=ReconcileSuccess
+alpha-output: data={"source":"alpha"}, rv=3086
+Error from server (NotFound): configmaps "beta-output" not found
+beta-output: absent

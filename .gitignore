@@ -44,6 +44,7 @@ testresults/**
 *.txt
 
 .worktrees/
+.claude/
 graph-experiment/
 .yaks
 
@@ -54,9 +55,14 @@ graph-experiment/
 # Built binaries
 examples/karpenter/karpenter
 examples/crossplane/crossplane
+examples/crossplane/crossplane-*
 examples/knative-serving/knative-serving
 examples/kratix/kratix
 examples/kro/kro
+
+# Checked-in audit evidence can include kubectl text/log captures.
+!docs/crossplane-audits/artifacts/tier3/**/*.txt
+!docs/crossplane-audits/artifacts/tier3/**/*.log
 
 # === Post-paper cleanup (2026-04-25) ===
 

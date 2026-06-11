@@ -1,0 +1,26 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: widget-composition-beta
+spec:
+  compositeTypeRef:
+    apiVersion: example.org/v1
+    kind: XWidget
+  mode: Pipeline
+  pipeline:
+    - step: produce-configmap
+      functionRef:
+        name: function-patch-and-transform
+      input:
+        apiVersion: pt.fn.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: cm
+            base:
+              apiVersion: v1
+              kind: ConfigMap
+              metadata:
+                name: beta-output
+                namespace: default
+              data:
+                source: beta

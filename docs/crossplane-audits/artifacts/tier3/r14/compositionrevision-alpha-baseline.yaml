@@ -1,0 +1,53 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositionRevision
+metadata:
+  creationTimestamp: "2026-04-29T17:54:17Z"
+  generation: 1
+  labels:
+    crossplane.io/composition-hash: a39f01a51ec3ab2c9fe4f8ec6ca826637cb03acd5166bf05d554cde1dbc28de
+    crossplane.io/composition-name: widget-composition-alpha
+  name: widget-composition-alpha-a39f01a
+  ownerReferences:
+  - apiVersion: apiextensions.crossplane.io/v1
+    blockOwnerDeletion: true
+    controller: true
+    kind: Composition
+    name: widget-composition-alpha
+    uid: f2be4fb6-0a69-4f10-9558-eb6b84644dc7
+  resourceVersion: "8442"
+  uid: bb666568-e48e-471a-b2e6-18a997c0030a
+spec:
+  compositeTypeRef:
+    apiVersion: example.org/v1
+    kind: XWidget
+  mode: Pipeline
+  pipeline:
+  - functionRef:
+      name: function-patch-and-transform
+    input:
+      apiVersion: pt.fn.crossplane.io/v1beta1
+      kind: Resources
+      resources:
+      - base:
+          apiVersion: v1
+          data:
+            source: alpha
+          kind: ConfigMap
+          metadata:
+            name: alpha-output
+            namespace: default
+        name: cm
+    step: produce-configmap
+  revision: 1
+status:
+  conditions:
+  - lastTransitionTime: "2026-04-29T17:54:17Z"
+    observedGeneration: 1
+    reason: ReconcileSuccess
+    status: "True"
+    type: Synced
+  - lastTransitionTime: "2026-04-29T17:54:17Z"
+    observedGeneration: 1
+    reason: ValidPipeline
+    status: "True"
+    type: ValidPipeline

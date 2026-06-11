@@ -1,0 +1,11 @@
+apiVersion: example.org/v1
+kind: XWidget
+metadata:
+  name: example
+spec:
+  compositionRef:
+    name: widget-composition-alpha
+  compositionRevisionRef:
+    name: widget-composition-alpha-a39f01a
+  compositionUpdatePolicy: Manual
+  message: "F1 audit"

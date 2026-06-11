@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	xpevent "github.com/crossplane/crossplane-runtime/v2/pkg/event"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
+	xpresource "github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource/fake"
 	ucomposite "github.com/crossplane/crossplane-runtime/v2/pkg/resource/unstructured/composite"
 	"github.com/crossplane/crossplane/v2/apis/apiextensions/v1"
@@ -16,7 +18,6 @@ import (
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composite"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composition"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/revision"
-	xpresource "github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -144,6 +145,10 @@ func claimXRToClaimMapper() tracecheck.WatchMapper {
 }
 
 func buildInitialCrossplaneState(builder *tracecheck.ExplorerBuilder) tracecheck.StateNode {
+	if os.Getenv("KAMERA_DEMO") == "f2-revision" {
+		return buildF2RevisionOnlyState(builder)
+	}
+
 	stateBuilder := builder.NewStateEventBuilder()
 	composition := buildComposition()
 	tag.AddSleeveObjectID(composition)
@@ -159,6 +164,52 @@ func buildInitialCrossplaneState(builder *tracecheck.ExplorerBuilder) tracecheck
 
 	initialState := tracecheck.MergeStateNodes(compositionState, xrState)
 	return tracecheck.MergeStateNodes(initialState, functionState)
+}
+
+// buildF2RevisionOnlyState seeds the F2 revision-only convergence demo: a
+// FunctionRevision (capabilities=composition) and a CompositionRevision with
+// no ValidPipeline condition pre-set. Only the CompositionRevisionReconciler
+// reconciles. Mirrors workflow_f2_revision-only-convergence.json so the TUI
+// demo lands on a state that fully converges post-fix.
+func buildF2RevisionOnlyState(builder *tracecheck.ExplorerBuilder) tracecheck.StateNode {
+	stateBuilder := builder.NewStateEventBuilder()
+
+	functionRevision := buildFunctionRevision()
+	tag.AddSleeveObjectID(functionRevision)
+	functionState := stateBuilder.AddTopLevelObject(functionRevision)
+
+	rev := buildCompositionRevisionForF2Demo()
+	tag.AddSleeveObjectID(rev)
+	revState := stateBuilder.AddTopLevelObject(rev, "CompositionRevisionReconciler")
+
+	return tracecheck.MergeStateNodes(functionState, revState)
+}
+
+func buildCompositionRevisionForF2Demo() *v1.CompositionRevision {
+	return &v1.CompositionRevision{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: compositionName + "-rev-1",
+			Labels: map[string]string{
+				"crossplane.io/composition-name": compositionName,
+			},
+		},
+		Spec: v1.CompositionRevisionSpec{
+			CompositeTypeRef: v1.TypeReference{
+				APIVersion: xrAPIVersion,
+				Kind:       xrKind,
+			},
+			Mode: v1.CompositionModePipeline,
+			Pipeline: []v1.PipelineStep{
+				{
+					Step: "pipeline",
+					FunctionRef: v1.FunctionReference{
+						Name: stubFunctionName,
+					},
+				},
+			},
+			Revision: 1,
+		},
+	}
 }
 
 func buildComposition() *v1.Composition {
@@ -350,7 +401,7 @@ func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.
 		scenarios = append(scenarios, explore.Scenario{
 			Name:             input.Name,
 			EnvironmentState: state,
-			ExternalInputs:       userInputs,
+			ExternalInputs:   userInputs,
 			Config:           cfg,
 		})
 	}
@@ -472,4 +523,3 @@ func sameObjectIdentity(a, b client.Object) bool {
 	}
 	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
 }
-

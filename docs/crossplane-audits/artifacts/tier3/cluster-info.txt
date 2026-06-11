@@ -1,0 +1,31 @@
+Tier 3 cluster freeze-point info
+Captured: 2026-04-29T17:53:37Z
+
+== kind ==
+kind v0.30.0 go1.25.0 darwin/arm64
+
+== kubectl client ==
+Client Version: v1.28.4
+Kustomize Version: v5.0.4-0.20230601165947-6ce0bf390ce3
+
+== node image ==
+Debian GNU/Linux 12 (bookworm)
+v1.30.0
+
+== Crossplane image ==
+xpkg.crossplane.io/crossplane/crossplane:v2.2.0
+
+== Crossplane RBAC manager image ==
+xpkg.crossplane.io/crossplane/crossplane:v2.2.0
+
+== helm release ==
+NAME      	NAMESPACE        	REVISION	UPDATED                             	STATUS  	CHART           	APP VERSION
+crossplane	crossplane-system	1       	2026-04-29 09:59:26.894517 -0700 PDT	deployed	crossplane-2.2.0	2.2.0
+
+== installed Functions ==
+NAME                           INSTALLED   HEALTHY   PACKAGE                                                                   AGE
+function-patch-and-transform   True        True      xpkg.upbound.io/crossplane-contrib/function-patch-and-transform:v0.10.0   53m
+
+== current FunctionRevisions ==
+NAME                                        HEALTHY   RUNTIME   IMAGE                                                                     STATE    AGE
+function-patch-and-transform-9991175eae0e   True      True      xpkg.upbound.io/crossplane-contrib/function-patch-and-transform:v0.10.0   Active   53m

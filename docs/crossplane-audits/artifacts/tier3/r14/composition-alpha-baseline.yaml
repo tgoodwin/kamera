@@ -1,0 +1,33 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"apiextensions.crossplane.io/v1","kind":"Composition","metadata":{"annotations":{},"name":"widget-composition-alpha"},"spec":{"compositeTypeRef":{"apiVersion":"example.org/v1","kind":"XWidget"},"mode":"Pipeline","pipeline":[{"functionRef":{"name":"function-patch-and-transform"},"input":{"apiVersion":"pt.fn.crossplane.io/v1beta1","kind":"Resources","resources":[{"base":{"apiVersion":"v1","data":{"source":"alpha"},"kind":"ConfigMap","metadata":{"name":"alpha-output","namespace":"default"}},"name":"cm"}]},"step":"produce-configmap"}]}}
+  creationTimestamp: "2026-04-29T17:54:17Z"
+  generation: 1
+  name: widget-composition-alpha
+  resourceVersion: "8437"
+  uid: f2be4fb6-0a69-4f10-9558-eb6b84644dc7
+spec:
+  compositeTypeRef:
+    apiVersion: example.org/v1
+    kind: XWidget
+  mode: Pipeline
+  pipeline:
+  - functionRef:
+      name: function-patch-and-transform
+    input:
+      apiVersion: pt.fn.crossplane.io/v1beta1
+      kind: Resources
+      resources:
+      - base:
+          apiVersion: v1
+          data:
+            source: alpha
+          kind: ConfigMap
+          metadata:
+            name: alpha-output
+            namespace: default
+        name: cm
+    step: produce-configmap

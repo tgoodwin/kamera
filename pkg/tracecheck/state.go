@@ -235,10 +235,62 @@ func GetUniquePaths(paths []ExecutionHistory) []ExecutionHistory {
 	// First deduplicate using UniqueKey
 	deduped := dedupePathsByUniqueKey(paths)
 
+	// Drop paths whose UniqueKey is a strict prefix of another path's. This
+	// catches the case where the explorer records every prefix of a single
+	// long-running execution as its own "path." Paths ending in convergence
+	// carry a :converged suffix on their last UniqueKey segment, so a
+	// converged short path is never a segment-wise prefix of a longer
+	// non-converged extension and is preserved.
+	deduped = dropPrefixSubsumedPaths(deduped)
+
 	// Then filter out paths that are entirely no-ops
 	return lo.Filter(deduped, func(path ExecutionHistory, _ int) bool {
 		return len(path) > 0 && len(path.FilterNoOps()) > 0
 	})
+}
+
+// dropPrefixSubsumedPaths removes paths whose UniqueKey segments form a
+// strict prefix of another path's UniqueKey segments. UniqueKey is a
+// comma-joined sequence of "<controllerID>@<effectCount>[:<suffix>]"
+// tokens (one per non-no-op step), so segment-wise comparison after a
+// strings.Split correctly identifies prefix relationships without
+// false-positives from controller-id substring matches.
+func dropPrefixSubsumedPaths(paths []ExecutionHistory) []ExecutionHistory {
+	if len(paths) < 2 {
+		return paths
+	}
+	keys := make([][]string, len(paths))
+	for i, p := range paths {
+		keys[i] = strings.Split(p.UniqueKey(), ",")
+	}
+	isStrictPrefix := func(short, long []string) bool {
+		if len(short) >= len(long) {
+			return false
+		}
+		for j := range short {
+			if short[j] != long[j] {
+				return false
+			}
+		}
+		return true
+	}
+	out := make([]ExecutionHistory, 0, len(paths))
+	for i, p := range paths {
+		subsumed := false
+		for j := range paths {
+			if i == j {
+				continue
+			}
+			if isStrictPrefix(keys[i], keys[j]) {
+				subsumed = true
+				break
+			}
+		}
+		if !subsumed {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 type ObservableState interface {
