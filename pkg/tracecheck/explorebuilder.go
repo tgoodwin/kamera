@@ -1,12 +1,14 @@
 package tracecheck
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"time"
 
 	"github.com/samber/lo"
+	"github.com/tgoodwin/kamera/pkg/apiserver"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
@@ -14,11 +16,13 @@ import (
 	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/kube-openapi/pkg/spec3"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -56,6 +60,10 @@ type ExplorerBuilder struct {
 	// Owned by the builder so it is available during BuildStartStateFromObjects
 	// (before Build) and then transferred to the Explorer in Build().
 	resourceVersions map[snapshot.VersionHash]int64
+
+	schemaRegistry *apiserver.Registry
+	requireSchemas bool
+	schemaErrors   []error
 
 	// onForkFuncs are called at the beginning of Fork() to reset shared
 	// mutable state that lives outside the snapshot system (e.g. in-memory
@@ -130,6 +138,7 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 		snapStore:                  snapshot.NewStore(),
 		reconcilerToKind:           make(map[ReconcilerID]string),
 		resourceVersions:           make(map[snapshot.VersionHash]int64),
+		schemaRegistry:             apiserver.NewRegistry(),
 
 		config: &ExploreConfig{
 			MaxDepth:        *searchDepth,
@@ -151,6 +160,45 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	builder.registerCoreControllers()
 
 	return builder
+}
+
+// RequireSchemas makes schema registration mandatory for every API write that
+// needs type topology. Reads and deletes do not require a schema.
+func (b *ExplorerBuilder) RequireSchemas() *ExplorerBuilder {
+	b.requireSchemas = true
+	return b
+}
+
+// WithCRD registers all served structural schemas declared by a CRD.
+func (b *ExplorerBuilder) WithCRD(crd *apiextensionsv1.CustomResourceDefinition) *ExplorerBuilder {
+	if err := b.schemaRegistry.RegisterCRD(crd); err != nil {
+		b.schemaErrors = append(b.schemaErrors, err)
+	}
+	return b
+}
+
+// WithResourceSchema registers one GVK from a structural OpenAPI v3 schema.
+// This is the explicit registration path for built-in and aggregated APIs.
+func (b *ExplorerBuilder) WithResourceSchema(
+	gvk schema.GroupVersionKind,
+	namespaced bool,
+	hasStatus bool,
+	openAPIV3Schema *apiextensionsv1.JSONSchemaProps,
+) *ExplorerBuilder {
+	if err := b.schemaRegistry.RegisterResourceSchema(gvk, namespaced, hasStatus, openAPIV3Schema); err != nil {
+		b.schemaErrors = append(b.schemaErrors, err)
+	}
+	return b
+}
+
+// WithOpenAPIV3 registers GVK schemas from a complete OpenAPI v3 document.
+// OpenAPI does not describe resource scope or status-subresource availability;
+// use WithCRD or WithResourceSchema when those semantics matter.
+func (b *ExplorerBuilder) WithOpenAPIV3(doc *spec3.OpenAPI) *ExplorerBuilder {
+	if err := b.schemaRegistry.RegisterOpenAPIV3(doc); err != nil {
+		b.schemaErrors = append(b.schemaErrors, err)
+	}
+	return b
 }
 
 // BuildRestartSeed materializes the provided state into a restart seed using the builder's store.
@@ -210,6 +258,9 @@ func (b *ExplorerBuilder) Fork() *ExplorerBuilder {
 		podCrashProbabilities:      maps.Clone(b.podCrashProbabilities),
 		userActions:                slices.Clone(b.userActions),
 		resourceVersions:           make(map[snapshot.VersionHash]int64),
+		schemaRegistry:             b.schemaRegistry.Clone(),
+		requireSchemas:             b.requireSchemas,
+		schemaErrors:               slices.Clone(b.schemaErrors),
 		onForkFuncs:                b.onForkFuncs,
 		onCrashFuncs:               b.onCrashFuncs,
 	}
@@ -800,7 +851,11 @@ func (b *ExplorerBuilder) instantiateCleanupReconciler(mgr *manager) *Reconciler
 }
 
 func (b *ExplorerBuilder) NewStateEventBuilder() *StateEventBuilder {
-	return NewStateEventBuilder(b.snapStore, b.scheme)
+	builder := NewStateEventBuilder(b.snapStore, b.scheme)
+	builder.prepareInitial = func(obj client.Object) error {
+		return b.seedInitialFieldOwnership([]client.Object{obj})
+	}
+	return builder
 }
 
 func (b *ExplorerBuilder) NewStateClassifier() *StateClassifier {
@@ -878,6 +933,12 @@ func (b *ExplorerBuilder) PrimeVersionStoreFromHistory(history ExecutionHistory,
 
 // BuildStartStateFromObjects constructs a starting StateNode from concrete objects and an initial pending list.
 func (b *ExplorerBuilder) BuildStartStateFromObjects(objs []client.Object, pending []PendingReconcile) (StateNode, error) {
+	if err := errors.Join(b.schemaErrors...); err != nil {
+		return StateNode{}, fmt.Errorf("registering API schemas: %w", err)
+	}
+	if err := b.seedInitialFieldOwnership(objs); err != nil {
+		return StateNode{}, err
+	}
 	return buildStartStateFromObjects(b.snapStore, b.scheme, objs, pending, b.resourceVersions)
 }
 
@@ -915,6 +976,9 @@ func (b *ExplorerBuilder) GetStartStateFromObject(obj client.Object, dependentCo
 }
 
 func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
+	if err := errors.Join(b.schemaErrors...); err != nil {
+		return nil, fmt.Errorf("registering API schemas: %w", err)
+	}
 	// TODO just pull out a dedicated 'BuildFromTraceFile' type of thing
 	// to keep that concept separate.
 	mode := "standalone"
@@ -961,7 +1025,12 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 
 		// effectRVs tracks the current integer resourceVersion per resource key
 		// per frame, for optimistic concurrency conflict checking.
-		effectRVs: make(map[string]map[string]int64),
+		effectRVs:     make(map[string]map[string]int64),
+		effectObjects: make(map[string]map[string]*unstructured.Unstructured),
+		effectNextRV:  make(map[string]int64),
+
+		schemaRegistry: b.schemaRegistry,
+		requireSchemas: b.requireSchemas,
 	}
 
 	// Initialize reconcilers with appropriate clients
@@ -1031,12 +1100,16 @@ func (b *ExplorerBuilder) BuildLensManager(traceFilePath string) (*LensManager, 
 	}
 	rollup := CausalRollup(traces)
 	mgr := &manager{
-		versionStore: NewVersionStore(b.snapStore, b.scheme),
-		effects:      make(map[string]reconcileEffects),
-		scheme:       b.scheme,
-		effectRKeys:  make(map[string]util.Set[string]),
-		effectIKeys:  make(map[string]util.Set[snapshot.IdentityKey]),
-		effectRVs:    make(map[string]map[string]int64),
+		versionStore:   NewVersionStore(b.snapStore, b.scheme),
+		effects:        make(map[string]reconcileEffects),
+		scheme:         b.scheme,
+		effectRKeys:    make(map[string]util.Set[string]),
+		effectIKeys:    make(map[string]util.Set[snapshot.IdentityKey]),
+		effectRVs:      make(map[string]map[string]int64),
+		effectObjects:  make(map[string]map[string]*unstructured.Unstructured),
+		effectNextRV:   make(map[string]int64),
+		schemaRegistry: b.schemaRegistry,
+		requireSchemas: b.requireSchemas,
 	}
 
 	return NewLensManager(

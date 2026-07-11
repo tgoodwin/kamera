@@ -19,12 +19,13 @@ import (
 
 // StateEventBuilder helps create a sequence of state events
 type StateEventBuilder struct {
-	store        *snapshot.Store
-	events       []StateEvent
-	sequence     int64
-	currentTime  time.Time
-	scheme       *runtime.Scheme
-	reconcileIDs map[string]int
+	store          *snapshot.Store
+	events         []StateEvent
+	sequence       int64
+	currentTime    time.Time
+	scheme         *runtime.Scheme
+	reconcileIDs   map[string]int
+	prepareInitial func(client.Object) error
 }
 
 func NewStateEventBuilder(store *snapshot.Store, scheme *runtime.Scheme) *StateEventBuilder {
@@ -140,6 +141,11 @@ func ensureObjectGVK(obj client.Object, scheme *runtime.Scheme) schema.GroupVers
 }
 
 func (b *StateEventBuilder) AddTopLevelObject(obj client.Object, dependentControllers ...ReconcilerID) StateNode {
+	if b.prepareInitial != nil {
+		if err := b.prepareInitial(obj); err != nil {
+			panic("preparing top-level object: " + err.Error())
+		}
+	}
 	tag.EnsureDeterministicIdentity(obj)
 	gvk := ensureObjectGVK(obj, b.scheme)
 

@@ -8,6 +8,7 @@ require (
 	github.com/tgoodwin/kamera v0.0.0
 	google.golang.org/protobuf v1.36.11
 	k8s.io/api v0.35.0
+	k8s.io/apiextensions-apiserver v0.35.0
 	k8s.io/apimachinery v0.35.0
 	sigs.k8s.io/controller-runtime v0.23.1
 )
@@ -110,7 +111,6 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apiextensions-apiserver v0.35.0 // indirect
 	k8s.io/apiserver v0.35.0 // indirect
 	k8s.io/client-go v0.35.0 // indirect
 	k8s.io/code-generator v0.35.0 // indirect

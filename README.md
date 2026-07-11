@@ -51,6 +51,28 @@ go run .
     eb.WithMaxDepth(100) // optional
     ```
 
+    For accurate Server-Side Apply behavior, also register the structural
+    schemas of resources that controllers write. A `runtime.Scheme` provides
+    Go types, but not Kubernetes merge topology:
+
+    ```go
+    eb.WithCRD(fooCRD) // preferred for CRDs
+    eb.WithResourceSchema(gvk, namespaced, hasStatus, openAPIV3Schema)
+    eb.WithOpenAPIV3(openAPIDocument) // built-in or aggregated APIs
+
+    // Optional: fail writes to any GVK whose schema was not registered.
+    eb.RequireSchemas()
+    ```
+
+    Registered, single-version resources use schema-aware SSA merging,
+    managed-field ownership, conflicts, force, omission, status isolation, and
+    generic metadata validation. Without `RequireSchemas`, unregistered GVKs
+    retain the legacy behavior to support incremental migration. Non-apply
+    patch ownership, dynamic and multi-version CRDs, admission, CEL, and the
+    complete API-server validation/defaulting pipeline remain outside this
+    milestone. See [Schema-backed API writes](docs/design/schema-backed-write-engine.md)
+    for the exact contract and limitations.
+
 4. **Register each controller-runtime reconciler.** Supply a factory that accepts a controller-runtime `client.Client`. The returned `ReconcilerBuilder` lets you chain `.For()` (primary resource) and `.Watches()` registrations. For non controller-runtime implementations, see [below](#using-non-controller-runtime-controllers).
 
     ```go

@@ -25,6 +25,8 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	sleevelog "github.com/tgoodwin/kamera/pkg/util/logger"
+	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -44,6 +46,7 @@ const (
 
 func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
 	builder := tracecheck.NewExplorerBuilder(newScheme())
+	builder.WithResourceSchema(corev1.SchemeGroupVersion.WithKind("ConfigMap"), true, false, configMapOpenAPISchema())
 	log := logging.NewLogrLogger(sleevelog.GetLogger(sleevelog.Debug))
 	recorder := newLogRecorder(log)
 
@@ -100,6 +103,21 @@ func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
 		Watches("example.org/XWidget", claimXRToClaimMapper())
 
 	return builder
+}
+
+func configMapOpenAPISchema() *apiextensionsv1.JSONSchemaProps {
+	stringValues := &apiextensionsv1.JSONSchemaPropsOrBool{
+		Allows: true,
+		Schema: &apiextensionsv1.JSONSchemaProps{Type: "string"},
+	}
+	return &apiextensionsv1.JSONSchemaProps{
+		Type: "object",
+		Properties: map[string]apiextensionsv1.JSONSchemaProps{
+			"data":       {Type: "object", AdditionalProperties: stringValues},
+			"binaryData": {Type: "object", AdditionalProperties: stringValues.DeepCopy()},
+			"immutable":  {Type: "boolean"},
+		},
+	}
 }
 
 // deterministicNameGenerator generates a fixed name for XRs created by claims.

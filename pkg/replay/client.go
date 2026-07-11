@@ -2,6 +2,7 @@ package replay
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -20,10 +21,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/yaml"
 )
 
 var logger logr.Logger
@@ -178,7 +179,18 @@ func extractMergePatchRV(_ client.Object, patch client.Patch, preconditions *Pre
 
 func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType, preconditions *PreconditionInfo, options *EffectOptions) error {
 	// TODO validate preconditions
-	tag.EnsureDeterministicIdentity(obj)
+	if opType != event.APPLY {
+		tag.EnsureDeterministicIdentity(obj)
+	}
+	if preconditions != nil && preconditions.FieldManager == "" && opType != event.APPLY {
+		preconditions.FieldManager = c.reconcilerID
+	}
+	if event.IsWriteOp(opType) {
+		if options == nil {
+			options = &EffectOptions{}
+		}
+		options.ReconcilerID = c.reconcilerID
+	}
 	return c.recorder.RecordEffect(ctx, obj, opType, preconditions, options)
 }
 
@@ -229,7 +241,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
 	}
 
-		if err := c.handleEffect(ctx, frozenObj, event.GET, nil, nil); err != nil {
+	if err := c.handleEffect(ctx, frozenObj, event.GET, nil, nil); err != nil {
 		logger.V(1).Error(err,
 			"canonicalKind", canonicalKind,
 			"namespace", key.Namespace,
@@ -388,7 +400,18 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 	if op == event.PATCH {
 		extractMergePatchRV(obj, patch, &preconditions)
 	}
-	return c.handleEffect(ctx, obj, op, &preconditions, nil)
+	options := &EffectOptions{PatchType: patch.Type()}
+	if op != event.APPLY {
+		return c.handleEffect(ctx, obj, op, &preconditions, options)
+	}
+	applyObj, err := patchToUnstructured(obj, patch)
+	if err != nil {
+		return err
+	}
+	if err := c.handleEffect(ctx, applyObj, op, &preconditions, options); err != nil {
+		return err
+	}
+	return c.copyInto(obj, applyObj)
 }
 
 // Apply models server-side apply operations introduced in controller-runtime v0.22+.
@@ -420,27 +443,46 @@ func applyConfigToUnstructured(obj runtime.ApplyConfiguration) (*unstructured.Un
 		}
 	}
 
-	// Fall back to the typed apply configuration interface.
-	ac, ok := obj.(interface {
-		GetName() *string
-		GetNamespace() *string
-		GetKind() *string
-		GetAPIVersion() *string
-	})
-	if !ok {
-		return nil, fmt.Errorf("%T is a runtime.ApplyConfiguration but not an applyConfiguration", obj)
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling %T apply configuration: %w", obj, err)
 	}
-
 	u := &unstructured.Unstructured{}
-	if name := ptr.Deref(ac.GetName(), ""); name != "" {
-		u.SetName(name)
+	if err := json.Unmarshal(data, &u.Object); err != nil {
+		return nil, fmt.Errorf("decoding %T apply configuration: %w", obj, err)
 	}
-	if ns := ptr.Deref(ac.GetNamespace(), ""); ns != "" {
-		u.SetNamespace(ns)
-	}
-	u.SetKind(ptr.Deref(ac.GetKind(), ""))
-	u.SetAPIVersion(ptr.Deref(ac.GetAPIVersion(), ""))
 	return u, nil
+}
+
+func patchToUnstructured(obj client.Object, patch client.Patch) (*unstructured.Unstructured, error) {
+	data, err := patch.Data(obj)
+	if err != nil {
+		return nil, fmt.Errorf("building %s patch: %w", patch.Type(), err)
+	}
+	intent := &unstructured.Unstructured{}
+	if err := json.Unmarshal(data, &intent.Object); err != nil {
+		jsonData, yamlErr := yaml.YAMLToJSON(data)
+		if yamlErr != nil {
+			return nil, fmt.Errorf("decoding %s patch: %w", patch.Type(), err)
+		}
+		if jsonErr := json.Unmarshal(jsonData, &intent.Object); jsonErr != nil {
+			return nil, fmt.Errorf("decoding %s patch: %w", patch.Type(), jsonErr)
+		}
+	}
+	gvk := util.GetGroupVersionKind(obj)
+	if intent.GetAPIVersion() == "" {
+		intent.SetAPIVersion(gvk.GroupVersion().String())
+	}
+	if intent.GetKind() == "" {
+		intent.SetKind(gvk.Kind)
+	}
+	if intent.GetName() == "" {
+		intent.SetName(obj.GetName())
+	}
+	if intent.GetNamespace() == "" {
+		intent.SetNamespace(obj.GetNamespace())
+	}
+	return intent, nil
 }
 
 func (c *Client) Status() client.SubResourceWriter {
@@ -468,7 +510,18 @@ func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch 
 	if op == event.PATCH {
 		extractMergePatchRV(obj, patch, &preconditions)
 	}
-	return c.wrapped.handleEffect(ctx, obj, op, &preconditions, &EffectOptions{Subresource: "status"})
+	options := &EffectOptions{Subresource: "status", PatchType: patch.Type()}
+	if op != event.APPLY {
+		return c.wrapped.handleEffect(ctx, obj, op, &preconditions, options)
+	}
+	applyObj, err := patchToUnstructured(obj, patch)
+	if err != nil {
+		return err
+	}
+	if err := c.wrapped.handleEffect(ctx, applyObj, op, &preconditions, options); err != nil {
+		return err
+	}
+	return c.wrapped.copyInto(obj, applyObj)
 }
 
 func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
@@ -477,9 +530,10 @@ func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub c
 }
 
 func (c *subResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+	preconditions := ExtractStatusApplyPreconditions(opts)
 	u, err := applyConfigToUnstructured(obj)
 	if err != nil {
 		return err
 	}
-	return c.wrapped.handleEffect(ctx, u, event.APPLY, nil, &EffectOptions{Subresource: "status"})
+	return c.wrapped.handleEffect(ctx, u, event.APPLY, &preconditions, &EffectOptions{Subresource: "status", PatchType: types.ApplyPatchType})
 }
