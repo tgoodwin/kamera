@@ -25,6 +25,7 @@ Each project's detailed analysis is in `examples/<project>/.agents/ANALYSIS.md`.
 
 Source: `sigs.k8s.io/karpenter` (AWS node autoscaler)
 Analysis: `examples/karpenter/.agents/ANALYSIS.md`
+Public GitHub links: [#2915](https://github.com/kubernetes-sigs/karpenter/issues/2915), [#2916](https://github.com/kubernetes-sigs/karpenter/issues/2916), [#2917](https://github.com/kubernetes-sigs/karpenter/issues/2917), [#2918](https://github.com/kubernetes-sigs/karpenter/issues/2918), [#2919](https://github.com/kubernetes-sigs/karpenter/issues/2919), [#2920](https://github.com/kubernetes-sigs/karpenter/issues/2920), [#2921](https://github.com/kubernetes-sigs/karpenter/issues/2921), [#2922](https://github.com/kubernetes-sigs/karpenter/issues/2922)
 
 | ID | Description | Severity | Perturbation |
 |----|-------------|----------|-------------|
@@ -57,6 +58,7 @@ Source: `github.com/crossplane/crossplane` v2.2.0
 Analysis: `examples/crossplane/.agents/ANALYSIS.md`
 Harness: CompositionReconciler + CompositionRevisionReconciler + CompositeReconciler +
 CleanupReconciler (real Crossplane code).
+Public GitHub links: [#7220](https://github.com/crossplane/crossplane/issues/7220), [#7221](https://github.com/crossplane/crossplane/issues/7221), [#7222](https://github.com/crossplane/crossplane/issues/7222), [#7223](https://github.com/crossplane/crossplane/issues/7223), [#7224](https://github.com/crossplane/crossplane/issues/7224), [PR #7283](https://github.com/crossplane/crossplane/pull/7283)
 
 | ID | Description | Severity | Perturbation |
 |----|-------------|----------|-------------|
@@ -102,6 +104,7 @@ outcome categories.
 
 Source: `github.com/syntasso/kratix`
 Analysis: `examples/kratix/.agents/ANALYSIS.md`
+Public GitHub links: [#740](https://github.com/syntasso/kratix/issues/740), [#741](https://github.com/syntasso/kratix/issues/741), [#742](https://github.com/syntasso/kratix/issues/742), [#743](https://github.com/syntasso/kratix/issues/743)
 
 | ID | Description | Severity | Perturbation |
 |----|-------------|----------|-------------|
@@ -123,6 +126,7 @@ K5-K10 all hit the same 4 states. The Promise lifecycle subsystem is clean.
 Source: `github.com/kubernetes-sigs/kro`
 Analysis: `examples/kro/.agents/ANALYSIS.md`
 Harness: Both real KRO controllers (RGD + Instance) wired in via adapters.
+Public GitHub links: [#1170](https://github.com/kubernetes-sigs/kro/issues/1170), [#1171](https://github.com/kubernetes-sigs/kro/issues/1171)
 
 | ID | Description | Severity | Perturbation |
 |----|-------------|----------|-------------|
@@ -157,6 +161,7 @@ Harness: 9 real KCP controllers wired via `//go:linkname` (workspace init +
 API binding lifecycle + endpoint discovery). Uses fake KCP clientset, fake
 apiextensions clientset, and fake k8s clientset with typed bookmark watch
 reactors for informer sync.
+Public GitHub links: [#3924](https://github.com/kcp-dev/kcp/issues/3924), [#3925](https://github.com/kcp-dev/kcp/issues/3925), [#3926](https://github.com/kcp-dev/kcp/issues/3926), [PR #4004](https://github.com/kcp-dev/kcp/pull/4004)
 
 | ID | Description | Severity | Perturbation |
 |----|-------------|----------|-------------|
@@ -204,6 +209,7 @@ Analysis: `examples/knative-serving/.agents/ANALYSIS.md`
 Harness: ServiceReconciler + ConfigurationReconciler + RevisionReconciler +
 RouteReconciler + KPA + ServerlessServiceReconciler (all real Knative code),
 plus IngressStatusStub and RevisionDigestStub.
+Public GitHub links: none found yet
 
 | ID | Description | Severity | Perturbation |
 |----|-------------|----------|-------------|
@@ -235,6 +241,7 @@ Source: `sigs.k8s.io/cluster-api` main (post-v1.12, pre-v1.13)
 Analysis: `examples/cluster-api/.agents/ANALYSIS.md`
 Harness: MachineDeploymentReconciler + MachineSetReconciler + MachineReconciler +
 MachineHealthCheckReconciler + provider stubs (InfraMachine, BootstrapConfig).
+Public GitHub links: none filed
 
 **Result: zero divergence across 11 scenarios and all 4 perturbation dimensions.**
 
