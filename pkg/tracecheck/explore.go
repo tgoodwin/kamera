@@ -49,7 +49,7 @@ type StalenessInterval struct {
 	StaleAt         int64        `json:"staleAt"`
 	CatchUpAt       int64        `json:"catchUpAt"`
 	Lag             int64        `json:"lag"`             // how far behind frontier; -1 = frozen
-	FreezeAtSequence int64       `json:"freezeAt,omitempty"` // when lag=-1 and set, freeze at this sequence instead of staleAt
+	FreezeAtSequence int64        `json:"freezeAt,omitempty"` // when lag=-1 and set, freeze at this sequence instead of staleAt
 }
 
 // PermuteDepthRange constrains ordering permutations to a specific depth window.
@@ -1682,6 +1682,30 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 	for _, effect := range stepResult.Changes.Effects {
 		existingKey, exists := nextState.HasNamespacedNameForKind(effect.Key.ResourceKey)
 
+		if effect.Materialized {
+			switch effect.OpType {
+			case event.CREATE:
+				if exists {
+					panic("materialized create effect object already exists: " + effect.Key.String())
+				}
+			case event.UPDATE, event.APPLY:
+				if effect.OpType == event.UPDATE && !exists {
+					panic("materialized update effect object not found: " + effect.Key.String())
+				}
+			default:
+				panic(fmt.Sprintf("unsupported materialized effect type: %s", effect.OpType))
+			}
+			if exists && nextState[existingKey] == effect.Version {
+				continue
+			}
+			if exists && existingKey != effect.Key {
+				delete(nextState, existingKey)
+			}
+			changes[effect.Key] = effect.Version
+			nextState[effect.Key] = effect.Version
+			goto recordMaterializedEffect
+		}
+
 		switch effect.OpType {
 		case event.CREATE:
 			if exists {
@@ -1883,6 +1907,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			panic(fmt.Errorf("unknown effect type: %s", effect.OpType))
 		}
 
+	recordMaterializedEffect:
 		highestSequence++
 		newRV := highestSequence
 

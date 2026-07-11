@@ -3,6 +3,7 @@ package replay
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -33,6 +34,9 @@ type PreconditionInfo struct {
 	ResourceVersion *string    // For optimistic concurrency control
 	UID             *types.UID // For delete operations with UID check
 	DryRun          bool       // For operations that shouldn't affect state
+	FieldManager    string
+	Force           bool
+	FieldValidation string
 }
 
 // ExtractCreatePreconditions extracts preconditions from CreateOptions
@@ -43,7 +47,9 @@ func ExtractCreatePreconditions(opts []client.CreateOption) PreconditionInfo {
 	}
 
 	return PreconditionInfo{
-		DryRun: containsDryRun(createOpts.DryRun),
+		DryRun:          containsDryRun(createOpts.DryRun),
+		FieldManager:    createOpts.FieldManager,
+		FieldValidation: createOpts.FieldValidation,
 	}
 }
 
@@ -55,7 +61,9 @@ func ExtractUpdatePreconditions(opts []client.UpdateOption) PreconditionInfo {
 	}
 
 	return PreconditionInfo{
-		DryRun: containsDryRun(updateOpts.DryRun),
+		DryRun:          containsDryRun(updateOpts.DryRun),
+		FieldManager:    updateOpts.FieldManager,
+		FieldValidation: updateOpts.FieldValidation,
 	}
 }
 
@@ -90,9 +98,11 @@ func ExtractPatchPreconditions(opts []client.PatchOption) PreconditionInfo {
 		opt.ApplyToPatch(patchOpts)
 	}
 
-	// Patches can specify Force conflict resolution
 	return PreconditionInfo{
-		DryRun: containsDryRun(patchOpts.DryRun),
+		DryRun:          containsDryRun(patchOpts.DryRun),
+		FieldManager:    patchOpts.FieldManager,
+		Force:           ptr.Deref(patchOpts.Force, false),
+		FieldValidation: patchOpts.FieldValidation,
 	}
 }
 
@@ -104,7 +114,9 @@ func ExtractApplyPreconditions(opts []client.ApplyOption) PreconditionInfo {
 	}
 
 	return PreconditionInfo{
-		DryRun: containsDryRun(applyOpts.DryRun),
+		DryRun:       containsDryRun(applyOpts.DryRun),
+		FieldManager: applyOpts.FieldManager,
+		Force:        ptr.Deref(applyOpts.Force, false),
 	}
 }
 
@@ -135,7 +147,9 @@ func ExtractStatusUpdatePreconditions(opts []client.SubResourceUpdateOption) Pre
 	}
 
 	return PreconditionInfo{
-		DryRun: containsDryRun(updateOpts.DryRun),
+		DryRun:          containsDryRun(updateOpts.DryRun),
+		FieldManager:    updateOpts.FieldManager,
+		FieldValidation: updateOpts.FieldValidation,
 	}
 }
 
@@ -147,7 +161,10 @@ func ExtractStatusPatchPreconditions(opts []client.SubResourcePatchOption) Preco
 	}
 
 	return PreconditionInfo{
-		DryRun: containsDryRun(patchOpts.DryRun),
+		DryRun:          containsDryRun(patchOpts.DryRun),
+		FieldManager:    patchOpts.FieldManager,
+		Force:           ptr.Deref(patchOpts.Force, false),
+		FieldValidation: patchOpts.FieldValidation,
 	}
 }
 
@@ -159,7 +176,24 @@ func ExtractSubResourceCreatePreconditions(opts []client.SubResourceCreateOption
 	}
 
 	return PreconditionInfo{
-		DryRun: containsDryRun(createOpts.DryRun),
+		DryRun:          containsDryRun(createOpts.DryRun),
+		FieldManager:    createOpts.FieldManager,
+		FieldValidation: createOpts.FieldValidation,
+	}
+}
+
+// ExtractStatusApplyPreconditions extracts preconditions from
+// SubResourceApplyOptions.
+func ExtractStatusApplyPreconditions(opts []client.SubResourceApplyOption) PreconditionInfo {
+	applyOpts := &client.SubResourceApplyOptions{}
+	for _, opt := range opts {
+		opt.ApplyToSubResourceApply(applyOpts)
+	}
+
+	return PreconditionInfo{
+		DryRun:       containsDryRun(applyOpts.DryRun),
+		FieldManager: applyOpts.FieldManager,
+		Force:        ptr.Deref(applyOpts.Force, false),
 	}
 }
 

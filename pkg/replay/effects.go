@@ -5,6 +5,7 @@ import (
 
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/util"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -15,7 +16,9 @@ type EffectRecorder interface {
 }
 
 type EffectOptions struct {
-	Subresource string
+	Subresource  string
+	PatchType    types.PatchType
+	ReconcilerID string
 }
 
 type DataEffect struct {
