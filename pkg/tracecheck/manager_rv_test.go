@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // newTestManager creates a manager wired for RV conflict testing.
@@ -105,7 +106,7 @@ func TestResourceVersionConflict_CurrentWriteSucceeds(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// Test 3: Multi-write within same reconcile — all succeed against same baseline
+// Test 3: Successful writes advance RV within the reconcile.
 func TestResourceVersionConflict_MultiWriteSameReconcile(t *testing.T) {
 	rvMap := make(map[snapshot.VersionHash]int64)
 	mgr := newTestManager(func(vh snapshot.VersionHash) int64 { return rvMap[vh] })
@@ -125,25 +126,42 @@ func TestResourceVersionConflict_MultiWriteSameReconcile(t *testing.T) {
 	err := mgr.RecordEffect(ctx, objWithRV, event.GET, nil, nil)
 	require.NoError(t, err)
 
-	// First UPDATE with RV=5 — succeeds
-	patch1 := makeObj("test-cm", "5")
-	patch1.Object["data"] = map[string]any{"step": "1"}
-	err = mgr.RecordEffect(ctx, patch1, event.UPDATE, nil, nil)
+	// First UPDATE with RV=5 succeeds and receives the API server's next RV.
+	currentObj := makeObj("test-cm", "5")
+	currentObj.Object["data"] = map[string]any{"step": "1"}
+	err = mgr.RecordEffect(ctx, currentObj, event.UPDATE, nil, nil)
 	require.NoError(t, err)
+	require.Equal(t, "6", currentObj.GetResourceVersion())
 
-	// Second UPDATE also with RV=5 — succeeds (RV doesn't advance within a frame;
-	// all writes in the same reconcile are checked against the same ground truth baseline)
-	patch2 := makeObj("test-cm", "5")
-	patch2.Object["data"] = map[string]any{"step": "2"}
-	err = mgr.RecordEffect(ctx, patch2, event.UPDATE, nil, nil)
+	// Reusing the returned object carries RV=6 and succeeds again.
+	currentObj.Object["data"] = map[string]any{"step": "2"}
+	err = mgr.RecordEffect(ctx, currentObj, event.UPDATE, nil, nil)
 	require.NoError(t, err)
+	require.Equal(t, "7", currentObj.GetResourceVersion())
 
-	// UPDATE with wrong RV=99 — should fail
-	patch3 := makeObj("test-cm", "99")
-	patch3.Object["data"] = map[string]any{"step": "3"}
-	err = mgr.RecordEffect(ctx, patch3, event.UPDATE, nil, nil)
+	// A separate copy retaining the original RV is now stale.
+	staleObj := makeObj("test-cm", "5")
+	staleObj.Object["data"] = map[string]any{"step": "3"}
+	err = mgr.RecordEffect(ctx, staleObj, event.UPDATE, nil, nil)
 	require.Error(t, err)
-	require.True(t, apierrors.IsConflict(err), "expected Conflict for wrong RV, got: %v", err)
+	require.True(t, apierrors.IsConflict(err), "expected Conflict for stale RV, got: %v", err)
+}
+
+func TestResourceVersionConflict_UpdateRequiresRV(t *testing.T) {
+	rvMap := make(map[snapshot.VersionHash]int64)
+	mgr := newTestManager(func(vh snapshot.VersionHash) int64 { return rvMap[vh] })
+
+	obj := makeObj("test-cm", "")
+	hash := mgr.Publish(obj)
+	rvMap[hash] = 5
+
+	key := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "test-cm", "obj1")
+	ctx := ctxWithFrame("frame-update-without-rv")
+	require.NoError(t, mgr.PrepareEffectContext(ctx, ObjectVersions{key: hash}))
+
+	err := mgr.RecordEffect(ctx, makeObj("test-cm", ""), event.UPDATE, nil, nil)
+	require.Error(t, err)
+	require.True(t, apierrors.IsInvalid(err), "expected Invalid for Update without RV, got: %v", err)
 }
 
 // Test 4: No-RV write succeeds
@@ -231,4 +249,33 @@ func TestResourceVersionStamping_DoReconcile(t *testing.T) {
 	require.Len(t, objects, 1)
 	u := objects[0].(*unstructured.Unstructured)
 	require.Equal(t, "42", u.GetResourceVersion(), "expected RV=42 stamped on served object")
+}
+
+func TestResourceVersionStamping_DistinguishesKindsWithSameName(t *testing.T) {
+	nn := types.NamespacedName{Namespace: "default", Name: "shared"}
+	configMap := makeObj("shared", "")
+	secret := makeObj("shared", "")
+	secret.SetKind("Secret")
+
+	configMapHash := snapshot.VersionHash{Value: "config-map"}
+	secretHash := snapshot.VersionHash{Value: "secret"}
+	versions := map[snapshot.VersionHash]int64{
+		configMapHash: 41,
+		secretHash:    73,
+	}
+	observable := ObjectVersions{
+		snapshot.NewCompositeKeyWithGroup("", "ConfigMap", nn.Namespace, nn.Name, "cm-id"):  configMapHash,
+		snapshot.NewCompositeKeyWithGroup("", "Secret", nn.Namespace, nn.Name, "secret-id"): secretHash,
+	}
+	frame := replay.CacheFrame{
+		"core/ConfigMap": {nn: configMap},
+		"core/Secret":    {nn: secret},
+	}
+
+	stampCacheFrameResourceVersions(frame, observable, func(hash snapshot.VersionHash) int64 {
+		return versions[hash]
+	})
+
+	require.Equal(t, "41", configMap.GetResourceVersion())
+	require.Equal(t, "73", secret.GetResourceVersion())
 }

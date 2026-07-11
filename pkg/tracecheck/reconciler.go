@@ -159,6 +159,38 @@ type ReconcilerContainer struct {
 	rvLookup func(snapshot.VersionHash) int64
 }
 
+type cacheObjectKey struct {
+	canonicalKind  string
+	namespacedName types.NamespacedName
+}
+
+func stampCacheFrameResourceVersions(frame replay.CacheFrame, observableState ObjectVersions, rvLookup func(snapshot.VersionHash) int64) {
+	if rvLookup == nil {
+		return
+	}
+
+	rvByKey := make(map[cacheObjectKey]int64, len(observableState))
+	for key, hash := range observableState {
+		if rv := rvLookup(hash); rv > 0 {
+			rvByKey[cacheObjectKey{
+				canonicalKind: util.CanonicalGroupKind(key.ResourceKey.Group, key.ResourceKey.Kind),
+				namespacedName: types.NamespacedName{
+					Namespace: key.ResourceKey.Namespace,
+					Name:      key.ResourceKey.Name,
+				},
+			}] = rv
+		}
+	}
+
+	for canonicalKind, objects := range frame {
+		for namespacedName, obj := range objects {
+			if rv, ok := rvByKey[cacheObjectKey{canonicalKind: canonicalKind, namespacedName: namespacedName}]; ok {
+				obj.SetResourceVersion(strconv.FormatInt(rv, 10))
+			}
+		}
+	}
+}
+
 func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
 	frameID := replay.FrameIDFromContext(ctx)
 
@@ -181,27 +213,14 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 		panic(errMsg)
 	}
 
-	// Build a name→RV map for stamping cache frame objects with resourceVersion.
+	// Stamp resourceVersions by full resource identity. Namespace/name alone is
+	// not unique because different resource kinds may share both values.
 	// This must be done on cache frame copies (not store copies) to avoid
 	// contaminating version hashes used for state comparison.
 	if r.rvLookup != nil {
 		if crs, ok := r.Strategy.(*ControllerRuntimeStrategy); ok {
-			rvByName := make(map[string]int64)
-			for key, hash := range observableState {
-				if rv := r.rvLookup(hash); rv > 0 {
-					nameKey := key.ResourceKey.Namespace + "/" + key.ResourceKey.Name
-					rvByName[nameKey] = rv
-				}
-			}
 			crs.rvStamper = func(frame replay.CacheFrame) {
-				for _, objs := range frame {
-					for nn, obj := range objs {
-						nameKey := nn.Namespace + "/" + nn.Name
-						if rv, ok := rvByName[nameKey]; ok {
-							obj.SetResourceVersion(strconv.FormatInt(rv, 10))
-						}
-					}
-				}
+				stampCacheFrameResourceVersions(frame, observableState, r.rvLookup)
 			}
 		}
 	}

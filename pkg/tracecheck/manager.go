@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -98,6 +99,30 @@ func canonicalResourceKeyString(group, kind, namespace, name string) string {
 	return fmt.Sprintf("%s/%s/%s", util.CanonicalGroupKind(group, kind), namespace, name)
 }
 
+func invalidResourceVersion(gvk schema.GroupVersionKind, name string, value any, detail string) error {
+	return apierrors.NewInvalid(
+		schema.GroupKind{Group: gvk.Group, Kind: gvk.Kind},
+		name,
+		field.ErrorList{field.Invalid(field.NewPath("metadata", "resourceVersion"), value, detail)},
+	)
+}
+
+func (m *manager) advanceEffectResourceVersion(frameID, resourceKey string, obj client.Object) {
+	rvs, ok := m.effectRVs[frameID]
+	if !ok {
+		return
+	}
+
+	var nextRV int64 = 1
+	for _, rv := range rvs {
+		if rv >= nextRV {
+			nextRV = rv + 1
+		}
+	}
+	rvs[resourceKey] = nextRV
+	obj.SetResourceVersion(strconv.FormatInt(nextRV, 10))
+}
+
 func (m *manager) Summary() {
 	store := m.versionStore.GetVersionMap(snapshot.AnonymizedHash)
 	for k, v := range store {
@@ -167,12 +192,10 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		reffects.reads = append(reffects.reads, eff)
 	} else {
 		reffects.writes = append(reffects.writes, eff)
-
-		// Note: we do NOT advance effectRVs here. The tracked RV stays at
-		// the pre-reconcile ground truth value. This means all writes within
-		// a single reconcile are checked against the same baseline. The conflict
-		// only fires when the controller was served a stale cache frame (RV=N)
-		// but the ground truth is already at RV=N+1 from a prior reconcile step.
+		if opType != event.REMOVE {
+			resourceKey := canonicalResourceKeyString(gvk.Group, kind, obj.GetNamespace(), obj.GetName())
+			m.advanceEffectResourceVersion(frameID, resourceKey, obj)
+		}
 	}
 	m.effects[frameID] = reffects
 	logger.V(2).Info("recorded effects", "frameID", frameID, "numReads", len(reffects.reads), "numWrites", len(reffects.writes))
@@ -315,25 +338,29 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		var claimedRVStr string
 		if op == event.UPDATE {
 			claimedRVStr = obj.GetResourceVersion()
+			if claimedRVStr == "" {
+				return invalidResourceVersion(gvk, obj.GetName(), claimedRVStr, "must be specified for an update")
+			}
 		} else if precondition != nil && precondition.ResourceVersion != nil {
 			claimedRVStr = *precondition.ResourceVersion
 		}
 		if claimedRVStr != "" {
+			claimedRV, err := strconv.ParseInt(claimedRVStr, 10, 64)
+			if err != nil || claimedRV <= 0 {
+				return invalidResourceVersion(gvk, obj.GetName(), claimedRVStr, "must be a positive integer")
+			}
 			if rvs, ok := m.effectRVs[frameID]; ok {
 				currentRV, tracked := rvs[resourceKey]
-				if tracked {
-					claimedRV, err := strconv.ParseInt(claimedRVStr, 10, 64)
-					if err == nil && claimedRV != currentRV {
-						logger.V(1).Info("resourceVersion conflict",
-							"key", resourceKey,
-							"claimedRV", claimedRV,
-							"currentRV", currentRV)
-						return apierrors.NewConflict(
-							schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
-							obj.GetName(),
-							fmt.Errorf("the object has been modified; please apply your changes to the latest version"),
-						)
-					}
+				if tracked && claimedRV != currentRV {
+					logger.V(1).Info("resourceVersion conflict",
+						"key", resourceKey,
+						"claimedRV", claimedRV,
+						"currentRV", currentRV)
+					return apierrors.NewConflict(
+						schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
+						obj.GetName(),
+						fmt.Errorf("the object has been modified; please apply your changes to the latest version"),
+					)
 				}
 			}
 		}
