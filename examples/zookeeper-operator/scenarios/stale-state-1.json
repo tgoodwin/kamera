@@ -39,7 +39,7 @@
       }
     ],
     "tuning": {
-      "maxDepth": 200,
+      "maxDepth": 400,
       "permuteControllers": [],
       "userActionReadyDepths": {
         "0": 10,
@@ -87,25 +87,20 @@
       }
     ],
     "tuning": {
-      "maxDepth": 200,
+      "maxDepth": 400,
       "permuteControllers": [],
       "userActionReadyDepths": {
         "0": 10,
         "1": 80
       },
-      "faultInjection": [{
-        "reconciler": "ZookeeperClusterReconciler",
-        "crashAfterEffect": 1,
-        "triggerOnce": true,
-        "triggerAfterDepth": 80
-      }],
       "stalenessIntervals": [{
         "reconciler": "ZookeeperClusterReconciler",
         "kind": "zookeeper.pravega.io/ZookeeperCluster",
         "staleAt": 32,
         "catchUpAt": 200,
         "lag": -1,
-        "freezeAt": 17
+        "freezeAt": 17,
+        "activateAtDepth": 105
       }]
     }
   }

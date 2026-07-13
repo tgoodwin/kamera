@@ -94,7 +94,7 @@ func TestApplyInputTuningStalenessIntervals(t *testing.T) {
 	base := tracecheck.ExploreConfig{}
 	got, err := ApplyInputTuning(base, coverage.InputTuning{
 		StalenessIntervals: []coverage.InputStalenessInterval{
-			{Reconciler: "ControllerA", Kind: "apps/Deployment", StaleAt: 3, CatchUpAt: 8, Lag: -1},
+			{Reconciler: "ControllerA", Kind: "apps/Deployment", StaleAt: 3, CatchUpAt: 8, Lag: -1, ActivateAtDepth: 20, DeactivateAtDepth: 40},
 			{Reconciler: "ControllerB", Kind: "core/ConfigMap", StaleAt: 1, CatchUpAt: 5, Lag: 2},
 		},
 	})
@@ -107,6 +107,9 @@ func TestApplyInputTuningStalenessIntervals(t *testing.T) {
 	si0 := got.Perturbations.StalenessIntervals[0]
 	if si0.ReconcilerID != "ControllerA" || si0.Kind != "apps/Deployment" || si0.StaleAt != 3 || si0.CatchUpAt != 8 || si0.Lag != -1 {
 		t.Fatalf("unexpected interval 0: %+v", si0)
+	}
+	if si0.ActivateAtDepth != 20 || si0.DeactivateAtDepth != 40 {
+		t.Fatalf("expected depth gate [20,40), got %+v", si0)
 	}
 }
 

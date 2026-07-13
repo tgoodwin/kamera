@@ -85,8 +85,8 @@ func TestShouldApplyNextUserAction_ReadyDepthScheduling(t *testing.T) {
 		depth:             3,
 		nextUserActionIdx: 1,
 	}
-	if !explorer.shouldApplyNextUserAction(earlyConverged) {
-		t.Fatalf("expected true for converged state below ready depth")
+	if explorer.shouldApplyNextUserAction(earlyConverged) {
+		t.Fatalf("expected false for converged state below scheduled ready depth")
 	}
 }
 

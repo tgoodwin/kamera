@@ -133,6 +133,35 @@ func TestEvaluateStalenessIntervals_AfterWindow(t *testing.T) {
 	}
 }
 
+func TestEvaluateStalenessIntervals_DepthGate(t *testing.T) {
+	interval := StalenessInterval{
+		ReconcilerID:      "WidgetReconciler",
+		Kind:              "example.org/Widget",
+		StaleAt:           3,
+		CatchUpAt:         20,
+		Lag:               -1,
+		ActivateAtDepth:   10,
+		DeactivateAtDepth: 15,
+	}
+	state := StateNode{
+		Contents:           StateSnapshot{KindSequences: KindSequences{"example.org/Widget": 8}},
+		stalenessIntervals: []StalenessInterval{interval},
+	}
+
+	state.depth = 9
+	if got := state.evaluateStalenessIntervals("WidgetReconciler"); len(got) != 0 {
+		t.Fatalf("expected current view before activation depth, got %v", got)
+	}
+	state.depth = 10
+	if got := state.evaluateStalenessIntervals("WidgetReconciler"); got["example.org/Widget"] != 3 {
+		t.Fatalf("expected stale view at activation depth, got %v", got)
+	}
+	state.depth = 15
+	if got := state.evaluateStalenessIntervals("WidgetReconciler"); len(got) != 0 {
+		t.Fatalf("expected current view at deactivation depth, got %v", got)
+	}
+}
+
 func TestEvaluateStalenessIntervals_DifferentReconciler(t *testing.T) {
 	sn := StateNode{
 		Contents: StateSnapshot{

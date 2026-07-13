@@ -4,6 +4,7 @@ import (
 	"context"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/tgoodwin/kamera/pkg/event"
 	corev1 "k8s.io/api/core/v1"
@@ -18,6 +19,12 @@ type noopReconciler struct{}
 
 func (noopReconciler) Reconcile(context.Context, reconcile.Request) (reconcile.Result, error) {
 	return reconcile.Result{}, nil
+}
+
+type delayedRequeueReconciler struct{}
+
+func (delayedRequeueReconciler) Reconcile(context.Context, reconcile.Request) (reconcile.Result, error) {
+	return reconcile.Result{RequeueAfter: 10 * time.Second}, nil
 }
 
 func coreScheme(t *testing.T) *runtime.Scheme {
@@ -171,6 +178,57 @@ func TestExplore_UserActionIndexProgressesInOrder(t *testing.T) {
 	}
 	if userSteps[1].StepMetadata[UserActionIDMetadataKey] != "update-cm" {
 		t.Fatalf("expected second user step id update-cm, got %q", userSteps[1].StepMetadata[UserActionIDMetadataKey])
+	}
+}
+
+func TestExplore_ScheduledUserActionPreemptsDeferredRequeue(t *testing.T) {
+	scheme := coreScheme(t)
+	builder := NewExplorerBuilder(scheme)
+	builder.WithMaxDepth(30)
+	builder.WithReconciler("ConfigMapController", func(ctrlclient.Client) Reconciler {
+		return &delayedRequeueReconciler{}
+	}).For("ConfigMap").Watches("ConfigMap", EnqueueRequestForObject())
+	builder.WithUserActions([]UserAction{
+		{
+			ID:      "create-cm",
+			OpType:  event.CREATE,
+			Payload: &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "scheduled-cm"}},
+		},
+		{
+			ID:     "update-cm",
+			OpType: event.UPDATE,
+			Payload: &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "scheduled-cm"},
+				Data:       map[string]string{"updated": "true"},
+			},
+		},
+	})
+	builder.config.Perturbations.UserActionReadyDepths[1] = 5
+
+	explorer, err := builder.Build("standalone")
+	if err != nil {
+		t.Fatalf("build explorer: %v", err)
+	}
+	start := buildStartStateOrFatal(t, builder, &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "seed-pod"},
+	})
+
+	result := explorer.Explore(context.Background(), start)
+	if len(result.AbortedStates) != 0 {
+		t.Fatalf("expected no aborted states, got %d: %v", len(result.AbortedStates), result.AbortedStates[0].Error)
+	}
+	if len(result.ConvergedStates) != 1 {
+		t.Fatalf("expected 1 converged state, got %d", len(result.ConvergedStates))
+	}
+
+	var userSteps []*ReconcileResult
+	for _, step := range result.ConvergedStates[0].Paths[0] {
+		if step != nil && step.ControllerID == UserControllerID {
+			userSteps = append(userSteps, step)
+		}
+	}
+	if len(userSteps) != 2 {
+		t.Fatalf("expected both scheduled user actions, got %d", len(userSteps))
 	}
 }
 

@@ -85,12 +85,14 @@ func ApplyInputTuning(base tracecheck.ExploreConfig, tuning coverage.InputTuning
 		intervals := make([]tracecheck.StalenessInterval, 0, len(tuning.StalenessIntervals))
 		for _, si := range tuning.StalenessIntervals {
 			intervals = append(intervals, tracecheck.StalenessInterval{
-				ReconcilerID:     tracecheck.ReconcilerID(si.Reconciler),
-				Kind:             si.Kind,
-				StaleAt:          si.StaleAt,
-				CatchUpAt:        si.CatchUpAt,
-				Lag:              si.Lag,
-				FreezeAtSequence: si.FreezeAtSequence,
+				ReconcilerID:      tracecheck.ReconcilerID(si.Reconciler),
+				Kind:              si.Kind,
+				StaleAt:           si.StaleAt,
+				CatchUpAt:         si.CatchUpAt,
+				Lag:               si.Lag,
+				FreezeAtSequence:  si.FreezeAtSequence,
+				ActivateAtDepth:   si.ActivateAtDepth,
+				DeactivateAtDepth: si.DeactivateAtDepth,
 			})
 		}
 		cfg.Perturbations.StalenessIntervals = intervals

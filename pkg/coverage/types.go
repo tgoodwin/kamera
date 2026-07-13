@@ -9,7 +9,7 @@ import (
 type Input struct {
 	Name             string           `json:"name"`
 	EnvironmentState EnvironmentState `json:"environmentState"`
-	ExternalInputs   []ExternalInput   `json:"externalInputs"`
+	ExternalInputs   []ExternalInput  `json:"externalInputs"`
 	Tuning           InputTuning      `json:"tuning"`
 }
 
@@ -45,12 +45,14 @@ type UserInput = ExternalInput
 
 // InputStalenessInterval is the JSON-facing staleness interval configuration.
 type InputStalenessInterval struct {
-	Reconciler       string `json:"reconciler"`
-	Kind             string `json:"kind"`
-	StaleAt          int64  `json:"staleAt"`
-	CatchUpAt        int64  `json:"catchUpAt"`
-	Lag              int64  `json:"lag"`
-	FreezeAtSequence int64  `json:"freezeAt,omitempty"`
+	Reconciler        string `json:"reconciler"`
+	Kind              string `json:"kind"`
+	StaleAt           int64  `json:"staleAt"`
+	CatchUpAt         int64  `json:"catchUpAt"`
+	Lag               int64  `json:"lag"`
+	FreezeAtSequence  int64  `json:"freezeAt,omitempty"`
+	ActivateAtDepth   int    `json:"activateAtDepth,omitempty"`
+	DeactivateAtDepth int    `json:"deactivateAtDepth,omitempty"`
 }
 
 // InputDepthRange constrains permutation expansion to a specific depth window.

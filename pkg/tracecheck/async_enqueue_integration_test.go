@@ -10,12 +10,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/simclock"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -77,6 +79,33 @@ func (s *AlwaysRequeueStrategy) ReconcileAtState(ctx context.Context, name types
 type AlwaysRequeueAfterStrategy struct {
 	recorder     replay.EffectRecorder
 	requeueAfter time.Duration
+}
+
+// StableWritingRequeueAfterStrategy models pollers that persist an unchanged
+// desired object on each pass before scheduling their next poll.
+type StableWritingRequeueAfterStrategy struct {
+	recorder replay.EffectRecorder
+	object   ctrlclient.Object
+}
+
+func (s *StableWritingRequeueAfterStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
+	s.object = nil
+	for _, obj := range state {
+		if clientObj, ok := obj.(ctrlclient.Object); ok {
+			s.object = clientObj.DeepCopyObject().(ctrlclient.Object)
+			break
+		}
+	}
+	return ctx, func() {}, nil
+}
+
+func (s *StableWritingRequeueAfterStrategy) ReconcileAtState(ctx context.Context, name types.NamespacedName) (reconcile.Result, error) {
+	if s.object != nil {
+		if err := s.recorder.RecordEffect(ctx, s.object, event.UPDATE, nil, nil); err != nil {
+			return reconcile.Result{}, err
+		}
+	}
+	return reconcile.Result{RequeueAfter: time.Second}, nil
 }
 
 func (s *AlwaysRequeueAfterStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
@@ -385,4 +414,28 @@ func TestExplore_StableRequeueAfterPollingConverges(t *testing.T) {
 
 	require.Len(t, result.AbortedStates, 0, "stable RequeueAfter poller should not hit max depth")
 	require.Len(t, result.ConvergedStates, 1, "stable RequeueAfter poller should be treated as converged")
+}
+
+func TestExplore_StableRequeueAfterWithUnchangedWriteConverges(t *testing.T) {
+	restore := simclock.SetDepth(0)
+	defer restore()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+
+	builder := NewExplorerBuilder(scheme)
+	builder.WithMaxDepth(20)
+	builder.WithCustomStrategy("StableWritingPoller", func(r replay.EffectRecorder) Strategy {
+		return &StableWritingRequeueAfterStrategy{recorder: r}
+	}).For("core/Pod")
+
+	explorer, err := builder.Build("test")
+	require.NoError(t, err)
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "polling-pod", Namespace: "default"}}
+	initialState := builder.GetStartStateFromObject(pod, "StableWritingPoller")
+
+	result := explorer.Explore(context.Background(), initialState)
+
+	require.Empty(t, result.AbortedStates, "stable poller writes should not hit max depth")
+	require.Len(t, result.ConvergedStates, 1, "unchanged writes should count toward polling quiescence")
 }

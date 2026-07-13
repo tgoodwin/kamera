@@ -43,12 +43,14 @@ type EffectContextManager interface {
 // StalenessInterval defines a window during which a reconciler's view
 // of a specific resource kind lags behind the actual cluster state.
 type StalenessInterval struct {
-	ReconcilerID    ReconcilerID `json:"reconciler"`
-	Kind            string       `json:"kind"`  // canonical group/kind
-	StaleAt         int64        `json:"staleAt"`
-	CatchUpAt       int64        `json:"catchUpAt"`
-	Lag             int64        `json:"lag"`             // how far behind frontier; -1 = frozen
-	FreezeAtSequence int64       `json:"freezeAt,omitempty"` // when lag=-1 and set, freeze at this sequence instead of staleAt
+	ReconcilerID      ReconcilerID `json:"reconciler"`
+	Kind              string       `json:"kind"` // canonical group/kind
+	StaleAt           int64        `json:"staleAt"`
+	CatchUpAt         int64        `json:"catchUpAt"`
+	Lag               int64        `json:"lag"`                // how far behind frontier; -1 = frozen
+	FreezeAtSequence  int64        `json:"freezeAt,omitempty"` // when lag=-1 and set, freeze at this sequence instead of staleAt
+	ActivateAtDepth   int          `json:"activateAtDepth,omitempty"`
+	DeactivateAtDepth int          `json:"deactivateAtDepth,omitempty"`
 }
 
 // PermuteDepthRange constrains ordering permutations to a specific depth window.
@@ -286,12 +288,7 @@ func (e *Explorer) shouldApplyNextUserAction(state StateNode) bool {
 		return false
 	}
 	if readyDepth, ok := e.userActionReadyDepth(state.nextUserActionIdx); ok {
-		if state.depth >= readyDepth {
-			return true
-		}
-		// If a branch converges before a scheduled depth, apply at convergence so
-		// the run can continue without synthetic no-op depth padding.
-		return state.IsConverged()
+		return state.depth >= readyDepth
 	}
 	// policy here is to apply the next user action after the current state has converged
 	return state.IsConverged()
@@ -962,6 +959,17 @@ func (e *Explorer) explore(
 			return nil
 		}
 
+		// If all pending work is deferred, advance simulated depth before choosing
+		// between that work and a scheduled user action. Re-evaluating the user
+		// scheduler at the advanced depth is essential: otherwise an earlier user
+		// action can make a later action ready while the only controller work is
+		// still deferred, and selection aborts with no ready reconcile.
+		if len(currentState.ReadyPendingReconciles()) == 0 {
+			if nextDepth, ok := e.nextReadyDepth(currentState); ok {
+				currentState.depth = nextDepth
+			}
+		}
+
 		shouldApplyUserAction := e.shouldApplyNextUserAction(currentState)
 		if shouldApplyUserAction && logger.V(2).Enabled() {
 			logger.V(2).WithValues(
@@ -1015,12 +1023,6 @@ func (e *Explorer) explore(
 				orderPruneUseOrderHash,
 			)
 			continue
-		}
-
-		if len(currentState.ReadyPendingReconciles()) == 0 {
-			if nextDepth, ok := e.nextReadyDepth(currentState); ok {
-				currentState.depth = nextDepth
-			}
 		}
 
 		// A state is considered converged if:
@@ -1495,7 +1497,8 @@ func (e *Explorer) materializeNextState(
 	newContents, newSequences, newStateEvents := e.applyEffects(stepLogger, stateView, stepResult)
 	triggeredByStep := e.getTriggeredReconcilers(stepResult.Changes, NewStateReaderFromObjectVersions(newContents, e.versionManager))
 	newPendingReconciles := e.determineNewPendingReconciles(stepCtx, stateView, consumed, stepResult)
-	e.maybePromoteStableRequeueAfter(stateView, consumed, stepResult, newPendingReconciles)
+	semanticNoOp := maps.Equal(newContents, stateView.Objects())
+	e.maybePromoteStableRequeueAfter(stateView, consumed, stepResult, semanticNoOp, newPendingReconciles)
 	stepLogger.V(1).WithValues(
 		"Depth", stateView.depth,
 		"Count", len(newPendingReconciles),
@@ -1573,12 +1576,13 @@ func (e *Explorer) maybePromoteStableRequeueAfter(
 	stateView StateNode,
 	consumed *PendingReconcile,
 	stepResult *ReconcileResult,
+	semanticNoOp bool,
 	pending []PendingReconcile,
 ) {
 	if e == nil || e.optimizations == nil || consumed == nil || stepResult == nil {
 		return
 	}
-	if stepResult.ctrlRes.RequeueAfter <= 0 || !stepResult.wasNoOp() {
+	if stepResult.ctrlRes.RequeueAfter <= 0 || !semanticNoOp {
 		return
 	}
 
@@ -1598,7 +1602,10 @@ func (e *Explorer) maybePromoteStableRequeueAfter(
 		if pending[i].Request.NamespacedName != consumed.Request.NamespacedName {
 			continue
 		}
-		if pending[i].Source != SourceRequeueAfter {
+		// A controller that writes an unchanged object can trigger its own watch.
+		// Pending-reconcile deduplication then preserves SourceStateChange instead
+		// of SourceRequeueAfter, even though this is the same stable poll cycle.
+		if pending[i].Source != SourceRequeueAfter && pending[i].Source != SourceStateChange {
 			continue
 		}
 		pending[i].Source = SourceStableRequeueAfter
@@ -1994,11 +2001,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		// reconcileResult is nil — the error occurred before any effects
 		// could be recorded (e.g., state preparation failure). Treat as no-op.
 		tolerableErrResult := &ReconcileResult{
-			ControllerID: pr.ReconcilerID,
-			FrameID:      frameID,
-			FrameType:    FrameTypeExplore,
-			Changes:      Changes{ObjectVersions: make(ObjectVersions)},
-			Error:        err.Error(),
+			ControllerID:     pr.ReconcilerID,
+			FrameID:          frameID,
+			FrameType:        FrameTypeExplore,
+			Changes:          Changes{ObjectVersions: make(ObjectVersions)},
+			Error:            err.Error(),
 			ReenqueueRequest: &pr,
 		}
 		return tolerableErrResult, nil

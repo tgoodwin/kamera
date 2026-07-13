@@ -325,6 +325,12 @@ func (sn StateNode) evaluateStalenessIntervals(reconcilerID ReconcilerID) KindSe
 		if interval.ReconcilerID != reconcilerID {
 			continue
 		}
+		if interval.ActivateAtDepth > 0 && sn.depth < interval.ActivateAtDepth {
+			continue
+		}
+		if interval.DeactivateAtDepth > 0 && sn.depth >= interval.DeactivateAtDepth {
+			continue
+		}
 		frontier := sn.Contents.KindSequences[interval.Kind]
 		if frontier < interval.StaleAt || frontier >= interval.CatchUpAt {
 			continue // not in stale window

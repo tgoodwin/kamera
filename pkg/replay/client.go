@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -140,7 +141,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
 	}
 
-		if err := c.handleEffect(ctx, frozenObj, event.GET, nil, nil); err != nil {
+	if err := c.handleEffect(ctx, frozenObj, event.GET, nil, nil); err != nil {
 		logger.V(1).Error(err,
 			"canonicalKind", canonicalKind,
 			"namespace", key.Namespace,
@@ -193,7 +194,19 @@ func (c *Client) List(ctx context.Context, list client.ObjectList, opts ...clien
 			"keys", keys)
 	}
 
-	for _, obj := range objsForKind {
+	keys := make([]types.NamespacedName, 0, len(objsForKind))
+	for key := range objsForKind {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Namespace != keys[j].Namespace {
+			return keys[i].Namespace < keys[j].Namespace
+		}
+		return keys[i].Name < keys[j].Name
+	})
+
+	for _, key := range keys {
+		obj := objsForKind[key]
 		// Namespace filter.
 		if listOpts.Namespace != "" && obj.GetNamespace() != listOpts.Namespace {
 			continue
