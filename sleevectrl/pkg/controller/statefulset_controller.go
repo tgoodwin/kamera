@@ -337,7 +337,9 @@ func createPodForStatefulSet(statefulSet *appsv1.StatefulSet, ordinal int) (*cor
 	// Start with the pod template from the StatefulSet
 	podSpec := statefulSet.Spec.Template.Spec.DeepCopy()
 
-	labels := statefulSet.GetLabels()
+	// Kubernetes creates StatefulSet Pods from spec.template metadata. Labels
+	// attached only to the StatefulSet object are not inherited by its Pods.
+	labels := statefulSet.Spec.Template.Labels
 	// get non-sleeve labels
 	out := make(map[string]string)
 	for k, v := range labels {

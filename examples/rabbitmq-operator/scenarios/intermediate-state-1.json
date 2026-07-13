@@ -79,7 +79,7 @@
       },
       "faultInjection": [{
         "reconciler": "RabbitmqClusterReconciler",
-        "crashAfterEffect": 2,
+        "crashAfterEffect": 3,
         "triggerOnce": true,
         "triggerAfterDepth": 31
       }]

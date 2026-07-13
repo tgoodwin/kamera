@@ -43,6 +43,10 @@ type PodStatusStep struct {
 	Conditions []corev1.PodCondition
 	PodIP      string
 	HostIP     string
+	// ContainersReady overrides the readiness copied from the
+	// ContainersReady Pod condition. This models workloads whose management
+	// process is running before the main service becomes ready.
+	ContainersReady *bool
 }
 
 // PodStateMachineFactory constructs a PodStateMachine for a given Pod.
@@ -380,7 +384,54 @@ func applyStatusStep(pod *corev1.Pod, step PodStatusStep) bool {
 		})
 	}
 
+	if step.Phase == corev1.PodRunning {
+		applyRunningContainerStatuses(pod, step)
+	}
+
 	return !equality.Semantic.DeepEqual(*original, pod.Status)
+}
+
+// applyRunningContainerStatuses models the kubelet's per-container status once
+// a Pod reaches Running. Controllers such as cass-operator use this status,
+// rather than Pod phase alone, to decide whether a management API is available.
+func applyRunningContainerStatuses(pod *corev1.Pod, step PodStatusStep) {
+	ready := false
+	for _, condition := range step.Conditions {
+		if condition.Type == corev1.ContainersReady {
+			ready = condition.Status == corev1.ConditionTrue
+			break
+		}
+	}
+	if step.ContainersReady != nil {
+		ready = *step.ContainersReady
+	}
+
+	existing := make(map[string]corev1.ContainerStatus, len(pod.Status.ContainerStatuses))
+	for _, status := range pod.Status.ContainerStatuses {
+		existing[status.Name] = status
+	}
+
+	statuses := make([]corev1.ContainerStatus, 0, len(pod.Spec.Containers))
+	for _, container := range pod.Spec.Containers {
+		startedAt := metav1.NewTime(simclock.Now())
+		if status, ok := existing[container.Name]; ok && status.State.Running != nil {
+			startedAt = status.State.Running.StartedAt
+		}
+		statuses = append(statuses, corev1.ContainerStatus{
+			Name:    container.Name,
+			Image:   container.Image,
+			Ready:   ready,
+			Started: boolPtr(true),
+			State: corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{StartedAt: startedAt},
+			},
+		})
+	}
+	pod.Status.ContainerStatuses = statuses
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func isTerminalPhase(phase corev1.PodPhase) bool {

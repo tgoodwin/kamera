@@ -79,7 +79,7 @@
       },
       "faultInjection": [{
         "reconciler": "RabbitmqClusterReconciler",
-        "crashAfterEffect": 1,
+        "crashAfterEffect": 3,
         "triggerOnce": true,
         "triggerAfterDepth": 35
       }],
@@ -89,7 +89,7 @@
         "staleAt": 35,
         "catchUpAt": 200,
         "lag": -1,
-        "freezeAt": 25
+        "freezeAt": 17
       }]
     }
   }

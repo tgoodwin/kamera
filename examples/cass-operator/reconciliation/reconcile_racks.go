@@ -22,12 +22,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"github.com/tgoodwin/kamera/examples/cass-operator/internal/result"
 	api "github.com/tgoodwin/kamera/examples/cass-operator/cassandra/v1beta1"
 	"github.com/tgoodwin/kamera/examples/cass-operator/events"
 	"github.com/tgoodwin/kamera/examples/cass-operator/httphelper"
+	"github.com/tgoodwin/kamera/examples/cass-operator/internal/result"
 	"github.com/tgoodwin/kamera/examples/cass-operator/oplabels"
 	"github.com/tgoodwin/kamera/examples/cass-operator/utils"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 )
 
 var (
@@ -717,7 +718,7 @@ func (rc *ReconciliationContext) CheckRackPodLabels() result.ReconcileResult {
 
 func shouldUpsertUsers(dc api.CassandraDatacenter) bool {
 	lastCreated := dc.Status.UsersUpserted
-	return time.Now().After(lastCreated.Add(time.Minute * 4))
+	return simclock.Now().After(lastCreated.Add(time.Minute * 4))
 }
 
 func (rc *ReconciliationContext) upsertUser(user api.CassandraUser) error {
@@ -808,10 +809,10 @@ func (rc *ReconciliationContext) CreateUsers() result.ReconcileResult {
 		"Created superuser")
 
 	patch := client.MergeFrom(rc.Datacenter.DeepCopy())
-	rc.Datacenter.Status.UsersUpserted = metav1.Now()
+	rc.Datacenter.Status.UsersUpserted = metav1.NewTime(simclock.Now())
 
 	// For backwards compatibility
-	rc.Datacenter.Status.SuperUserUpserted = metav1.Now()
+	rc.Datacenter.Status.SuperUserUpserted = metav1.NewTime(simclock.Now())
 
 	if err = rc.Client.Status().Patch(rc.Ctx, rc.Datacenter, patch); err != nil {
 		rc.ReqLogger.Error(err, "error updating the users upsert timestamp")
@@ -995,7 +996,7 @@ func (rc *ReconciliationContext) UpdateStatus() result.ReconcileResult {
 }
 
 func hasBeenXMinutes(x int, sinceTime time.Time) bool {
-	xMinutesAgo := time.Now().Add(time.Minute * time.Duration(-x))
+	xMinutesAgo := simclock.Now().Add(time.Minute * time.Duration(-x))
 	return sinceTime.Before(xMinutesAgo)
 }
 
@@ -1478,7 +1479,7 @@ func (rc *ReconciliationContext) labelServerPodStarting(pod *corev1.Pod) error {
 	}
 
 	statusPatch := client.MergeFrom(dc.DeepCopy())
-	dc.Status.LastServerNodeStarted = metav1.Now()
+	dc.Status.LastServerNodeStarted = metav1.NewTime(simclock.Now())
 	err = rc.Client.Status().Patch(rc.Ctx, dc, statusPatch)
 	return err
 }
@@ -1488,7 +1489,7 @@ func (rc *ReconciliationContext) enableQuietPeriod(seconds int) error {
 
 	dur := time.Second * time.Duration(seconds)
 	statusPatch := client.MergeFrom(dc.DeepCopy())
-	dc.Status.QuietPeriod = metav1.NewTime(time.Now().Add(dur))
+	dc.Status.QuietPeriod = metav1.NewTime(simclock.Now().Add(dur))
 	err := rc.Client.Status().Patch(rc.Ctx, dc, statusPatch)
 	return err
 }
@@ -1660,7 +1661,9 @@ func (rc *ReconciliationContext) startOneNodePerRack(endpointData httphelper.Cas
 						"Labeled pod a seed node %s", pod.Name)
 
 					// sleeping five seconds for DNS paranoia
-					time.Sleep(5 * time.Second)
+					// Preserve the operator's logical DNS wait without delaying an
+					// offline simulation by five seconds of wall-clock time.
+					simclock.DeterministicClock{}.Sleep(5 * time.Second)
 				}
 				if err := rc.startCassandra(endpointData, pod); err != nil {
 					return "", err
@@ -1737,7 +1740,7 @@ func isMgmtApiRunning(pod *corev1.Pod) bool {
 		runInfo := state.Running
 		if runInfo != nil {
 			// give management API ten seconds to come up
-			tenSecondsAgo := time.Now().Add(time.Second * -10)
+			tenSecondsAgo := simclock.Now().Add(time.Second * -10)
 			return runInfo.StartedAt.Time.Before(tenSecondsAgo)
 		}
 	}
@@ -1822,7 +1825,7 @@ func (rc *ReconciliationContext) CheckRollingRestart() result.ReconcileResult {
 
 	if dc.Spec.RollingRestartRequested {
 		dcPatch := client.MergeFrom(dc.DeepCopy())
-		dc.Status.LastRollingRestart = metav1.Now()
+		dc.Status.LastRollingRestart = metav1.NewTime(simclock.Now())
 		_ = rc.setCondition(
 			api.NewDatacenterCondition(api.DatacenterRollingRestart, corev1.ConditionTrue))
 		err := rc.Client.Status().Patch(rc.Ctx, dc, dcPatch)
@@ -1870,7 +1873,7 @@ func (rc *ReconciliationContext) setCondition(condition *api.DatacenterCondition
 	dc := rc.Datacenter
 	if dc.GetConditionStatus(condition.Type) != condition.Status {
 		// We are changing the status, so record the transition time
-		condition.LastTransitionTime = metav1.Now()
+		condition.LastTransitionTime = metav1.NewTime(simclock.Now())
 		dc.SetCondition(*condition)
 		return true
 	}

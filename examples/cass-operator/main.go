@@ -12,6 +12,7 @@ import (
 
 func main() {
 	flag.Parse()
+	configureSimulatedManagementAPI()
 
 	ctx := context.Background()
 	builder := newCassExplorerBuilder()

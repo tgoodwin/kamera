@@ -26,7 +26,10 @@
         }
       } }
     ],
-    "tuning": { "maxDepth": 120 }
+    "tuning": {
+      "maxDepth": 240,
+      "userActionReadyDepths": { "1": 100 }
+    }
   },
   {
     "name": "s2-intermediate-state-2",
@@ -56,14 +59,14 @@
       } }
     ],
     "tuning": {
-      "maxDepth": 120,
-      "faultInjections": [
+      "maxDepth": 240,
+      "userActionReadyDepths": { "1": 100 },
+      "faultInjection": [
         {
           "reconciler": "CassandraDatacenterReconciler",
-          "crashAfterEffect": 5,
-          "recoverAtDepth": 25,
-          "triggerOnce": true,
-          "triggerAfterDepth": 8
+          "crashAfterEffect": 2,
+		  "triggerOnce": true,
+          "triggerAfterDepth": 20
         }
       ]
     }

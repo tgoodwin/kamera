@@ -136,6 +136,54 @@ func TestPodLifecycleSequentialTransitions(t *testing.T) {
 	}
 }
 
+func TestApplyStatusStepPopulatesRunningContainerStatuses(t *testing.T) {
+	pod := &corev1.Pod{
+		Spec: corev1.PodSpec{Containers: []corev1.Container{
+			{Name: "cassandra", Image: "example/cassandra:1"},
+			{Name: "sidecar", Image: "example/sidecar:1"},
+		}},
+	}
+
+	changed := applyStatusStep(pod, PodStatusStep{
+		Phase: corev1.PodRunning,
+		Conditions: []corev1.PodCondition{
+			{Type: corev1.ContainersReady, Status: corev1.ConditionFalse},
+		},
+	})
+	if !changed {
+		t.Fatal("expected running status step to change pod status")
+	}
+	if len(pod.Status.ContainerStatuses) != 2 {
+		t.Fatalf("expected two container statuses, got %d", len(pod.Status.ContainerStatuses))
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.State.Running == nil {
+			t.Fatalf("expected container %q to be running", status.Name)
+		}
+		if status.Ready {
+			t.Fatalf("expected container %q not to be ready", status.Name)
+		}
+	}
+
+	startedAt := pod.Status.ContainerStatuses[0].State.Running.StartedAt
+	containersReady := false
+	applyStatusStep(pod, PodStatusStep{
+		Phase:           corev1.PodRunning,
+		ContainersReady: &containersReady,
+		Conditions: []corev1.PodCondition{
+			{Type: corev1.ContainersReady, Status: corev1.ConditionTrue},
+		},
+	})
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Ready {
+			t.Fatalf("expected container %q readiness override", status.Name)
+		}
+		if !status.State.Running.StartedAt.Equal(&startedAt) {
+			t.Fatalf("expected container %q start time to be preserved", status.Name)
+		}
+	}
+}
+
 type failingFactory struct {
 	err error
 }

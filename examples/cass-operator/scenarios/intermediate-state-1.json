@@ -57,11 +57,10 @@
     ],
     "tuning": {
       "maxDepth": 120,
-      "faultInjections": [
+      "faultInjection": [
         {
           "reconciler": "CassandraDatacenterReconciler",
-          "crashAfterEffect": 3,
-          "recoverAtDepth": 15,
+          "crashAfterEffect": 8,
           "triggerOnce": true
         }
       ]

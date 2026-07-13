@@ -1,5 +1,8 @@
 # Kamera
 
+SOSP 2026 artifact evaluators should start with the
+[artifact evaluation guide](artifact/README.md).
+
 **Note:** This project is a research artifact and is under active development. Its APIs and functionalities are subject to change and it is not yet recommended for production use.
 
 `kamera` is a toolkit for observing, analyzing, and verifying the behavior of the Kubernetes control plane. It is designed specifically for controllers built with [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime), providing targeted instrumentation to capture the behaviors of individual controllers as well as the interactions between them.

@@ -19,10 +19,11 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	"github.com/tgoodwin/kamera/examples/cass-operator/internal/result"
 	api "github.com/tgoodwin/kamera/examples/cass-operator/cassandra/v1beta1"
 	"github.com/tgoodwin/kamera/examples/cass-operator/dynamicwatch"
 	"github.com/tgoodwin/kamera/examples/cass-operator/httphelper"
+	"github.com/tgoodwin/kamera/examples/cass-operator/internal/result"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 )
 
 // Use a var so we can mock this function
@@ -94,7 +95,7 @@ type ReconcileCassandraDatacenter struct {
 // See: https://godoc.org/sigs.k8s.io/controller-runtime/pkg/reconcile#Result
 func (r *ReconcileCassandraDatacenter) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
 
-	startReconcile := time.Now()
+	startReconcile := simclock.Now()
 
 	logger := log.
 		WithValues("requestNamespace", request.Namespace).
@@ -103,7 +104,7 @@ func (r *ReconcileCassandraDatacenter) Reconcile(ctx context.Context, request re
 		WithValues("loopID", uuid.New().String())
 
 	defer func() {
-		reconcileDuration := time.Since(startReconcile).Seconds()
+		reconcileDuration := simclock.Now().Sub(startReconcile).Seconds()
 		logger.Info("Reconcile loop completed",
 			"duration", reconcileDuration)
 	}()
@@ -135,7 +136,7 @@ func (r *ReconcileCassandraDatacenter) Reconcile(ctx context.Context, request re
 	// TODO fold this into the quiet period
 	twentySecs := time.Second * 20
 	lastNodeStart := rc.Datacenter.Status.LastServerNodeStarted
-	cooldownTime := time.Until(lastNodeStart.Add(twentySecs))
+	cooldownTime := lastNodeStart.Add(twentySecs).Sub(simclock.Now())
 
 	if cooldownTime > 0 {
 		logger.Info("Ending reconciliation early because a server node was recently started")
@@ -143,9 +144,9 @@ func (r *ReconcileCassandraDatacenter) Reconcile(ctx context.Context, request re
 		return result.RequeueSoon(secs).Output()
 	}
 
-	if rc.Datacenter.Status.QuietPeriod.After(time.Now()) {
+	if rc.Datacenter.Status.QuietPeriod.After(simclock.Now()) {
 		logger.Info("Ending reconciliation early because the datacenter is in a quiet period")
-		cooldownTime = rc.Datacenter.Status.QuietPeriod.Sub(time.Now())
+		cooldownTime = rc.Datacenter.Status.QuietPeriod.Sub(simclock.Now())
 		secs := 1 + int(cooldownTime.Seconds())
 		return result.RequeueSoon(secs).Output()
 	}

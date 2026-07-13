@@ -13,6 +13,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"github.com/tgoodwin/kamera/sleevectrl/pkg/controller"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -41,6 +42,19 @@ func newScheme() *runtime.Scheme {
 func newCassExplorerBuilder() *tracecheck.ExplorerBuilder {
 	builder := tracecheck.NewExplorerBuilder(newScheme())
 	builder.WithMaxDepth(200)
+
+	// cass-operator starts Cassandra through the management API after the Pod's
+	// containers are running. The cassandra container remains unready until that
+	// start operation completes, even though the simulated Pod lifecycle itself
+	// has reached its final stage.
+	builder.WithReconciler("PodLifecycleController", func(c client.Client) tracecheck.Reconciler {
+		return controller.NewPodLifecycleReconciler(
+			c,
+			newScheme(),
+			cassPodLifecycleFactory{},
+			0,
+		)
+	}).For("Pod")
 
 	// Wire CassandraDatacenter reconciler (real code from cass-operator)
 	builder.WithReconciler(cassReconcilerID, func(c client.Client) tracecheck.Reconciler {
@@ -76,6 +90,24 @@ func newCassExplorerBuilder() *tracecheck.ExplorerBuilder {
 	builder.WithResourceDepGK(schema.GroupKind{Group: "", Kind: "PersistentVolume"}, "PVCController")
 
 	return builder
+}
+
+type cassPodLifecycleFactory struct{}
+
+func (cassPodLifecycleFactory) NewStateMachine(pod *corev1.Pod) controller.PodStateMachine {
+	steps := controller.DefaultPodLifecycle()
+	state := pod.Labels[api.CassNodeState]
+	if state != "Starting" && state != "Started" {
+		containersReady := false
+		steps[len(steps)-1].ContainersReady = &containersReady
+		for idx := range steps[len(steps)-1].Conditions {
+			condition := &steps[len(steps)-1].Conditions[idx]
+			if condition.Type == corev1.ContainersReady || condition.Type == corev1.PodReady {
+				condition.Status = corev1.ConditionFalse
+			}
+		}
+	}
+	return (&controller.DeterministicPodStateMachineFactory{Steps: steps}).NewStateMachine(pod)
 }
 
 func buildDefaultState(builder *tracecheck.ExplorerBuilder) tracecheck.StateNode {
@@ -191,8 +223,8 @@ func buildCassandraDatacenter(name, namespace string, size int) *unstructured.Un
 				"namespace": namespace,
 			},
 			"spec": map[string]any{
-				"clusterName": "cluster1",
-				"serverType":  "cassandra",
+				"clusterName":   "cluster1",
+				"serverType":    "cassandra",
 				"serverVersion": "3.11.7",
 				"managementApiAuth": map[string]any{
 					"insecure": map[string]any{},

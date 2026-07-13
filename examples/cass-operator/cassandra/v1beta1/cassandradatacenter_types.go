@@ -100,7 +100,7 @@ func getImageForServerVersion(server, version string) (string, error) {
 
 	img, success = imageCalc(server + "-" + version)
 	if !success {
-		return "", fmt.Errorf(errMsg)
+		return "", errors.New(errMsg)
 	}
 
 	return img, nil
