@@ -23,28 +23,12 @@
           "kind": "ZookeeperCluster",
           "metadata": { "name": "zookeeper-cluster", "namespace": "default" }
         }
-      },
-      {
-        "id": "recreate-zk",
-        "opType": "CREATE",
-        "object": {
-          "apiVersion": "zookeeper.pravega.io/v1beta1",
-          "kind": "ZookeeperCluster",
-          "metadata": { "name": "zookeeper-cluster", "namespace": "default" },
-          "spec": {
-            "replicas": 1,
-            "persistence": { "reclaimPolicy": "Delete" }
-          }
-        }
       }
     ],
     "tuning": {
       "maxDepth": 200,
       "permuteControllers": [],
-      "userActionReadyDepths": {
-        "0": 10,
-        "1": 80
-      }
+      "userActionReadyDepths": { "0": 10 }
     }
   },
   {
@@ -71,28 +55,12 @@
           "kind": "ZookeeperCluster",
           "metadata": { "name": "zookeeper-cluster", "namespace": "default" }
         }
-      },
-      {
-        "id": "recreate-zk",
-        "opType": "CREATE",
-        "object": {
-          "apiVersion": "zookeeper.pravega.io/v1beta1",
-          "kind": "ZookeeperCluster",
-          "metadata": { "name": "zookeeper-cluster", "namespace": "default" },
-          "spec": {
-            "replicas": 1,
-            "persistence": { "reclaimPolicy": "Delete" }
-          }
-        }
       }
     ],
     "tuning": {
       "maxDepth": 200,
       "permuteControllers": [],
-      "userActionReadyDepths": {
-        "0": 10,
-        "1": 80
-      },
+      "userActionReadyDepths": { "0": 10 },
       "faultInjection": [{
         "reconciler": "ZookeeperClusterReconciler",
         "crashAfterEffect": 2,

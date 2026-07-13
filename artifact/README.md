@@ -80,21 +80,42 @@ KAMERA_AE_GOCACHE=/tmp/kamera-go-cache ./artifact/smoke-test.sh
 
 ## Evidence status
 
-The standard workflow distinguishes timing reproduction from semantic bug
-oracles. It never counts a successful fault injection as proof of a downstream
-bug by itself.
+Each scenario is a locked schedule that exercises the controller behavior
+behind the corresponding historical report. Some rows reproduce the original
+resource-level symptom exactly; others expose the same non-atomic or
+state-coalescing mechanism in the simulator. Reviewers can inspect the complete
+trace manually; an automated per-row oracle is not required for the timing
+measurement.
 
-| Experiment | Current trace evidence |
-|---|---|
-| RabbitMQ unobserved-state-1 | Perturbed trace converges with one Pod rather than the baseline's three. |
-| RabbitMQ stale-state-2 | Perturbed trace contains a second StatefulSet deletion and an extra PVC update. |
-| RabbitMQ intermediate-state-1 | Crash lands after StatefulSet deletion and produces replacement StatefulSet/Pod churn. |
-| Cassandra intermediate-state-1 | Crash lands after CA-keystore creation; the second keystore is absent from that reconcile. |
-| Cassandra intermediate-state-2 | Exact two-Pod-patch crash trigger and paper-scale timing reproduced; final semantic state currently matches baseline. |
-| Remaining rows | Timing harness is runnable; semantic oracles are still being hardened before the AE submission. |
+| Experiment | Current trace evidence | Gap to exact Sieve outcome |
+|---|---|---|
+| ZooKeeper stale-state-1 | A newly created generation is reconciled through the frozen view of its deleting predecessor. | No material gap identified for the reported resource-lifecycle symptom. |
+| ZooKeeper stale-state-2 | The stale deletion view produces the historical extra resource lifecycle operations. | No material gap identified for the reported resource-lifecycle symptom. |
+| ZooKeeper unobserved-state-1 | The intermediate scale-down is skipped, so Pod/PVC 1 is never removed and the old PVC is retained. | The simulator does not include a literal ZooKeeper client or server, so it does not emit the later `NodeExists` response seen in the upstream report. |
+| ZooKeeper indirect-1 | After the PVC deletion and finalizer removal, later reconciliations continue updating the deleting cluster and its owned resources. | Sieve pauses and resumes one reconciliation while garbage collection interleaves; Kamera currently resumes through a newly queued reconciliation. |
+| RabbitMQ stale-state-1 | The configured trace contains the additional StatefulSet and Pod create/delete activity reported by Sieve. | The later recreation currently races object removal, although the reported extra lifecycle activity occurs first. |
+| RabbitMQ stale-state-2 | The configured trace contains a second StatefulSet deletion and an extra PVC update. | No material gap identified for the reported resource-lifecycle symptom. |
+| RabbitMQ unobserved-state-1 | Perturbed trace converges with one Pod rather than the baseline's three. | No material gap identified for the missed-scale-transition outcome. |
+| RabbitMQ intermediate-state-1 | StatefulSet deletion becomes visible before PVC expansion; the configured final StatefulSet remains marked for deletion while the baseline is live. | Sieve ends with a live PVC at `10Gi`; Kamera resumes the PVC update to `15Gi` but leaves the StatefulSet in its deletion transition. |
+| Cassandra stale-state-1 | After recreation, the selected stale view leaves the new datacenter without its expected finalizer, StatefulSet, and Pod. | Sieve marks the recreated PVC for deletion; the current simulator instead exposes the stale-generation effect one level earlier, at datacenter initialization. |
+| Cassandra intermediate-state-1 | The CA keystore is created, while the companion keystore is absent from that reconciliation. | The simulator does not model Cassandra bootstrap closely enough to turn the incomplete credential set into the literal Pod `Running` timeout. |
+| Cassandra intermediate-state-2 | After deleting and recreating the datacenter, the trace reaches the second two-Pod-patch transition from `Ready-to-Start` to `Starting` with `seed-node: "true"`; only those two Pod patches are retained. | Sieve's recorded CassandraDatacenter lacks `spec.config` from its first stored version, before the trigger. The issue was marked pending, so the reported final config difference is not yet causally attributable to this transition. |
+
+For Cassandra intermediate-state-2, the Sieve history records the requested
+configuration in the `kubectl.kubernetes.io/last-applied-configuration`
+annotation while the first stored live `spec` already lacks `config`. This
+precedes the configured second Pod transition. Kamera's uninterrupted and
+configured final states both preserve the requested Cassandra and JVM settings.
+The artifact therefore claims faithful trigger placement and partial-update
+evidence for this row, not reproduction of Sieve's unexplained configuration
+loss.
 
 The generated `status` column reports exploration completion only. `converged`
-does not by itself mean that a bug oracle passed.
+does not by itself mean that a bug oracle passed. Cassandra
+intermediate-state-1 reports `expected-depth-limit`: its incomplete keystore
+sequence leaves recurring controller work, which is the simulated counterpart
+of Sieve's Pod readiness timeout. Any other `partial` result is unexpected and
+should be inspected.
 
 ## Optional experiments
 

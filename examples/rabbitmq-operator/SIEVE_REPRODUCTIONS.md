@@ -161,7 +161,15 @@ go run . --inputs scenarios/intermediate-state-1.json \
 
 ### Bug signal in trace
 
-This bug's signal requires further tuning of crash injection timing to produce a distinct trace divergence from the baseline. The current configuration produces identical S1/S2 traces, indicating the crash does not land at the right point in the reconciliation cycle.
+At step 33, the configured trace marks the StatefulSet for deletion and stops
+that reconciliation before the PVC update. At that point both the StatefulSet
+template and PVC still request `10Gi`. The next reconciliation updates the PVC
+and template to `15Gi`, but the final configured StatefulSet remains marked for
+deletion. The baseline finishes with a live StatefulSet requesting `15Gi`.
+
+The configured and baseline runs both complete with zero aborted states. The
+field-level difference demonstrates that the resize sequence spans multiple
+externally visible states and is not completed atomically.
 
 ---
 

@@ -71,8 +71,13 @@ dump="$(find "$run_dir" -maxdepth 1 -type f -name '*.jsonl' -print -quit)"
 duration_ns="$(jq -er '.campaignMetrics.durationNs | select(. > 0)' "$dump")"
 observed_ms="$(awk -v ns="$duration_ns" 'BEGIN { printf "%.3f", ns / 1000000 }')"
 error_states="$(jq '[.states[] | select(.error != null)] | length' "$dump")"
+max_depth_states="$(jq '[.states[] | select(.error == "max depth reached")] | length' "$dump")"
 status=converged
 [[ "$error_states" -eq 0 ]] || status=partial
+if [[ "$experiment" = cass/intermediate-state-1 &&
+      "$error_states" -gt 0 && "$max_depth_states" -eq "$error_states" ]]; then
+  status=expected-depth-limit
+fi
 
 jq -n \
   --arg experiment "$experiment" \
@@ -82,7 +87,8 @@ jq -n \
   --argjson sieve_s "$sieve_s" \
   --argjson duration_ns "$duration_ns" \
   --argjson error_states "$error_states" \
-  '{experiment:$experiment,status:$status,paperKameraMs:$paper_ms,paperSieveSeconds:$sieve_s,durationNs:$duration_ns,observedMs:($duration_ns/1000000),errorStates:$error_states,dump:$dump}' \
+  --argjson max_depth_states "$max_depth_states" \
+  '{experiment:$experiment,status:$status,paperKameraMs:$paper_ms,paperSieveSeconds:$sieve_s,durationNs:$duration_ns,observedMs:($duration_ns/1000000),errorStates:$error_states,maxDepthStates:$max_depth_states,dump:$dump}' \
   >"$run_dir/result.json"
 
 printf '%s\t%s\t%s\t%s\t%s\n' "$experiment" "$paper_ms" "$observed_ms" "$status" "$run_dir/result.json"

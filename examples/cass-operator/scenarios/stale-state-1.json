@@ -26,7 +26,10 @@
         }
       } }
     ],
-    "tuning": { "maxDepth": 120 }
+    "tuning": {
+      "maxDepth": 250,
+      "userActionReadyDepths": { "0": 92, "1": 110 }
+    }
   },
   {
     "name": "s2-stale-state-1",
@@ -56,15 +59,16 @@
       } }
     ],
     "tuning": {
-      "maxDepth": 120,
+      "maxDepth": 250,
+      "userActionReadyDepths": { "0": 92, "1": 110 },
       "stalenessIntervals": [
         {
           "reconciler": "CassandraDatacenterReconciler",
           "kind": "cassandra.datastax.com/CassandraDatacenter",
-          "staleAt": 30,
-          "catchUpAt": 55,
+          "staleAt": 50,
+          "catchUpAt": 75,
           "lag": -1,
-          "freezeAt": 30
+          "freezeAt": 43
         }
       ]
     }

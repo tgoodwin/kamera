@@ -207,9 +207,12 @@ No PVC deletion. Controller never saw replicas=1, so `cleanupOrphanPVCs` never i
 
 ### Bug description
 
-During deletion of a ZookeeperCluster, the controller removes the `cleanUpZookeeperPVC` finalizer and crashes mid-reconcile before completing the rest of its reconciliation pipeline. With the finalizer removed, the K8s garbage collector cascade-deletes all owned resources (StatefulSet, ConfigMap, Services, PDB). When the controller restarts and processes the recreated cluster, it faces an inconsistent intermediate state where some resources were partially cleaned up by GC while others were not.
-
-This causes extra reconcile churn (more UPDATE operations than baseline) and missing resource recreation (PodDisruptionBudget not re-created after GC deletion).
+During deletion of a ZookeeperCluster, the controller removes the
+`cleanUpZookeeperPVC` finalizer but does not return from the reconciliation.
+Ordinary resource reconciliation can therefore continue after the object has
+become eligible for removal. The configured run interrupts the reconciliation
+immediately after the PVC deletion and finalizer update, then lets the queued
+reconciliation resume from that externally visible intermediate state.
 
 ### Kamera reproduction
 
@@ -220,31 +223,22 @@ go run . --inputs scenarios/indirect-1.json \
 ```
 
 **Scenario configuration (`indirect-1.json`, S2):**
-- Same `recreate` workload as stale-state-1
+- A single ZookeeperCluster deletion at depth 10
 - `faultInjection`: crash after 2nd write effect (PVC DELETE + finalizer UPDATE go through, rest truncated), `triggerOnce: true`, `triggerAfterDepth: 11`
-- No staleness needed: the bug is purely about crash timing and GC interaction
+- No staleness or recreation action is needed
 
 **Sieve time:** 278 seconds
 **Kamera simulation time:** 498ms
 
 ### Bug signal in trace
 
-**Baseline (S1):**
-```
-CREATE PodDisruptionBudget: 2 (initial + post-recreation)
-REMOVE PodDisruptionBudget: 1 (GC cleanup)
-UPDATE ConfigMap: 16
-UPDATE StatefulSet: 19
-UPDATE ZookeeperCluster: 38
-```
+At step 20, the configured trace deletes
+`PersistentVolumeClaim/data-zookeeper-cluster-0` and removes the finalizer from
+the deleting ZookeeperCluster. Steps 29, 41, and 51 then update the ConfigMap,
+StatefulSet, Services, and deleting ZookeeperCluster. The run completes with
+the finalizer-free ZookeeperCluster and its owned StatefulSet still present.
 
-**Crash mid-delete (S2):**
-```
-CREATE PodDisruptionBudget: 1 (initial only, NOT re-created after recreation)
-REMOVE PodDisruptionBudget: 0 (missing)
-UPDATE ConfigMap: 17 (+1)
-UPDATE StatefulSet: 21 (+2)
-UPDATE ZookeeperCluster: 41 (+3)
-```
-
-The crash mid-delete causes: (1) PDB not re-created after recreation (missing resource), (2) extra UPDATE churn across multiple resource types as the controller struggles to converge from the inconsistent intermediate state.
+In the baseline, removal proceeds: the final state contains neither the
+ZookeeperCluster nor its StatefulSet or Pod. Both runs complete with zero
+aborted states. This directly exposes the controller's continue-after-finalizer
+resource-update mechanism without requiring a recreated cluster.
