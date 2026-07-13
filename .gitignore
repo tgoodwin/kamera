@@ -47,6 +47,8 @@ testresults/**
 graph-experiment/
 artifact-deps/
 .yaks
+.beads/
+.claude/
 
 # Dolt database files (added by bd init)
 .dolt/
