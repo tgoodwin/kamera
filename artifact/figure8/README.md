@@ -69,3 +69,32 @@ but the corresponding bounded-reference fallback was first committed in
 commit and this first reconstructible commit. This is evidence that the
 experiment ran from a working tree whose planner change was committed later,
 not that the April commit introduced a different experiment.
+
+This reconstruction reflects the authors' submission workflow: the KRO
+campaign ran from an uncommitted working tree based on `46edf3e`, and the
+remaining changes were checked in after the deadline. We therefore do not
+describe `1c85e5b` as the literal commit used on March 30. It is the earliest
+clean commit found that contains the behavior visible in that day's archived
+log and reproduces the recorded campaign invariants.
+
+### Why this rerun does not use `sosp-ae` HEAD
+
+The paper's Table 6 harnesses and the KRO/Karpenter experiments were developed
+on separate Kamera branches. Later, `sosp-ae` consolidated the harnesses and
+added shared simulation-fidelity changes. Those changes are desirable for the
+current artifact, but they also change the KRO exploration graph, so a single
+modern Kamera revision cannot reproduce every historical metric exactly.
+
+The provenance audit reran the same exhaustive KRO inputs and pinned KRO
+adapter at three Kamera boundaries:
+
+| Kamera source | Total node visits | Global resource states | Interpretation |
+|---|---:|---:|---|
+| `1c85e5b` | 54,418 | 131 | Exact archived Figure 8 invariants |
+| `bcc0299` | 52,190 | 131 | First later simulator-semantic boundary; adds stateful watch mapping and missing controller watches |
+| audited `sosp-ae` head (`490ea33`) | 52,180 | 123 | Consolidated AE implementation with additional fidelity changes |
+
+All three runs produced 30 full dumps and 1,680 staleness trials. The changing
+node/state totals demonstrate why the historical pin is substantive rather
+than arbitrary. Normal artifact workflows use `sosp-ae`; only the exact
+paper-era KRO computation uses the reconstructed snapshot.

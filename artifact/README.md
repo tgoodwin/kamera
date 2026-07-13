@@ -17,6 +17,36 @@ The paper's bug-discovery campaign used an LLM agent. That campaign is not part
 of the standard workflow because it requires external model access and is not
 deterministic. See [Optional experiments](#optional-experiments).
 
+## Source snapshot provenance
+
+The paper experiments were run from project-specific Kamera branches and
+working trees rather than from one clean repository commit. In particular, the
+Table 6 controller harnesses were developed on a line ending at `1e9f9c1`,
+while the KRO and Karpenter coverage experiments used a separate line based on
+`46edf3e`. Those lines contain different shared-simulator changes; combining
+their historical tips is not a source-only merge of independent harnesses.
+
+Some submission-time working-tree changes were first checked in after the
+April 1 paper deadline. Where the archived logs establish that such behavior
+was already present during an experiment, this artifact distinguishes:
+
+- the clean commit on which the experiment working tree was based;
+- the first later commit that captures the evidenced working-tree behavior;
+- subsequent simulator changes that alter the historical measurement.
+
+The standard Table 6 and Section 6.1 workflows run from this consolidated
+`sosp-ae` branch. An exact historical rerun may instead use an
+experiment-specific Kamera snapshot when later fidelity improvements change a
+reported metric. The KRO-2 Figure 8 rerun is the current example: `1c85e5b` is
+the earliest committed reconstruction found to reproduce the archived campaign
+invariants exactly. Later shared-simulator revisions do not reproduce those
+exact totals. See `artifact/figure8/README.md` for the validation evidence.
+
+The other pinned SHAs in this artifact identify external controller sources
+such as KCP, KRO, and Karpenter. They naturally differ by experiment and should
+not be interpreted as competing Kamera revisions. Each adapter patch and
+scenario is separately checksummed in its dependency manifest.
+
 ## Requirements
 
 - Linux or macOS on x86-64 or arm64

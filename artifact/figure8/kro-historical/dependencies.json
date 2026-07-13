@@ -4,7 +4,8 @@
     "repository": "the evaluator's local Kamera checkout",
     "experimentBaseCommit": "46edf3e37c79f4c503418bff0f7d6a88cad99a01",
     "reconstructionCommit": "1c85e5b89fa46cc8470dbd63159d6640921fdeee",
-    "reconstructionReason": "first commit containing the aborted-reference staleness-plan fallback evidenced by the archived March 30 run log",
+    "reconstructionReason": "earliest clean commit found that contains the aborted-reference staleness-plan fallback evidenced by the archived March 30 run log and reproduces the archived campaign invariants",
+    "submissionWorkingTree": "the experiment ran from an uncommitted working tree based on experimentBaseCommit; reconstructionCommit is the first committed capture, not a claim that an April commit was used on March 30",
     "harnessPath": "examples/kro"
   },
   "kro": {
@@ -31,5 +32,24 @@
     "commit": "636fbb33ba26f17b3fc6fdf7d0bafd2ee188702f",
     "statusAtPackaging": "open draft, not merged",
     "relationship": "post-paper schema-backed server-side apply prototype"
+  },
+  "snapshotValidation": {
+    "invariants": {
+      "fullDumps": 30,
+      "stalenessTrials": 1680,
+      "totalNodeVisits": 54418,
+      "globalResourceStates": 131
+    },
+    "reconstructionCommitResult": "matches all invariants",
+    "firstLaterSemanticBoundary": {
+      "commit": "bcc029937740d79c7143c8c544abc3fd7e82d38c",
+      "totalNodeVisits": 52190,
+      "globalResourceStates": 131
+    },
+    "auditedSospAeHead": {
+      "commit": "490ea33558ab85b4905f09ccdc7b2d426aef287c",
+      "totalNodeVisits": 52180,
+      "globalResourceStates": 123
+    }
   }
 }

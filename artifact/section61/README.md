@@ -25,6 +25,12 @@ Karpenter simulation adapter. The KCP harness is checked into this artifact;
 the historical multi-gigabyte trace outputs are not needed. The complete
 source manifest and patch checksum are in `dependencies.json`.
 
+These two hashes pin the upstream controller implementations exercised by the
+simulations; they are not Kamera snapshot selections. This Section 6.1
+workflow builds against the evaluator's `sosp-ae` checkout. The separate
+`1c85e5b` Kamera reconstruction is used only by the exact historical KRO-2
+Figure 8 rerun, whose totals are sensitive to later shared-simulator changes.
+
 By default, setup writes ignored checkouts under `artifact-deps/section61`.
 Pass a different destination as its first argument and set
 `KAMERA_AE_DEPS_DIR` to that same path when running the reproducer:
