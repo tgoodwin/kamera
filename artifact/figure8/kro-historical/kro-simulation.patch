@@ -1,0 +1,151 @@
+diff --git a/pkg/controller/resourcegraphdefinition/controller.go b/pkg/controller/resourcegraphdefinition/controller.go
+index 96c40601..7c98f64b 100644
+--- a/pkg/controller/resourcegraphdefinition/controller.go
++++ b/pkg/controller/resourcegraphdefinition/controller.go
+@@ -23,0 +24 @@ import (
++	"k8s.io/apimachinery/pkg/runtime/schema"
+@@ -40,0 +42,8 @@ import (
++// DynamicControllerRegistrar abstracts the Register/Deregister operations
++// on the DynamicController. The real *dynamiccontroller.DynamicController
++// satisfies this interface.
++type DynamicControllerRegistrar interface {
++	Register(ctx context.Context, parent schema.GroupVersionResource, instanceHandler dynamiccontroller.Handler, resourceGVRsToWatch ...schema.GroupVersionResource) error
++	Deregister(ctx context.Context, parent schema.GroupVersionResource) error
++}
++
+@@ -56 +65 @@ type ResourceGraphDefinitionReconciler struct {
+-	dynamicController       *dynamiccontroller.DynamicController
++	dynamicController       DynamicControllerRegistrar
+@@ -63 +72 @@ func NewResourceGraphDefinitionReconciler(
+-	dynamicController *dynamiccontroller.DynamicController,
++	dynamicController DynamicControllerRegistrar,
+diff --git a/pkg/graph/builder.go b/pkg/graph/builder.go
+index 8d40eac3..aeeea490 100644
+--- a/pkg/graph/builder.go
++++ b/pkg/graph/builder.go
+@@ -67,0 +68,12 @@ func NewBuilder(clientConfig *rest.Config, httpClient *http.Client) (*Builder, e
++// NewBuilderFromResolver creates a Builder with a pre-built schema resolver
++// and REST mapper. Useful for testing or environments without an API server.
++// If schemaResolver is nil, CEL expression type checking is skipped and
++// schemaless parsing is used for all resources.
++func NewBuilderFromResolver(schemaResolver resolver.SchemaResolver, restMapper meta.RESTMapper) *Builder {
++	return &Builder{
++		schemaResolver:    schemaResolver,
++		restMapper:        restMapper,
++		skipCELValidation: schemaResolver == nil,
++	}
++}
++
+@@ -94,0 +107,5 @@ type Builder struct {
++	// skipCELValidation skips CEL expression type checking during graph building.
++	// When true, the builder still extracts CEL expressions and builds the
++	// dependency graph, but does not validate expression types against schemas.
++	// Useful for test harnesses without API server access.
++	skipCELValidation bool
+@@ -199,18 +215,0 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
+-	// Prepare schemas for CEL type checking.
+-	// Collections need to be wrapped as list types.
+-	celSchemas := collectNodeSchemas(nodes, schemas)
+-
+-	// include the instance spec schema in the context as "schema". This will let us
+-	// validate expressions such as ${schema.spec.someField}.
+-	//
+-	// not that we only include the spec and metadata fields, instance status references
+-	// are not allowed in RGDs (yet)
+-	schemaWithoutStatus, err := getSchemaWithoutStatus(instanceCRD)
+-	if err != nil {
+-		return nil, fmt.Errorf("failed to get schema without status: %w", err)
+-	}
+-	celSchemas[SchemaVarName] = schemaWithoutStatus
+-
+-	// Create a DeclTypeProvider for introspecting type structures during validation
+-	typeProvider := krocel.CreateDeclTypeProvider(celSchemas)
+-
+@@ -235,2 +234,10 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
+-	// Now that we know all resources are properly declared and dependencies are valid,
+-	// we can perform type checking on the CEL expressions.
++	// CEL type checking: validate expression types against schemas.
++	// Skipped when skipCELValidation is set (e.g., no API server for schema resolution).
++	if !b.skipCELValidation {
++		// Prepare schemas for CEL type checking.
++		celSchemas := collectNodeSchemas(nodes, schemas)
++		schemaWithoutStatus, err := getSchemaWithoutStatus(instanceCRD)
++		if err != nil {
++			return nil, fmt.Errorf("failed to get schema without status: %w", err)
++		}
++		celSchemas[SchemaVarName] = schemaWithoutStatus
+@@ -238,5 +245 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
+-	// Create a typed CEL environment with all resource schemas for template expressions
+-	templatesEnv, err := krocel.TypedEnvironment(celSchemas)
+-	if err != nil {
+-		return nil, fmt.Errorf("failed to create typed CEL environment: %w", err)
+-	}
++		typeProvider := krocel.CreateDeclTypeProvider(celSchemas)
+@@ -244,4 +247 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
+-	// Create a CEL environment with only "schema" for includeWhen expressions
+-	var schemaEnv *cel.Env
+-	if celSchemas[SchemaVarName] != nil {
+-		schemaEnv, err = krocel.TypedEnvironment(map[string]*spec.Schema{SchemaVarName: celSchemas[SchemaVarName]})
++		templatesEnv, err := krocel.TypedEnvironment(celSchemas)
+@@ -249 +249 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
+-			return nil, fmt.Errorf("failed to create CEL environment for includeWhen validation: %w", err)
++			return nil, fmt.Errorf("failed to create typed CEL environment: %w", err)
+@@ -251 +250,0 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
+-	}
+@@ -253,4 +252,12 @@ func (b *Builder) NewResourceGraphDefinition(originalCR *v1alpha1.ResourceGraphD
+-	// Validate all CEL expressions for each node
+-	for id, node := range nodes {
+-		if err := validateNode(node, templatesEnv, schemaEnv, schemas[id], typeProvider); err != nil {
+-			return nil, fmt.Errorf("failed to validate resource %q: %w", id, err)
++		var schemaEnv *cel.Env
++		if celSchemas[SchemaVarName] != nil {
++			schemaEnv, err = krocel.TypedEnvironment(map[string]*spec.Schema{SchemaVarName: celSchemas[SchemaVarName]})
++			if err != nil {
++				return nil, fmt.Errorf("failed to create CEL environment for includeWhen validation: %w", err)
++			}
++		}
++
++		for id, node := range nodes {
++			if err := validateNode(node, templatesEnv, schemaEnv, schemas[id], typeProvider); err != nil {
++				return nil, fmt.Errorf("failed to validate resource %q: %w", id, err)
++			}
+@@ -324,4 +331,7 @@ func (b *Builder) buildRGResource(
+-	// 5. Load the OpenAPI schema for the resource.
+-	resourceSchema, err := b.schemaResolver.ResolveSchema(gvk)
+-	if err != nil {
+-		return nil, nil, fmt.Errorf("failed to get schema for resource %s: %w", rgResource.ID, err)
++	// 5. Load the OpenAPI schema for the resource (if resolver available).
++	var resourceSchema *spec.Schema
++	if b.schemaResolver != nil {
++		resourceSchema, err = b.schemaResolver.ResolveSchema(gvk)
++		if err != nil {
++			return nil, nil, fmt.Errorf("failed to get schema for resource %s: %w", rgResource.ID, err)
++		}
+@@ -340 +350,17 @@ func (b *Builder) buildRGResource(
+-	if gvk.Group == "apiextensions.k8s.io" && gvk.Version == "v1" && gvk.Kind == "CustomResourceDefinition" {
++	if resourceSchema == nil {
++		// No schema available — use schemaless parsing (walks the template
++		// JSON structure directly). This skips type validation of CEL
++		// expressions but correctly extracts the dependency graph.
++		fieldDescriptors, err = parser.ParseSchemalessResource(resourceObject)
++		if err != nil {
++			return nil, nil, fmt.Errorf("failed to parse schemaless resource %s: %w", rgResource.ID, err)
++		}
++
++		if gvk.Group == "apiextensions.k8s.io" && gvk.Version == "v1" && gvk.Kind == "CustomResourceDefinition" {
++			for _, expr := range fieldDescriptors {
++				if !strings.HasPrefix(expr.Path, "metadata.") {
++					return nil, nil, fmt.Errorf("CEL expressions in CRDs are only supported for metadata fields, found in path %q, resource %s", expr.Path, rgResource.ID)
++				}
++			}
++		}
++	} else if gvk.Group == "apiextensions.k8s.io" && gvk.Version == "v1" && gvk.Kind == "CustomResourceDefinition" {
+@@ -724,0 +751,5 @@ func buildStatusSchema(
++	// If no status schema, return empty schema and no variables.
++	if len(rgSchema.Status.Raw) == 0 || string(rgSchema.Status.Raw) == "null" {
++		return &extv1.JSONSchemaProps{Type: "object"}, nil, nil, nil
++	}
++
+@@ -1277 +1308 @@ func collectNodeSchemas(nodes map[string]*Node, nodeSchemas map[string]*spec.Sch
+-		if sch, ok := nodeSchemas[id]; ok {
++		if sch, ok := nodeSchemas[id]; ok && sch != nil {

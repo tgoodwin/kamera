@@ -1,0 +1,580 @@
+[
+  {
+    "name": "K2b/no-fault",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-resourcegraphdefinition-1",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ResourceGraphDefinitionController",
+          "crashAfterEffect": 1,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-resourcegraphdefinition-2",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ResourceGraphDefinitionController",
+          "crashAfterEffect": 2,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-resourcegraphdefinition-3",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ResourceGraphDefinitionController",
+          "crashAfterEffect": 3,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-resourcegraphdefinition-4",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ResourceGraphDefinitionController",
+          "crashAfterEffect": 4,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-resourcegraphdefinition-5",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ResourceGraphDefinitionController",
+          "crashAfterEffect": 5,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-resourcegraphdefinition-6",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ResourceGraphDefinitionController",
+          "crashAfterEffect": 6,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-resourcegraphdefinition-7",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ResourceGraphDefinitionController",
+          "crashAfterEffect": 7,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-application-1",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 1,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-application-2",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 2,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-application-3",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 3,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-application-4",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 4,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-application-5",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 5,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-application-6",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 6,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  },
+  {
+    "name": "K2b/fault-application-7",
+    "tuning": {
+      "maxDepth": 30,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 7,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  }
+]

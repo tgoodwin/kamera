@@ -1,0 +1,41 @@
+[
+  {
+    "name": "K2b-tuning-v1/fault-app-crash-after-2",
+    "tuning": {
+      "maxDepth": 50,
+      "permuteControllers": [
+        "ResourceGraphDefinitionController",
+        "ApplicationController"
+      ],
+      "faultInjection": [
+        {
+          "reconciler": "ApplicationController",
+          "crashAfterEffect": 2,
+          "triggerOnce": true
+        }
+      ]
+    },
+    "externalInputs": [
+      {
+        "id": "create-application-instance",
+        "opType": "CREATE",
+        "object": {
+          "apiVersion": "kro.run/v1alpha1",
+          "kind": "Application",
+          "metadata": {
+            "name": "my-app-instance",
+            "namespace": "default"
+          },
+          "spec": {
+            "name": "my-app",
+            "image": "nginx",
+            "replicas": 1,
+            "ingress": {
+              "enabled": true
+            }
+          }
+        }
+      }
+    ]
+  }
+]

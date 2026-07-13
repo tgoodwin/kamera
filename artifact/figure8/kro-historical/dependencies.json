@@ -1,0 +1,35 @@
+{
+  "format": "kamera-figure8-kro-dependencies-v1",
+  "kamera": {
+    "repository": "the evaluator's local Kamera checkout",
+    "experimentBaseCommit": "46edf3e37c79f4c503418bff0f7d6a88cad99a01",
+    "reconstructionCommit": "1c85e5b89fa46cc8470dbd63159d6640921fdeee",
+    "reconstructionReason": "first commit containing the aborted-reference staleness-plan fallback evidenced by the archived March 30 run log",
+    "harnessPath": "examples/kro"
+  },
+  "kro": {
+    "url": "https://github.com/kro-run/kro.git",
+    "baseCommit": "c9320ee963f745637bb622f6b68853a870187d20",
+    "historicalIntegrationHead": "e635e4bb24c5a4ade897674b90101d72400f70c8",
+    "patch": "kro-simulation.patch",
+    "patchSha256": "e35bc275e00dfb28ab1c989b05d450ef4fae421037938c8f11732ae7cc6dbde9"
+  },
+  "scenarios": [
+    {
+      "path": "k2b-tuning-v1.json",
+      "sha256": "0361fd9d6bfdc6d655ed8a354d90baebe9e40ecc2ddedf99646ffe6ac518dfad",
+      "purpose": "first focused paper-era reproduction"
+    },
+    {
+      "path": "k2b-exhaustive.json",
+      "sha256": "9d3c502d73620df584cf7a16ffa344f9c01ac00cc302565afc1f06da59deea22",
+      "purpose": "paper-era exhaustive campaign"
+    }
+  ],
+  "laterSemanticChange": {
+    "pullRequest": "https://github.com/tgoodwin/kamera/pull/83",
+    "commit": "636fbb33ba26f17b3fc6fdf7d0bafd2ee188702f",
+    "statusAtPackaging": "open draft, not merged",
+    "relationship": "post-paper schema-backed server-side apply prototype"
+  }
+}

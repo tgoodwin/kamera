@@ -141,14 +141,27 @@ python3 -m pip install -r artifact/figure8/requirements.txt
 The script redraws the published result from checked-in data. It intentionally
 does not rerun the LLM-guided experiment: doing so would require external model
 access and would measure a new agent trajectory rather than reproduce the
-paper's recorded one. The original multi-hour exhaustive commands and raw-data
-provenance are documented in
+paper's recorded one. The original exhaustive commands and raw-data provenance
+are documented in
 `experiments/coverage-curves/MANIFEST.md`.
+
+The deterministic KRO-2 simulation underlying panel (b) can also be rerun
+without an LLM:
+
+```bash
+./artifact/setup-figure8-kro-deps.sh
+./artifact/run-figure8-kro-historical.sh focused
+```
+
+Use `full` in place of `focused` to run the complete historical KRO-2 input
+matrix. The focused workflow reports the observable paper-era outcome and also
+reports that its depth-50 trace is bounded, rather than calling it converged.
+See `artifact/figure8/README.md` for the provenance and semantic scope.
 
 ## Rerun Section 6.1 case studies
 
-A developer-preview workflow reruns fixed simulations for KCP-4 and KAR-12 and
-checks the observable outcomes described in Section 6.1.2:
+A developer-preview workflow reruns fixed converging simulations for KCP-4 and
+KAR-12 and checks their observable outcomes from Section 6.1.2:
 
 ```bash
 ./artifact/setup-section61-deps.sh
@@ -163,8 +176,8 @@ results include trace dumps, logs, per-case JSON checks, and `section61.tsv`.
 The setup script clones KCP and Karpenter at the exact commits recorded in
 `artifact/section61/dependencies.json` and applies the checked-in Karpenter
 simulation adapter. See `artifact/section61/README.md` for the exact outcomes,
-dependency-directory overrides, and the reason KRO-2 is not presently claimed
-as a passing reproduction.
+dependency-directory overrides, and how the separate historical KRO-2 rerun
+relates to the later schema-aware implementation.
 
 ## Optional experiments
 

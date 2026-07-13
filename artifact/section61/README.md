@@ -42,20 +42,32 @@ run prints two `PASS` rows. The locked KAR-12 campaign uses depth 100: at depth
 validation at depth 100 yielded six truly converged trials; the oracle requires
 both relevant converged outcomes rather than a fixed convergence count.
 
-## Why KRO-2 is not a passing row
+## KRO-2: historical and current-semantics tracks
 
-The historical KRO-2 harness used replacement-like behavior for server-side
-apply. In that model, an interrupted metadata apply removed the Application's
-`spec`, after which the child Service remained absent. With structural schema
-registration and schema-aware apply semantics, `spec` is preserved and the
-controller creates the Deployment, Service, and Ingress after recovery. The
-old locked trace therefore does not isolate the mechanism described in the
-paper closely enough to serve as reproduced evidence.
+The paper-era KRO-2 harness used replacement-like behavior for server-side
+apply. In that model, an interruption after two Application-controller effects
+leaves the Application without `spec`, and the Deployment, Service, and
+Ingress remain absent. The exact focused and exhaustive inputs and the pinned
+KRO source adapter are now packaged under `artifact/figure8/kro-historical`.
+Run them with:
 
-KRO-2 remains an investigation item: either a revised schedule must exercise
-the reported controller behavior under faithful apply semantics, or the case
-study text must be narrowed. The artifact deliberately reports this limitation
-instead of treating a bounded or semantically confounded trace as a pass.
+```bash
+./artifact/setup-figure8-kro-deps.sh
+./artifact/run-figure8-kro-historical.sh focused
+```
+
+This is a paper-snapshot reproduction and is also the simulation underlying
+the KRO-2 Figure 8 curve. The focused depth-50 run is a bounded partial trace,
+so its checker reports the observable outcome and zero converged states
+separately.
+
+Draft PR [#83](https://github.com/tgoodwin/kamera/pull/83), opened after the
+paper experiments, prototypes structural-schema registration and schema-aware
+apply. Under those semantics, `spec` is preserved and the controller can create
+the child resources after recovery. That prototype was still open and unmerged
+when this artifact was packaged. It is therefore a useful forward-looking
+comparison, not the semantics against which the historical Figure 8 result
+should be judged.
 
 ## Checking existing dumps
 
