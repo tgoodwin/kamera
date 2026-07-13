@@ -10,25 +10,37 @@ studies and checks their observable outcomes without invoking an LLM:
   the `NodeClaim`, establishing that the result depends on the simulated
   ordering rather than the initial state alone.
 
-Run both from the Kamera repository root:
+Prepare the pinned controller sources, then run both simulations from the
+Kamera repository root:
 
 ```bash
-KAMERA_AE_KCP_DIR=/path/to/kcp \
-KAMERA_AE_KARPENTER_DIR=/path/to/karpenter \
-  ./artifact/reproduce-section61.sh
+./artifact/setup-section61-deps.sh
+./artifact/reproduce-section61.sh
 ```
 
-The prepared KCP checkout must contain its harness under `kamera/`. The
-Karpenter checkout supplies the controller packages imported by
-`examples/karpenter`. These controller-source dependencies are currently being
-packaged for the evaluator-facing release; until then this script is intended
-for the authors' prepared checkouts.
+Setup clones KCP at
+`301a8f749e7b99a0c81f43b37aa5b5e5ff0fc0b4` and Karpenter at
+`8ae07cf8b4ecf8ae3f04bc306d97f1ee40d21849`. It then applies the checked-in
+Karpenter simulation adapter. The KCP harness is checked into this artifact;
+the historical multi-gigabyte trace outputs are not needed. The complete
+source manifest and patch checksum are in `dependencies.json`.
+
+By default, setup writes ignored checkouts under `artifact-deps/section61`.
+Pass a different destination as its first argument and set
+`KAMERA_AE_DEPS_DIR` to that same path when running the reproducer:
+
+```bash
+./artifact/setup-section61-deps.sh /tmp/kamera-section61-deps
+KAMERA_AE_DEPS_DIR=/tmp/kamera-section61-deps \
+  ./artifact/reproduce-section61.sh
+```
 
 The output directory contains the complete dumps, campaign-metrics reports,
 per-case `oracle.json` files, logs, and a combined `section61.tsv`. A successful
 run prints two `PASS` rows. The locked KAR-12 campaign uses depth 100: at depth
-50 every historical trial was a bounded partial trace, while depth 100 yields
-seven truly converged trials in the `sosp-ae` workflow.
+50 every historical trial was a bounded partial trace. The clean pinned-source
+validation at depth 100 yielded six truly converged trials; the oracle requires
+both relevant converged outcomes rather than a fixed convergence count.
 
 ## Why KRO-2 is not a passing row
 

@@ -1,0 +1,22 @@
+{
+  "format": "kamera-section61-dependencies-v1",
+  "repositories": [
+    {
+      "name": "KCP",
+      "url": "https://github.com/kcp-dev/kcp.git",
+      "commit": "301a8f749e7b99a0c81f43b37aa5b5e5ff0fc0b4",
+      "localChanges": "none"
+    },
+    {
+      "name": "Karpenter",
+      "url": "https://github.com/kubernetes-sigs/karpenter.git",
+      "commit": "8ae07cf8b4ecf8ae3f04bc306d97f1ee40d21849",
+      "patch": "patches/karpenter-simulation.patch",
+      "patchSha256": "2f801d581767445a2eb59cb67b0dccf7ccc7c05ec6d6ec4c57fc3e450b5f422c"
+    }
+  ],
+  "kcpHarness": {
+    "path": "kcp-harness",
+    "sourceCommit": "4f5f41b1ad3127f85be62e231bb0630553b8a245"
+  }
+}

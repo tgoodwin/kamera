@@ -1,0 +1,103 @@
+diff --git a/pkg/controllers/disruption/consolidation.go b/pkg/controllers/disruption/consolidation.go
+index 00ffebd7..6dcd0dd9 100644
+--- a/pkg/controllers/disruption/consolidation.go
++++ b/pkg/controllers/disruption/consolidation.go
+@@ -61,0 +62 @@ type consolidation struct {
++	Simulation             bool // skip real-time validation sleeps
+@@ -63,0 +65,4 @@ type consolidation struct {
++// SimulationMode can be set to true before constructing controllers to skip
++// real-time validation sleeps in the disruption pipeline.
++var SimulationMode bool
++
+@@ -66,0 +72 @@ func MakeConsolidation(clock clock.Clock, cluster *state.Cluster, kubeClient cli
++		Simulation: SimulationMode,
+diff --git a/pkg/controllers/disruption/validation.go b/pkg/controllers/disruption/validation.go
+index db350404..ec4f3f82 100644
+--- a/pkg/controllers/disruption/validation.go
++++ b/pkg/controllers/disruption/validation.go
+@@ -67,0 +68 @@ type validation struct {
++	Simulation    bool // skip real-time validation sleeps
+@@ -87,0 +89 @@ func NewEmptinessValidator(c consolidation) *EmptinessValidator {
++			Simulation:    c.Simulation,
+@@ -95 +97 @@ func (e *EmptinessValidator) Validate(ctx context.Context, cmd Command, validati
+-	if validationPeriod > 0 {
++	if validationPeriod > 0 && !e.Simulation {
+@@ -127,0 +130 @@ func NewSingleConsolidationValidator(c consolidation) *ConsolidationValidator {
++			Simulation:    c.Simulation,
+@@ -160 +163 @@ func (c *ConsolidationValidator) isValid(ctx context.Context, cmd Command, valid
+-	if validationPeriod > 0 {
++	if validationPeriod > 0 && !c.Simulation {
+diff --git a/pkg/controllers/nodeclaim/lifecycle/controller.go b/pkg/controllers/nodeclaim/lifecycle/controller.go
+index 6248424d..594fefbc 100644
+--- a/pkg/controllers/nodeclaim/lifecycle/controller.go
++++ b/pkg/controllers/nodeclaim/lifecycle/controller.go
+@@ -70,0 +71 @@ type Controller struct {
++	Simulation    bool // skip real-time sleeps in simulation mode
+@@ -177 +178,3 @@ func (c *Controller) Reconcile(ctx context.Context, nodeClaim *v1.NodeClaim) (re
+-		c.clock.Sleep(time.Second)
++		if !c.Simulation {
++			c.clock.Sleep(time.Second)
++		}
+diff --git a/pkg/controllers/provisioning/batcher.go b/pkg/controllers/provisioning/batcher.go
+index e0fee7c9..2e783a95 100644
+--- a/pkg/controllers/provisioning/batcher.go
++++ b/pkg/controllers/provisioning/batcher.go
+@@ -34,2 +34,3 @@ type Batcher[T comparable] struct {
+-	trigger chan struct{}
+-	clk     clock.Clock
++	trigger    chan struct{}
++	clk        clock.Clock
++	simulation bool // when true, skip real-time waits
+@@ -49,0 +51,6 @@ func NewBatcher[T comparable](clk clock.Clock) *Batcher[T] {
++// SetSimulation enables simulation mode where Wait() checks the trigger
++// non-blocking and returns immediately, avoiding real-time delays.
++func (b *Batcher[T]) SetSimulation(enabled bool) {
++	b.simulation = enabled
++}
++
+@@ -79,0 +87,11 @@ func (b *Batcher[T]) Wait(ctx context.Context) bool {
++	if b.simulation {
++		// In simulation mode, check trigger non-blocking and return immediately.
++		// All pods are already in state; no async arrivals to wait for.
++		select {
++		case <-b.trigger:
++			return true
++		default:
++			return false
++		}
++	}
++
+diff --git a/pkg/controllers/provisioning/provisioner.go b/pkg/controllers/provisioning/provisioner.go
+index 152648fc..17ed38ea 100644
+--- a/pkg/controllers/provisioning/provisioner.go
++++ b/pkg/controllers/provisioning/provisioner.go
+@@ -106,0 +107,6 @@ func NewProvisioner(kubeClient client.Client, recorder events.Recorder,
++// SetSimulation enables simulation mode on the batcher, causing Wait()
++// to check the trigger non-blocking and return immediately.
++func (p *Provisioner) SetSimulation(enabled bool) {
++	p.batcher.SetSimulation(enabled)
++}
++
+diff --git a/pkg/state/nodepoolhealth/tracker.go b/pkg/state/nodepoolhealth/tracker.go
+index 90723404..ccb83323 100644
+--- a/pkg/state/nodepoolhealth/tracker.go
++++ b/pkg/state/nodepoolhealth/tracker.go
+@@ -144,0 +145,7 @@ func (s *State) SetStatus(nodePoolUID types.UID, status Status) {
++// ResetAll clears all tracked nodepool health state.
++func (s *State) ResetAll() {
++	s.Lock()
++	defer s.Unlock()
++	s.trackers = make(map[types.UID]*Tracker)
++}
++
+diff --git a/pkg/test/cachesyncingclient.go b/pkg/test/cachesyncingclient.go
+index 2c22f85c..d5906d2d 100644
+--- a/pkg/test/cachesyncingclient.go
++++ b/pkg/test/cachesyncingclient.go
+@@ -27,0 +28 @@ import (
++	"k8s.io/apimachinery/pkg/runtime"
+@@ -146,0 +148,4 @@ func (c *cacheSyncingStatusWriter) Update(ctx context.Context, obj client.Object
++func (c *cacheSyncingStatusWriter) Apply(_ context.Context, _ runtime.ApplyConfiguration, _ ...client.SubResourceApplyOption) error {
++	panic("apply on cacheSyncingStatusWriter isn't supported")
++}
++

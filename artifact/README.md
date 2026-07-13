@@ -20,7 +20,7 @@ deterministic. See [Optional experiments](#optional-experiments).
 ## Requirements
 
 - Linux or macOS on x86-64 or arm64
-- Go 1.24 or newer
+- Go 1.25.5 or newer
 - Bash 3.2 or newer
 - `jq`, `awk`, and standard Unix utilities
 - Approximately 2 CPU cores, 4 GiB RAM, and 5 GiB free disk space
@@ -151,9 +151,8 @@ A developer-preview workflow reruns fixed simulations for KCP-4 and KAR-12 and
 checks the observable outcomes described in Section 6.1.2:
 
 ```bash
-KAMERA_AE_KCP_DIR=/path/to/kcp \
-KAMERA_AE_KARPENTER_DIR=/path/to/karpenter \
-  ./artifact/reproduce-section61.sh
+./artifact/setup-section61-deps.sh
+./artifact/reproduce-section61.sh
 ```
 
 This workflow does not rerun the LLM-guided search. It starts from locked
@@ -161,10 +160,11 @@ simulation configurations, verifies true convergence with campaign metrics,
 and applies deterministic checks to the final resource states. The complete
 results include trace dumps, logs, per-case JSON checks, and `section61.tsv`.
 
-The evaluator-portable packaging of the KCP and Karpenter controller sources
-is still in progress, so this command currently expects prepared source
-checkouts. See `artifact/section61/README.md` for the exact outcomes and for the
-reason KRO-2 is not presently claimed as a passing reproduction.
+The setup script clones KCP and Karpenter at the exact commits recorded in
+`artifact/section61/dependencies.json` and applies the checked-in Karpenter
+simulation adapter. See `artifact/section61/README.md` for the exact outcomes,
+dependency-directory overrides, and the reason KRO-2 is not presently claimed
+as a passing reproduction.
 
 ## Optional experiments
 

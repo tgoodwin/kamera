@@ -5,24 +5,49 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 output_root="${1:-artifact-results/section61-$(date +%Y%m%d-%H%M%S)}"
 [[ "$output_root" = /* ]] || output_root="$PWD/$output_root"
 
+if [[ -n "${KAMERA_AE_GOCACHE:-}" ]]; then
+  export GOCACHE="$KAMERA_AE_GOCACHE"
+fi
+
 if [[ -e "$output_root" ]]; then
   echo "refusing to overwrite existing output: $output_root" >&2
   exit 1
 fi
 
-kcp_dir="${KAMERA_AE_KCP_DIR:-$(cd "$repo_root/.." && pwd)/kcp}"
-karpenter_dir="${KAMERA_AE_KARPENTER_DIR:-$(cd "$repo_root/.." && pwd)/karpenter}"
-kcp_harness="$kcp_dir/kamera"
+deps_root="${KAMERA_AE_DEPS_DIR:-$repo_root/artifact-deps/section61}"
+kcp_dir="${KAMERA_AE_KCP_DIR:-$deps_root/kcp}"
+karpenter_dir="${KAMERA_AE_KARPENTER_DIR:-$deps_root/karpenter}"
+kcp_harness="$repo_root/artifact/section61/kcp-harness"
 karpenter_harness="$repo_root/examples/karpenter"
+kcp_sha="301a8f749e7b99a0c81f43b37aa5b5e5ff0fc0b4"
+karpenter_sha="8ae07cf8b4ecf8ae3f04bc306d97f1ee40d21849"
+karpenter_patch="$repo_root/artifact/section61/patches/karpenter-simulation.patch"
 
-if [[ ! -f "$kcp_harness/go.mod" ]]; then
-  echo "KCP harness not found at $kcp_harness" >&2
-  echo "set KAMERA_AE_KCP_DIR to the prepared KCP source checkout" >&2
+if [[ ! -f "$kcp_dir/go.mod" ]]; then
+  echo "KCP source not found at $kcp_dir" >&2
+  echo "run ./artifact/setup-section61-deps.sh first" >&2
   exit 1
 fi
 if [[ ! -f "$karpenter_dir/go.mod" ]]; then
   echo "Karpenter source not found at $karpenter_dir" >&2
-  echo "set KAMERA_AE_KARPENTER_DIR to the prepared Karpenter source checkout" >&2
+  echo "run ./artifact/setup-section61-deps.sh first" >&2
+  exit 1
+fi
+if [[ "$(git -C "$kcp_dir" rev-parse HEAD)" != "$kcp_sha" ]]; then
+  echo "KCP source is not at pinned commit $kcp_sha" >&2
+  exit 1
+fi
+if [[ "$(git -C "$karpenter_dir" rev-parse HEAD)" != "$karpenter_sha" ]]; then
+  echo "Karpenter source is not at pinned commit $karpenter_sha" >&2
+  exit 1
+fi
+if [[ -n "$(git -C "$kcp_dir" status --short)" ]]; then
+  echo "KCP source checkout has unexpected changes" >&2
+  exit 1
+fi
+if ! cmp -s <(git -C "$karpenter_dir" diff --binary --unified=0 --abbrev=8) "$karpenter_patch"; then
+  echo "Karpenter source does not contain exactly the pinned simulation adapter" >&2
+  echo "rerun ./artifact/setup-section61-deps.sh with a fresh dependency directory" >&2
   exit 1
 fi
 
