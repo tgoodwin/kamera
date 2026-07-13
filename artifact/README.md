@@ -117,6 +117,34 @@ sequence leaves recurring controller work, which is the simulated counterpart
 of Sieve's Pod readiness timeout. Any other `partial` result is unexpected and
 should be inspected.
 
+## Reproduce Figure 8
+
+Figure 8 compares exhaustive exploration with the first agent-guided
+reproduction for KCP-4, KRO-2, and KAR-12. Regenerate its three panels from the
+archived coverage samples with:
+
+```bash
+./artifact/reproduce-figure8.sh
+```
+
+This writes three PDFs, `figure8-summary.tsv`, and a data provenance manifest
+under a timestamped `artifact-results/figure8-*` directory. Python 3 and
+`matplotlib` are required for this optional plotting workflow. A disposable
+environment can be prepared with:
+
+```bash
+python3 -m venv /tmp/kamera-figure8-venv
+source /tmp/kamera-figure8-venv/bin/activate
+python3 -m pip install -r artifact/figure8/requirements.txt
+```
+
+The script redraws the published result from checked-in data. It intentionally
+does not rerun the LLM-guided experiment: doing so would require external model
+access and would measure a new agent trajectory rather than reproduce the
+paper's recorded one. The original multi-hour exhaustive commands and raw-data
+provenance are documented in
+`experiments/coverage-curves/MANIFEST.md`.
+
 ## Optional experiments
 
 The original Sieve real-cluster baselines require Sieve, Docker, kind,

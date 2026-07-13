@@ -28,7 +28,15 @@ numbers), see `summary.md` and the per-experiment `tuning-experiment-*.md` /
 
 ---
 
-## Figure 1 — Exhaustive vs. Agent (3-panel: KCP4, KRO K2b, Karpenter D12)
+## Figure 8 — Exhaustive vs. Agent (3-panel: KCP4, KRO K2b, Karpenter D12)
+
+**Artifact-evaluation driver:** `artifact/reproduce-figure8.sh`
+
+The AE driver reads compact, plot-equivalent coverage samples from
+`artifact/data/figure8/` and writes the three panel PDFs to a caller-selected
+result directory. This avoids assumptions about the separate paper worktree
+and does not require the large raw evidence directories. See
+`artifact/figure8/README.md` for the packaging contract and source hashes.
 
 **Driver script:** `experiments/coverage-curves/plot_exhaustive_vs_agent.sh`
 **Underlying plotter:** `scripts/plot_comparison.py`

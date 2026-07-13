@@ -1,0 +1,119 @@
+{
+  "format": "kamera-figure8-coverage-v1",
+  "inputs": {
+    "kcp4-exhaustive": {
+      "sourceFile": "kcp-k4-log.txt",
+      "sourceSha256": "6bd0a15cd68de8f695aec9db74cf1687dbd9a26f80f4baa0f6b7b5010f90ac09",
+      "packagedSha256": "c7687ba0306a68de97da72c47385f1f90d452eeb0a1c6946b43f33874d96bd6c",
+      "sourcePoints": 8721,
+      "packagedPoints": 600,
+      "first": {
+        "ts": "2026-03-26T17:18:47-07:00",
+        "Total States": 1,
+        "# Distinct States": 1,
+        "Resource States": 1
+      },
+      "last": {
+        "ts": "2026-03-26T17:46:39-07:00",
+        "Total States": 9216,
+        "# Distinct States": 8930,
+        "Resource States": 254
+      }
+    },
+    "kcp4-agent": {
+      "sourceFile": "kcp4-trial2-v1-log.txt",
+      "sourceSha256": "1c86d67783b89f3fb085fbc4a7038a68290ebee40d0a82c92bebb316bef35c9c",
+      "packagedSha256": "7e2a9af098576c4beebef4dd306f9c841200fadb623dde9f4785dd4a7556d460",
+      "sourcePoints": 556,
+      "packagedPoints": 556,
+      "first": {
+        "ts": "2026-03-28T09:52:13-07:00",
+        "Total States": 1,
+        "# Distinct States": 1,
+        "Resource States": 1
+      },
+      "last": {
+        "ts": "2026-03-28T09:53:10-07:00",
+        "Total States": 584,
+        "# Distinct States": 578,
+        "Resource States": 72
+      }
+    },
+    "kro2-exhaustive": {
+      "sourceFile": "k2b-exhaustive-accumulated.txt",
+      "sourceSha256": "c7b7aaf84bac27bc7d643d9e42c80d9576c236e573010a39d80bb1ea22fc5bc7",
+      "packagedSha256": "1c56c2ef1864cbc6172de9fd289b88b1f2497e010147e9dc2493214b6657bab2",
+      "sourcePoints": 1711,
+      "packagedPoints": 600,
+      "first": {
+        "ts": "2026-03-30T14:35:31-07:00",
+        "Total States": 1,
+        "# Distinct States": 1,
+        "Resource States": 1
+      },
+      "last": {
+        "ts": "2026-03-30T14:41:44.787686-07:00",
+        "Total States": 54418,
+        "# Distinct States": 131,
+        "Resource States": 131
+      }
+    },
+    "kro2-agent": {
+      "sourceFile": "k2b-agent-v1-padded.txt",
+      "sourceSha256": "9284f46663e11d5853496b427d150435ea19c7b21eff74fc423f12ad138d0635",
+      "packagedSha256": "201e7466d29bd49ccc3bc0bc071cf37e9d61e1133d4ca725ac57a23990b16bf5",
+      "sourcePoints": 186,
+      "packagedPoints": 186,
+      "first": {
+        "ts": "2026-03-30T14:35:31-07:00",
+        "Total States": 1,
+        "# Distinct States": 1,
+        "Resource States": 1
+      },
+      "last": {
+        "ts": "2026-03-30T14:37:10-07:00",
+        "Total States": 51,
+        "# Distinct States": 8,
+        "Resource States": 7
+      }
+    },
+    "kar12-exhaustive": {
+      "sourceFile": "d12-exhaustive-accumulated.txt",
+      "sourceSha256": "f3a5a4a1abbcf4d4953addaa27c93a38e976d7ee256648182cbc026944e8fdef",
+      "packagedSha256": "e09370f52bd688b2d3a80d4a809e1cd9f80886908e1b4659a6646309f80f56d9",
+      "sourcePoints": 2011,
+      "packagedPoints": 600,
+      "first": {
+        "ts": "2026-03-29T10:00:00.028385",
+        "Total States": 76,
+        "# Distinct States": 76,
+        "Resource States": 5
+      },
+      "last": {
+        "ts": "2026-03-29T11:59:57.843811",
+        "Total States": 34211240,
+        "# Distinct States": 34211240,
+        "Resource States": 794
+      }
+    },
+    "kar12-agent": {
+      "sourceFile": "d12-agent-v1-padded.txt",
+      "sourceSha256": "9eb945fbbf5223a5a80f7dfd7cadf2703a5e1f138e8da2f0b8e3f4c44fdfb8d8",
+      "packagedSha256": "b3249be5b42713a6afb9cfbe30217dcd4198925d9d17a2d6156a7a17fb3e206f",
+      "sourcePoints": 307,
+      "packagedPoints": 307,
+      "first": {
+        "ts": "2026-03-29T17:08:21-07:00",
+        "Total States": 1,
+        "# Distinct States": 1,
+        "Resource States": 1
+      },
+      "last": {
+        "ts": "2026-03-29T17:10:34-07:00",
+        "Total States": 1481,
+        "# Distinct States": 1478,
+        "Resource States": 203
+      }
+    }
+  }
+}
