@@ -145,6 +145,27 @@ paper's recorded one. The original multi-hour exhaustive commands and raw-data
 provenance are documented in
 `experiments/coverage-curves/MANIFEST.md`.
 
+## Rerun Section 6.1 case studies
+
+A developer-preview workflow reruns fixed simulations for KCP-4 and KAR-12 and
+checks the observable outcomes described in Section 6.1.2:
+
+```bash
+KAMERA_AE_KCP_DIR=/path/to/kcp \
+KAMERA_AE_KARPENTER_DIR=/path/to/karpenter \
+  ./artifact/reproduce-section61.sh
+```
+
+This workflow does not rerun the LLM-guided search. It starts from locked
+simulation configurations, verifies true convergence with campaign metrics,
+and applies deterministic checks to the final resource states. The complete
+results include trace dumps, logs, per-case JSON checks, and `section61.tsv`.
+
+The evaluator-portable packaging of the KCP and Karpenter controller sources
+is still in progress, so this command currently expects prepared source
+checkouts. See `artifact/section61/README.md` for the exact outcomes and for the
+reason KRO-2 is not presently claimed as a passing reproduction.
+
 ## Optional experiments
 
 The original Sieve real-cluster baselines require Sieve, Docker, kind,
