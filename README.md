@@ -1,7 +1,10 @@
 # Kamera
 
-SOSP 2026 artifact evaluators should start with the
-[artifact evaluation guide](artifact/README.md).
+> [!IMPORTANT]
+> **SOSP 2026 artifact evaluators:** use the `sosp-ae` branch and start with
+> the [artifact evaluation guide](artifact/README.md). It provides the shortest
+> successful path through the badge checks, reproduction scripts, expected
+> outputs, and runtime estimates.
 
 **Note:** This project is a research artifact and is under active development. Its APIs and functionalities are subject to change and it is not yet recommended for production use.
 

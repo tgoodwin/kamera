@@ -1,166 +1,95 @@
 # Kamera SOSP 2026 Artifact Evaluation
 
+> [!IMPORTANT]
+> **Start here.** Run these commands from the repository root on the
+> `sosp-ae` branch. The standard workflow needs no Kubernetes cluster,
+> container runtime, cloud account, or LLM credential. Begin with the smoke
+> test before downloading the larger case-study dependencies.
+
 This artifact accompanies the SOSP 2026 paper about **Kamera**. The anonymous
-paper draft calls the system *Leica*; both names refer to the same system.
+paper draft calls the system *Leica*; both names refer to the same system. We
+target the Available, Functional, and Reproduced badges. The immutable archive
+and DOI will be added after artifact evaluation.
 
-The artifact targets the Available, Functional, and Reproduced badges. The
-archival DOI will be added after the evaluation, when the reviewed revision is
-deposited in an immutable public archive.
+- **Available:** the source, scenarios, adapters, and instructions are public
+  on `sosp-ae`; the reviewed revision will be archived with a DOI.
+- **Functional:** the smoke test builds Kamera and checks a complete simulated
+  controller execution.
+- **Reproduced:** the remaining scripts regenerate Table 6, Figure 8, and the
+  directly scriptable Section 6.1 outcomes described below.
 
-## What is reproduced
+## Reproduction goals at a glance
 
-The primary reproduction target is Table 6: the execution time of Kamera's
-**perturbed simulation run** for 11 bugs previously studied by Sieve. The
-timing does not include a baseline run or a real Kubernetes cluster run.
+Runtime estimates are conservative first-run ranges on a laptop with a normal
+network connection. A warm Go module cache is usually much faster. For the
+core path—smoke test, Table 6, Figure 8 redraw, and Section 6.1—budget roughly
+**30–60 minutes**, most of it dependency download and compilation time.
 
-The paper's bug-discovery campaign used an LLM agent. That campaign is not part
-of the standard workflow because it requires external model access and is not
-deterministic. See [Optional experiments](#optional-experiments).
+| Goal | Command | Typical first run | Successful result | Details |
+|---|---|---:|---|---|
+| Functional check | `./artifact/smoke-test.sh` | 1–2 min | Prints `PASS` | [Below](#1-run-the-functional-smoke-test) |
+| Table 6 execution times | `./artifact/run-table6.sh` | 5–15 min | Writes `table6.md` with 11 rows | [Table 6 guide](table6/README.md) |
+| Figure 8 panels | `./artifact/reproduce-figure8.sh` | Under 1 min after Python setup | Writes three PDFs and a summary | [Figure 8 guide](figure8/README.md) |
+| Section 6.1 KCP-4 and KAR-12 outcomes | Setup, then `./artifact/reproduce-section61.sh` | 10–30 min | Prints two `PASS` rows | [Section 6.1 guide](section61/README.md) |
+| Historical KRO-2 simulation | Setup, then `./artifact/run-figure8-kro-historical.sh focused` | 5–15 min | Outcome check plus campaign metrics | [Figure 8 guide](figure8/README.md) |
 
-## Source snapshot provenance
-
-The paper experiments were run from project-specific Kamera branches and
-working trees rather than from one clean repository commit. In particular, the
-Table 6 controller harnesses were developed on a line ending at `1e9f9c1`,
-while the KRO and Karpenter coverage experiments used a separate line based on
-`46edf3e`. Those lines contain different shared-simulator changes; combining
-their historical tips is not a source-only merge of independent harnesses.
-
-Some submission-time working-tree changes were first checked in after the
-April 1 paper deadline. Where the archived logs establish that such behavior
-was already present during an experiment, this artifact distinguishes:
-
-- the clean commit on which the experiment working tree was based;
-- the first later commit that captures the evidenced working-tree behavior;
-- subsequent simulator changes that alter the historical measurement.
-
-The standard Table 6 and Section 6.1 workflows run from this consolidated
-`sosp-ae` branch. An exact historical rerun may instead use an
-experiment-specific Kamera snapshot when later fidelity improvements change a
-reported metric. The KRO-2 Figure 8 rerun is the current example: `1c85e5b` is
-the earliest committed reconstruction found to reproduce the archived campaign
-invariants exactly. Later shared-simulator revisions do not reproduce those
-exact totals. See `artifact/figure8/README.md` for the validation evidence.
-
-The other pinned SHAs in this artifact identify external controller sources
-such as KCP, KRO, and Karpenter. They naturally differ by experiment and should
-not be interpreted as competing Kamera revisions. Each adapter patch and
-scenario is separately checksummed in its dependency manifest.
+The historical KRO-2 **full** matrix is an extended check. It adds roughly
+3–10 minutes after setup and verifies the exact archived invariants: 30 dumps,
+1,680 staleness trials, 54,418 node visits, and 131 resource states.
 
 ## Requirements
 
 - Linux or macOS on x86-64 or arm64
 - Go 1.25.5 or newer
 - Bash 3.2 or newer
-- `jq`, `awk`, and standard Unix utilities
+- Python 3; `matplotlib` is needed only to redraw Figure 8
+- `git`, `jq`, `awk`, and standard Unix utilities
 - Approximately 2 CPU cores, 4 GiB RAM, and 5 GiB free disk space
-- Network access for the first Go module download
+- Network access for initial Go modules and pinned case-study repositories
 
-No Kubernetes cluster, container runtime, cloud account, or LLM credential is
-required for the standard workflow. The paper measurements used an Apple M1
-Pro (10 cores, 16 GiB RAM); execution times naturally vary by host.
+The paper measurements used an Apple M1 Pro with 10 cores and 16 GiB RAM.
+Absolute execution times naturally vary by host; the scripts preserve the
+paper's measurement boundary and report the evaluator's observed values.
 
-## Quick functional check
+## Recommended evaluator path
 
-From the repository root:
+### 1. Run the functional smoke test
 
 ```bash
 ./artifact/smoke-test.sh
 ```
 
-This builds the RabbitMQ harness, runs the `unobserved-state-1` perturbation in
-an isolated process, verifies convergence, and checks that the trace contains
-one Pod creation. A successful run ends with `PASS` and normally takes under
-two minutes including a cold build.
+This builds the RabbitMQ harness, runs one perturbed simulation in an isolated
+process, verifies convergence, and checks one directly observable outcome. A
+successful run ends with:
 
-## Reproduce Table 6
+```text
+PASS: Kamera built, the perturbed run converged, and the unobserved-state oracle observed one Pod creation.
+```
 
-Run all 11 perturbed simulations:
+### 2. Reproduce Table 6
 
 ```bash
 ./artifact/run-table6.sh
 ```
 
-The command prints the result directory and writes:
+This runs all 11 locked perturbed simulations and measures only Kamera's
+simulation duration—the quantity reported in Table 6. It writes a timestamped
+directory under `artifact-results/` containing `table6.md`, `table6.tsv`,
+complete traces, logs, and per-row metadata.
 
-- `table6.md`: human-readable paper-versus-observed timing table;
-- `table6.tsv`: machine-readable summary;
-- `runs/<experiment>/result.json`: duration and convergence metadata;
-- `runs/<experiment>/*.jsonl`: complete exploration trace;
-- `runs/<experiment>/run.log`: detailed diagnostic log.
-
-The first run builds three operator harnesses and may take several minutes.
-The simulations themselves ordinarily complete in seconds. To run one row:
+To run only one row:
 
 ```bash
 ./artifact/run-experiment.sh cass/intermediate-state-2
 ```
 
-Accepted experiment IDs are listed in `artifact/run-table6.sh`. Every timing
-is read from `campaignMetrics.durationNs` in the emitted trace. The runner uses
-`--parallel-processes` and selects input index 1 so that the perturbed scenario
-runs alone; this prevents process-global simulator state from leaking between
-the baseline and perturbation.
+See the [Table 6 guide](table6/README.md) for timing semantics, expected status
+values, per-scenario evidence, and known gaps from literal Sieve behavior.
 
-If the default Go cache is unsuitable, set an isolated cache explicitly:
+### 3. Redraw Figure 8
 
-```bash
-KAMERA_AE_GOCACHE=/tmp/kamera-go-cache ./artifact/smoke-test.sh
-```
-
-## Evidence status
-
-Each scenario is a locked schedule that exercises the controller behavior
-behind the corresponding historical report. Some rows reproduce the original
-resource-level symptom exactly; others expose the same non-atomic or
-state-coalescing mechanism in the simulator. Reviewers can inspect the complete
-trace manually; an automated per-row oracle is not required for the timing
-measurement.
-
-| Experiment | Current trace evidence | Gap to exact Sieve outcome |
-|---|---|---|
-| ZooKeeper stale-state-1 | A newly created generation is reconciled through the frozen view of its deleting predecessor. | No material gap identified for the reported resource-lifecycle symptom. |
-| ZooKeeper stale-state-2 | The stale deletion view produces the historical extra resource lifecycle operations. | No material gap identified for the reported resource-lifecycle symptom. |
-| ZooKeeper unobserved-state-1 | The intermediate scale-down is skipped, so Pod/PVC 1 is never removed and the old PVC is retained. | The simulator does not include a literal ZooKeeper client or server, so it does not emit the later `NodeExists` response seen in the upstream report. |
-| ZooKeeper indirect-1 | After the PVC deletion and finalizer removal, later reconciliations continue updating the deleting cluster and its owned resources. | Sieve pauses and resumes one reconciliation while garbage collection interleaves; Kamera currently resumes through a newly queued reconciliation. |
-| RabbitMQ stale-state-1 | The configured trace contains the additional StatefulSet and Pod create/delete activity reported by Sieve. | The later recreation currently races object removal, although the reported extra lifecycle activity occurs first. |
-| RabbitMQ stale-state-2 | The configured trace contains a second StatefulSet deletion and an extra PVC update. | No material gap identified for the reported resource-lifecycle symptom. |
-| RabbitMQ unobserved-state-1 | Perturbed trace converges with one Pod rather than the baseline's three. | No material gap identified for the missed-scale-transition outcome. |
-| RabbitMQ intermediate-state-1 | StatefulSet deletion becomes visible before PVC expansion; the configured final StatefulSet remains marked for deletion while the baseline is live. | Sieve ends with a live PVC at `10Gi`; Kamera resumes the PVC update to `15Gi` but leaves the StatefulSet in its deletion transition. |
-| Cassandra stale-state-1 | After recreation, the selected stale view leaves the new datacenter without its expected finalizer, StatefulSet, and Pod. | Sieve marks the recreated PVC for deletion; the current simulator instead exposes the stale-generation effect one level earlier, at datacenter initialization. |
-| Cassandra intermediate-state-1 | The CA keystore is created, while the companion keystore is absent from that reconciliation. | The simulator does not model Cassandra bootstrap closely enough to turn the incomplete credential set into the literal Pod `Running` timeout. |
-| Cassandra intermediate-state-2 | After deleting and recreating the datacenter, the trace reaches the second two-Pod-patch transition from `Ready-to-Start` to `Starting` with `seed-node: "true"`; only those two Pod patches are retained. | Sieve's recorded CassandraDatacenter lacks `spec.config` from its first stored version, before the trigger. The issue was marked pending, so the reported final config difference is not yet causally attributable to this transition. |
-
-For Cassandra intermediate-state-2, the Sieve history records the requested
-configuration in the `kubectl.kubernetes.io/last-applied-configuration`
-annotation while the first stored live `spec` already lacks `config`. This
-precedes the configured second Pod transition. Kamera's uninterrupted and
-configured final states both preserve the requested Cassandra and JVM settings.
-The artifact therefore claims faithful trigger placement and partial-update
-evidence for this row, not reproduction of Sieve's unexplained configuration
-loss.
-
-The generated `status` column reports exploration completion only. `converged`
-does not by itself mean that a bug oracle passed. Cassandra
-intermediate-state-1 reports `expected-depth-limit`: its incomplete keystore
-sequence leaves recurring controller work, which is the simulated counterpart
-of Sieve's Pod readiness timeout. Any other `partial` result is unexpected and
-should be inspected.
-
-## Reproduce Figure 8
-
-Figure 8 compares exhaustive exploration with the first agent-guided
-reproduction for KCP-4, KRO-2, and KAR-12. Regenerate its three panels from the
-archived coverage samples with:
-
-```bash
-./artifact/reproduce-figure8.sh
-```
-
-This writes three PDFs, `figure8-summary.tsv`, and a data provenance manifest
-under a timestamped `artifact-results/figure8-*` directory. Python 3 and
-`matplotlib` are required for this optional plotting workflow. A disposable
-environment can be prepared with:
+Prepare a disposable Python environment if `matplotlib` is unavailable:
 
 ```bash
 python3 -m venv /tmp/kamera-figure8-venv
@@ -168,14 +97,33 @@ source /tmp/kamera-figure8-venv/bin/activate
 python3 -m pip install -r artifact/figure8/requirements.txt
 ```
 
-The script redraws the published result from checked-in data. It intentionally
-does not rerun the LLM-guided experiment: doing so would require external model
-access and would measure a new agent trajectory rather than reproduce the
-paper's recorded one. The original exhaustive commands and raw-data provenance
-are documented in
-`experiments/coverage-curves/MANIFEST.md`.
+Then redraw all three panels:
 
-The deterministic KRO-2 simulation underlying panel (b) can also be rerun
+```bash
+./artifact/reproduce-figure8.sh
+```
+
+This uses checked-in, plot-equivalent samples from the recorded campaigns and
+writes three PDFs, `figure8-summary.tsv`, and a data manifest. It does not
+rerun the LLM trajectory, because that would require external model access and
+would measure a new search rather than reproduce the paper's recorded one.
+
+### 4. Rerun the Section 6.1 simulations
+
+```bash
+./artifact/setup-section61-deps.sh
+./artifact/reproduce-section61.sh
+```
+
+Setup clones the pinned KCP and Karpenter sources and applies the checksummed
+Karpenter simulation adapter. The reproducer runs fixed KCP-4 and KAR-12
+simulations, verifies convergence with campaign metrics, and applies
+deterministic final-state checks. A successful run prints two `PASS` rows and
+writes traces, logs, oracle JSON, and `section61.tsv`.
+
+### 5. Optionally rerun the historical KRO-2 computation
+
+The deterministic simulation selected by the original agent can be run
 without an LLM:
 
 ```bash
@@ -183,54 +131,62 @@ without an LLM:
 ./artifact/run-figure8-kro-historical.sh focused
 ```
 
-Use `full` in place of `focused` to run the complete historical KRO-2 input
-matrix. The focused workflow reports the observable paper-era outcome and also
-reports that its depth-50 trace is bounded, rather than calling it converged.
-See `artifact/figure8/README.md` for the provenance and semantic scope.
+For the exact complete campaign invariants, replace `focused` with `full`.
+The focused depth-50 execution reaches the reported observable outcome but is
+a bounded trace, so the checker reports zero converged states separately.
 
-## Rerun Section 6.1 case studies
+## Scope of the reproduced claims
 
-A developer-preview workflow reruns fixed converging simulations for KCP-4 and
-KAR-12 and checks their observable outcomes from Section 6.1.2:
+- **Table 6:** perturbed Kamera execution time for 11 controller scenarios.
+  Baseline execution and real-cluster Sieve time are not included in the
+  reported number.
+- **Figure 8:** the published panels are regenerated from archived samples;
+  KRO-2 additionally has a deterministic historical simulator rerun.
+- **Section 6.1:** fixed KCP-4 and KAR-12 configurations rerun the simulations
+  and check their observable outcomes. The search process itself is excluded.
+- **LLM-guided discovery:** intentionally not in the standard workflow because
+  it is credential-dependent and nondeterministic.
+- **Real-cluster Sieve baselines:** optional and not required for the primary
+  reproduction target; they require Docker, kind, kubectl, and Sieve.
 
-```bash
-./artifact/setup-section61-deps.sh
-./artifact/reproduce-section61.sh
-```
+## Source snapshot provenance
 
-This workflow does not rerun the LLM-guided search. It starts from locked
-simulation configurations, verifies true convergence with campaign metrics,
-and applies deterministic checks to the final resource states. The complete
-results include trace dumps, logs, per-case JSON checks, and `section61.tsv`.
+The paper experiments used project-specific Kamera branches and working trees,
+not one clean repository commit. The standard Table 6 and Section 6.1 scripts
+run from the consolidated `sosp-ae` branch. The exact historical KRO-2 rerun
+uses `1c85e5b`, the earliest clean reconstruction found to contain the
+submission-time behavior evidenced by the archived March 30 log and to match
+the archived campaign invariants.
 
-The setup script clones KCP and Karpenter at the exact commits recorded in
-`artifact/section61/dependencies.json` and applies the checked-in Karpenter
-simulation adapter. See `artifact/section61/README.md` for the exact outcomes,
-dependency-directory overrides, and how the separate historical KRO-2 rerun
-relates to the later schema-aware implementation.
+Other pinned SHAs identify the external controller source for a particular
+experiment; they are not competing Kamera revisions. The detailed KRO audit,
+later semantic boundaries, adapter hashes, and scenario hashes are recorded in
+the [Figure 8 guide](figure8/README.md) and its dependency manifest.
 
-## Optional experiments
+## Results and troubleshooting
 
-The original Sieve real-cluster baselines require Sieve, Docker, kind,
-kubectl, and the target operator images. They are intentionally excluded from
-Table 6's reported Kamera duration and from the standard workflow. Instructions
-will be supplied as an optional extended experiment.
+- Scripts never overwrite an existing result directory. Omit the output path
+  to create a timestamped directory, or pass a new path explicitly.
+- If the default Go cache is unsuitable, set one explicitly, for example:
 
-The LLM-driven bug-finding campaign is likewise optional and deferred until a
-model-neutral credential/configuration interface is documented. The checked-in
-trace scenarios require no model access.
+  ```bash
+  KAMERA_AE_GOCACHE=/tmp/kamera-go-cache ./artifact/smoke-test.sh
+  ```
+
+- For Table 6, `converged` describes exploration completion; it is separate
+  from the per-scenario observable evidence. One documented row uses
+  `expected-depth-limit`.
+- Any other unexpected partial trace should be inspected with:
+
+  ```bash
+  go run ./cmd/kamera analyze campaign-metrics /path/to/dump.jsonl
+  ```
+
+- Do not time a combined baseline and perturbed invocation. The Table 6 runner
+  enforces process isolation and selects only the perturbed input.
 
 ## License and archival plan
 
-Kamera is released under the repository's MIT `LICENSE`. Imported operator
+Kamera is released under the repository's MIT `LICENSE`. Imported controller
 source retains its original copyright headers. Before archival release, the
 artifact will include a third-party notices inventory and the final Zenodo DOI.
-
-## Troubleshooting
-
-- Existing result directories are never overwritten; choose a fresh path or
-  omit the output argument to get a timestamped directory.
-- A `partial` status means the trace contains an aborted state. Inspect
-  `run.log` and run `go run ./cmd/kamera analyze campaign-metrics <dump>`.
-- Do not time a combined baseline/S2 invocation. Process isolation is required
-  for valid results.
