@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the directly observable outcome in the historical KRO-2 trace."""
+"""Check the directly observable outcome in the KRO-2 paper-snapshot trace."""
 
 import argparse
 import json
@@ -67,7 +67,7 @@ def main():
         and not child_kinds
     )
     result = {
-        "case": "KRO-2 historical",
+        "case": "KRO-2",
         "status": "OBSERVED" if observed else "NOT_OBSERVED",
         "convergedStates": converged,
         "maxDepthStates": bounded,
@@ -76,11 +76,11 @@ def main():
         "terminalChildKinds": child_kinds,
         "observable": (
             "after the configured two-effect interruption, the terminal "
-            "paper-era partial trace has an Application without spec and no "
+            "paper-snapshot partial trace has an Application without spec and no "
             "Deployment, Service, or Ingress"
         ),
         "scope": (
-            "paper-era replacement-like apply semantics; this does not assess "
+            "paper-snapshot replacement-like apply semantics; this does not assess "
             "the later schema-backed apply prototype"
         ),
     }

@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 deps_root="${1:-$repo_root/artifact-deps/figure8-kro}"
 [[ "$deps_root" = /* ]] || deps_root="$PWD/$deps_root"
+kamera_repository="${KAMERA_AE_KAMERA_REPOSITORY:-https://github.com/tgoodwin/kamera.git}"
 
 kro_url="https://github.com/kro-run/kro.git"
 kro_sha="c9320ee963f745637bb622f6b68853a870187d20"
@@ -13,8 +14,8 @@ kamera_sha="1c85e5b89fa46cc8470dbd63159d6640921fdeee"
 mkdir -p "$deps_root"
 kamera_dir="$deps_root/kamera-paper"
 if [[ ! -e "$kamera_dir" ]]; then
-  echo "cloning the local Kamera repository at $kamera_sha"
-  git clone --no-checkout "$repo_root" "$kamera_dir"
+  echo "cloning Kamera at $kamera_sha"
+  git clone --filter=blob:none --no-checkout "$kamera_repository" "$kamera_dir"
   git -C "$kamera_dir" checkout --detach "$kamera_sha"
 elif ! git -C "$kamera_dir" rev-parse --git-dir >/dev/null 2>&1; then
   echo "$kamera_dir exists but is not a Git checkout" >&2
@@ -50,10 +51,10 @@ if [[ "$actual" != "$kro_sha" ]]; then
 fi
 
 if git -C "$kro_dir" apply --check --unidiff-zero "$kro_patch" 2>/dev/null; then
-  echo "applying pinned paper-era KRO simulation adapter"
+  echo "applying pinned KRO-2 simulation adapter"
   git -C "$kro_dir" apply --unidiff-zero "$kro_patch"
 elif git -C "$kro_dir" apply --reverse --check --unidiff-zero "$kro_patch" 2>/dev/null; then
-  echo "paper-era KRO simulation adapter is already applied"
+  echo "pinned KRO-2 simulation adapter is already applied"
 else
   echo "KRO checkout has changes that do not match the pinned adapter" >&2
   exit 1
@@ -65,13 +66,7 @@ if ! cmp -s <(git -C "$kro_dir" diff --binary --unified=0 --abbrev=8) "$kro_patc
 fi
 
 cat <<EOF
-Figure 8 KRO dependency is ready:
+Figure 8 KRO-2 dependency is ready:
   Kamera: $kamera_dir ($kamera_sha)
-  KRO: $kro_dir ($kro_sha + pinned paper-era adapter)
-
-Run the focused check:
-  ./artifact/run-figure8-kro-historical.sh focused
-
-Run the complete historical input matrix:
-  ./artifact/run-figure8-kro-historical.sh full
+  KRO: $kro_dir ($kro_sha + pinned adapter)
 EOF

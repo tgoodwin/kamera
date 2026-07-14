@@ -1,0 +1,202 @@
+[
+  {
+    "name": "kcp4/late-apiexport-arrival",
+    "environmentState": {
+      "objects": [
+        {
+          "apiVersion": "core.kcp.io/v1alpha1",
+          "kind": "LogicalCluster",
+          "metadata": {
+            "name": "cluster",
+            "namespace": "root",
+            "annotations": {
+              "kcp.io/cluster": "root",
+              "kcp.io/path": "root"
+            }
+          },
+          "spec": {},
+          "status": {
+            "phase": "Ready",
+            "conditions": [
+              {
+                "status": "True",
+                "type": "Ready"
+              },
+              {
+                "status": "True",
+                "type": "WorkspaceInitialized"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "core.kcp.io/v1alpha1",
+          "kind": "LogicalCluster",
+          "metadata": {
+            "name": "cluster",
+            "namespace": "root:provider",
+            "annotations": {
+              "kcp.io/cluster": "root:provider",
+              "kcp.io/path": "root:provider"
+            }
+          },
+          "spec": {},
+          "status": {
+            "phase": "Ready",
+            "conditions": [
+              {
+                "status": "True",
+                "type": "Ready"
+              },
+              {
+                "status": "True",
+                "type": "WorkspaceInitialized"
+              }
+            ]
+          }
+        },
+        {
+          "apiVersion": "core.kcp.io/v1alpha1",
+          "kind": "LogicalCluster",
+          "metadata": {
+            "name": "cluster",
+            "namespace": "root:consumer",
+            "annotations": {
+              "internal.tenancy.kcp.io/type": "root:consumer-type",
+              "kcp.io/cluster": "root:consumer",
+              "kcp.io/path": "root:consumer"
+            }
+          },
+          "spec": {},
+          "status": {
+            "phase": "Initializing",
+            "initializers": [
+              "system:apibindings"
+            ]
+          }
+        },
+        {
+          "apiVersion": "core.kcp.io/v1alpha1",
+          "kind": "Shard",
+          "metadata": {
+            "name": "root",
+            "namespace": "root",
+            "annotations": {
+              "kcp.io/cluster": "root",
+              "kcp.io/path": "root"
+            },
+            "labels": {
+              "region": "internal"
+            }
+          },
+          "spec": {
+            "baseURL": "https://root.example.invalid",
+            "externalURL": "https://root.example.invalid",
+            "virtualWorkspaceURL": "https://root.example.invalid"
+          },
+          "status": {}
+        },
+        {
+          "apiVersion": "tenancy.kcp.io/v1alpha1",
+          "kind": "WorkspaceType",
+          "metadata": {
+            "name": "consumer-type",
+            "namespace": "root",
+            "annotations": {
+              "kcp.io/cluster": "root",
+              "kcp.io/path": "root"
+            }
+          },
+          "spec": {
+            "defaultAPIBindingLifecycle": "Maintain",
+            "defaultAPIBindings": [
+              {
+                "export": "widgets",
+                "path": "root:provider"
+              }
+            ],
+            "extend": {}
+          },
+          "status": {}
+        },
+        {
+          "apiVersion": "topology.kcp.io/v1alpha1",
+          "kind": "Partition",
+          "metadata": {
+            "name": "internal",
+            "namespace": "root:provider",
+            "annotations": {
+              "kcp.io/cluster": "root:provider",
+              "kcp.io/path": "root:provider"
+            }
+          },
+          "spec": {
+            "selector": {
+              "matchLabels": {
+                "region": "internal"
+              }
+            }
+          }
+        },
+        {
+          "apiVersion": "apis.kcp.io/v1alpha1",
+          "kind": "APIExportEndpointSlice",
+          "metadata": {
+            "name": "widgets",
+            "namespace": "root:provider",
+            "annotations": {
+              "kcp.io/cluster": "root:provider"
+            }
+          },
+          "spec": {
+            "export": {
+              "name": "widgets",
+              "path": "root:provider"
+            },
+            "partition": "internal"
+          },
+          "status": {}
+        }
+      ]
+    },
+    "tuning": {
+      "maxDepth": 60,
+      "permuteControllers": [
+        "LogicalClusterController",
+        "APIBinderInitializerController",
+        "DefaultAPIBindingLifecycleController",
+        "APIBindingAnnotationSyncController",
+        "APIExportEndpointSliceController",
+        "APIExportEndpointSliceURLsController"
+      ],
+      "userActionReadyDepths": {
+        "0": 5
+      }
+    },
+    "userInputs": [],
+    "externalInputs": [
+      {
+        "id": "apiexport-arrives",
+        "opType": "CREATE",
+        "source": "UserAction",
+        "object": {
+          "apiVersion": "apis.kcp.io/v1alpha2",
+          "kind": "APIExport",
+          "metadata": {
+            "name": "widgets",
+            "namespace": "root:provider",
+            "annotations": {
+              "kcp.io/cluster": "root:provider",
+              "kcp.io/path": "root:provider",
+              "extra.apis.kcp.io/visibility": "internal"
+            }
+          },
+          "spec": {},
+          "status": {
+            "identityHash": "widgets-identity"
+          }
+        }
+      }
+    ]
+  }
+]

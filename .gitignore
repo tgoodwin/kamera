@@ -46,6 +46,7 @@ testresults/**
 .worktrees/
 graph-experiment/
 artifact-deps/
+artifact-results/
 .yaks
 .beads/
 .claude/

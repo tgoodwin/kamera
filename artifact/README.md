@@ -1,182 +1,196 @@
 # Kamera SOSP 2026 Artifact Evaluation
 
 > [!IMPORTANT]
-> **Start here.** Run these commands from the repository root on the
-> `sosp-ae` branch. The standard workflow needs no Kubernetes cluster,
-> container runtime, cloud account, or LLM credential. Begin with the smoke
-> test before downloading the larger case-study dependencies.
+> **Start here.** Run all commands from the repository root on the `sosp-ae`
+> branch. The standard path needs no Kubernetes cluster, container runtime,
+> cloud account, or LLM credential.
 
-This artifact accompanies the SOSP 2026 paper about **Kamera**. The anonymous
-paper draft calls the system *Leica*; both names refer to the same system. We
-target the Available, Functional, and Reproduced badges. The immutable archive
-and DOI will be added after artifact evaluation.
+This artifact accompanies the SOSP 2026 paper *Testing Custom Control Planes
+Without the Cluster*. The anonymous draft calls the system *Leica*; both names
+refer to Kamera. We seek the **Available**, **Functional**, and **Reproduced**
+badges.
 
-- **Available:** the source, scenarios, adapters, and instructions are public
-  on `sosp-ae`; the reviewed revision will be archived with a DOI.
-- **Functional:** the smoke test builds Kamera and checks a complete simulated
-  controller execution.
-- **Reproduced:** the remaining scripts regenerate Table 6, Figure 8, and the
-  directly scriptable Section 6.1 outcomes described below.
+## Reproduction map
 
-## Reproduction goals at a glance
+First-run estimates are conservative laptop ranges. A warm Go module cache is
+usually much faster. Budget approximately **45–90 minutes** for the complete
+standard path, most of it dependency download, compilation, and simulations.
 
-Runtime estimates are conservative first-run ranges on a laptop with a normal
-network connection. A warm Go module cache is usually much faster. For the
-core path—smoke test, Table 6, Figure 8 redraw, and Section 6.1—budget roughly
-**30–60 minutes**, most of it dependency download and compilation time.
+| Paper claim | Evaluator command | Typical first run | Evidence produced |
+|---|---|---:|---|
+| Functional smoke check | `./artifact/smoke-test.sh` | 1–2 min | build, converged trace, observable check, `PASS` |
+| Table 6 | `./artifact/run-table6.sh` | 5–15 min | 11 perturbed-run durations, traces, status table |
+| Figure 8 | setup, then `./artifact/reproduce-figure8.sh` | 20–60 min including setup | 3 fresh outcomes, 3 PDFs, numerical report, raw-derived curves |
+| Section 6.1 | setup, then `./artifact/reproduce-section61.sh` | 10–30 min | KCP-4 and KAR-12 traces, campaign metrics, oracle results |
 
-| Goal | Command | Typical first run | Successful result | Details |
-|---|---|---:|---|---|
-| Functional check | `./artifact/smoke-test.sh` | 1–2 min | Prints `PASS` | [Below](#1-run-the-functional-smoke-test) |
-| Table 6 execution times | `./artifact/run-table6.sh` | 5–15 min | Writes `table6.md` with 11 rows | [Table 6 guide](table6/README.md) |
-| Figure 8 panels | `./artifact/reproduce-figure8.sh` | Under 1 min after Python setup | Writes three PDFs and a summary | [Figure 8 guide](figure8/README.md) |
-| Section 6.1 KCP-4 and KAR-12 outcomes | Setup, then `./artifact/reproduce-section61.sh` | 10–30 min | Prints two `PASS` rows | [Section 6.1 guide](section61/README.md) |
-| Historical KRO-2 simulation | Setup, then `./artifact/run-figure8-kro-historical.sh focused` | 5–15 min | Outcome check plus campaign metrics | [Figure 8 guide](figure8/README.md) |
+The extended Figure 8 workflow reruns every exhaustive campaign. It adds up to
+two hours because KAR-12 intentionally uses the paper's two-hour cap. See the
+[Figure 8 guide](figure8/README.md).
 
-The historical KRO-2 **full** matrix is an extended check. It adds roughly
-3–10 minutes after setup and verifies the exact archived invariants: 30 dumps,
-1,680 staleness trials, 54,418 node visits, and 131 resource states.
+## Badge: Available
 
-## Requirements
+The public artifact is the
+[`sosp-ae` branch](https://github.com/tgoodwin/kamera/tree/sosp-ae). It contains
+the source, scripts, pinned scenarios, controller adapters, expected outcomes,
+and documentation needed for evaluation. Kamera is released under the
+repository's MIT `LICENSE`; imported controller source retains its original
+copyright headers.
+
+The immutable archive and DOI will be added at the end of the artifact
+evaluation process, as permitted by the SOSP AE schedule. The reviewed branch
+revision—not an unrelated development snapshot—will be archived.
+
+## Badge: Functional
+
+### Requirements
 
 - Linux or macOS on x86-64 or arm64
-- Go 1.25.5 or newer
+- Go 1.25.0 or newer
 - Bash 3.2 or newer
-- Python 3; `matplotlib` is needed only to redraw Figure 8
+- Python 3; Figure 8's fully pinned plotting environment requires Python 3.11+
 - `git`, `jq`, `awk`, and standard Unix utilities
-- Approximately 2 CPU cores, 4 GiB RAM, and 5 GiB free disk space
-- Network access for initial Go modules and pinned case-study repositories
+- approximately 2 CPU cores, 4 GiB RAM, and 5 GiB free disk space for the
+  standard path
+- network access for initial Go modules and pinned controller repositories
 
-The paper measurements used an Apple M1 Pro with 10 cores and 16 GiB RAM.
-Absolute execution times naturally vary by host; the scripts preserve the
-paper's measurement boundary and report the evaluator's observed values.
+The paper measurements used an Apple M1 Pro with 10 cores and 16 GiB RAM. The
+AE workflow was validated on that host with macOS 14.7.6 (build 23H626), Go
+1.25.0 (`darwin/amd64`, running under Rosetta), Python 3.14.2, and GNU Bash
+5.2.37. Absolute durations vary by host; the scripts preserve each reported
+measurement boundary and display the evaluator's observed values.
 
-## Recommended evaluator path
-
-### 1. Run the functional smoke test
+### Build and smoke test
 
 ```bash
 ./artifact/smoke-test.sh
 ```
 
-This builds the RabbitMQ harness, runs one perturbed simulation in an isolated
-process, verifies convergence, and checks one directly observable outcome. A
-successful run ends with:
+This builds Kamera and the RabbitMQ harness, runs a complete perturbed
+simulation in an isolated process, verifies convergence with campaign metrics,
+and checks a directly observable outcome. Success ends with:
 
 ```text
 PASS: Kamera built, the perturbed run converged, and the unobserved-state oracle observed one Pod creation.
 ```
 
-### 2. Reproduce Table 6
+The remaining reproduction scripts provide broader functional evidence: they
+build pinned case-study integrations, retain full logs and dumps, and fail if
+their expected output structure or observable checks are absent.
+
+## Badge: Reproduced
+
+### 1. Reproduce Table 6 execution times
 
 ```bash
 ./artifact/run-table6.sh
 ```
 
 This runs all 11 locked perturbed simulations and measures only Kamera's
-simulation duration—the quantity reported in Table 6. It writes a timestamped
-directory under `artifact-results/` containing `table6.md`, `table6.tsv`,
-complete traces, logs, and per-row metadata.
+simulation duration—the value reported in Table 6. It writes a timestamped
+directory under `artifact-results/` containing `table6.md`, `table6.tsv`, full
+traces, logs, per-row metadata, and observable evidence.
 
-To run only one row:
+To run one row:
 
 ```bash
 ./artifact/run-experiment.sh cass/intermediate-state-2
 ```
 
-See the [Table 6 guide](table6/README.md) for timing semantics, expected status
-values, per-scenario evidence, and known gaps from literal Sieve behavior.
+Success means all 11 rows have an expected status and a recorded perturbed-run
+duration. See the [Table 6 guide](table6/README.md) for exact outcome checks,
+timing semantics, and the documented differences from literal Sieve behavior.
 
-### 3. Redraw Figure 8
+### 2. Reproduce Figure 8
 
-Prepare a disposable Python environment if `matplotlib` is unavailable:
+Install the pinned case-study sources and plotting dependency:
 
 ```bash
+./artifact/setup-figure8-deps.sh
+
 python3 -m venv /tmp/kamera-figure8-venv
 source /tmp/kamera-figure8-venv/bin/activate
 python3 -m pip install -r artifact/figure8/requirements.txt
 ```
 
-Then redraw all three panels:
+Then run the standard reproduction:
 
 ```bash
 ./artifact/reproduce-figure8.sh
 ```
 
-This uses checked-in, plot-equivalent samples from the recorded campaigns and
-writes three PDFs, `figure8-summary.tsv`, and a data manifest. It does not
-rerun the LLM trajectory, because that would require external model access and
-would measure a new search rather than reproduce the paper's recorded one.
+This does more than redraw checked-in plot data. It reruns the fixed
+agent-selected simulation for KCP-4, KRO-2, and KAR-12, checks all three
+observable outcomes, verifies and extracts archived **raw exhaustive simulator
+output**, derives all six curves through one extractor, and generates three
+PDF panels plus `figure8-report.md` and `figure8-report.tsv`.
 
-### 4. Rerun the Section 6.1 simulations
+Success reports `OBSERVED` and `CONSISTENT` for all three cases. No LLM is
+needed because this workflow evaluates the configurations selected during the
+paper experiments, not a new stochastic search trajectory.
+
+To rerun the exhaustive side as well:
+
+```bash
+./artifact/reproduce-figure8.sh --exhaustive-source fresh
+```
+
+KAR-12 stops after two hours and retains all output completed before the cap,
+matching the paper's timeout treatment. Exact source pins, raw-data handling,
+plot semantics, expected endpoints, and the explanation for
+experiment-specific Kamera revisions are in the
+[Figure 8 guide](figure8/README.md).
+
+### 3. Reproduce the directly scriptable Section 6.1 outcomes
+
+If the Figure 8 setup above has already run, its pinned KCP and Karpenter
+checkouts are reused automatically:
+
+```bash
+./artifact/reproduce-section61.sh
+```
+
+For a standalone Section 6.1 run, set up those dependencies first:
 
 ```bash
 ./artifact/setup-section61-deps.sh
 ./artifact/reproduce-section61.sh
 ```
 
-Setup clones the pinned KCP and Karpenter sources and applies the checksummed
-Karpenter simulation adapter. The reproducer runs fixed KCP-4 and KAR-12
-simulations, verifies convergence with campaign metrics, and applies
-deterministic final-state checks. A successful run prints two `PASS` rows and
-writes traces, logs, oracle JSON, and `section61.tsv`.
+This runs the fixed KCP-4 and KAR-12 simulations, verifies campaign completion,
+and applies deterministic final-state checks. Success prints two `PASS` rows
+and writes traces, logs, oracle JSON, and `section61.tsv`.
 
-### 5. Optionally rerun the historical KRO-2 computation
+Section 6.1's credential-dependent LLM discovery process is outside the
+standard artifact path. The reproduced claim here is that the reported
+configurations execute in Kamera and their stated observable outcomes occur.
+The [Section 6.1 guide](section61/README.md) gives the exact checks.
 
-The deterministic simulation selected by the original agent can be run
-without an LLM:
+## Claim boundaries
 
-```bash
-./artifact/setup-figure8-kro-deps.sh
-./artifact/run-figure8-kro-historical.sh focused
-```
-
-For the exact complete campaign invariants, replace `focused` with `full`.
-The focused depth-50 execution reaches the reported observable outcome but is
-a bounded trace, so the checker reports zero converged states separately.
-
-## Scope of the reproduced claims
-
-- **Table 6:** perturbed Kamera execution time for 11 controller scenarios.
-  Baseline execution and real-cluster Sieve time are not included in the
-  reported number.
-- **Figure 8:** the published panels are regenerated from archived samples;
-  KRO-2 additionally has a deterministic historical simulator rerun.
-- **Section 6.1:** fixed KCP-4 and KAR-12 configurations rerun the simulations
-  and check their observable outcomes. The search process itself is excluded.
-- **LLM-guided discovery:** intentionally not in the standard workflow because
-  it is credential-dependent and nondeterministic.
-- **Real-cluster Sieve baselines:** optional and not required for the primary
-  reproduction target; they require Docker, kind, kubectl, and Sieve.
-
-## Source snapshot provenance
-
-The paper experiments used project-specific Kamera branches and working trees,
-not one clean repository commit. The standard Table 6 and Section 6.1 scripts
-run from the consolidated `sosp-ae` branch. The exact historical KRO-2 rerun
-uses `1c85e5b`, the earliest clean reconstruction found to contain the
-submission-time behavior evidenced by the archived March 30 log and to match
-the archived campaign invariants.
-
-Other pinned SHAs identify the external controller source for a particular
-experiment; they are not competing Kamera revisions. The detailed KRO audit,
-later semantic boundaries, adapter hashes, and scenario hashes are recorded in
-the [Figure 8 guide](figure8/README.md) and its dependency manifest.
+- **Table 6:** the reported number is perturbed Kamera execution time. Baseline
+  execution and real-cluster Sieve time are not included.
+- **Figure 8:** fresh local executions establish all three agent-selected
+  outcomes. Archived raw exhaustive outputs reproduce the paper panels through
+  the same extraction and plotting path; the extended command recomputes them.
+- **Section 6.1:** fixed KCP-4 and KAR-12 configurations rerun and check their
+  observable outcomes; the LLM search process itself is excluded.
+- **Real-cluster Sieve baselines:** not required for these primary reproduction
+  targets. Running them requires Docker, kind, kubectl, and a Sieve checkout.
 
 ## Results and troubleshooting
 
 - Scripts never overwrite an existing result directory. Omit the output path
-  to create a timestamped directory, or pass a new path explicitly.
+  to create a timestamped directory, or pass a new one explicitly.
 - If the default Go cache is unsuitable, set one explicitly, for example:
 
   ```bash
   KAMERA_AE_GOCACHE=/tmp/kamera-go-cache ./artifact/smoke-test.sh
   ```
 
-- For Table 6, `converged` describes exploration completion; it is separate
-  from the per-scenario observable evidence. One documented row uses
+- For Table 6, exploration completion and the per-scenario observable are
+  reported separately. One documented row has the expected status
   `expected-depth-limit`.
-- Any other unexpected partial trace should be inspected with:
+- Inspect any unexpected partial trace with:
 
   ```bash
   go run ./cmd/kamera analyze campaign-metrics /path/to/dump.jsonl
@@ -185,8 +199,5 @@ the [Figure 8 guide](figure8/README.md) and its dependency manifest.
 - Do not time a combined baseline and perturbed invocation. The Table 6 runner
   enforces process isolation and selects only the perturbed input.
 
-## License and archival plan
-
-Kamera is released under the repository's MIT `LICENSE`. Imported controller
-source retains its original copyright headers. Before archival release, the
-artifact will include a third-party notices inventory and the final Zenodo DOI.
+If a command fails, include its result directory, host architecture, Go and
+Python versions, and the final 100 log lines in the evaluator report.

@@ -1,0 +1,54 @@
+{
+  "format": "kamera-figure8-dependencies-v2",
+  "experiments": {
+    "kcp4": {
+      "kameraCommit": "d629dded905603903a3440095f20baf460358205",
+      "controllerRepository": "https://github.com/kcp-dev/kcp.git",
+      "controllerCommit": "301a8f749e7b99a0c81f43b37aa5b5e5ff0fc0b4",
+      "harnessSourceCommit": "4f5f41b1ad3127f85be62e231bb0630553b8a245",
+      "harnessPath": "kcp-historical/harness",
+      "harnessNote": "The experiment harness was committed locally after submission but was not published as a standalone repository revision. The exact Go sources are packaged here; go.mod only replaces machine-local paths with paths supplied by the runner.",
+      "harnessFilesSha256": {
+        "bookmark_reactor.go": "d07106b0c05ef95a684d1092b001b411c744adac167253c52be015378fbc48e8",
+        "fake_metadata.go": "1408312da078bd53b6eaf2ab45efa436b320b99f8e595f473f181749a15b199e",
+        "go.mod": "a9b4e05a673fe160ac9cc30f88f936f1bdaa6fa2fa5a6068a1807b74c6afec18",
+        "go.sum": "6ca9adca8b2ac1785502fb51dead406009cc1a2f0c7ab279fb44e8c5f8a77738",
+        "harness.go": "896972bfed4b9d9ef74190362a950406c44aa78c73eeff646bad3fb79f8987d0",
+        "linkname.go": "20c768482795ceeb92debdddf47616013a37fafe560b92036dc746bfda66916e",
+        "main.go": "6684975d4d386d5afa4a92642856378cb698de4e76d71c6bdd5f833118104aed",
+        "scenario.go": "e78c9f0172a98dabdf89e4a780a623c40a908c5a3dc21683d9628168dac16198"
+      },
+      "focusedScenario": "kcp-historical/scenarios/kcp4_trial2-v1.json",
+      "focusedScenarioSha256": "bc75ed753dfa78622baed3a88c175d58422ddc0a4246c2d77d74dd993725fb30",
+      "exhaustiveScenario": "kcp-historical/scenarios/kcp4_late-apiexport.json",
+      "exhaustiveScenarioSha256": "6d81d3ab9cc5ee83ff6e6011e2d59fbf88184439e425518324404346d6b33342"
+    },
+    "kro2": {
+      "kameraCommit": "1c85e5b89fa46cc8470dbd63159d6640921fdeee",
+      "controllerRepository": "https://github.com/kro-run/kro.git",
+      "controllerCommit": "c9320ee963f745637bb622f6b68853a870187d20",
+      "adapter": "kro-historical/kro-simulation.patch",
+      "adapterSha256": "e35bc275e00dfb28ab1c989b05d450ef4fae421037938c8f11732ae7cc6dbde9",
+      "focusedScenario": "kro-historical/k2b-tuning-v1.json",
+      "focusedScenarioSha256": "0361fd9d6bfdc6d655ed8a354d90baebe9e40ecc2ddedf99646ffe6ac518dfad",
+      "exhaustiveScenario": "kro-historical/k2b-exhaustive.json",
+      "exhaustiveScenarioSha256": "9d3c502d73620df584cf7a16ffa344f9c01ac00cc302565afc1f06da59deea22",
+      "note": "The Kamera pin is the earliest clean reconstruction that matches every archived exhaustive invariant."
+    },
+    "kar12": {
+      "kameraCommit": "06bbe01af6545280b282e2d2a3f5964685b2bae5",
+      "scenarioCaptureCommit": "46edf3e37c79f4c503418bff0f7d6a88cad99a01",
+      "controllerRepository": "https://github.com/kubernetes-sigs/karpenter.git",
+      "controllerCommit": "8ae07cf8b4ecf8ae3f04bc306d97f1ee40d21849",
+      "adapter": "../section61/patches/karpenter-simulation.patch",
+      "adapterSha256": "2f801d581767445a2eb59cb67b0dccf7ccc7c05ec6d6ec4c57fc3e450b5f422c",
+      "focusedScenario": "kar-historical/d12-tuning-v1.json",
+      "focusedScenarioSha256": "b7c9c63f929dbff312be8728761dd4170782e6b4875645a205218b9e06391b82",
+      "exhaustiveScenario": "kar-historical/d12-exhaustive.json",
+      "exhaustiveScenarioSha256": "4278b94ddc77475e0e675c66b429c2f0c8d014cb40d0c2bfe2157772dcf96771",
+      "publishedAgentLog": "experiments/coverage-curves/karpenter/tuning-runs/d12-tuning-v1-log.txt",
+      "publishedAgentLogSha256": "2e6bd1bf017d56151051558b9f5fb07f7bb67649cc99a01b48e1d73988b04224",
+      "note": "The scenario ran from an uncommitted working tree based on kameraCommit and was first checked in by scenarioCaptureCommit."
+    }
+  }
+}

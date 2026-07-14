@@ -57,29 +57,41 @@ if ! cmp -s <(git -C "$kro_dir" diff --binary --unified=0 --abbrev=8) "$kro_patc
   exit 1
 fi
 
-mkdir -p "$output_root/bin" "$output_root/build" "$output_root/focused/dumps"
+mkdir -p "$output_root/bin" "$output_root/build" \
+  "$output_root/focused/dumps/reference" "$output_root/focused/dumps/rerun"
 cp "$harness/go.mod" "$output_root/build/kro.mod"
 cp "$harness/go.sum" "$output_root/build/kro.sum"
 go mod edit -modfile="$output_root/build/kro.mod" \
   -replace="github.com/tgoodwin/kamera=$kamera_dir" \
   -replace="github.com/kubernetes-sigs/kro=$kro_dir"
 
-echo "building pinned paper-era KRO harness"
+echo "building pinned KRO-2 paper-snapshot harness"
 (
   cd "$harness"
   go build -modfile="$output_root/build/kro.mod" -o "$output_root/bin/kro-historical" .
 )
 
 echo "running focused KRO-2 scenario"
+: >"$output_root/focused/run.log"
 (
   cd "$harness"
   "$output_root/bin/kro-historical" \
     --inputs "$scenario_dir/k2b-tuning-v1.json" \
-    --output "$output_root/focused/dumps" \
+    --output "$output_root/focused/dumps/reference" \
+    --interactive=false \
+    --closed-loop=false \
+    --no-perturbations \
+    --emit-stats
+) >>"$output_root/focused/run.log" 2>&1
+(
+  cd "$harness"
+  "$output_root/bin/kro-historical" \
+    --inputs "$scenario_dir/k2b-tuning-v1.json" \
+    --output "$output_root/focused/dumps/rerun" \
     --interactive=false \
     --closed-loop=false \
     --emit-stats
-) >"$output_root/focused/run.log" 2>&1
+) >>"$output_root/focused/run.log" 2>&1
 
 : >"$output_root/focused/campaign-metrics.txt"
 focused_dumps=()
@@ -88,15 +100,25 @@ while IFS= read -r dump; do
   go run "$repo_root/cmd/kamera" analyze campaign-metrics "$dump" \
     >>"$output_root/focused/campaign-metrics.txt"
 done < <(find "$output_root/focused/dumps" -type f -name '*.jsonl' | sort)
-if [[ "${#focused_dumps[@]}" -ne 1 ]]; then
-  echo "expected one focused dump, found ${#focused_dumps[@]}" >&2
+if [[ "${#focused_dumps[@]}" -ne 2 ]]; then
+  echo "expected focused reference and rerun dumps, found ${#focused_dumps[@]}" >&2
   exit 1
 fi
-python3 "$scenario_dir/check_outcome.py" "${focused_dumps[0]}" --json \
+focused_rerun=""
+for dump in "${focused_dumps[@]}"; do
+  if [[ "$dump" == */rerun/* ]]; then
+    focused_rerun="$dump"
+  fi
+done
+if [[ -z "$focused_rerun" ]]; then
+  echo "the focused KRO-2 run did not produce a rerun dump" >&2
+  exit 1
+fi
+python3 "$scenario_dir/check_outcome.py" "$focused_rerun" --json \
   >"$output_root/focused/outcome.json"
 
 if [[ "$mode" == "full" ]]; then
-  echo "running complete historical KRO-2 input matrix"
+  echo "running complete KRO-2 input matrix"
   mkdir -p "$output_root/exhaustive/dumps"
   (
     cd "$harness"
@@ -139,4 +161,4 @@ if [[ "$mode" == "full" ]]; then
   cat "$output_root/exhaustive/summary.json"
   echo "complete-matrix metrics: $output_root/exhaustive/campaign-metrics.txt"
 fi
-echo "wrote historical KRO-2 results to $output_root"
+echo "wrote KRO-2 results to $output_root"

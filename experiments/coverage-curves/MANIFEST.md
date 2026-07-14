@@ -32,11 +32,11 @@ numbers), see `summary.md` and the per-experiment `tuning-experiment-*.md` /
 
 **Artifact-evaluation driver:** `artifact/reproduce-figure8.sh`
 
-The AE driver reads compact, plot-equivalent coverage samples from
-`artifact/data/figure8/` and writes the three panel PDFs to a caller-selected
-result directory. This avoids assumptions about the separate paper worktree
-and does not require the large raw evidence directories. See
-`artifact/figure8/README.md` for the packaging contract and source hashes.
+The AE driver reruns all three fixed agent-selected simulations, checks their
+observable outcomes, and extracts the exhaustive curves from checksummed raw
+simulator-output archives under `artifact/data/figure8/raw/`. The extended
+mode recomputes the exhaustive outputs as well. See
+`artifact/figure8/README.md` for the packaging contract and source pins.
 
 **Driver script:** `experiments/coverage-curves/plot_exhaustive_vs_agent.sh`
 **Underlying plotter:** `scripts/plot_comparison.py`
@@ -75,7 +75,7 @@ the KRO/Karpenter outputs back into `experiments/coverage-curves/<project>/`.
 | Exhaustive (preprocessed) | `experiments/coverage-curves/karpenter/d12-exhaustive-accumulated.txt` | Same accumulation logic as KRO K2b (see `plot_exhaustive_vs_agent.sh`). **Plot input.** |
 | Exhaustive narrative log | `experiments/coverage-curves/karpenter/d12-exhaustive-log.txt` | Stdout transcript of the exhaustive harness invocation (informational, not a plot input). |
 | Exhaustive scenario | `experiments/coverage-curves/karpenter/d12_exhaustive.json` | The 120-action-depth cross-product scenario fed to the harness. |
-| Agent first reproduction | `experiments/coverage-curves/karpenter/d12-agent-v1-padded.txt` | Padded version of `karpenter/tuning-runs-v2/d12-tuning-v2-1-log.txt` (the v2-prompt baseline reproduction). |
+| Agent first reproduction | `experiments/coverage-curves/karpenter/tuning-runs/d12-tuning-v1-log.txt` | Iteration 1 of the original D12 agent run. The Figure 8 AE extractor applies the same inference padding before accumulating this multi-process log. This is distinct from the later `tuning-runs-v2` campaign used by the tuning-summary figure. |
 | Milestones | `133 7200` (seconds) | Agent reproduces at 133s; exhaustive timed out at 7200s. |
 
 ---

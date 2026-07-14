@@ -15,8 +15,18 @@ if [[ -e "$output_root" ]]; then
 fi
 
 deps_root="${KAMERA_AE_DEPS_DIR:-$repo_root/artifact-deps/section61}"
-kcp_dir="${KAMERA_AE_KCP_DIR:-$deps_root/kcp}"
-karpenter_dir="${KAMERA_AE_KARPENTER_DIR:-$deps_root/karpenter}"
+default_kcp_dir="$deps_root/kcp"
+default_karpenter_dir="$deps_root/karpenter"
+if [[ -z "${KAMERA_AE_DEPS_DIR:-}" ]]; then
+  if [[ ! -e "$default_kcp_dir" && -e "$repo_root/artifact-deps/figure8/kcp/kcp" ]]; then
+    default_kcp_dir="$repo_root/artifact-deps/figure8/kcp/kcp"
+  fi
+  if [[ ! -e "$default_karpenter_dir" && -e "$repo_root/artifact-deps/figure8/kar/karpenter" ]]; then
+    default_karpenter_dir="$repo_root/artifact-deps/figure8/kar/karpenter"
+  fi
+fi
+kcp_dir="${KAMERA_AE_KCP_DIR:-$default_kcp_dir}"
+karpenter_dir="${KAMERA_AE_KARPENTER_DIR:-$default_karpenter_dir}"
 kcp_harness="$repo_root/artifact/section61/kcp-harness"
 karpenter_harness="$repo_root/examples/karpenter"
 kcp_sha="301a8f749e7b99a0c81f43b37aa5b5e5ff0fc0b4"
