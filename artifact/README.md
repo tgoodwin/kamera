@@ -1,10 +1,5 @@
 # Kamera SOSP 2026 Artifact Evaluation
 
-> [!IMPORTANT]
-> **Start here!** You can run all commands from the repository root on the `sosp-ae`
-> branch. Our reproduction process only requires `Go` to build Kamera locally, and `bash`
-> to drive reproduction scripts.
-
 This artifact accompanies the SOSP 2026 paper *Testing Custom Control Planes
 Without the Cluster*. The anonymous draft calls the system *Leica*; both names
 refer to Kamera. We seek the **Available**, **Functional**, and **Reproduced**
@@ -12,20 +7,18 @@ badges.
 
 ## Reproduction map
 
-First-run estimates are conservative laptop ranges. A warm Go module cache is
-usually much faster. Budget approximately **45–90 minutes** for the complete
-standard path, most of it dependency download, compilation, and simulations.
+Evaluation time estimates are with respect to an Apple M1 Pro with 16 GB RAM (2020 Macbook Pro). A warm Go module cache is
+usually much faster than a cold start run. Budget approximately **45–90 minutes** for the complete
+standard path, most of it dependency download, compilation, and simulation runs.
 
 | Paper claim | Evaluator command | Typical first run | Evidence produced |
 |---|---|---:|---|
-| Functional smoke check | `./artifact/smoke-test.sh` | 1–2 min | build, converged trace, observable check, `PASS` |
+| Functional smoke check | `./artifact/smoke-test.sh` | 1–2 min | build, run simulation to convergence, run oracle check over produced trace |
 | Table 6 | `./artifact/run-table6.sh` | 5–15 min | 11 perturbed-run durations, traces, status table |
-| Figure 8 | setup, then `./artifact/reproduce-figure8.sh` | 20–60 min including setup | 3 experimental reproductions + plot re-generation |
+| Figure 8 | setup, then `./artifact/reproduce-figure8.sh` | 20–60 min including setup | 3 experimental reproductions + plotting |
 | Section 6.1 | setup, then `./artifact/reproduce-section61.sh` | 10–30 min | 2 selected bug reproductions exhibiting oracle results |
 
-The extended Figure 8 workflow reruns every exhaustive baseline for completeness. It takes up to
-two hours following the paper's two-hour exhaustive search timeout. See the
-[Figure 8 guide](figure8/README.md).
+The Figure 8 reproduction workflow reruns every exhaustive baseline in addition to the tuned executions. One of the 3 experiments in Figure 8 is reported in the paper to time out after 2 hours. Thus, it takes up to two hours following the paper's two-hour exhaustive search timeout. We provide a pre-generated trace for this 2-hour exhaustive baseline if evaluators choose to not regenerate the exhaustive search trace until the 2 hour timeout fires. See the [Figure 8 guide](figure8/README.md).
 
 ## Badge: Available
 
@@ -38,7 +31,7 @@ copyright headers.
 
 The immutable archive and DOI will be added at the end of the artifact
 evaluation process, as permitted by the SOSP AE schedule. The reviewed branch
-revision will be archived, as the main branch is an open-source tool that will undergo further development.
+revision will be archived, as the main Kamera branch will undergo further development as Kamera is an open-source tool.
 
 ## Badge: Functional
 
@@ -53,9 +46,9 @@ revision will be archived, as the main branch is an open-source tool that will u
   standard path
 - network access for initial Go modules and pinned controller repositories
 
-The paper measurements used an Apple M1 Pro with 10 cores and 16 GiB RAM. The
+The paper's measurements used an Apple M1 Pro with 10 cores and 16 GiB RAM. The
 AE workflow was validated on that host with macOS 14.7.6 (build 23H626), Go
-1.25.0 (`darwin/amd64`, running under Rosetta), Python 3.14.2, and GNU Bash
+1.25.0, Python 3.14.2, and GNU Bash
 5.2.37. Absolute durations vary by host; the scripts preserve each reported
 measurement boundary and display the evaluator's observed values.
 
@@ -73,7 +66,7 @@ PASS: Kamera built, the perturbed run converged, and the unobserved-state oracle
 ```
 
 The remaining reproduction scripts provide broader functional evidence: they
-build pinned case-study integrations, produce fresh outputs, and fail if
+build the case-study CCP test harnesses with which we found bugs, produce fresh outputs, and fail if
 their expected output structure or observable checks deviate from the paper's reported results.
 
 ## Badge: Reproduced
@@ -141,6 +134,10 @@ experiment-specific Kamera revisions are in the
 
 ### 3. Reproduce the directly scriptable Section 6.1 outcomes
 
+This runs two selected bugs: KCP-4 and KAR-12 simulations, verifies campaign completion,
+and applies deterministic final-state checks. Success prints two `PASS` rows
+and writes traces, logs, oracle JSON, and `section61.tsv`.
+
 If the Figure 8 setup above has already run, its pinned KCP and Karpenter
 checkouts are reused automatically:
 
@@ -155,19 +152,15 @@ For a standalone Section 6.1 run, set up those dependencies first:
 ./artifact/reproduce-section61.sh
 ```
 
-This runs two selected bugs: KCP-4 and KAR-12 simulations, verifies campaign completion,
-and applies deterministic final-state checks. Success prints two `PASS` rows
-and writes traces, logs, oracle JSON, and `section61.tsv`.
-
 The process of *finding* the new bugs that we ultimately report in Section 6.1 was best effort, driven by an LLM,
 and thus inherently not reproducible via a deterministic script. Instead, the reproducable claim here is that the reported
 configurations for found bugs execute in Kamera and that their stated observable outcomes occur in the executions.
 The [Section 6.1 guide](section61/README.md) gives the exact checks.
 
-## Claim boundaries
+## Notes on reproduction claims
 
 - **Table 6:** the reported number is perturbed Kamera execution time. Baseline
-  execution and real-cluster Sieve time are not included. We can optionally provide instructions to run Sieve's own reproducer scripts if desired.
+  execution and real-cluster Sieve time are not included. We can optionally provide instructions to run Sieve's own reproducer scripts if desired, but it requires installing the additional dependencies of a different research project.
 - **Figure 8:** fresh local executions establish all three agent-selected
   outcomes. Archived raw exhaustive outputs reproduce the paper panels through
   the same extraction and plotting path; the extended command recomputes them.
