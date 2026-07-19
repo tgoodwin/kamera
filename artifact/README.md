@@ -1,9 +1,9 @@
 # Kamera SOSP 2026 Artifact Evaluation
 
 > [!IMPORTANT]
-> **Start here.** Run all commands from the repository root on the `sosp-ae`
-> branch. The standard path needs no Kubernetes cluster, container runtime,
-> cloud account, or LLM credential.
+> **Start here!** You can run all commands from the repository root on the `sosp-ae`
+> branch. Our reproduction process only requires `Go` to build Kamera locally, and `bash`
+> to drive reproduction scripts.
 
 This artifact accompanies the SOSP 2026 paper *Testing Custom Control Planes
 Without the Cluster*. The anonymous draft calls the system *Leica*; both names
@@ -20,11 +20,11 @@ standard path, most of it dependency download, compilation, and simulations.
 |---|---|---:|---|
 | Functional smoke check | `./artifact/smoke-test.sh` | 1–2 min | build, converged trace, observable check, `PASS` |
 | Table 6 | `./artifact/run-table6.sh` | 5–15 min | 11 perturbed-run durations, traces, status table |
-| Figure 8 | setup, then `./artifact/reproduce-figure8.sh` | 20–60 min including setup | 3 fresh outcomes, 3 PDFs, numerical report, raw-derived curves |
-| Section 6.1 | setup, then `./artifact/reproduce-section61.sh` | 10–30 min | KCP-4 and KAR-12 traces, campaign metrics, oracle results |
+| Figure 8 | setup, then `./artifact/reproduce-figure8.sh` | 20–60 min including setup | 3 experimental reproductions + plot re-generation |
+| Section 6.1 | setup, then `./artifact/reproduce-section61.sh` | 10–30 min | 2 selected bug reproductions exhibiting oracle results |
 
-The extended Figure 8 workflow reruns every exhaustive campaign. It adds up to
-two hours because KAR-12 intentionally uses the paper's two-hour cap. See the
+The extended Figure 8 workflow reruns every exhaustive baseline for completeness. It takes up to
+two hours following the paper's two-hour exhaustive search timeout. See the
 [Figure 8 guide](figure8/README.md).
 
 ## Badge: Available
@@ -38,7 +38,7 @@ copyright headers.
 
 The immutable archive and DOI will be added at the end of the artifact
 evaluation process, as permitted by the SOSP AE schedule. The reviewed branch
-revision—not an unrelated development snapshot—will be archived.
+revision will be archived, as the main branch is an open-source tool that will undergo further development.
 
 ## Badge: Functional
 
@@ -65,17 +65,16 @@ measurement boundary and display the evaluator's observed values.
 ./artifact/smoke-test.sh
 ```
 
-This builds Kamera and the RabbitMQ harness, runs a complete perturbed
-simulation in an isolated process, verifies convergence with campaign metrics,
-and checks a directly observable outcome. Success ends with:
+This builds Kamera and a test harness for the RabbitMQ controller, runs a complete perturbed
+simulation, verifies convergence, and checks for the observable outcome of a known bug in the produced trace output. Success ends with:
 
 ```text
 PASS: Kamera built, the perturbed run converged, and the unobserved-state oracle observed one Pod creation.
 ```
 
 The remaining reproduction scripts provide broader functional evidence: they
-build pinned case-study integrations, retain full logs and dumps, and fail if
-their expected output structure or observable checks are absent.
+build pinned case-study integrations, produce fresh outputs, and fail if
+their expected output structure or observable checks deviate from the paper's reported results.
 
 ## Badge: Reproduced
 
@@ -85,8 +84,8 @@ their expected output structure or observable checks are absent.
 ./artifact/run-table6.sh
 ```
 
-This runs all 11 locked perturbed simulations and measures only Kamera's
-simulation duration—the value reported in Table 6. It writes a timestamped
+This runs all 11 perturbed simulations and measures only Kamera's
+simulation duration, i.e., the values reported in Table 6. It writes a timestamped
 directory under `artifact-results/` containing `table6.md`, `table6.tsv`, full
 traces, logs, per-row metadata, and observable evidence.
 
@@ -97,8 +96,8 @@ To run one row:
 ```
 
 Success means all 11 rows have an expected status and a recorded perturbed-run
-duration. See the [Table 6 guide](table6/README.md) for exact outcome checks,
-timing semantics, and the documented differences from literal Sieve behavior.
+duration. See the [Table 6 guide](table6/README.md) for exact outcome checks and
+timing semantics.
 
 ### 2. Reproduce Figure 8
 
@@ -118,7 +117,7 @@ Then run the standard reproduction:
 ./artifact/reproduce-figure8.sh
 ```
 
-This does more than redraw checked-in plot data. It reruns the fixed
+This reruns the fixed
 agent-selected simulation for KCP-4, KRO-2, and KAR-12, checks all three
 observable outcomes, verifies and extracts archived **raw exhaustive simulator
 output**, derives all six curves through one extractor, and generates three
@@ -156,26 +155,26 @@ For a standalone Section 6.1 run, set up those dependencies first:
 ./artifact/reproduce-section61.sh
 ```
 
-This runs the fixed KCP-4 and KAR-12 simulations, verifies campaign completion,
+This runs two selected bugs: KCP-4 and KAR-12 simulations, verifies campaign completion,
 and applies deterministic final-state checks. Success prints two `PASS` rows
 and writes traces, logs, oracle JSON, and `section61.tsv`.
 
-Section 6.1's credential-dependent LLM discovery process is outside the
-standard artifact path. The reproduced claim here is that the reported
-configurations execute in Kamera and their stated observable outcomes occur.
+The process of *finding* the new bugs that we ultimately report in Section 6.1 was best effort, driven by an LLM,
+and thus inherently not reproducible via a deterministic script. Instead, the reproducable claim here is that the reported
+configurations for found bugs execute in Kamera and that their stated observable outcomes occur in the executions.
 The [Section 6.1 guide](section61/README.md) gives the exact checks.
 
 ## Claim boundaries
 
 - **Table 6:** the reported number is perturbed Kamera execution time. Baseline
-  execution and real-cluster Sieve time are not included.
+  execution and real-cluster Sieve time are not included. We can optionally provide instructions to run Sieve's own reproducer scripts if desired.
 - **Figure 8:** fresh local executions establish all three agent-selected
   outcomes. Archived raw exhaustive outputs reproduce the paper panels through
   the same extraction and plotting path; the extended command recomputes them.
-- **Section 6.1:** fixed KCP-4 and KAR-12 configurations rerun and check their
-  observable outcomes; the LLM search process itself is excluded.
-- **Real-cluster Sieve baselines:** not required for these primary reproduction
-  targets. Running them requires Docker, kind, kubectl, and a Sieve checkout.
+- **Section 6.1:** KCP-4 and KAR-12 configurations rerun and check their
+  observable outcomes; the LLM-driven bug search process itself is excluded.
+- **Real-cluster Sieve baselines:** not included for these primary reproduction
+  targets, although we can provide additional instructinons for doing so. Running them requires Docker, kind, kubectl, and a Sieve checkout.
 
 ## Results and troubleshooting
 
