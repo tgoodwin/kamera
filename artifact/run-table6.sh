@@ -26,7 +26,7 @@ experiments=(
 )
 
 tsv="$output_root/table6.tsv"
-printf 'experiment\tpaper_kamera_ms\tobserved_ms\tstatus\tresult_json\n' >"$tsv"
+printf 'experiment\tpaper_kamera_ms\tpaper_sieve_s\tobserved_ms\tstatus\tresult_json\n' >"$tsv"
 for experiment in "${experiments[@]}"; do
   "$repo_root/artifact/run-experiment.sh" "$experiment" "$output_root" | tee -a "$tsv"
 done
@@ -35,21 +35,28 @@ awk -F '\t' '
   BEGIN {
     print "# Table 6: perturbed simulation execution time"
     print ""
-    print "Only the Kamera perturbed-run duration is measured. Sieve cluster time and any baseline run are excluded."
+    print "Only the Kamera perturbed-run duration is freshly measured. Sieve times are the paper baselines and are not rerun."
     print ""
-    print "| Experiment | Paper Kamera (ms) | Observed (ms) | Observed / paper | Status |"
-    print "|---|---:|---:|---:|---|"
+    print "| Experiment | Paper Sieve (s) | Paper Kamera (ms) | Observed Kamera (ms) | Observed / paper | Reproduced speedup over Sieve | Status |"
+    print "|---|---:|---:|---:|---:|---:|---|"
   }
   NR > 1 {
-    ratio = $3 / $2
-    printf "| %s | %.0f | %.3f | %.2fx | %s |\n", $1, $2, $3, ratio, $4
+    ratio = $4 / $2
+    speedup = ($3 * 1000) / $4
+    printf "| %s | %.0f | %.0f | %.3f | %.2fx | %.0fx | %s |\n", $1, $3, $2, $4, ratio, speedup, $5
     logsum += log(ratio)
+    speedup_logsum += log(speedup)
     count++
   }
   END {
     print ""
-    if (count > 0) printf "Geometric mean observed/paper ratio: %.2fx\n", exp(logsum/count)
+    if (count > 0) {
+      printf "Geometric mean reproduced speedup over Sieve: %.0fx\n", exp(speedup_logsum/count)
+      printf "Geometric mean observed/paper Kamera ratio: %.2fx\n", exp(logsum/count)
+    }
   }
 ' "$tsv" >"$output_root/table6.md"
 
-echo "wrote $output_root/table6.md"
+printf '\nTable 6 reproduction summary\n\n'
+cat "$output_root/table6.md"
+printf '\nFull results written to: %s\n' "$output_root"

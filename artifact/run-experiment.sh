@@ -91,4 +91,5 @@ jq -n \
   '{experiment:$experiment,status:$status,paperKameraMs:$paper_ms,paperSieveSeconds:$sieve_s,durationNs:$duration_ns,observedMs:($duration_ns/1000000),errorStates:$error_states,maxDepthStates:$max_depth_states,dump:$dump}' \
   >"$run_dir/result.json"
 
-printf '%s\t%s\t%s\t%s\t%s\n' "$experiment" "$paper_ms" "$observed_ms" "$status" "$run_dir/result.json"
+printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+  "$experiment" "$paper_ms" "$sieve_s" "$observed_ms" "$status" "$run_dir/result.json"
