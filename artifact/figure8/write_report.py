@@ -162,6 +162,26 @@ def main():
             "`campaignMetrics` used for this run. The paper outcome milestone includes the "
             "recorded agent-search interval; the local scripts do not rerun model inference.\n"
         )
+        kro_row = next(row for row in rows if row["experiment"] == "KRO-2")
+        output.write(
+            "\nKRO-2's exhaustive x-axis accumulates the internal duration of each "
+            "reference, rerun, and lightweight staleness phase. Those phases are executed "
+            "concurrently, so this accumulated duration is not the outer command's elapsed "
+            "wall-clock time. "
+        )
+        if args.exhaustive_source == "archived":
+            output.write(
+                "The regenerated archive reaches the paper's exact 54,418-state and "
+                "131-resource-state endpoints, but its accumulated phase duration is "
+                f"{kro_row['observed_exhaustive_seconds']:.1f}s versus the paper run's "
+                f"{kro_row['paper_exhaustive_seconds']:.0f}s. This is why the regenerated "
+                "curve ends before the green paper milestone.\n"
+            )
+        else:
+            output.write(
+                "Its endpoint therefore varies with host performance and concurrent "
+                "contention even when the explored-state endpoints match.\n"
+            )
 
     print(args.markdown)
 

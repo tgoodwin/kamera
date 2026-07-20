@@ -20,7 +20,7 @@ def main():
     args = parser.parse_args()
 
     plt.rcParams.update({"font.size": 8})
-    figure, axes = plt.subplots(3, 1, figsize=(3.33, 4.25))
+    figure, axes = plt.subplots(3, 1, figsize=(3.33, 4.65))
 
     plot_runs(
         axes[0],
@@ -36,7 +36,6 @@ def main():
         ],
         legend_loc="lower right",
         xlim=1760,
-        title="(a) KCP-4 (9 controllers, 6 resources)",
     )
 
     plot_runs(
@@ -55,7 +54,6 @@ def main():
         legend_loc="lower right",
         xlim=394,
         x_minutes=True,
-        title="(b) KRO-2 (2 controllers, 2 resources)",
     )
 
     plot_runs(
@@ -73,15 +71,30 @@ def main():
         annotations=[("Agent (1481S, 194ms exec)", 133, 1481, 30)],
         legend_loc="lower right",
         xlim=7600,
-        title="(c) KAR-12 (14 controllers, 5 resources)",
     )
+
+    captions = (
+        "(a) KCP-4 (9 controllers, 6 resources)",
+        "(b) KRO-2 (2 controllers, 2 resources)",
+        "(c) KAR-12 (14 controllers, 5 resources)",
+    )
+    for axis, caption in zip(axes, captions):
+        axis.text(
+            0.5,
+            -0.43,
+            caption,
+            transform=axis.transAxes,
+            ha="center",
+            va="top",
+            fontsize=9,
+        )
 
     figure.subplots_adjust(
         left=0.15,
         right=0.97,
-        top=0.97,
-        bottom=0.08,
-        hspace=0.72,
+        top=0.98,
+        bottom=0.09,
+        hspace=1.0,
     )
     figure.savefig(args.output, dpi=600, bbox_inches="tight", pad_inches=0.02)
     print(f"Saved Figure 8 to {args.output}")

@@ -105,6 +105,13 @@ for KRO-2, and 131 seconds for KAR-12—so the fresh simulation curves use the
 same comparison boundary as Figure 8. Those offsets are recorded experimental
 metadata, not time spent by the local scripts.
 
+KRO-2's exhaustive x-axis is the sum of the internal durations reported by its
+reference, rerun, and lightweight staleness phases. Because those phases run
+concurrently, that sum is not the outer command's elapsed wall-clock time. The
+regenerated archive matches the paper's exact 54,418-state and
+131-resource-state endpoints but accumulates about 206 seconds rather than the
+paper run's 374 seconds, so its curve ends before the green paper milestone.
+
 The standard path uses raw exhaustive simulator output rather than checked-in
 plot-ready curves. The compact JSONL samples previously used by this branch
 are not inputs to `reproduce-figure8.sh`.
