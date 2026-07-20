@@ -17,17 +17,15 @@ The first setup can take another **10–30 minutes**, depending on the Go module
 cache and network connection.
 
 ```bash
-./artifact/setup-figure8-deps.sh
-
-python3 -m venv /tmp/kamera-figure8-venv
-source /tmp/kamera-figure8-venv/bin/activate
-python3 -m pip install -r artifact/figure8/requirements.txt
-
 ./artifact/reproduce-figure8.sh
 ```
 
-The lock file pins the complete plotting dependency set and requires Python
-3.11 or newer.
+That command performs the complete workflow. On first use, it clones and
+verifies the pinned case-study sources, creates a managed Python environment,
+and installs the fully pinned plotting dependencies. These are cached under
+the ignored `artifact-deps/figure8/` directory and reused on subsequent runs.
+The host must provide Git, Go, and Python 3.11 or newer; no virtual-environment
+activation is required.
 
 This standard path:
 

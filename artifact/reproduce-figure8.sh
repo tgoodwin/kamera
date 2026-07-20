@@ -19,6 +19,9 @@ while [[ $# -gt 0 ]]; do
       cat <<'EOF'
 usage: ./artifact/reproduce-figure8.sh [--exhaustive-source archived|fresh] [--output DIR]
 
+  The command prepares and caches the pinned source and Python dependencies
+  automatically on first use.
+
   archived  Run fresh agent-selected simulations and extract exhaustive curves
             from the checked-in raw-evidence archives (standard AE path).
   fresh     Rerun every exhaustive campaign as well. KAR-12 is capped at two
@@ -45,18 +48,25 @@ fi
 export MPLCONFIGDIR="${MPLCONFIGDIR:-${TMPDIR:-/tmp}/kamera-matplotlib-cache}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-${TMPDIR:-/tmp}/kamera-cache}"
 mkdir -p "$MPLCONFIGDIR" "$XDG_CACHE_HOME"
-if ! python3 -c 'import matplotlib' >/dev/null 2>&1; then
-  echo "Figure 8 requires Python 3 and the pinned matplotlib dependency." >&2
-  echo "See artifact/figure8/README.md for the virtual-environment command." >&2
-  exit 1
-fi
+
+deps_root="${KAMERA_AE_FIGURE8_DEPS_DIR:-$repo_root/artifact-deps/figure8}"
+[[ "$deps_root" = /* ]] || deps_root="$PWD/$deps_root"
+venv_dir="${KAMERA_AE_FIGURE8_VENV:-$deps_root/python-venv}"
+[[ "$venv_dir" = /* ]] || venv_dir="$PWD/$venv_dir"
+export KAMERA_AE_FIGURE8_DEPS_DIR="$deps_root"
+export KAMERA_AE_FIGURE8_VENV="$venv_dir"
+
+echo "preparing pinned Figure 8 dependencies"
+"$repo_root/artifact/setup-figure8-deps.sh" "$deps_root"
+python="$venv_dir/bin/python"
+export PATH="$venv_dir/bin:$PATH"
 
 mkdir -p "$output_root"
 "$repo_root/artifact/run-figure8-simulations.sh" "$output_root/simulations"
 
 if [[ "$exhaustive_source" == "archived" ]]; then
   archive_dir="$repo_root/artifact/data/figure8/raw"
-  python3 "$repo_root/artifact/figure8/verify_raw_archives.py" "$archive_dir"
+  "$python" "$repo_root/artifact/figure8/verify_raw_archives.py" "$archive_dir"
   mkdir -p "$output_root/raw"
   for archive in kcp4 kro2 kar12; do
     tar -xzf "$archive_dir/$archive.tar.gz" -C "$output_root/raw"
@@ -73,7 +83,7 @@ else
 fi
 
 curves="$output_root/curves"
-python3 "$repo_root/artifact/figure8/extract_curves.py" \
+"$python" "$repo_root/artifact/figure8/extract_curves.py" \
   --kcp-exhaustive-log "$kcp_exhaustive_log" \
   --kcp-agent-log "$output_root/simulations/kcp4/run.log" \
   --kro-exhaustive-dir "$kro_exhaustive_dir" \
@@ -82,11 +92,11 @@ python3 "$repo_root/artifact/figure8/extract_curves.py" \
   --kar-agent-log "$output_root/simulations/kar12/run.log" \
   --output "$curves"
 
-python3 "$repo_root/artifact/figure8/plot_figure8.py" \
+"$python" "$repo_root/artifact/figure8/plot_figure8.py" \
   --curves "$curves" \
   --output "$output_root/figure8.pdf"
 
-python3 "$repo_root/artifact/figure8/write_report.py" \
+"$python" "$repo_root/artifact/figure8/write_report.py" \
   --curves "$curves/curve-summary.json" \
   --simulations "$output_root/simulations/simulation-summary.json" \
   --exhaustive-source "$exhaustive_source" \

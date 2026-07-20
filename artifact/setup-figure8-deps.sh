@@ -5,6 +5,43 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 deps_root="${1:-$repo_root/artifact-deps/figure8}"
 [[ "$deps_root" = /* ]] || deps_root="$PWD/$deps_root"
 kamera_repository="${KAMERA_AE_KAMERA_REPOSITORY:-https://github.com/tgoodwin/kamera.git}"
+requirements="$repo_root/artifact/figure8/requirements.txt"
+venv_dir="${KAMERA_AE_FIGURE8_VENV:-$deps_root/python-venv}"
+[[ "$venv_dir" = /* ]] || venv_dir="$PWD/$venv_dir"
+
+setup_python_environment() {
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Figure 8 requires Python 3.11 or newer" >&2
+    exit 1
+  fi
+  if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)'; then
+    echo "Figure 8 requires Python 3.11 or newer; found $(python3 --version 2>&1)" >&2
+    exit 1
+  fi
+
+  if [[ ! -x "$venv_dir/bin/python" ]]; then
+    echo "creating pinned Figure 8 Python environment at $venv_dir"
+    python3 -m venv "$venv_dir"
+  fi
+
+  local requirements_hash stamp installed_hash=""
+  requirements_hash="$(python3 -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$requirements")"
+  stamp="$venv_dir/.kamera-figure8-requirements.sha256"
+  if [[ -f "$stamp" ]]; then
+    installed_hash="$(<"$stamp")"
+  fi
+
+  if [[ "$installed_hash" != "$requirements_hash" ]] || \
+     ! "$venv_dir/bin/python" -c 'import matplotlib' >/dev/null 2>&1; then
+    echo "installing pinned Figure 8 Python dependencies"
+    "$venv_dir/bin/python" -m pip install \
+      --disable-pip-version-check \
+      -r "$requirements"
+    printf '%s\n' "$requirements_hash" >"$stamp"
+  else
+    echo "pinned Figure 8 Python environment is ready"
+  fi
+}
 
 clone_at() {
   local name="$1"
@@ -78,6 +115,7 @@ apply_exact_patch() {
 }
 
 mkdir -p "$deps_root/kcp" "$deps_root/kar"
+setup_python_environment
 
 kcp_kamera_sha="d629dded905603903a3440095f20baf460358205"
 kcp_sha="301a8f749e7b99a0c81f43b37aa5b5e5ff0fc0b4"
@@ -95,10 +133,8 @@ apply_exact_patch "Karpenter simulation" "$deps_root/kar/karpenter" "$karpenter_
 
 cat <<EOF
 Figure 8 dependencies are ready under $deps_root:
+  Python: $venv_dir
   KCP-4: Kamera $kcp_kamera_sha, KCP $kcp_sha, packaged harness
   KRO-2: see $deps_root/kro
   KAR-12: Kamera $kar_kamera_sha, Karpenter $karpenter_sha + pinned adapter
-
-Run the standard reproduction:
-  ./artifact/reproduce-figure8.sh
 EOF

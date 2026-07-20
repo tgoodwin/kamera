@@ -125,28 +125,19 @@ timing semantics.
 
 ### 2. Reproduce Figure 8
 
-Install the pinned case-study sources and plotting dependency:
-
-```bash
-./artifact/setup-figure8-deps.sh
-
-python3 -m venv /tmp/kamera-figure8-venv
-source /tmp/kamera-figure8-venv/bin/activate
-python3 -m pip install -r artifact/figure8/requirements.txt
-```
-
-Then run the standard reproduction:
+Run the complete standard reproduction:
 
 ```bash
 ./artifact/reproduce-figure8.sh
 ```
 
-This reruns the fixed
-agent-selected simulation for KCP-4, KRO-2, and KAR-12, checks all three
-observable outcomes, verifies and extracts archived **raw exhaustive simulator
-output**, derives all six curves through one extractor, and generates one
-vertically stacked `figure8.pdf` plus `figure8-report.md` and
-`figure8-report.tsv`.
+On first use, this command automatically installs and verifies the pinned
+case-study sources and a managed plotting environment under the ignored
+`artifact-deps/figure8/` directory. It then reruns the fixed agent-selected
+simulation for KCP-4, KRO-2, and KAR-12, checks all three observable outcomes,
+verifies and extracts archived **raw exhaustive simulator output**, derives
+all six curves through one extractor, and generates one vertically stacked
+`figure8.pdf` plus `figure8-report.md` and `figure8-report.tsv`.
 
 Success reports `OBSERVED` and `CONSISTENT` for all three cases. No LLM is
 needed because this workflow evaluates the configurations selected during the
