@@ -65,13 +65,45 @@ measurement boundary and display the evaluator's observed values.
 ./artifact/smoke-test.sh
 ```
 
-This builds Kamera and the RabbitMQ harness, runs a complete perturbed
+This builds Kamera and the RabbitMQ harness (1-2 minutes), runs a complete perturbed
 simulation in an isolated process, verifies convergence with campaign metrics,
-and checks a directly observable outcome. Success ends with:
+and checks a directly observable outcome (a few seconds). The required success
+line is:
 
 ```text
 PASS: Kamera built, the perturbed run converged, and the unobserved-state oracle observed one Pod creation.
 ```
+
+<details>
+<summary>Optional: inspect the smoke test trace to manually verify the `PASS` result.</summary>
+
+The smoke test prints the exact path of the simulation trace, and a command to open it in Kamera's trace inspection TUI:
+
+```text
+Trace written to: <path>
+Optional: inspect the trace interactively:
+  go run ./cmd/kamera inspect exploration "<path>"
+```
+
+The TUI opens on the trace's single converged state with one execution path. Press `Enter` to drill into its path and its reconciliation steps. Near the end of the path, look for:
+
+1. An `External User` update that changes `RabbitmqCluster.spec.replicas` from
+   1 to 3.
+2. The following `RabbitmqClusterReconciler`. Its observations still contain
+   the stale `RabbitmqCluster` version with `replicas: 1`, (stale view) so it does not create
+   the additional Pods.
+3. A second `External User` update that changes the requested replicas from 3
+   to 2.
+4. The final mismatch: the `RabbitmqCluster` requests 2 replicas, while the
+   `StatefulSet` remains at 1 replica and only `rabbitmq-cluster-server-0`
+   exists.
+
+That mismatch is the reproduced unobserved-state bug. Use `Tab` to move between
+panes, `Enter` or `d` to inspect a selected object, effect, or observation,
+`Esc` to go back, and `q` to quit. This inspection is optional and is not an
+additional pass criterion.
+
+</details>
 
 The remaining reproduction scripts provide broader functional evidence: they
 build pinned case-study integrations, retain full logs and dumps, and fail if

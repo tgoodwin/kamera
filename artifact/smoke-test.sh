@@ -15,3 +15,5 @@ status="$(jq -r '.status' "$result")"
 [[ "$status" == converged ]] || { echo "FAIL: perturbed run did not converge"; exit 1; }
 [[ "$pod_creates" -eq 1 ]] || { echo "FAIL: expected one Pod creation, got $pod_creates"; exit 1; }
 echo "PASS: Kamera built, the perturbed run converged, and the unobserved-state oracle observed one Pod creation."
+echo "Trace written to: $dump"
+printf 'Optional: inspect the trace interactively:\n  go run ./cmd/kamera inspect exploration "%s"\n' "$dump"
