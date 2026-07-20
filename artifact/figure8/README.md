@@ -36,11 +36,13 @@ This standard path:
 3. checks that each configured observable outcome occurs;
 4. verifies and extracts the checked-in raw exhaustive-output archives;
 5. derives all six plotting curves with `extract_curves.py`;
-6. writes three PDFs and a numerical comparison report.
+6. writes one vertically stacked Figure 8 PDF and a numerical comparison
+   report.
 
 The result directory contains:
 
-- `figure8a-kcp4.pdf`, `figure8b-kro2.pdf`, and `figure8c-kar12.pdf`;
+- `figure8.pdf`, containing the KCP-4, KRO-2, and KAR-12 panels in the same
+  vertical layout as the paper;
 - `figure8-report.md` and `figure8-report.tsv`;
 - the six extracted JSONL curves under `curves/`;
 - fresh simulation dumps, logs, campaign metrics, and outcome checks under

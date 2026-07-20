@@ -144,8 +144,9 @@ Then run the standard reproduction:
 This reruns the fixed
 agent-selected simulation for KCP-4, KRO-2, and KAR-12, checks all three
 observable outcomes, verifies and extracts archived **raw exhaustive simulator
-output**, derives all six curves through one extractor, and generates three
-PDF panels plus `figure8-report.md` and `figure8-report.tsv`.
+output**, derives all six curves through one extractor, and generates one
+vertically stacked `figure8.pdf` plus `figure8-report.md` and
+`figure8-report.tsv`.
 
 Success reports `OBSERVED` and `CONSISTENT` for all three cases. No LLM is
 needed because this workflow evaluates the configurations selected during the

@@ -82,29 +82,9 @@ python3 "$repo_root/artifact/figure8/extract_curves.py" \
   --kar-agent-log "$output_root/simulations/kar12/run.log" \
   --output "$curves"
 
-plot="$repo_root/scripts/plot_comparison.py"
-python3 "$plot" \
-  --runs "$curves/kcp4-exhaustive.jsonl" "$curves/kcp4-agent.jsonl" \
-  --labels "Exhaustive" "Agent" --offsets 0 68 \
-  --milestones "Paper: agent reproduces" 133 green "Paper: exhaustive done" 1672 green \
-  --legend-loc "lower right" --figwidth 3.33 --figheight 0.96 --xlim 1760 \
-  --title "" -o "$output_root/figure8a-kcp4.pdf"
-
-python3 "$plot" \
-  --runs "$curves/kro2-exhaustive.jsonl" "$curves/kro2-agent.jsonl" \
-  --labels "Exhaustive" "Agent" --offsets 0 99 \
-  --milestones "Paper: agent reproduces" 99 green "Paper: exhaustive done" 374 green \
-  --legend-loc "lower right" --figwidth 3.33 --figheight 0.96 --xlim 394 \
-  --x-minutes --annotate "Agent (102S, 279ms exec)" 99 51 55 \
-  --title "" -o "$output_root/figure8b-kro2.pdf"
-
-python3 "$plot" \
-  --runs "$curves/kar12-exhaustive.jsonl" "$curves/kar12-agent.jsonl" \
-  --labels "Exhaustive" "Agent" --offsets 0 131 \
-  --milestones "Paper: agent reproduces" 133 green "Paper: timeout" 7200 red \
-  --legend-loc "lower right" --figwidth 3.33 --figheight 0.96 --xlim 7600 \
-  --annotate "Agent (1481S, 194ms exec)" 133 1481 30 \
-  --title "" -o "$output_root/figure8c-kar12.pdf"
+python3 "$repo_root/artifact/figure8/plot_figure8.py" \
+  --curves "$curves" \
+  --output "$output_root/figure8.pdf"
 
 python3 "$repo_root/artifact/figure8/write_report.py" \
   --curves "$curves/curve-summary.json" \
@@ -117,4 +97,5 @@ cp "$repo_root/artifact/figure8/dependencies.json" "$output_root/dependencies.js
 if [[ "$exhaustive_source" == "archived" ]]; then
   cp "$repo_root/artifact/data/figure8/raw/manifest.json" "$output_root/raw-archive-manifest.json"
 fi
-echo "wrote Figure 8 panels, raw-derived curves, and report to $output_root"
+printf 'Figure 8 written to: %s\n' "$output_root/figure8.pdf"
+printf 'Numerical report written to: %s\n' "$output_root/figure8-report.md"

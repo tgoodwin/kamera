@@ -22,7 +22,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
-import matplotlib.patches as mpatches
 
 
 def parse_log_with_time(path):
@@ -47,6 +46,149 @@ def parse_log_with_time(path):
                 "resources": resources,
             })
     return points
+
+
+def plot_runs(
+    ax,
+    runs,
+    labels,
+    *,
+    offsets=None,
+    milestones=None,
+    annotations=None,
+    xlim=None,
+    x_minutes=False,
+    legend_loc="lower right",
+    title="",
+):
+    """Plot aligned exploration runs on an existing Matplotlib axis."""
+    offsets = list(offsets or [0.0] * len(runs))
+    if len(offsets) < len(runs):
+        offsets.extend([0.0] * (len(runs) - len(offsets)))
+
+    colors = plt.cm.tab10.colors
+    for i, (path, label) in enumerate(zip(runs, labels)):
+        points = parse_log_with_time(path)
+        if not points:
+            print(f"WARNING: no data in {path}", file=sys.stderr)
+            continue
+
+        t0 = points[0]["ts"]
+        seconds = [
+            (point["ts"] - t0).total_seconds() + offsets[i]
+            for point in points
+        ]
+        totals = [point["total"] for point in points]
+        resources = [point["resources"] for point in points]
+
+        color = colors[i % len(colors)]
+        ax.plot(
+            seconds,
+            totals,
+            "-",
+            color=color,
+            linewidth=1,
+            alpha=0.8,
+            label=f"{label} (S)",
+        )
+        ax.plot(
+            seconds,
+            resources,
+            "--",
+            color=color,
+            linewidth=1,
+            alpha=0.8,
+            label=f"{label} (R)",
+        )
+        ax.fill_between(seconds, resources, totals, alpha=0.08, color=color)
+
+        final = points[-1]
+        print(
+            f"{label}: {seconds[-1]:.0f}s, {final['total']} total, "
+            f"{final['unique']} unique, {final['resources']} R"
+        )
+
+    for _, seconds, color in milestones or []:
+        ax.axvline(
+            x=seconds,
+            color=color,
+            linewidth=1,
+            linestyle="--",
+            alpha=0.7,
+        )
+
+    for annotation in annotations or []:
+        text, x_value, y_value, offset_x = annotation
+        x, y, ox = float(x_value), float(y_value), float(offset_x)
+        ax.annotate(
+            text,
+            xy=(x, y),
+            xytext=(ox, 8),
+            textcoords="offset points",
+            fontsize=5.5,
+            ha="center",
+            bbox=dict(
+                boxstyle="round,pad=0.2",
+                facecolor="white",
+                edgecolor="tab:orange",
+                alpha=0.9,
+            ),
+            arrowprops=dict(arrowstyle="->", color="tab:orange", lw=0.8),
+        )
+
+    if xlim:
+        ax.set_xlim(right=xlim)
+
+    x_max = xlim or ax.get_xlim()[1]
+    if x_max > 600 or x_minutes:
+        minutes = x_max / 60
+        if minutes > 600:
+            tick_interval = 60 * 300
+        elif minutes > 120:
+            tick_interval = 60 * 30
+        elif minutes > 60:
+            tick_interval = 60 * 10
+        elif minutes > 20:
+            tick_interval = 60 * 5
+        elif minutes > 5:
+            tick_interval = 60 * 2
+        else:
+            tick_interval = 60
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
+        ax.xaxis.set_major_formatter(
+            ticker.FuncFormatter(lambda value, _: f"{value / 60:.0f}")
+        )
+        ax.set_xlabel("Time (minutes)", fontsize=6)
+    else:
+        if x_max > 200:
+            tick_interval = 30
+        elif x_max > 60:
+            tick_interval = 15
+        else:
+            tick_interval = 10
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
+        ax.set_xlabel("Time (seconds)", fontsize=6)
+
+    ax.set_ylabel("States visited", fontsize=6)
+    ax.set_yscale("log")
+    ax.set_ylim(bottom=1)
+    ax.yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=3))
+    ax.yaxis.set_minor_locator(ticker.NullLocator())
+    ax.yaxis.set_major_formatter(ticker.LogFormatterSciNotation())
+    ax.set_title(title, fontsize=9)
+    ax.tick_params(labelsize=7)
+    ax.grid(alpha=0.2)
+
+    if "center" in legend_loc:
+        ax.legend(
+            fontsize=5,
+            loc=legend_loc,
+            ncol=2,
+            bbox_to_anchor=(0.5, 0.0) if "lower" in legend_loc else (0.5, 1.0),
+            framealpha=0.9,
+        )
+    else:
+        ax.legend(fontsize=5, loc=legend_loc, ncol=2, framealpha=0.9)
 
 
 def main():
@@ -84,97 +226,20 @@ def main():
             milestones.append((label, secs, color))
             i += 2
 
-    offsets = args.offsets or [0.0] * len(args.runs)
-    if len(offsets) < len(args.runs):
-        offsets.extend([0.0] * (len(args.runs) - len(offsets)))
-
     fig, ax = plt.subplots(figsize=(args.figwidth, args.figheight))
     plt.rcParams.update({'font.size': 8})
-    colors = plt.cm.tab10.colors
-
-    for i, (path, label) in enumerate(zip(args.runs, args.labels)):
-        points = parse_log_with_time(path)
-        if not points:
-            print(f"WARNING: no data in {path}", file=sys.stderr)
-            continue
-
-        # Align to t=0 for this run, with optional offset
-        t0 = points[0]["ts"]
-        offset = offsets[i]
-        seconds = [(p["ts"] - t0).total_seconds() + offset for p in points]
-        totals = [p["total"] for p in points]
-        resources = [p["resources"] for p in points]
-
-        color = colors[i % len(colors)]
-        ax.plot(seconds, totals, "-", color=color, linewidth=1, alpha=0.8, label=f"{label} (S)")
-        ax.plot(seconds, resources, "--", color=color, linewidth=1, alpha=0.8, label=f"{label} (R)")
-        ax.fill_between(seconds, resources, totals, alpha=0.08, color=color)
-
-        final = points[-1]
-
-        print(f"{label}: {seconds[-1]:.0f}s, {final['total']} total, {final['unique']} unique, {final['resources']} R")
-
-    for label, secs, color in milestones:
-        ax.axvline(x=secs, color=color, linewidth=1, linestyle="--", alpha=0.7)
-
-    if args.annotate:
-        for ann in args.annotate:
-            text, x_str, y_str, ox_str = ann
-            x, y, ox = float(x_str), float(y_str), float(ox_str)
-            ax.annotate(text, xy=(x, y), xytext=(ox, 8), textcoords="offset points",
-                        fontsize=5.5, ha="center",
-                        bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="tab:orange", alpha=0.9),
-                        arrowprops=dict(arrowstyle="->", color="tab:orange", lw=0.8))
-
-    if args.xlim:
-        ax.set_xlim(right=args.xlim)
-
-    # Adaptive tick spacing
-    x_max = args.xlim or ax.get_xlim()[1]
-    if x_max > 600 or args.x_minutes:
-        # Show minutes — pick tick interval to get ~6-8 ticks
-        minutes = x_max / 60
-        if minutes > 600:
-            tick_interval = 60 * 300  # every 300 min
-        elif minutes > 120:
-            tick_interval = 60 * 30   # every 30 min
-        elif minutes > 60:
-            tick_interval = 60 * 10   # every 10 min
-        elif minutes > 20:
-            tick_interval = 60 * 5    # every 5 min
-        elif minutes > 5:
-            tick_interval = 60 * 2    # every 2 min
-        else:
-            tick_interval = 60        # every 1 min
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
-        ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{x / 60:.0f}"))
-        ax.set_xlabel("Time (minutes)", fontsize=6)
-    else:
-        # Show seconds
-        if x_max > 200:
-            tick_interval = 30
-        elif x_max > 60:
-            tick_interval = 15
-        else:
-            tick_interval = 10
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(tick_interval))
-        ax.set_xlabel("Time (seconds)", fontsize=6)
-    ax.set_ylabel("States visited", fontsize=6)
-    ax.set_yscale("log")
-    ax.set_ylim(bottom=1)
-    ax.yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=3))
-    ax.yaxis.set_minor_locator(ticker.NullLocator())
-    ax.yaxis.set_major_formatter(ticker.LogFormatterSciNotation())
-    ax.set_title(args.title, fontsize=9)
-    ax.tick_params(labelsize=7)
-    ax.grid(alpha=0.2)
-
-    if "center" in args.legend_loc:
-        ax.legend(fontsize=5, loc=args.legend_loc, ncol=2,
-                  bbox_to_anchor=(0.5, 0.0) if "lower" in args.legend_loc else (0.5, 1.0),
-                  framealpha=0.9)
-    else:
-        ax.legend(fontsize=5, loc=args.legend_loc, ncol=2, framealpha=0.9)
+    plot_runs(
+        ax,
+        args.runs,
+        args.labels,
+        offsets=args.offsets,
+        milestones=milestones,
+        annotations=args.annotate,
+        xlim=args.xlim,
+        x_minutes=args.x_minutes,
+        legend_loc=args.legend_loc,
+        title=args.title,
+    )
 
     plt.subplots_adjust(left=0.15, right=0.97, top=0.95, bottom=0.22)
     if args.output:
