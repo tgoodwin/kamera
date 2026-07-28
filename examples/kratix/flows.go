@@ -13,8 +13,8 @@ import (
 	"github.com/syntasso/kratix/lib/compression"
 	"github.com/syntasso/kratix/lib/writers"
 	"github.com/tgoodwin/kamera/pkg/coverage"
-	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/explore"
+	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -131,7 +131,7 @@ func configureWorksReconcilers(eb *tracecheck.ExplorerBuilder) {
 
 func configureHealthRecordReconciler(eb *tracecheck.ExplorerBuilder) {
 	eb.WithReconciler(healthRecordControllerID, func(c ctrlclient.Client) tracecheck.Reconciler {
-		nsClient := &defaultNamespaceClient{Client: c, namespace: "default"}
+		nsClient := replay.NewDefaultNamespaceClient(c, "default", shouldDefaultNamespace)
 		return &controller.HealthRecordReconciler{
 			Client:        nsClient,
 			Scheme:        c.Scheme(),
@@ -147,7 +147,7 @@ func configurePromisesReconcilers(
 	preStarted map[string]*controller.DynamicResourceRequestController,
 ) {
 	eb.WithReconciler(promiseControllerID, func(c ctrlclient.Client) tracecheck.Reconciler {
-		nsClient := &defaultNamespaceClient{Client: c, namespace: "default"}
+		nsClient := replay.NewDefaultNamespaceClient(c, "default", shouldDefaultNamespace)
 		manager := &controllerfakes.FakeManager{}
 		skipNameValidation := true
 		manager.GetControllerOptionsReturns(controllerconfig.Controller{SkipNameValidation: &skipNameValidation})
@@ -166,7 +166,7 @@ func configurePromisesReconcilers(
 		}
 	}).For(promiseKind)
 	eb.WithReconciler(promiseRevisionControllerID, func(c ctrlclient.Client) tracecheck.Reconciler {
-		nsClient := &defaultNamespaceClient{Client: c, namespace: "default"}
+		nsClient := replay.NewDefaultNamespaceClient(c, "default", shouldDefaultNamespace)
 		return &controller.PromiseRevisionReconciler{
 			Client:        nsClient,
 			Log:           ctrl.Log.WithName("promise-revision"),
@@ -333,40 +333,9 @@ func buildPromisesFlow() (*tracecheck.ExplorerBuilder, tracecheck.StateNode, err
 }
 
 func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.Input) ([]explore.Scenario, error) {
-	if builder == nil {
-		return nil, fmt.Errorf("builder is nil")
-	}
-	if len(inputs) == 0 {
-		return nil, fmt.Errorf("no inputs supplied")
-	}
-
-	scenarios := make([]explore.Scenario, 0, len(inputs))
-	for idx, input := range inputs {
-		state, seededObjects, err := buildStateFromCoverageInput(builder, input)
-		if err != nil {
-			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
-		}
-		userInputs, err := buildUserActionsFromCoverageInput(input, seededObjects)
-		if err != nil {
-			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
-		}
-
-		cfg, err := explore.ApplyInputTuning(builder.Config(), input.Tuning)
-		if err != nil {
-			return nil, fmt.Errorf("apply tuning for input %d (%s): %w", idx, input.Name, err)
-		}
-		scenarios = append(scenarios, explore.Scenario{
-			Name:             input.Name,
-			EnvironmentState: state,
-			ExternalInputs:       userInputs,
-			Config:           cfg,
-		})
-	}
-
-	if len(scenarios) == 0 {
-		return nil, fmt.Errorf("no scenarios produced")
-	}
-	return scenarios, nil
+	return explore.CompileInputScenarios(builder, inputs, explore.ScenarioCompileOptions{
+		BuildState: buildStateFromCoverageInput,
+	})
 }
 
 func buildStateFromCoverageInput(
@@ -506,7 +475,7 @@ func configureDynamicRequestReconcilers(eb *tracecheck.ExplorerBuilder, specs []
 		rrKind := spec.gvk.Group + "/" + spec.gvk.Kind
 
 		eb.WithReconciler(spec.controllerID, func(c ctrlclient.Client) tracecheck.Reconciler {
-			nsClient := &defaultNamespaceClient{Client: c, namespace: "default"}
+			nsClient := replay.NewDefaultNamespaceClient(c, "default", shouldDefaultNamespace)
 			enabled := true
 			canCreateResources := true
 
@@ -550,55 +519,4 @@ func copyDynamicControllers(
 		out[k] = v
 	}
 	return out
-}
-
-
-func buildUserActionsFromCoverageInput(
-	input coverage.Input,
-	seededObjects []ctrlclient.Object,
-) ([]tracecheck.UserAction, error) {
-	actions := make([]tracecheck.UserAction, 0, len(input.ExternalInputs))
-	for idx, action := range input.ExternalInputs {
-		if action.Object == nil {
-			return nil, fmt.Errorf("input user input %d has nil object", idx)
-		}
-		id := strings.TrimSpace(action.ID)
-		if id == "" {
-			id = fmt.Sprintf("user-input-%d", idx)
-		}
-		opType := action.OpType
-		if opType == event.CREATE && isInputObjectSeeded(action.Object, seededObjects) {
-			opType = event.UPDATE
-		}
-		actions = append(actions, tracecheck.UserAction{
-			ID:      id,
-			OpType:  opType,
-			Payload: action.Object.DeepCopy(),
-		})
-	}
-	return actions, nil
-}
-
-func isInputObjectSeeded(object ctrlclient.Object, seededObjects []ctrlclient.Object) bool {
-	if object == nil {
-		return false
-	}
-	for _, seeded := range seededObjects {
-		if sameObjectIdentity(seeded, object) {
-			return true
-		}
-	}
-	return false
-}
-
-func sameObjectIdentity(a, b ctrlclient.Object) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	aGVK := a.GetObjectKind().GroupVersionKind()
-	bGVK := b.GetObjectKind().GroupVersionKind()
-	if aGVK.Group != bGVK.Group || aGVK.Kind != bGVK.Kind {
-		return false
-	}
-	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
 }

@@ -1,0 +1,8 @@
+apiVersion: example.org/v1
+kind: XWidget
+metadata:
+  name: example
+  namespace: default
+spec:
+  compositionRef:
+    name: widget-composition

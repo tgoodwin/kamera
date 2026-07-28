@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/reconciler"
+	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -24,12 +25,12 @@ import (
 	nodeclaimdisruption "sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/disruption"
 	nodeclaimhydration "sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/hydration"
 	"sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/lifecycle"
-	"sigs.k8s.io/karpenter/pkg/state/nodepoolhealth"
+	nodepoolreadiness "sigs.k8s.io/karpenter/pkg/controllers/nodepool/readiness"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/controllers/state/informer"
-	nodepoolreadiness "sigs.k8s.io/karpenter/pkg/controllers/nodepool/readiness"
 	"sigs.k8s.io/karpenter/pkg/operator/options"
+	"sigs.k8s.io/karpenter/pkg/state/nodepoolhealth"
 	"sigs.k8s.io/karpenter/pkg/test"
 )
 
@@ -59,7 +60,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	cp := &deterministicCloudProvider{fake.NewCloudProvider()}
 	clk := clock.RealClock{}
 	opts := test.Options()
-	switcher := newSwitchingClient()
+	switcher := replay.NewSwitchingClient()
 	provisionerClient := &nameGeneratingClient{Client: switcher}
 
 	wrapWithOptions := func(c client.Client, inner tracecheck.Reconciler) tracecheck.Reconciler {
