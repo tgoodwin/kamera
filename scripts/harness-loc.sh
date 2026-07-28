@@ -21,37 +21,27 @@ go_code() {
     jq -r '[.[] | select(.Name == "Go")][0].Code // 0'
 }
 
-printf '| Project | Production Go LOC | Test Go LOC | Total Go LOC |\n'
-printf '|---|---:|---:|---:|\n'
+printf '| Project | Harness Go LOC |\n'
+printf '|---|---:|\n'
 
-production_total=0
-test_total=0
+harness_total=0
 for system in "${systems[@]}"; do
   harness_dir="$repo_root/examples/$system"
   if [[ ! -d "$harness_dir" ]]; then
-    printf '| %s | unavailable | unavailable | unavailable |\n' "$system"
+    printf '| %s | unavailable |\n' "$system"
     continue
   fi
 
-  production_files=()
-  test_files=()
+  harness_files=()
   while IFS= read -r -d '' file; do
-    if [[ "$file" == *_test.go ]]; then
-      test_files+=("$file")
-    else
-      production_files+=("$file")
+    if [[ "$file" != *_test.go ]]; then
+      harness_files+=("$file")
     fi
   done < <(find -L "$harness_dir" -maxdepth 1 -type f -name '*.go' -print0)
 
-  production="$(go_code "${production_files[@]}")"
-  tests="$(go_code "${test_files[@]}")"
-  total=$((production + tests))
-  production_total=$((production_total + production))
-  test_total=$((test_total + tests))
-  printf '| %s | %d | %d | %d |\n' "$system" "$production" "$tests" "$total"
+  harness_loc="$(go_code "${harness_files[@]}")"
+  harness_total=$((harness_total + harness_loc))
+  printf '| %s | %d |\n' "$system" "$harness_loc"
 done
 
-printf '| **Total** | **%d** | **%d** | **%d** |\n' \
-  "$production_total" \
-  "$test_total" \
-  "$((production_total + test_total))"
+printf '| **Total** | **%d** |\n' "$harness_total"
