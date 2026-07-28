@@ -1,0 +1,9 @@
+Completed Table 2 harness-bloat audit for the five evaluated systems (Karpenter, Crossplane, Kratix, KRO, KCP).
+
+Counting method recovered: scc Go Code over root-level examples/<system>/*.go, including *_test.go. Current counts: Karpenter 1,894 (paper says 1,875; the 19-LOC difference equals watch_mappers.go), Crossplane 743, Kratix 813, KRO 904, KCP 1,608; total 5,962. Tests account for 1,117 LOC; non-test total is 4,845.
+
+Exact file-level buckets: tests 1,117; CLI mains 419; mixed scenario/setup 2,607; wiring/adapters/mocks 1,819. Five copies of the repeated scenario/action compilation core total about 386 code lines before extraction. KCP also retains a 51-line local tuning implementation already shared elsewhere.
+
+Main candidates: shared Input→Scenario compiler; shared CLI runner plus reproducible LOC command; reusable replay client adapters (KRO dynamic/clientset 296 LOC, Kratix namespace wrapper 59, Karpenter switching client 71); externalize embedded fixtures/generators (~758 code lines by contiguous-function estimate). KCP remains the real complexity outlier because its upstream controllers use client-go fake clients/informers and unexported process methods rather than the controller-runtime Reconciler seam.
+
+Conservative post-refactor estimate: roughly 2.8k–3.3k harness LOC if Table 2 reports non-test code and common plumbing/adapters/fixtures are moved out, subject to implementation and remeasurement.
