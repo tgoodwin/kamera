@@ -961,7 +961,9 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 
 		// effectRVs tracks the current integer resourceVersion per resource key
 		// per frame, for optimistic concurrency conflict checking.
-		effectRVs: make(map[string]map[string]int64),
+		effectRVs:      make(map[string]map[string]int64),
+		effectVersions: make(map[string]map[string]snapshot.VersionHash),
+		effectNextRVs:  make(map[string]int64),
 	}
 
 	// Initialize reconcilers with appropriate clients
@@ -1031,12 +1033,14 @@ func (b *ExplorerBuilder) BuildLensManager(traceFilePath string) (*LensManager, 
 	}
 	rollup := CausalRollup(traces)
 	mgr := &manager{
-		versionStore: NewVersionStore(b.snapStore, b.scheme),
-		effects:      make(map[string]reconcileEffects),
-		scheme:       b.scheme,
-		effectRKeys:  make(map[string]util.Set[string]),
-		effectIKeys:  make(map[string]util.Set[snapshot.IdentityKey]),
-		effectRVs:    make(map[string]map[string]int64),
+		versionStore:   NewVersionStore(b.snapStore, b.scheme),
+		effects:        make(map[string]reconcileEffects),
+		scheme:         b.scheme,
+		effectRKeys:    make(map[string]util.Set[string]),
+		effectIKeys:    make(map[string]util.Set[snapshot.IdentityKey]),
+		effectRVs:      make(map[string]map[string]int64),
+		effectVersions: make(map[string]map[string]snapshot.VersionHash),
+		effectNextRVs:  make(map[string]int64),
 	}
 
 	return NewLensManager(

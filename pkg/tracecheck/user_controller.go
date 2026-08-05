@@ -77,8 +77,12 @@ func (r *userActionReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 	if r.client == nil {
 		return reconcile.Result{}, fmt.Errorf("user action client is not configured")
 	}
+	if action.Payload == nil {
+		return reconcile.Result{}, fmt.Errorf("user action %q payload must implement client.Object", action.ID)
+	}
 
-	obj, ok := action.Payload.(client.Object)
+	payload := action.Payload.DeepCopyObject()
+	obj, ok := payload.(client.Object)
 	if !ok || obj == nil {
 		return reconcile.Result{}, fmt.Errorf("user action %q payload must implement client.Object", action.ID)
 	}
@@ -90,6 +94,18 @@ func (r *userActionReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		}
 		return reconcile.Result{}, nil
 	case event.UPDATE:
+		// Workflow inputs describe the desired object and commonly omit the
+		// server-managed resourceVersion. Model the read-modify-write performed
+		// by a real API client before issuing Update, while preserving an
+		// explicitly supplied RV so scenarios can intentionally exercise stale
+		// user writes.
+		if obj.GetResourceVersion() == "" {
+			current := obj.DeepCopyObject().(client.Object)
+			if err := r.client.Get(ctx, client.ObjectKeyFromObject(obj), current); err != nil {
+				return reconcile.Result{}, err
+			}
+			obj.SetResourceVersion(current.GetResourceVersion())
+		}
 		if err := r.client.Update(ctx, obj); err != nil {
 			return reconcile.Result{}, err
 		}

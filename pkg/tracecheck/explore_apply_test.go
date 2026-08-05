@@ -688,3 +688,59 @@ func TestApplyEffects_StateEventHashMatchesContents_MultipleEffects(t *testing.T
 			"resourceVersion must match stateEvent sequence for key %s", se.Effect.Key)
 	}
 }
+
+func TestApplyEffects_PreservesMultipleWritesToSameObject(t *testing.T) {
+	store := snapshot.NewStore()
+	vs := NewVersionStore(store, nil)
+	explorer := &Explorer{
+		versionManager:   vs,
+		resourceVersions: make(map[snapshot.VersionHash]int64),
+	}
+
+	key := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "example", "obj1")
+	oldObj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"namespace": "default",
+			"name":      "example",
+		},
+		"data": map[string]any{"step": "0"},
+	}}
+	firstObj := oldObj.DeepCopy()
+	firstObj.Object["data"] = map[string]any{"step": "1"}
+	secondObj := oldObj.DeepCopy()
+	secondObj.Object["data"] = map[string]any{"step": "2"}
+
+	oldHash := vs.Publish(oldObj)
+	firstHash := vs.Publish(firstObj)
+	secondHash := vs.Publish(secondObj)
+	explorer.resourceVersions[oldHash] = 5
+
+	initialEvent := StateEvent{Sequence: 5, Effect: Effect{OpType: event.CREATE, Key: key, Version: oldHash, ResourceVersion: 5}}
+	state := StateNode{Contents: NewStateSnapshot(
+		ObjectVersions{key: oldHash},
+		KindSequences{key.CanonicalGroupKind(): 5},
+		[]StateEvent{initialEvent},
+	)}
+	stepResult := &ReconcileResult{
+		FrameID: "frame-two-writes",
+		Changes: Changes{
+			ObjectVersions: ObjectVersions{key: secondHash},
+			Effects: []Effect{
+				{OpType: event.UPDATE, Key: key, Version: firstHash, ResourceVersion: 6},
+				{OpType: event.UPDATE, Key: key, Version: secondHash, ResourceVersion: 7},
+			},
+		},
+	}
+
+	nextState, _, stateEvents := explorer.applyEffects(logr.Discard(), state, stepResult)
+	require.Len(t, stateEvents, 3)
+	require.Equal(t, int64(6), stateEvents[1].Sequence)
+	require.Equal(t, firstHash, stateEvents[1].Effect.Version)
+	require.Equal(t, int64(7), stateEvents[2].Sequence)
+	require.Equal(t, secondHash, stateEvents[2].Effect.Version)
+	require.Equal(t, secondHash, nextState[key])
+	require.Equal(t, int64(6), explorer.resourceVersions[firstHash])
+	require.Equal(t, int64(7), explorer.resourceVersions[secondHash])
+}
