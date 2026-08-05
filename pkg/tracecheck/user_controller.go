@@ -77,8 +77,12 @@ func (r *userActionReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 	if r.client == nil {
 		return reconcile.Result{}, fmt.Errorf("user action client is not configured")
 	}
+	if action.Payload == nil {
+		return reconcile.Result{}, fmt.Errorf("user action %q payload must implement client.Object", action.ID)
+	}
 
-	obj, ok := action.Payload.(client.Object)
+	payload := action.Payload.DeepCopyObject()
+	obj, ok := payload.(client.Object)
 	if !ok || obj == nil {
 		return reconcile.Result{}, fmt.Errorf("user action %q payload must implement client.Object", action.ID)
 	}

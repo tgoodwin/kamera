@@ -52,10 +52,12 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	KnowledgeManager := NewKnowledgeManager(snapStore)
 
 	mgr := &manager{
-		versionStore: vStore,
-		effects:      make(map[string]reconcileEffects),
-		scheme:       scheme,
-		effectRVs:    make(map[string]map[string]int64),
+		versionStore:   vStore,
+		effects:        make(map[string]reconcileEffects),
+		scheme:         scheme,
+		effectRVs:      make(map[string]map[string]int64),
+		effectVersions: make(map[string]map[string]snapshot.VersionHash),
+		effectNextRVs:  make(map[string]int64),
 	}
 
 	return &TraceChecker{
@@ -143,8 +145,10 @@ func FromBuilder(b *replay.Builder) *TraceChecker {
 		effects:       make(map[string]reconcileEffects),
 		converterImpl: converter,
 		// TODO handle scheme properly
-		scheme:    nil,
-		effectRVs: make(map[string]map[string]int64),
+		scheme:         nil,
+		effectRVs:      make(map[string]map[string]int64),
+		effectVersions: make(map[string]map[string]snapshot.VersionHash),
+		effectNextRVs:  make(map[string]int64),
 	}
 
 	return &TraceChecker{

@@ -32,10 +32,14 @@ type VersionManager interface {
 }
 
 type Effect struct {
-	OpType      event.OperationType
-	Key         snapshot.CompositeKey
-	Version     snapshot.VersionHash
-	Subresource string `json:"subresource,omitempty"`
+	OpType  event.OperationType
+	Key     snapshot.CompositeKey
+	Version snapshot.VersionHash
+	// ResourceVersion is the API-server sequence assigned when this write was
+	// accepted. A zero value is retained for imported/legacy effects whose
+	// sequence is assigned during materialization.
+	ResourceVersion int64  `json:"resourceVersion,omitempty"`
+	Subresource     string `json:"subresource,omitempty"`
 
 	Precondition *replay.PreconditionInfo
 }
@@ -87,6 +91,12 @@ type manager struct {
 	// within a reconcile frame, used for optimistic concurrency conflict checking.
 	// frameID → resourceKey → current integer RV
 	effectRVs map[string]map[string]int64
+	// effectVersions tracks the latest accepted object version for each resource
+	// within a frame. It lets the simulated write path identify no-op patches
+	// before advancing the optimistic-concurrency baseline.
+	effectVersions map[string]map[string]snapshot.VersionHash
+	// effectNextRVs is the next branch-local global sequence to assign.
+	effectNextRVs map[string]int64
 
 	// rvLookup maps VersionHash → integer resourceVersion.
 	// Set from the explorer's resourceVersions map.
@@ -107,20 +117,59 @@ func invalidResourceVersion(gvk schema.GroupVersionKind, name string, value any,
 	)
 }
 
-func (m *manager) advanceEffectResourceVersion(frameID, resourceKey string, obj client.Object) {
+type resourceVersionBaseContextKey struct{}
+
+func withResourceVersionBase(ctx context.Context, base int64) context.Context {
+	return context.WithValue(ctx, resourceVersionBaseContextKey{}, base)
+}
+
+func resourceVersionBaseFromContext(ctx context.Context) int64 {
+	base, _ := ctx.Value(resourceVersionBaseContextKey{}).(int64)
+	return base
+}
+
+func (m *manager) allocateEffectResourceVersion(frameID string) int64 {
+	nextRV := m.effectNextRVs[frameID]
+	m.effectNextRVs[frameID] = nextRV + 1
+	return nextRV
+}
+
+func (m *manager) advanceEffectResourceVersion(frameID, resourceKey string, obj client.Object) int64 {
 	rvs, ok := m.effectRVs[frameID]
 	if !ok {
-		return
+		return 0
 	}
 
-	var nextRV int64 = 1
-	for _, rv := range rvs {
-		if rv >= nextRV {
-			nextRV = rv + 1
-		}
-	}
+	nextRV := m.allocateEffectResourceVersion(frameID)
 	rvs[resourceKey] = nextRV
 	obj.SetResourceVersion(strconv.FormatInt(nextRV, 10))
+	return nextRV
+}
+
+func resolveEffectVersion(versionManager VersionManager, currentVersion snapshot.VersionHash, exists bool, effect Effect) (snapshot.VersionHash, bool) {
+	if !exists {
+		return effect.Version, false
+	}
+
+	oldObj := versionManager.Resolve(currentVersion)
+	newObj := versionManager.Resolve(effect.Version)
+	if effect.Subresource == "status" && (effect.OpType == event.UPDATE || effect.OpType == event.PATCH || effect.OpType == event.APPLY) {
+		merged := mergeStatusSubresourceObject(oldObj, newObj, effect.OpType == event.PATCH || effect.OpType == event.APPLY)
+		mergedVersion := versionManager.Publish(merged)
+		return mergedVersion, mergedVersion == currentVersion
+	}
+
+	switch effect.OpType {
+	case event.UPDATE, event.PATCH:
+		return effect.Version, effect.Version == currentVersion
+	case event.APPLY:
+		if oldObj != nil && newObj != nil {
+			specChanged, _ := snapshot.CheckSpecChanged(oldObj, newObj)
+			metadataChanged := !metadataEqual(oldObj, newObj)
+			return effect.Version, !specChanged && !metadataChanged
+		}
+	}
+	return effect.Version, false
 }
 
 func (m *manager) Summary() {
@@ -174,6 +223,10 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	if err != nil {
 		return err
 	}
+	// resourceVersion is API-server metadata, not part of the logical object
+	// version stored in exploration state. Keep it on the caller's object for
+	// OCC and return-value fidelity, but exclude it from content hashing.
+	u.SetResourceVersion("")
 
 	// publish the object versionHash
 	versionHash := m.Publish(u)
@@ -191,11 +244,23 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	if opType == event.GET || opType == event.LIST {
 		reffects.reads = append(reffects.reads, eff)
 	} else {
-		reffects.writes = append(reffects.writes, eff)
-		if opType != event.REMOVE {
-			resourceKey := canonicalResourceKeyString(gvk.Group, kind, obj.GetNamespace(), obj.GetName())
-			m.advanceEffectResourceVersion(frameID, resourceKey, obj)
+		resourceKey := canonicalResourceKeyString(gvk.Group, kind, obj.GetNamespace(), obj.GetName())
+		currentVersion, exists := m.effectVersions[frameID][resourceKey]
+		materializedVersion, noOp := resolveEffectVersion(m.versionStore, currentVersion, exists, eff)
+		if noOp {
+			logger.V(2).Info("accepted no-op write", "frameID", frameID, "key", resourceKey, "opType", opType)
+			return nil
 		}
+
+		if opType != event.REMOVE {
+			eff.ResourceVersion = m.advanceEffectResourceVersion(frameID, resourceKey, obj)
+			m.effectVersions[frameID][resourceKey] = materializedVersion
+		} else {
+			eff.ResourceVersion = m.allocateEffectResourceVersion(frameID)
+			delete(m.effectVersions[frameID], resourceKey)
+			delete(m.effectRVs[frameID], resourceKey)
+		}
+		reffects.writes = append(reffects.writes, eff)
 	}
 	m.effects[frameID] = reffects
 	logger.V(2).Info("recorded effects", "frameID", frameID, "numReads", len(reffects.reads), "numWrites", len(reffects.writes))
@@ -214,9 +279,11 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 	// holds kind/namespace/name
 	rKeySet := util.NewSet[string]()
 	rvs := make(map[string]int64, len(ov))
+	versions := make(map[string]snapshot.VersionHash, len(ov))
 	for ck, vh := range ov {
 		primary := canonicalResourceKeyString(ck.ResourceKey.Group, ck.ResourceKey.Kind, ck.ResourceKey.Namespace, ck.ResourceKey.Name)
 		rKeySet.Add(primary)
+		versions[primary] = vh
 		// Look up the integer RV for this object version
 		if m.rvLookup != nil {
 			if rv := m.rvLookup(vh); rv > 0 {
@@ -227,6 +294,18 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 	m.effectRKeys[frameID] = rKeySet
 	m.effectIKeys[frameID] = util.NewSet(iKeys...)
 	m.effectRVs[frameID] = rvs
+	m.effectVersions[frameID] = versions
+	baseRV := resourceVersionBaseFromContext(ctx)
+	if baseRV == 0 {
+		// Keep direct manager callers useful while production exploration always
+		// supplies the branch's authoritative state-event frontier.
+		for _, rv := range rvs {
+			if rv > baseRV {
+				baseRV = rv
+			}
+		}
+	}
+	m.effectNextRVs[frameID] = baseRV + 1
 	return nil
 }
 
@@ -235,6 +314,8 @@ func (m *manager) CleanupEffectContext(ctx context.Context) {
 	delete(m.effectRKeys, frameID)
 	delete(m.effectIKeys, frameID)
 	delete(m.effectRVs, frameID)
+	delete(m.effectVersions, frameID)
+	delete(m.effectNextRVs, frameID)
 }
 
 func (m *manager) GetEffects(ctx context.Context) (Changes, error) {

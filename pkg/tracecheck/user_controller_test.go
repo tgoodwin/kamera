@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/snapshot"
+	"github.com/tgoodwin/kamera/pkg/util"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -119,5 +121,50 @@ func TestUserActionReconciler_Reconcile_SelectsActionByRequestIndex(t *testing.T
 	}
 	if action.ID != "a1" {
 		t.Fatalf("expected action ID a1 from request index 1, got %q", action.ID)
+	}
+}
+
+func TestUserActionUpdatePayloadIsIsolatedAcrossBranches(t *testing.T) {
+	payload := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "shared"},
+		Data:       map[string]string{"desired": "value"},
+	}
+	builder := NewExplorerBuilder(runtime.NewScheme())
+	builder.WithUserActions([]UserAction{{ID: "update-shared", OpType: event.UPDATE, Payload: payload}})
+	explorer, err := builder.Build("standalone")
+	if err != nil {
+		t.Fatalf("build explorer: %v", err)
+	}
+
+	key := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "shared", "obj1")
+	branchObject := func(value string, rv int64) ObjectVersions {
+		obj := &corev1.ConfigMap{
+			TypeMeta:   metav1.TypeMeta{APIVersion: "v1", Kind: "ConfigMap"},
+			ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "shared"},
+			Data:       map[string]string{"branch": value},
+		}
+		u, convertErr := util.ConvertToUnstructured(obj)
+		if convertErr != nil {
+			t.Fatalf("convert branch object: %v", convertErr)
+		}
+		hash := explorer.versionManager.Publish(u)
+		explorer.resourceVersions[hash] = rv
+		return ObjectVersions{key: hash}
+	}
+
+	firstCtx := withResourceVersionBase(context.Background(), 5)
+	if _, err := explorer.userController.ExecuteNextAction(firstCtx, branchObject("one", 5), 0); err != nil {
+		t.Fatalf("execute first branch: %v", err)
+	}
+	if payload.GetResourceVersion() != "" {
+		t.Fatalf("first branch mutated shared payload RV to %q", payload.GetResourceVersion())
+	}
+
+	secondCtx := withResourceVersionBase(context.Background(), 9)
+	if _, err := explorer.userController.ExecuteNextAction(secondCtx, branchObject("two", 9), 0); err != nil {
+		t.Fatalf("execute second branch: %v", err)
+	}
+	if payload.GetResourceVersion() != "" {
+		t.Fatalf("second branch mutated shared payload RV to %q", payload.GetResourceVersion())
 	}
 }
