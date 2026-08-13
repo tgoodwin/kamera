@@ -7,6 +7,10 @@ badges.
 
 ## Reproduction map
 
+The [bug findings and tested revisions](bug-findings.md) page links every public
+bug report, records the status snapshot used by the paper, and identifies the
+exact CCP versions evaluated.
+
 Evaluation time estimates are with respect to an Apple M1 Pro with 16 GB RAM (2020 Macbook Pro). A warm Go module cache is
 usually much faster than a cold start run. Budget approximately **45–90 minutes** for the complete
 standard path, most of it dependency download, compilation, and simulation runs.
