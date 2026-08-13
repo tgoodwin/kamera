@@ -196,8 +196,7 @@ replace (
 	k8s.io/mount-utils => github.com/kcp-dev/kubernetes/staging/src/k8s.io/mount-utils v0.0.0-20251216144411-4b3495fdcb9d
 	k8s.io/pod-security-admission => github.com/kcp-dev/kubernetes/staging/src/k8s.io/pod-security-admission v0.0.0-20251216144411-4b3495fdcb9d
 	k8s.io/sample-apiserver => github.com/kcp-dev/kubernetes/staging/src/k8s.io/sample-apiserver v0.0.0-20251216144411-4b3495fdcb9d
-	k8s.io/sample-cli-plugin => github.com/kcp-dev/kubernetes/staging/src/k8s.io/sample-cli-plugin v0.0.0-20251216144411-4b3495fdcb9d
-	k8s.io/sample-controller => github.com/kcp-dev/kubernetes/staging/src/k8s.io/sample-controller v0.0.0-20251216144411-4b3495fdcb9d
 )
 
+// Build this nested example module against Kamera from the same checkout.
 replace github.com/tgoodwin/kamera => ../..
