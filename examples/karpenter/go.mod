@@ -122,4 +122,4 @@ require (
 
 replace github.com/tgoodwin/kamera => ../..
 
-replace sigs.k8s.io/karpenter => /Users/tgoodwin/projects/karpenter
+replace sigs.k8s.io/karpenter => ../../artifact-deps/harnesses/karpenter

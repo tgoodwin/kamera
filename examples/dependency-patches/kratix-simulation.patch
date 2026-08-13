@@ -1,0 +1,89 @@
+diff --git a/internal/controller/controllerfakes/fake_manager.go b/internal/controller/controllerfakes/fake_manager.go
+index 69a94d86..41b35cc3 100644
+--- a/internal/controller/controllerfakes/fake_manager.go
++++ b/internal/controller/controllerfakes/fake_manager.go
+@@ -20,0 +21,2 @@ import (
++	"k8s.io/client-go/tools/events"
++	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
+@@ -1279,0 +1282,8 @@ func (fake *FakeManager) recordInvocation(key string, args []interface{}) {
++func (fake *FakeManager) GetConverterRegistry() conversion.Registry {
++	return nil
++}
++
++func (fake *FakeManager) GetEventRecorder(name string) events.EventRecorder {
++	return nil
++}
++
+diff --git a/internal/controller/promise_controller.go b/internal/controller/promise_controller.go
+index f2cdc011..5f05e87b 100644
+--- a/internal/controller/promise_controller.go
++++ b/internal/controller/promise_controller.go
+@@ -350 +350,2 @@ func (r *PromiseReconciler) handlePromiseVersion(ctx context.Context, promise *v
+-			Name: fmt.Sprintf("%s-%s", promise.GetName(), promiseVersion),
++			Name:      fmt.Sprintf("%s-%s", promise.GetName(), promiseVersion),
++			Namespace: promise.GetNamespace(),
+@@ -362,2 +363,6 @@ func (r *PromiseReconciler) handlePromiseVersion(ctx context.Context, promise *v
+-
+-		return controllerutil.SetControllerReference(promise, revision, scheme.Scheme)
++		owner := promise
++		if promise.GetNamespace() != "" {
++			owner = promise.DeepCopy()
++			owner.SetNamespace("")
++		}
++		return controllerutil.SetControllerReference(owner, revision, scheme.Scheme)
+@@ -1129 +1134 @@ func (r *PromiseReconciler) ensureCRDExists(ctx context.Context, promise *v1alph
+-	statusUpdated, err := r.updateStatus(promise, rrCRD.Spec.Names.Kind, rrCRD.Spec.Group, version)
++	statusUpdated, err := r.updateStatus(ctx, promise, rrCRD.Spec.Names.Kind, rrCRD.Spec.Group, version)
+@@ -1155 +1160 @@ func (r *PromiseReconciler) ensureCRDExists(ctx context.Context, promise *v1alph
+-func (r *PromiseReconciler) updateStatus(promise *v1alpha1.Promise, kind, group, version string) (bool, error) {
++func (r *PromiseReconciler) updateStatus(ctx context.Context, promise *v1alpha1.Promise, kind, group, version string) (bool, error) {
+@@ -1163 +1168 @@ func (r *PromiseReconciler) updateStatus(promise *v1alpha1.Promise, kind, group,
+-	return true, r.Client.Status().Update(context.TODO(), promise)
++	return true, r.Client.Status().Update(ctx, promise)
+@@ -1617 +1622 @@ func (r *PromiseReconciler) applyWorkForStaticDependencies(o opts, promise *v1al
+-	existingWork, err := resourceutil.GetWork(r.Client, v1alpha1.SystemNamespace, work.GetLabels())
++	existingWork, err := resourceutil.GetWorkWithContext(o.ctx, r.Client, v1alpha1.SystemNamespace, work.GetLabels())
+@@ -1651 +1656 @@ func (r *PromiseReconciler) deleteWorkForStaticDependencies(o opts, promise *v1a
+-	existingWork, err := resourceutil.GetWork(r.Client, v1alpha1.SystemNamespace, labels)
++	existingWork, err := resourceutil.GetWorkWithContext(o.ctx, r.Client, v1alpha1.SystemNamespace, labels)
+diff --git a/internal/controller/shared.go b/internal/controller/shared.go
+index 94e5722f..b822adf4 100644
+--- a/internal/controller/shared.go
++++ b/internal/controller/shared.go
+@@ -51,0 +52,14 @@ var (
++// SetStateStoreWriterFactories overrides the state store writer constructors for tests/examples.
++// Pass nil to leave the existing constructor unchanged.
++func SetStateStoreWriterFactories(
++	s3 func(logr.Logger, v1alpha1.BucketStateStoreSpec, string, map[string][]byte) (writers.StateStoreWriter, error),
++	git func(logr.Logger, v1alpha1.GitStateStoreSpec, string, map[string][]byte) (writers.StateStoreWriter, error),
++) {
++	if s3 != nil {
++		newS3Writer = s3
++	}
++	if git != nil {
++		newGitWriter = git
++	}
++}
++
+diff --git a/lib/resourceutil/work.go b/lib/resourceutil/work.go
+index 533f648d..015f6b6f 100644
+--- a/lib/resourceutil/work.go
++++ b/lib/resourceutil/work.go
+@@ -64,2 +64,2 @@ func GetWorksByType(k8sClient client.Client, workflowType v1alpha1.Type, obj *un
+-func GetWork(k8sClient client.Client, namespace string, labels map[string]string) (*v1alpha1.Work, error) {
+-	works, err := getExistingWorks(k8sClient, namespace, labels)
++func GetWorkWithContext(ctx context.Context, k8sClient client.Client, namespace string, labels map[string]string) (*v1alpha1.Work, error) {
++	works, err := getExistingWorksWithContext(ctx, k8sClient, namespace, labels)
+@@ -81,0 +82,4 @@ func GetWork(k8sClient client.Client, namespace string, labels map[string]string
++func GetWork(k8sClient client.Client, namespace string, labels map[string]string) (*v1alpha1.Work, error) {
++	return GetWorkWithContext(context.Background(), k8sClient, namespace, labels)
++}
++
+@@ -82,0 +87,4 @@ func getExistingWorks(k8sClient client.Client, namespace string, workLabels map[
++	return getExistingWorksWithContext(context.Background(), k8sClient, namespace, workLabels)
++}
++
++func getExistingWorksWithContext(ctx context.Context, k8sClient client.Client, namespace string, workLabels map[string]string) ([]v1alpha1.Work, error) {
+@@ -89 +97 @@ func getExistingWorks(k8sClient client.Client, namespace string, workLabels map[
+-	err = k8sClient.List(context.Background(), &works, &client.ListOptions{
++	err = k8sClient.List(ctx, &works, &client.ListOptions{

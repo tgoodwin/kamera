@@ -113,4 +113,4 @@ require (
 
 replace github.com/tgoodwin/kamera => ../..
 
-replace github.com/kubernetes-sigs/kro => /Users/tgoodwin/projects/kro
+replace github.com/kubernetes-sigs/kro => ../../artifact-deps/harnesses/kro

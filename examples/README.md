@@ -1,18 +1,17 @@
 # Examples
 
 Most harnesses live in-tree under their respective subdirectories. The KCP
-harness is checked in at `examples/kcp`. The Cluster API harness lives in a
-fork of the upstream project and is accessed through an intentionally
-untracked local symlink:
+harness is checked in at `examples/kcp`.
 
-| Path                   | Expected target                             |
-| ---------------------- | ------------------------------------------- |
-| `examples/cluster-api` | local checkout of `cluster-api/test/kamera` |
-
-To set them up, clone the relevant fork and symlink it in, e.g.:
+The Karpenter, Kratix, and KRO harnesses exercise small simulation adapters
+against pinned upstream revisions. Reconstruct those source dependencies with:
 
 ```sh
-ln -s /path/to/cluster-api/test/kamera examples/cluster-api
+make setup-harness-deps
 ```
 
-The path is listed in `.gitignore` so the symlink stays local.
+The command clones the pinned revisions into the ignored
+`artifact-deps/harnesses/` directory. It applies the existing artifact patches
+for Karpenter and KRO plus the checked-in Kratix harness patch. It is
+idempotent and rejects a checkout whose revision or working-tree changes do
+not match the recorded inputs. No machine-specific paths are required.
