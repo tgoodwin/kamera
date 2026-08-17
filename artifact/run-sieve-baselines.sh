@@ -38,10 +38,16 @@ output_root="${2:-artifact-results/table6-sieve-$(date +%Y%m%d-%H%M%S)}"
 [[ "$output_root" = /* ]] || output_root="$PWD/$output_root"
 python="${KAMERA_AE_SIEVE_PYTHON:-python3}"
 registry="${KAMERA_AE_SIEVE_REGISTRY:-ghcr.io/sieve-project/action}"
+script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SIEVE_CSI_MANIFEST_DIR="${SIEVE_CSI_MANIFEST_DIR:-$script_root/sieve/manifests}"
 expected_sieve_commit="6c97abeb79e644fa5eda889a2c174b2436dbc264"
 
 if [[ ! -f "$sieve_root/reproduce_bugs.py" ]]; then
   echo "Sieve checkout not found at $sieve_root" >&2
+  exit 1
+fi
+if [[ ! -d "$SIEVE_CSI_MANIFEST_DIR" ]]; then
+  echo "vendored CSI manifest directory not found: $SIEVE_CSI_MANIFEST_DIR" >&2
   exit 1
 fi
 actual_sieve_commit="$(git -C "$sieve_root" rev-parse HEAD)"

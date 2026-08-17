@@ -97,9 +97,10 @@ kind get clusters
 The repository includes a small patch that uses PyYAML's supported safe loader,
 makes Sieve's server build target configurable, and lets the caller select an
 instrumented kind node image. It also matches Sieve's bundled v4.1.1 hostpath
-CSI driver with the corresponding snapshot CRDs and makes two `sleep` calls
-portable to macOS. Apply it from the Sieve checkout, replacing
-`/path/to/kamera` with the artifact checkout:
+CSI driver with the corresponding snapshot CRDs, uses the artifact's vendored
+CSI manifests instead of GitHub Raw, and fails before changing the default
+StorageClass if CSI setup is incomplete. Apply it from the Sieve checkout,
+replacing `/path/to/kamera` with the artifact checkout:
 
 ```bash
 git apply /path/to/kamera/artifact/sieve/apple-silicon.patch
@@ -126,8 +127,18 @@ All four images are `linux/arm64`. Their published manifest digests are:
 | `rabbitmq-operator:test` | `sha256:8472f7abb71b5e8cb55431348de34ce4b899157ff0c848f64bd95f5b785e7a1e` |
 | `cass-operator:test` | `sha256:16fccdbcb912ea289e9b54e66b8e91f26589510939eb0c5ad29f40aca89d9089` |
 
-Keep the three exported variables set when invoking either Sieve directly or
-the Kamera wrapper. The patch changes no fault plans or oracles.
+Keep the three exported variables set when invoking the Kamera wrapper. The
+wrapper automatically sets `SIEVE_CSI_MANIFEST_DIR` to its vendored manifest
+directory. If invoking Sieve directly, also export its absolute path:
+
+```bash
+export SIEVE_CSI_MANIFEST_DIR=/absolute/path/to/kamera/artifact/sieve/manifests
+```
+
+The patch changes no fault plans or oracles. The ten CSI manifests are pinned
+and attributed in
+[`artifact/sieve/manifests`](manifests/README.md); the CSI installer makes no
+GitHub Raw requests when this directory is set.
 
 ## 2. Optional: validate the environment with one row
 
@@ -210,6 +221,10 @@ all rows because the rows use only these three controller families.
 
 - If cluster creation fails, run `kind delete cluster --name kind`, confirm the
   Docker daemon has enough CPU and memory, and retry that row.
+- If CSI setup fails, confirm `SIEVE_CSI_MANIFEST_DIR` is an absolute path to
+  `artifact/sieve/manifests`. The patched installer checks all ten files and
+  waits for the hostpath and snapshot-controller workloads before changing the
+  default StorageClass.
 - An image-pull denial means registry authentication is missing; log in to
   `ghcr.io` and retry.
 - Preserve `sieve_test_results`, `bug_reproduction_stats.tsv`, the wrapper log,
