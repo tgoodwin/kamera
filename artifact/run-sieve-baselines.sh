@@ -3,7 +3,7 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: ./artifact/run-sieve-baselines.sh [--dry-run] <sieve-checkout> [output-root]
+usage: ./artifact/run-sieve-baselines.sh [--dry-run] [--only <experiment>] <sieve-checkout> [output-root]
 
 Runs the 11 Table 6 baselines through Sieve's real kind-cluster reproducer.
 See artifact/sieve/README.md before running; Sieve deletes the kind cluster
@@ -13,10 +13,23 @@ EOF
 }
 
 dry_run=false
-if [[ "${1:-}" == "--dry-run" ]]; then
-  dry_run=true
-  shift
-fi
+only_experiment=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run)
+      dry_run=true
+      shift
+      ;;
+    --only)
+      [[ $# -ge 2 ]] || usage
+      only_experiment="$2"
+      shift 2
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
 [[ $# -ge 1 && $# -le 2 ]] || usage
 
 sieve_root="$1"
@@ -52,6 +65,21 @@ rows=(
   $'cass/intermediate-state-1\tcass-operator\tintermediate-state-1\t842'
   $'cass/intermediate-state-2\tcass-operator\tintermediate-state-2\t428'
 )
+
+if [[ -n "$only_experiment" ]]; then
+  selected_rows=()
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r experiment _ <<<"$row"
+    if [[ "$experiment" == "$only_experiment" ]]; then
+      selected_rows+=("$row")
+    fi
+  done
+  if [[ ${#selected_rows[@]} -eq 0 ]]; then
+    echo "unknown experiment: $only_experiment" >&2
+    exit 2
+  fi
+  rows=("${selected_rows[@]}")
+fi
 
 if [[ "$dry_run" == true ]]; then
   for row in "${rows[@]}"; do

@@ -45,16 +45,31 @@ cd sieve
 git checkout 6c97abeb79e644fa5eda889a2c174b2436dbc264
 ```
 
-Create an isolated Python environment. Python 3.7 is the version in Sieve's
-bug-reproduction workflow; newer Python releases may not build the pinned
-packages in `requirements.txt`.
+On Apple Silicon, create an isolated native Python 3.11 environment and install
+the artifact's reproduction-only requirements. They retain Sieve's runtime
+pins, update PyYAML for modern Python, constrain `requests` and `urllib3` for
+Sieve's Docker SDK, and omit `pysqlite3`, which Sieve uses only in learning
+mode:
 
 ```bash
-python3.7 -m venv .venv
+python3.11 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install \
+  -r /path/to/kamera/artifact/sieve/requirements-reproduce.txt
 python check_env.py
 ```
+
+On Linux x86-64, Python 3.7 with `pip install -r requirements.txt` remains the
+closest configuration to Sieve's original workflow. It is not the recommended
+Apple Silicon route: Python 3.7 has no native arm64 build, and installing an
+Intel build adds Rosetta without avoiding Sieve's other compatibility fixes.
+The native Python 3.11 environment above was validated by this artifact
+workflow.
+
+On newer Go releases, `check_env.py` may warn while parsing `go env` entries
+whose values contain `=`. If `go version` succeeds and `GOPATH` is exported,
+that parser warning does not prevent reproduction.
 
 If the registry requires authentication:
 
@@ -77,10 +92,12 @@ kind get clusters
 
 ### Apple Silicon setup
 
-The repository includes a small patch that makes Sieve's server build target
-configurable and lets the caller select an instrumented kind node image. Apply
-it from the Sieve checkout, replacing `/path/to/kamera` with the artifact
-checkout:
+The repository includes a small patch that uses PyYAML's supported safe loader,
+makes Sieve's server build target configurable, and lets the caller select an
+instrumented kind node image. It also matches Sieve's bundled v4.1.1 hostpath
+CSI driver with the corresponding snapshot CRDs and makes two `sleep` calls
+portable to macOS. Apply it from the Sieve checkout, replacing
+`/path/to/kamera` with the artifact checkout:
 
 ```bash
 git apply /path/to/kamera/artifact/sieve/apple-silicon.patch
@@ -112,19 +129,22 @@ the Kamera wrapper. The patch changes no fault plans or oracles.
 
 ## 2. Kick the tires with one row
 
-From the Sieve checkout, run RabbitMQ intermediate-state-1:
+From the Kamera checkout, run RabbitMQ intermediate-state-1 through the same
+wrapper used for the full matrix. This row also checks the CSI setup:
 
 ```bash
-python3 reproduce_bugs.py \
-  -c rabbitmq-operator \
-  -b intermediate-state-1 \
-  -r "${KAMERA_AE_SIEVE_REGISTRY:-ghcr.io/sieve-project/action}"
+./artifact/run-sieve-baselines.sh \
+  --only rmq/intermediate-state-1 \
+  /absolute/path/to/sieve
 ```
 
-Sieve should report the PVC storage mismatch, write
-`bug_reproduction_stats.tsv`, and place the detailed JSON under
-`sieve_test_results/`. The result JSON contains both `duration` and
-`number_errors`.
+Sieve should finish with `reproduced=True` and report that the RabbitMQ PVC
+remained at `10Gi` instead of the requested `15Gi`. It writes
+`bug_reproduction_stats.tsv` and places the detailed JSON under
+`sieve_test_results/`; the result JSON contains both `duration` and
+`number_errors`. Additional schema differences are expected when the arm64
+Kubernetes 1.24 image is compared with Sieve's stored reference state, so use
+the PVC mismatch—not the raw inconsistency count—as the row-specific check.
 
 Each invocation replaces `sieve_test_results`, so copy results before starting
 another row. The Kamera wrapper below does that automatically.

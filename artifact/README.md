@@ -201,8 +201,9 @@ The [Section 6.1 guide](section61/README.md) gives the exact checks.
   the configured run does not converge. The LLM-driven bug search process
   itself is excluded.
 - **Real-cluster Sieve baselines:** optional because they require Docker, kind,
-  kubectl, a legacy Python/Go toolchain, container-registry access, and several
-  hours. They are nevertheless documented and runnable for every Table 6 row.
+  kubectl, a separate Python/Go environment, container-registry access, and
+  several hours. They are nevertheless documented and runnable for every
+  Table 6 row.
 
 ## Results and troubleshooting
 
