@@ -1,0 +1,35 @@
+diff --git a/sieve.py b/sieve.py
+index d5b87539..0dac37ba 100644
+--- a/sieve.py
++++ b/sieve.py
+@@ -218,6 +218,7 @@ def prepare_sieve_server(test_context: TestContext):
+     os.chdir("sieve_server")
+     os_system("go mod tidy")
+     # TODO: we should build a container image for sieve server.
+-    os_system("env GOOS=linux GOARCH=amd64 go build")
++    sieve_server_goarch = os.environ.get("SIEVE_SERVER_GOARCH", "amd64")
++    os_system("env GOOS=linux GOARCH={} go build".format(sieve_server_goarch))
+     os.chdir(org_dir)
+     os_system("docker cp sieve_server kind-control-plane:/sieve_server")
+@@ -251,6 +252,10 @@ def setup_kind_cluster(test_context: TestContext):
+     k8s_image_tag = (
+         test_context.controller_config.kubernetes_version + "-" + platform + test_context.image_tag
+     )
++    kind_image = os.environ.get(
++        "SIEVE_KIND_IMAGE",
++        "{}/node:{}".format(k8s_container_registry, k8s_image_tag),
++    )
+     retry_cnt = 0
+     # Retry cluster creation for 5 times.
+     while retry_cnt < 5:
+@@ -266,8 +271,8 @@ def setup_kind_cluster(test_context: TestContext):
+                 )
+             retry_cnt += 1
+             os_system(
+-                "kind create cluster --image {}/node:{} --config {}".format(
+-                    k8s_container_registry, k8s_image_tag, kind_config
++                "kind create cluster --image {} --config {}".format(
++                    kind_image, kind_config
+                 )
+             )
+             os_system(

@@ -61,9 +61,12 @@ if ! cmp -s <(git -C "$karpenter_dir" diff --binary --unified=0 --abbrev=8) "$ka
   exit 1
 fi
 
+"$repo_root/artifact/setup-figure8-kro-deps.sh" "$deps_root/kro"
+
 cat <<EOF
 Section 6.1 source dependencies are ready:
   KCP:       $kcp_dir ($kcp_sha)
+  KRO-2:     $deps_root/kro (pinned Kamera and KRO adapter)
   Karpenter: $karpenter_dir ($karpenter_sha + pinned adapter)
 
 Run:

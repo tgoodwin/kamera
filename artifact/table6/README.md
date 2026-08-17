@@ -36,11 +36,12 @@ The runner uses `--parallel-processes` and selects input index 1 so the
 perturbed scenario runs alone. This prevents process-global simulator state
 from leaking between the baseline and perturbation.
 
-The generated `status` column describes exploration completion, not whether a
-separate outcome checker passed. Cassandra intermediate-state-1 reports
-`expected-depth-limit`: its incomplete keystore sequence leaves recurring
-controller work, corresponding to Sieve's Pod-readiness timeout. Any other
-`partial` result is unexpected and should be inspected.
+The generated `status` column describes exploration completion, not whether
+the configured bug mechanism occurred. A `partial` or `expected-depth-limit`
+row can still provide the intended evidence: some bugs leave recurring work,
+and some schedules deliberately retain a bounded prefix around the fault.
+Use the row-specific evidence below and inspect the trace when the completion
+status differs across hosts; do not treat convergence alone as the oracle.
 
 ## Evidence represented by each scenario
 
@@ -73,3 +74,11 @@ configuration loss.
 
 Reviewers can inspect every complete trace manually. The Table 6 timing claim
 does not depend on treating convergence itself as an outcome oracle.
+
+## Optional real-cluster Sieve baselines
+
+To rerun the comparison side with Sieve itself, including its kind-cluster
+startup, controller execution, fault injection, oracle, and teardown, follow
+the [Sieve baseline guide](../sieve/README.md). Those runs are intentionally
+separate from `run-table6.sh` because their legacy toolchain, container images,
+and multi-minute measurement boundary are different from Kamera's simulator.

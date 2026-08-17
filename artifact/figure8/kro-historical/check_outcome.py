@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the directly observable outcome in the KRO-2 paper-snapshot trace."""
+"""Check the directly observable outcome in the configured KRO-2 trace."""
 
 import argparse
 import json
@@ -76,13 +76,10 @@ def main():
         "terminalChildKinds": child_kinds,
         "observable": (
             "after the configured two-effect interruption, the terminal "
-            "paper-snapshot partial trace has an Application without spec and no "
+            "partial trace has an Application without spec and no "
             "Deployment, Service, or Ingress"
         ),
-        "scope": (
-            "paper-snapshot replacement-like apply semantics; this does not assess "
-            "the later schema-backed apply prototype"
-        ),
+        "scope": "bounded outcome reproduction; the configured run does not converge",
     }
 
     if args.json:

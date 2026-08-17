@@ -17,6 +17,7 @@ fi
 deps_root="${KAMERA_AE_DEPS_DIR:-$repo_root/artifact-deps/section61}"
 default_kcp_dir="$deps_root/kcp"
 default_karpenter_dir="$deps_root/karpenter"
+default_kro_deps="$deps_root/kro"
 if [[ -z "${KAMERA_AE_DEPS_DIR:-}" ]]; then
   if [[ ! -e "$default_kcp_dir" && -e "$repo_root/artifact-deps/figure8/kcp/kcp" ]]; then
     default_kcp_dir="$repo_root/artifact-deps/figure8/kcp/kcp"
@@ -24,9 +25,13 @@ if [[ -z "${KAMERA_AE_DEPS_DIR:-}" ]]; then
   if [[ ! -e "$default_karpenter_dir" && -e "$repo_root/artifact-deps/figure8/kar/karpenter" ]]; then
     default_karpenter_dir="$repo_root/artifact-deps/figure8/kar/karpenter"
   fi
+  if [[ ! -e "$default_kro_deps/kro" && -e "$repo_root/artifact-deps/figure8/kro/kro" ]]; then
+    default_kro_deps="$repo_root/artifact-deps/figure8/kro"
+  fi
 fi
 kcp_dir="${KAMERA_AE_KCP_DIR:-$default_kcp_dir}"
 karpenter_dir="${KAMERA_AE_KARPENTER_DIR:-$default_karpenter_dir}"
+kro_deps="${KAMERA_AE_KRO_DEPS_DIR:-$default_kro_deps}"
 kcp_harness="$repo_root/artifact/section61/kcp-harness"
 karpenter_harness="$repo_root/examples/karpenter"
 kcp_sha="301a8f749e7b99a0c81f43b37aa5b5e5ff0fc0b4"
@@ -95,6 +100,12 @@ go run "$repo_root/cmd/kamera" analyze campaign-metrics \
 python3 "$repo_root/artifact/section61/check_oracles.py" kcp4 \
   "$output_root/kcp4/dump.jsonl" --json >"$output_root/kcp4/oracle.json"
 
+echo "running KRO-2"
+KAMERA_AE_KRO_DEPS_DIR="$kro_deps" \
+KAMERA_AE_HISTORICAL_KAMERA_DIR="$kro_deps/kamera-paper" \
+KAMERA_AE_KRO_DIR="$kro_deps/kro" \
+  "$repo_root/artifact/run-figure8-kro-historical.sh" focused "$output_root/kro2"
+
 echo "building KAR-12 harness"
 (
   cd "$karpenter_harness"
@@ -131,13 +142,17 @@ fi
 python3 "$repo_root/artifact/section61/check_oracles.py" kar12 \
   "${kar_dumps[@]}" --json >"$output_root/kar12/oracle.json"
 
-printf 'case\tstatus\tconverged_states\toracle\n' >"$output_root/section61.tsv"
-python3 - "$output_root/kcp4/oracle.json" "$output_root/kar12/oracle.json" \
+printf 'case\tstatus\tconverged_states\toracle\tscope\n' >"$output_root/section61.tsv"
+python3 - \
+  "$output_root/kcp4/oracle.json" \
+  "$output_root/kro2/focused/outcome.json" \
+  "$output_root/kar12/oracle.json" \
   >>"$output_root/section61.tsv" <<'PY'
 import json
 import sys
 
-for path in sys.argv[1:]:
+scopes = ("converged", "bounded-outcome", "converged")
+for path, scope in zip(sys.argv[1:], scopes):
     with open(path) as source:
         result = json.load(source)
     print("\t".join((
@@ -145,6 +160,7 @@ for path in sys.argv[1:]:
         result["status"],
         str(result["convergedStates"]),
         result["observable"],
+        scope,
     )))
 PY
 

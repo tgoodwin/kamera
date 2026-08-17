@@ -53,7 +53,7 @@ if [[ "$(git -C "$kro_dir" rev-parse HEAD)" != "$kro_sha" ]]; then
   exit 1
 fi
 if ! cmp -s <(git -C "$kro_dir" diff --binary --unified=0 --abbrev=8) "$kro_patch"; then
-  echo "KRO source does not contain exactly the pinned paper-era adapter" >&2
+  echo "KRO source does not contain exactly the pinned KRO-2 adapter" >&2
   exit 1
 fi
 
@@ -65,7 +65,7 @@ go mod edit -modfile="$output_root/build/kro.mod" \
   -replace="github.com/tgoodwin/kamera=$kamera_dir" \
   -replace="github.com/kubernetes-sigs/kro=$kro_dir"
 
-echo "building pinned KRO-2 paper-snapshot harness"
+echo "building pinned KRO-2 harness"
 (
   cd "$harness"
   go build -modfile="$output_root/build/kro.mod" -o "$output_root/bin/kro-historical" .

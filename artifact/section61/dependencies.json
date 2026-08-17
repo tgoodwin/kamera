@@ -1,11 +1,18 @@
 {
-  "format": "kamera-section61-dependencies-v1",
+  "format": "kamera-section61-dependencies-v2",
   "repositories": [
     {
       "name": "KCP",
       "url": "https://github.com/kcp-dev/kcp.git",
       "commit": "301a8f749e7b99a0c81f43b37aa5b5e5ff0fc0b4",
       "localChanges": "none"
+    },
+    {
+      "name": "KRO",
+      "url": "https://github.com/kro-run/kro.git",
+      "commit": "c9320ee963f745637bb622f6b68853a870187d20",
+      "patch": "../figure8/kro-historical/kro-simulation.patch",
+      "patchSha256": "e35bc275e00dfb28ab1c989b05d450ef4fae421037938c8f11732ae7cc6dbde9"
     },
     {
       "name": "Karpenter",
@@ -18,5 +25,10 @@
   "kcpHarness": {
     "path": "kcp-harness",
     "sourceCommit": "4f5f41b1ad3127f85be62e231bb0630553b8a245"
+  },
+  "kroBoundedRun": {
+    "kameraCommit": "1c85e5b89fa46cc8470dbd63159d6640921fdeee",
+    "scenario": "../figure8/kro-historical/k2b-tuning-v1.json",
+    "scope": "bounded outcome reproduction; the configured run does not converge"
   }
 }
