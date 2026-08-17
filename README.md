@@ -25,8 +25,14 @@ The general process is:
 
 1. Clone `sieve-project/sieve` and check out the pinned revision
    `6c97abeb79e644fa5eda889a2c174b2436dbc264`.
-2. Install Sieve's Python dependencies in a virtual environment and complete
-   the platform-specific image setup from the guide.
+2. Create Sieve's Python environment, then complete the platform-specific
+   image setup from the guide:
+
+   ```bash
+   ./artifact/setup-sieve-python.sh /absolute/path/to/sieve
+   ```
+
+   The baseline runner automatically uses the resulting virtual environment.
 3. Return to the Kamera repository root and validate the environment with one
    RabbitMQ row:
 

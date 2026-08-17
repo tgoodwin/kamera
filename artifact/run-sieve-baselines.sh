@@ -36,7 +36,13 @@ sieve_root="$1"
 [[ "$sieve_root" = /* ]] || sieve_root="$PWD/$sieve_root"
 output_root="${2:-artifact-results/table6-sieve-$(date +%Y%m%d-%H%M%S)}"
 [[ "$output_root" = /* ]] || output_root="$PWD/$output_root"
-python="${KAMERA_AE_SIEVE_PYTHON:-python3}"
+if [[ -n "${KAMERA_AE_SIEVE_PYTHON:-}" ]]; then
+  python="$KAMERA_AE_SIEVE_PYTHON"
+elif [[ -x "$sieve_root/.venv/bin/python" ]]; then
+  python="$sieve_root/.venv/bin/python"
+else
+  python="python3"
+fi
 registry="${KAMERA_AE_SIEVE_REGISTRY:-ghcr.io/sieve-project/action}"
 script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 python_path="$(command -v "$python" 2>/dev/null || true)"

@@ -48,31 +48,26 @@ cd sieve
 git checkout 6c97abeb79e644fa5eda889a2c174b2436dbc264
 ```
 
-On Apple Silicon, create an isolated native Python 3.11 environment and install
-the artifact's reproduction-only requirements. They retain Sieve's runtime
-pins, update PyYAML for modern Python, constrain `requests` and `urllib3` for
-Sieve's Docker SDK, and omit `pysqlite3`, which Sieve uses only in learning
-mode:
+Return to the Kamera checkout and run the Python setup helper:
 
 ```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install \
-  -r /path/to/kamera/artifact/sieve/requirements-reproduce.txt
-python check_env.py
+./artifact/setup-sieve-python.sh /absolute/path/to/sieve
 ```
 
-On Linux x86-64, Python 3.7 with `pip install -r requirements.txt` remains the
-closest configuration to Sieve's original workflow. It is not the recommended
-Apple Silicon route: Python 3.7 has no native arm64 build, and installing an
-Intel build adds Rosetta without avoiding Sieve's other compatibility fixes.
-The native Python 3.11 environment above was validated by this artifact
-workflow.
+The helper creates `/absolute/path/to/sieve/.venv`, installs the appropriate
+requirements, and checks the installed package set. The baseline runner finds
+this environment automatically; shell activation is not required. Re-running
+the helper updates the same environment.
 
-On newer Go releases, `check_env.py` may warn while parsing `go env` entries
-whose values contain `=`. If `go version` succeeds and `GOPATH` is exported,
-that parser warning does not prevent reproduction.
+On Apple Silicon, the helper uses native Python 3.11 and the artifact's
+reproduction-only requirements. They retain Sieve's runtime pins, update
+PyYAML for modern Python, constrain `requests` and `urllib3` for Sieve's Docker
+SDK, and omit `pysqlite3`, which Sieve uses only in learning mode. On Linux
+x86-64, it uses Python 3.7 and Sieve's original `requirements.txt`. Override
+the interpreter with `KAMERA_AE_SIEVE_BOOTSTRAP_PYTHON` if it is installed
+under another name. Python 3.7 is not recommended on Apple Silicon: it has no
+native arm64 build, and an Intel build adds Rosetta without avoiding Sieve's
+other compatibility fixes.
 
 If the registry requires authentication:
 
