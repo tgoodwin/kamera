@@ -20,7 +20,8 @@ standard path, most of it dependency download, compilation, and simulation runs.
 | Functional smoke check | `./artifact/smoke-test.sh` | 1–2 min | build, run simulation to convergence, run oracle check over produced trace |
 | Table 6 | `./artifact/run-table6.sh` | 5–15 min | 11 perturbed-run durations, traces, status table |
 | Figure 8 | setup, then `./artifact/reproduce-figure8.sh` | 20–60 min including setup | 3 experimental reproductions + plotting |
-| Section 6.1 | setup, then `./artifact/reproduce-section61.sh` | 10–30 min | 2 selected bug reproductions exhibiting oracle results |
+| Section 6.1 | setup, then `./artifact/reproduce-section61.sh` | 15–40 min | all 3 case studies, including KRO-2 |
+| Optional Sieve baselines | follow the [Sieve guide](sieve/README.md) | approximately 1.5–2 hours | real kind-cluster Sieve runs for all 11 Table 6 rows |
 
 The Figure 8 reproduction workflow reruns every exhaustive baseline in addition to the tuned executions. One of the 3 experiments in Figure 8 is reported in the paper to time out after 2 hours. Thus, it takes up to two hours following the paper's two-hour exhaustive search timeout. We provide a pre-generated trace for this 2-hour exhaustive baseline if evaluators choose to not regenerate the exhaustive search trace until the 2 hour timeout fires. See the [Figure 8 guide](figure8/README.md).
 
@@ -123,9 +124,10 @@ To run one row:
 ./artifact/run-experiment.sh cass/intermediate-state-2
 ```
 
-Success means all 11 rows have an expected status and a recorded perturbed-run
-duration. See the [Table 6 guide](table6/README.md) for exact outcome checks and
-timing semantics.
+Success means all 11 rows produced a trace and a recorded perturbed-run
+duration. Completion status is diagnostic and is not the bug oracle. See the
+[Table 6 guide](table6/README.md) for row-specific evidence and timing
+semantics.
 
 ### 2. Reproduce Figure 8
 
@@ -161,11 +163,11 @@ experiment-specific Kamera revisions are in the
 
 ### 3. Reproduce the directly scriptable Section 6.1 outcomes
 
-This runs two selected bugs: KCP-4 and KAR-12 simulations, verifies campaign completion,
-and applies deterministic final-state checks. Success prints two `PASS` rows
-and writes traces, logs, oracle JSON, and `section61.tsv`.
+This runs KCP-4, KRO-2, and KAR-12 and applies deterministic outcome checks.
+Success prints `PASS` for all three cases, then writes traces, logs, oracle
+JSON, and `section61.tsv`.
 
-If the Figure 8 setup above has already run, its pinned KCP and Karpenter
+If the Figure 8 setup above has already run, its pinned KCP, KRO, and Karpenter
 checkouts are reused automatically:
 
 ```bash
@@ -180,21 +182,25 @@ For a standalone Section 6.1 run, set up those dependencies first:
 ```
 
 The process of *finding* the new bugs that we ultimately report in Section 6.1 was best effort, driven by an LLM,
-and thus inherently not reproducible via a deterministic script. Instead, the reproducable claim here is that the reported
+and thus inherently not reproducible via a deterministic script. Instead, the reproducible claim here is that the reported
 configurations for found bugs execute in Kamera and that their stated observable outcomes occur in the executions.
 The [Section 6.1 guide](section61/README.md) gives the exact checks.
 
 ## Notes on reproduction claims
 
 - **Table 6:** the reported number is perturbed Kamera execution time. Baseline
-  execution and real-cluster Sieve time are not included. We can optionally provide instructions to run Sieve's own reproducer scripts if desired, but it requires installing the additional dependencies of a different research project.
+  execution and real-cluster Sieve time are not included. The optional
+  [Sieve guide](sieve/README.md) reruns all 11 comparison rows using Sieve's
+  real kind-cluster workflow and preserves its separate timing boundary.
 - **Figure 8:** fresh local executions establish all three agent-selected
   outcomes. Archived raw exhaustive outputs reproduce the paper panels through
   the same extraction and plotting path; the extended command recomputes them.
-- **Section 6.1:** KCP-4 and KAR-12 configurations rerun and check their
-  observable outcomes; the LLM-driven bug search process itself is excluded.
-- **Real-cluster Sieve baselines:** not included for these primary reproduction
-  targets, although we can provide additional instructinons for doing so. Running them requires Docker, kind, kubectl, and a Sieve checkout.
+- **Section 6.1:** all three configurations rerun and check their observable
+  outcomes. The LLM-driven bug search process itself is excluded.
+- **Real-cluster Sieve baselines:** optional because they require Docker, kind,
+  kubectl, a separate Python/Go environment, container-registry access, and
+  approximately 1.5–2 hours. They are nevertheless documented and runnable
+  for every Table 6 row.
 
 ## Results and troubleshooting
 
@@ -207,8 +213,8 @@ The [Section 6.1 guide](section61/README.md) gives the exact checks.
   ```
 
 - For Table 6, exploration completion and the per-scenario observable are
-  reported separately. One documented row has the expected status
-  `expected-depth-limit`.
+  reported separately. Partial and max-depth results are diagnostic metadata,
+  not automatic failures; use the row-specific evidence in the Table 6 guide.
 - Inspect any unexpected partial trace with:
 
   ```bash

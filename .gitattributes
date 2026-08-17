@@ -1,0 +1,2 @@
+artifact/sieve/*.patch -whitespace
+artifact/sieve/manifests/*.yaml -whitespace

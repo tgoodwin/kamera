@@ -19,37 +19,21 @@
     {
       "path": "k2b-tuning-v1.json",
       "sha256": "0361fd9d6bfdc6d655ed8a354d90baebe9e40ecc2ddedf99646ffe6ac518dfad",
-      "purpose": "first focused paper-snapshot reproduction"
+      "purpose": "first focused KRO-2 reproduction"
     },
     {
       "path": "k2b-exhaustive.json",
       "sha256": "9d3c502d73620df584cf7a16ffa344f9c01ac00cc302565afc1f06da59deea22",
-      "purpose": "paper-snapshot exhaustive campaign"
+      "purpose": "KRO-2 exhaustive campaign"
     }
   ],
-  "laterSemanticChange": {
-    "pullRequest": "https://github.com/tgoodwin/kamera/pull/83",
-    "commit": "636fbb33ba26f17b3fc6fdf7d0bafd2ee188702f",
-    "statusAtPackaging": "open draft, not merged",
-    "relationship": "post-paper schema-backed server-side apply prototype"
-  },
-  "snapshotValidation": {
+  "reproductionValidation": {
     "invariants": {
       "fullDumps": 30,
       "stalenessTrials": 1680,
       "totalNodeVisits": 54418,
       "globalResourceStates": 131
     },
-    "reconstructionCommitResult": "matches all invariants",
-    "firstLaterSemanticBoundary": {
-      "commit": "bcc029937740d79c7143c8c544abc3fd7e82d38c",
-      "totalNodeVisits": 52190,
-      "globalResourceStates": 131
-    },
-    "auditedSospAeHead": {
-      "commit": "490ea33558ab85b4905f09ccdc7b2d426aef287c",
-      "totalNodeVisits": 52180,
-      "globalResourceStates": 123
-    }
+    "reconstructionCommitResult": "matches all invariants"
   }
 }

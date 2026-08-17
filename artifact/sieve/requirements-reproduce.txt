@@ -1,0 +1,10 @@
+# Sieve's bug-reproduction runtime, usable with native Python 3.11.
+# pysqlite3 is intentionally omitted because Sieve only uses it in learn mode.
+kubernetes==12.0.1
+PyYAML==6.0.3
+py-cui==0.1.3
+docker==5.0.2
+deepdiff==5.5.0
+# docker 5.0.2 needs requests' http+docker adapter and urllib3 1.x.
+requests==2.31.0
+urllib3==1.26.20

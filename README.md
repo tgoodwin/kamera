@@ -6,6 +6,54 @@
 > successful path through the badge checks, reproduction scripts, expected
 > outputs, and runtime estimates.
 
+## Reproducing the Table 6 Sieve baselines
+
+The standard artifact workflow runs the 11 Table 6 cases in Kamera with
+`./artifact/run-table6.sh`. Evaluators who also want to rerun the comparison
+with Sieve itself can use the checked-in wrapper around Sieve's real
+kind-cluster reproducer.
+
+This optional workflow additionally requires Docker, kubectl, Helm 3, kind
+0.13.0, Go, Python, `jq`, a configured `GOPATH` and `KUBECONFIG`, and enough
+resources to run the target controllers in a local cluster. Use a dedicated
+host: Sieve creates and deletes a cluster named `kind`. The validated Python
+and container-image setup differs between Linux x86-64 and Apple Silicon, so
+complete the platform-specific preparation in the
+[Sieve baseline guide](artifact/sieve/README.md) before running the wrapper.
+
+The general process is:
+
+1. Clone `sieve-project/sieve` and check out the pinned revision
+   `6c97abeb79e644fa5eda889a2c174b2436dbc264`.
+2. Create Sieve's Python environment, then complete the platform-specific
+   image setup from the guide:
+
+   ```bash
+   ./artifact/setup-sieve-python.sh /absolute/path/to/sieve
+   ```
+
+   The baseline runner automatically uses the resulting virtual environment.
+3. Return to the Kamera repository root and validate the environment with one
+   RabbitMQ row:
+
+   ```bash
+   ./artifact/run-sieve-baselines.sh \
+     --only rmq/intermediate-state-1 \
+     /absolute/path/to/sieve
+   ```
+
+4. Run all 11 Table 6 rows:
+
+   ```bash
+   ./artifact/run-sieve-baselines.sh /absolute/path/to/sieve
+   ```
+
+The full run covers four ZooKeeper, four RabbitMQ, and three Cassandra bugs.
+It preserves every Sieve result and writes a combined `table6-sieve.tsv` under
+`artifact-results/`; a successful row has `reproduced=True` in Sieve's oracle
+output. Budget approximately 1.5–2 hours, with additional time possible when
+old amd64 workload images run under Apple Silicon emulation.
+
 **Note:** This project is a research artifact and is under active development. Its APIs and functionalities are subject to change and it is not yet recommended for production use.
 
 `kamera` is a toolkit for observing, analyzing, and verifying the behavior of the Kubernetes control plane. It is designed specifically for controllers built with [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime), providing targeted instrumentation to capture the behaviors of individual controllers as well as the interactions between them.

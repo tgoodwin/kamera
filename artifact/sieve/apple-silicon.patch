@@ -1,0 +1,204 @@
+diff --git a/sieve.py b/sieve.py
+index d5b87539..c4adbf44 100644
+--- a/sieve.py
++++ b/sieve.py
+@@ -218,7 +218,8 @@ def prepare_sieve_server(test_context: TestContext):
+     os.chdir("sieve_server")
+     os_system("go mod tidy")
+     # TODO: we should build a container image for sieve server.
+-    os_system("env GOOS=linux GOARCH=amd64 go build")
++    sieve_server_goarch = os.environ.get("SIEVE_SERVER_GOARCH", "amd64")
++    os_system("env GOOS=linux GOARCH={} go build".format(sieve_server_goarch))
+     os.chdir(org_dir)
+     os_system("docker cp sieve_server kind-control-plane:/sieve_server")
+ 
+@@ -251,6 +252,10 @@ def setup_kind_cluster(test_context: TestContext):
+     k8s_image_tag = (
+         test_context.controller_config.kubernetes_version + "-" + platform + test_context.image_tag
+     )
++    kind_image = os.environ.get(
++        "SIEVE_KIND_IMAGE",
++        "{}/node:{}".format(k8s_container_registry, k8s_image_tag),
++    )
+     retry_cnt = 0
+     # Retry cluster creation for 5 times.
+     while retry_cnt < 5:
+@@ -266,8 +271,8 @@ def setup_kind_cluster(test_context: TestContext):
+                 )
+             retry_cnt += 1
+             os_system(
+-                "kind create cluster --image {}/node:{} --config {}".format(
+-                    k8s_container_registry, k8s_image_tag, kind_config
++                "kind create cluster --image {} --config {}".format(
++                    kind_image, kind_config
+                 )
+             )
+             os_system(
+@@ -692,7 +697,7 @@ def run_test(test_context: TestContext) -> TestResult:
+ 
+ 
+ def create_plan_for_test_mode(test_context: TestContext):
+-    test_plan_content = yaml.load(open(test_context.original_test_plan))
++    test_plan_content = yaml.safe_load(open(test_context.original_test_plan))
+     # TODO: we should probably just add the annotatedReconcileStackFrame when generating the test plan.
+     test_plan_content["annotatedReconcileStackFrame"] = [
+         i for i in test_context.controller_config.annotated_reconcile_functions.values()
+diff --git a/sieve_aux/csi-driver/deploy/util/deploy-hostpath.sh b/sieve_aux/csi-driver/deploy/util/deploy-hostpath.sh
+index 0e195956..a1ac3427 100755
+--- a/sieve_aux/csi-driver/deploy/util/deploy-hostpath.sh
++++ b/sieve_aux/csi-driver/deploy/util/deploy-hostpath.sh
+@@ -157,6 +157,19 @@ CSI_RESIZER_RBAC_YAML="https://raw.githubusercontent.com/kubernetes-csi/external
+ CSI_EXTERNALHEALTH_MONITOR_RBAC_YAML="https://raw.githubusercontent.com/kubernetes-csi/external-health-monitor/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-plugin.yaml" csi-external-health-monitor-controller false)/deploy/kubernetes/external-health-monitor-controller/rbac.yaml"
+ : ${CSI_EXTERNALHEALTH_MONITOR_RBAC:=https://raw.githubusercontent.com/kubernetes-csi/external-health-monitor/$(rbac_version "${BASE_DIR}/hostpath/csi-hostpath-plugin.yaml" csi-external-health-monitor-controller "${UPDATE_RBAC_RULES}")/deploy/kubernetes/external-health-monitor-controller/rbac.yaml}
+ 
++if [ -n "${SIEVE_CSI_MANIFEST_DIR:-}" ]; then
++    CSI_PROVISIONER_RBAC_YAML="${SIEVE_CSI_MANIFEST_DIR}/csi-provisioner-rbac.yaml"
++    CSI_PROVISIONER_RBAC="${CSI_PROVISIONER_RBAC_YAML}"
++    CSI_ATTACHER_RBAC_YAML="${SIEVE_CSI_MANIFEST_DIR}/csi-attacher-rbac.yaml"
++    CSI_ATTACHER_RBAC="${CSI_ATTACHER_RBAC_YAML}"
++    CSI_SNAPSHOTTER_RBAC_YAML="${SIEVE_CSI_MANIFEST_DIR}/csi-snapshotter-rbac.yaml"
++    CSI_SNAPSHOTTER_RBAC="${CSI_SNAPSHOTTER_RBAC_YAML}"
++    CSI_RESIZER_RBAC_YAML="${SIEVE_CSI_MANIFEST_DIR}/csi-resizer-rbac.yaml"
++    CSI_RESIZER_RBAC="${CSI_RESIZER_RBAC_YAML}"
++    CSI_EXTERNALHEALTH_MONITOR_RBAC_YAML="${SIEVE_CSI_MANIFEST_DIR}/csi-external-health-monitor-rbac.yaml"
++    CSI_EXTERNALHEALTH_MONITOR_RBAC="${CSI_EXTERNALHEALTH_MONITOR_RBAC_YAML}"
++fi
++
+ INSTALL_CRD=${INSTALL_CRD:-"false"}
+ 
+ # Some images are not affected by *_REGISTRY/*_TAG and IMAGE_* variables.
+diff --git a/sieve_aux/csi-driver/install.sh b/sieve_aux/csi-driver/install.sh
+index 61be4384..cd52f247 100755
+--- a/sieve_aux/csi-driver/install.sh
++++ b/sieve_aux/csi-driver/install.sh
+@@ -1,15 +1,33 @@
+ #!/bin/sh
+-
+-SNAPSHOTTER_VERSION=v2.0.1
++set -eu
++
++: "${SIEVE_CSI_MANIFEST_DIR:?set SIEVE_CSI_MANIFEST_DIR to the vendored Kamera CSI manifests}"
++
++for manifest in \
++    volumesnapshotclasses.yaml \
++    volumesnapshotcontents.yaml \
++    volumesnapshots.yaml \
++    snapshot-controller-rbac.yaml \
++    snapshot-controller.yaml \
++    csi-provisioner-rbac.yaml \
++    csi-attacher-rbac.yaml \
++    csi-snapshotter-rbac.yaml \
++    csi-resizer-rbac.yaml \
++    csi-external-health-monitor-rbac.yaml; do
++    test -f "${SIEVE_CSI_MANIFEST_DIR}/${manifest}" || {
++        echo "missing vendored CSI manifest: ${SIEVE_CSI_MANIFEST_DIR}/${manifest}" >&2
++        exit 1
++    }
++done
+ 
+ # Install VolumeSnapshot CRD
+-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/${SNAPSHOTTER_VERSION}/config/crd/snapshot.storage.k8s.io_volumesnapshotclasses.yaml
+-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/${SNAPSHOTTER_VERSION}/config/crd/snapshot.storage.k8s.io_volumesnapshotcontents.yaml
+-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/${SNAPSHOTTER_VERSION}/config/crd/snapshot.storage.k8s.io_volumesnapshots.yaml
++kubectl apply -f "${SIEVE_CSI_MANIFEST_DIR}/volumesnapshotclasses.yaml"
++kubectl apply -f "${SIEVE_CSI_MANIFEST_DIR}/volumesnapshotcontents.yaml"
++kubectl apply -f "${SIEVE_CSI_MANIFEST_DIR}/volumesnapshots.yaml"
+ 
+ # Create snapshot controller
+-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/${SNAPSHOTTER_VERSION}/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml
+-kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/${SNAPSHOTTER_VERSION}/deploy/kubernetes/snapshot-controller/setup-snapshot-controller.yaml
++kubectl apply -f "${SIEVE_CSI_MANIFEST_DIR}/snapshot-controller-rbac.yaml"
++kubectl apply -f "${SIEVE_CSI_MANIFEST_DIR}/snapshot-controller.yaml"
+ 
+ # Check for install
+ kubectl get volumesnapshotclasses.snapshot.storage.k8s.io
+@@ -22,14 +40,12 @@ kubectl get volumesnapshotcontents.snapshot.storage.k8s.io
+ # Check for pod
+ kubectl get pods
+ 
+-sleep 60s
+-
+-kubectl get pods
++kubectl rollout status statefulset/csi-hostpathplugin --timeout=5m
++kubectl rollout status statefulset/csi-hostpath-socat --timeout=5m
++kubectl -n kube-system rollout status deployment/snapshot-controller --timeout=5m
+ 
+ kubectl apply -f csi-storageclass.yaml
+ 
+-sleep 10s
+-
+ # Change default storage class
+ kubectl patch storageclass standard -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
+ kubectl patch storageclass csi-hostpath-sc -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+diff --git a/examples/cass-operator/deploy/deploy.sh b/examples/cass-operator/deploy/deploy.sh
+index ea8acae0..75f8d098 100755
+--- a/examples/cass-operator/deploy/deploy.sh
++++ b/examples/cass-operator/deploy/deploy.sh
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-set -x
++set -eux
+ 
+ kubectl apply -f controller-manifest.yaml
+ kubectl apply -f storageClass.yaml
+diff --git a/examples/zookeeper-operator/deploy/deploy.sh b/examples/zookeeper-operator/deploy/deploy.sh
+index 3223872a..5da4c612 100755
+--- a/examples/zookeeper-operator/deploy/deploy.sh
++++ b/examples/zookeeper-operator/deploy/deploy.sh
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-set -x
++set -eux
+ 
+ kubectl create -f crds
+ kubectl create -f default_ns/rbac.yaml
+diff --git a/examples/cass-operator/test/cdc-1.yaml b/examples/cass-operator/test/cdc-1.yaml
+index a549a400..0021c4b4 100644
+--- a/examples/cass-operator/test/cdc-1.yaml
++++ b/examples/cass-operator/test/cdc-1.yaml
+@@ -8,6 +8,13 @@ spec:
+   serverVersion: 3.11.7
+   managementApiAuth:
+     insecure: {}
++  configBuilderResources:
++    requests:
++      cpu: 1
++      memory: 512Mi
++    limits:
++      cpu: 1
++      memory: 1Gi
+   size: 1
+   storageConfig:
+     cassandraDataVolumeClaimSpec:
+@@ -24,4 +31,4 @@ spec:
+       role_manager: org.apache.cassandra.auth.CassandraRoleManager
+     jvm-options:
+       initial_heap_size: 800M
+-      max_heap_size: 800M
+\ No newline at end of file
++      max_heap_size: 800M
+diff --git a/examples/cass-operator/test/cdc-2.yaml b/examples/cass-operator/test/cdc-2.yaml
+index 378016af..04fcffb2 100644
+--- a/examples/cass-operator/test/cdc-2.yaml
++++ b/examples/cass-operator/test/cdc-2.yaml
+@@ -8,6 +8,13 @@ spec:
+   serverVersion: 3.11.7
+   managementApiAuth:
+     insecure: {}
++  configBuilderResources:
++    requests:
++      cpu: 1
++      memory: 512Mi
++    limits:
++      cpu: 1
++      memory: 1Gi
+   size: 2
+   storageConfig:
+     cassandraDataVolumeClaimSpec:
+@@ -24,4 +31,4 @@ spec:
+       role_manager: org.apache.cassandra.auth.CassandraRoleManager
+     jvm-options:
+       initial_heap_size: 800M
+-      max_heap_size: 800M
+\ No newline at end of file
++      max_heap_size: 800M
