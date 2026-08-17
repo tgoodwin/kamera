@@ -1,0 +1,11 @@
+apiVersion: pkg.crossplane.io/v1
+kind: FunctionRevision
+metadata:
+  name: kamera-stub-rev
+  labels:
+    pkg.crossplane.io/package: kamera-stub
+spec:
+  desiredState: Active
+status:
+  capabilities:
+    - composition

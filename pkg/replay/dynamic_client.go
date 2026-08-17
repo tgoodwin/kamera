@@ -1,4 +1,4 @@
-package main
+package replay
 
 import (
 	"context"
@@ -15,20 +15,22 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// replayDynamicClient adapts a controller-runtime client.Client to the
-// k8s.io/client-go/dynamic.Interface used by KRO's controllers.
-type replayDynamicClient struct {
+// dynamicClient adapts a controller-runtime client.Client to the
+// k8s.io/client-go/dynamic.Interface used by controllers built on client-go.
+type dynamicClient struct {
 	inner  client.Client
 	mapper meta.RESTMapper
 }
 
-var _ dynamic.Interface = (*replayDynamicClient)(nil)
+var _ dynamic.Interface = (*dynamicClient)(nil)
 
-func newReplayDynamicClient(c client.Client, mapper meta.RESTMapper) *replayDynamicClient {
-	return &replayDynamicClient{inner: c, mapper: mapper}
+// NewDynamicClient exposes a replay client through client-go's dynamic
+// interface.
+func NewDynamicClient(c client.Client, mapper meta.RESTMapper) dynamic.Interface {
+	return &dynamicClient{inner: c, mapper: mapper}
 }
 
-func (d *replayDynamicClient) Resource(resource schema.GroupVersionResource) dynamic.NamespaceableResourceInterface {
+func (d *dynamicClient) Resource(resource schema.GroupVersionResource) dynamic.NamespaceableResourceInterface {
 	return &replayNamespaceableResource{inner: d.inner, mapper: d.mapper, gvr: resource}
 }
 

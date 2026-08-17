@@ -3,20 +3,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	xpevent "github.com/crossplane/crossplane-runtime/v2/pkg/event"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/logging"
+	xpresource "github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 	"github.com/crossplane/crossplane-runtime/v2/pkg/resource/fake"
 	ucomposite "github.com/crossplane/crossplane-runtime/v2/pkg/resource/unstructured/composite"
-	"github.com/crossplane/crossplane/v2/apis/apiextensions/v1"
-	pkgmetav1 "github.com/crossplane/crossplane/v2/apis/pkg/meta/v1"
 	pkgv1 "github.com/crossplane/crossplane/v2/apis/pkg/v1"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/claim"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composite"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composition"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/revision"
-	xpresource "github.com/crossplane/crossplane-runtime/v2/pkg/resource"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -25,7 +22,6 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	sleevelog "github.com/tgoodwin/kamera/pkg/util/logger"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -161,43 +157,6 @@ func buildInitialCrossplaneState(builder *tracecheck.ExplorerBuilder) tracecheck
 	return tracecheck.MergeStateNodes(initialState, functionState)
 }
 
-func buildComposition() *v1.Composition {
-	return &v1.Composition{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: compositionName,
-		},
-		Spec: v1.CompositionSpec{
-			CompositeTypeRef: v1.TypeReference{
-				APIVersion: xrAPIVersion,
-				Kind:       xrKind,
-			},
-			Mode: v1.CompositionModePipeline,
-			Pipeline: []v1.PipelineStep{
-				{
-					Step: "pipeline",
-					FunctionRef: v1.FunctionReference{
-						Name: stubFunctionName,
-					},
-				},
-			},
-		},
-	}
-}
-
-func buildCompositeResource() *unstructured.Unstructured {
-	xr := &unstructured.Unstructured{}
-	xr.SetAPIVersion(xrAPIVersion)
-	xr.SetKind(xrKind)
-	xr.SetName("example")
-	xr.SetNamespace("default")
-	xr.Object["spec"] = map[string]any{
-		"compositionRef": map[string]any{
-			"name": compositionName,
-		},
-	}
-	return xr
-}
-
 // functionRevisionToCompositionRevisionMapper creates a WatchMapper that
 // models the Crossplane EnqueueCompositionRevisionsForFunctionRevision handler.
 // When a FunctionRevision changes, the real handler lists all CompositionRevisions
@@ -226,27 +185,6 @@ func functionRevisionToCompositionRevisionMapper() tracecheck.WatchMapper {
 		return []reconcile.Request{
 			{NamespacedName: types.NamespacedName{Name: compositionName + "-rev-1"}},
 		}
-	}
-}
-
-func buildFunctionRevision() *pkgv1.FunctionRevision {
-	return &pkgv1.FunctionRevision{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: stubFunctionName + "-rev",
-			Labels: map[string]string{
-				pkgv1.LabelParentPackage: stubFunctionName,
-			},
-		},
-		Spec: pkgv1.FunctionRevisionSpec{
-			PackageRevisionSpec: pkgv1.PackageRevisionSpec{
-				DesiredState: pkgv1.PackageRevisionActive,
-			},
-		},
-		Status: pkgv1.FunctionRevisionStatus{
-			PackageRevisionStatus: pkgv1.PackageRevisionStatus{
-				Capabilities: []string{pkgmetav1.FunctionCapabilityComposition},
-			},
-		},
 	}
 }
 
@@ -324,38 +262,9 @@ func copyAnnotations(in map[string]string) map[string]string {
 }
 
 func scenariosFromInputs(builder *tracecheck.ExplorerBuilder, inputs []coverage.Input) ([]explore.Scenario, error) {
-	if builder == nil {
-		return nil, fmt.Errorf("builder is nil")
-	}
-	if len(inputs) == 0 {
-		return nil, fmt.Errorf("no inputs supplied")
-	}
-
-	baseCfg := builder.Config()
-	scenarios := make([]explore.Scenario, 0, len(inputs))
-	for idx, input := range inputs {
-		state, seededObjects, err := buildStateFromCoverageInput(builder, input)
-		if err != nil {
-			return nil, fmt.Errorf("build start state for input %d (%s): %w", idx, input.Name, err)
-		}
-		userInputs, err := buildUserActionsFromCoverageInput(input, seededObjects)
-		if err != nil {
-			return nil, fmt.Errorf("build user actions for input %d (%s): %w", idx, input.Name, err)
-		}
-
-		cfg, err := explore.ApplyInputTuning(baseCfg, input.Tuning)
-		if err != nil {
-			return nil, fmt.Errorf("apply tuning for input %d (%s): %w", idx, input.Name, err)
-		}
-		scenarios = append(scenarios, explore.Scenario{
-			Name:             input.Name,
-			EnvironmentState: state,
-			ExternalInputs:       userInputs,
-			Config:           cfg,
-		})
-	}
-
-	return scenarios, nil
+	return explore.CompileInputScenarios(builder, inputs, explore.ScenarioCompileOptions{
+		BuildState: buildStateFromCoverageInput,
+	})
 }
 
 func buildStateFromCoverageInput(builder *tracecheck.ExplorerBuilder, input coverage.Input) (tracecheck.StateNode, []client.Object, error) {
@@ -422,54 +331,3 @@ func initialPendingForObjects(builder *tracecheck.ExplorerBuilder, objects []cli
 	}
 	return pending
 }
-
-func buildUserActionsFromCoverageInput(input coverage.Input, seededObjects []client.Object) ([]tracecheck.UserAction, error) {
-	actions := make([]tracecheck.UserAction, 0, len(input.ExternalInputs))
-	for idx, action := range input.ExternalInputs {
-		if action.Object == nil {
-			return nil, fmt.Errorf("input user input %d has nil object", idx)
-		}
-
-		id := strings.TrimSpace(action.ID)
-		if id == "" {
-			id = fmt.Sprintf("user-input-%d", idx)
-		}
-
-		opType := action.OpType
-		if opType == event.CREATE && isInputObjectSeeded(action.Object, seededObjects) {
-			opType = event.UPDATE
-		}
-
-		actions = append(actions, tracecheck.UserAction{
-			ID:      id,
-			OpType:  opType,
-			Payload: action.Object.DeepCopy(),
-		})
-	}
-	return actions, nil
-}
-
-func isInputObjectSeeded(object client.Object, seededObjects []client.Object) bool {
-	if object == nil {
-		return false
-	}
-	for _, seeded := range seededObjects {
-		if sameObjectIdentity(seeded, object) {
-			return true
-		}
-	}
-	return false
-}
-
-func sameObjectIdentity(a, b client.Object) bool {
-	if a == nil || b == nil {
-		return false
-	}
-	aGVK := a.GetObjectKind().GroupVersionKind()
-	bGVK := b.GetObjectKind().GroupVersionKind()
-	if aGVK.Group != bGVK.Group || aGVK.Kind != bGVK.Kind {
-		return false
-	}
-	return a.GetNamespace() == b.GetNamespace() && a.GetName() == b.GetName()
-}
-

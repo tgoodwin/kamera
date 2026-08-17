@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/explore"
+	"github.com/tgoodwin/kamera/pkg/tracecheck"
 )
 
 var fuzzCasesFlag = flag.Int("fuzz-cases", 12, "number of sampled parameterized scenarios to generate per input")
@@ -20,87 +20,35 @@ func main() {
 	setDefaultKarpenterInputsFlag()
 	flag.Parse()
 
-	ctx := context.Background()
-	builder := newKarpenterExplorerBuilder()
-	if cfgPath := explore.ConfigPath(); cfgPath != "" {
-		loadedCfg, err := explore.LoadExploreConfigFromFile(cfgPath, builder.Config())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "load explore config: %v\n", err)
-			os.Exit(1)
-		}
-		builder.SetConfig(loadedCfg)
-	}
-
-	inputsPath := strings.TrimSpace(explore.InputsPath())
-	inputs, err := loadInputsForRun(inputsPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "load inputs: %v\n", err)
-		os.Exit(1)
-	}
-
-	if !explore.InteractiveEnabled() {
-		if len(inputs) == 0 {
-			if inputsPath != "" {
-				fmt.Fprintf(os.Stderr, "batch mode requires valid --inputs input file, got %q\n", inputsPath)
-			} else {
-				fmt.Fprintf(os.Stderr, "batch mode requires --inputs\n")
+	err := explore.RunHarnessCLI(context.Background(), explore.HarnessCLIOptions{
+		NewBuilder: func([]coverage.Input) (*tracecheck.ExplorerBuilder, error) {
+			return newKarpenterExplorerBuilder(), nil
+		},
+		Compile:                       scenariosFromInputs,
+		RequireInputs:                 true,
+		RequireSingleInteractiveInput: true,
+		ParallelOptions: func() explore.ParallelOptions {
+			return batchParallelOptions(explore.ParallelProcessesEnabled(), explore.DumpPath())
+		},
+		InteractiveInput: func(builder *tracecheck.ExplorerBuilder, inputs []coverage.Input) (explore.RunInput, error) {
+			config, err := applyInputTuning(builder.Config(), inputs[0].Tuning)
+			if err != nil {
+				return explore.RunInput{}, fmt.Errorf("apply input tuning: %w", err)
 			}
-			os.Exit(1)
-		}
-
-		scenarios, err := scenariosFromInputs(builder, inputs)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "convert inputs: %v\n", err)
-			os.Exit(1)
-		}
-		runner, err := explore.NewParallelRunner(builder)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
-			os.Exit(1)
-		}
-		opts := batchParallelOptions(explore.ParallelProcessesEnabled(), explore.DumpPath())
-		if _, err := runner.RunAll(ctx, scenarios, opts); err != nil {
-			fmt.Fprintf(os.Stderr, "batch run error: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	if len(inputs) == 0 {
-		fmt.Fprintf(os.Stderr, "interactive mode requires one input file: either --inputs or default %q\n", defaultKarpenterInputsSearchPaths[0])
-		os.Exit(1)
-	}
-	if len(inputs) != 1 {
-		fmt.Fprintf(os.Stderr, "expected a single input for interactive mode, got %d\n", len(inputs))
-		os.Exit(1)
-	}
-
-	tunedCfg, err := applyInputTuning(builder.Config(), inputs[0].Tuning)
+			builder.SetConfig(config)
+			state, seededObjects, err := buildStateFromCoverageInput(builder, inputs[0])
+			if err != nil {
+				return explore.RunInput{}, fmt.Errorf("build initial state: %w", err)
+			}
+			actions, err := buildUserActionsFromCoverageInput(inputs[0], seededObjects)
+			if err != nil {
+				return explore.RunInput{}, fmt.Errorf("build user actions: %w", err)
+			}
+			return explore.RunInput{EnvironmentState: state, UserActions: actions}, nil
+		},
+	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "apply input tuning: %v\n", err)
-		os.Exit(1)
-	}
-	builder.SetConfig(tunedCfg)
-
-	initialState, seededObjects, err := buildStateFromCoverageInput(builder, inputs[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build initial state from input: %v\n", err)
-		os.Exit(1)
-	}
-	userActions, err := buildUserActionsFromCoverageInput(inputs[0], seededObjects)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "build user actions from input: %v\n", err)
-		os.Exit(1)
-	}
-
-	runner, err := explore.NewRunner(builder)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "runner setup error: %v\n", err)
-		os.Exit(1)
-	}
-
-	if err := runner.Run(ctx, explore.RunInput{EnvironmentState: initialState, UserActions: userActions}); err != nil {
-		fmt.Fprintf(os.Stderr, "session error: %v\n", err)
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
@@ -112,18 +60,6 @@ func setDefaultKarpenterInputsFlag() {
 	}
 
 	_ = flag.CommandLine.Set("inputs", inputsPath)
-}
-
-func loadInputsForRun(inputsPath string) ([]coverage.Input, error) {
-	if inputsPath == "" {
-		return nil, nil
-	}
-
-	inputs, err := coverage.LoadInputs(inputsPath)
-	if err != nil {
-		return nil, fmt.Errorf("load inputs from %s: %w", inputsPath, err)
-	}
-	return inputs, nil
 }
 
 func batchParallelOptions(parallelProcessesEnabled bool, dumpDir string) explore.ParallelOptions {

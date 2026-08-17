@@ -4,21 +4,22 @@ import (
 	"context"
 	"net/http"
 
-	"k8s.io/apimachinery/pkg/api/meta"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/typed/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	kroclient "github.com/kubernetes-sigs/kro/pkg/client"
+	"github.com/tgoodwin/kamera/pkg/replay"
 )
 
 // replayClientSet implements kroclient.SetInterface backed by a kamera replay client.
 type replayClientSet struct {
-	dynamicClient *replayDynamicClient
+	dynamicClient dynamic.Interface
 	replayClient  ctrlclient.Client
 	restMapper    meta.RESTMapper
 }
@@ -27,20 +28,22 @@ var _ kroclient.SetInterface = (*replayClientSet)(nil)
 
 func newReplayClientSet(c ctrlclient.Client, mapper meta.RESTMapper) *replayClientSet {
 	return &replayClientSet{
-		dynamicClient: newReplayDynamicClient(c, mapper),
+		dynamicClient: replay.NewDynamicClient(c, mapper),
 		replayClient:  c,
 		restMapper:    mapper,
 	}
 }
 
-func (s *replayClientSet) Dynamic() dynamic.Interface                                    { return s.dynamicClient }
-func (s *replayClientSet) RESTMapper() meta.RESTMapper                                   { return s.restMapper }
-func (s *replayClientSet) SetRESTMapper(m meta.RESTMapper)                               { s.restMapper = m }
-func (s *replayClientSet) HTTPClient() *http.Client                                      { return nil }
-func (s *replayClientSet) RESTConfig() *rest.Config                                      { return nil }
-func (s *replayClientSet) Kubernetes() kubernetes.Interface                               { return nil }
-func (s *replayClientSet) APIExtensionsV1() apiextensionsv1.ApiextensionsV1Interface      { return nil }
-func (s *replayClientSet) WithImpersonation(user string) (kroclient.SetInterface, error) { return s, nil }
+func (s *replayClientSet) Dynamic() dynamic.Interface                                { return s.dynamicClient }
+func (s *replayClientSet) RESTMapper() meta.RESTMapper                               { return s.restMapper }
+func (s *replayClientSet) SetRESTMapper(m meta.RESTMapper)                           { s.restMapper = m }
+func (s *replayClientSet) HTTPClient() *http.Client                                  { return nil }
+func (s *replayClientSet) RESTConfig() *rest.Config                                  { return nil }
+func (s *replayClientSet) Kubernetes() kubernetes.Interface                          { return nil }
+func (s *replayClientSet) APIExtensionsV1() apiextensionsv1.ApiextensionsV1Interface { return nil }
+func (s *replayClientSet) WithImpersonation(user string) (kroclient.SetInterface, error) {
+	return s, nil
+}
 
 func (s *replayClientSet) CRD(cfg kroclient.CRDWrapperConfig) kroclient.CRDInterface {
 	return &replayCRDClient{inner: s.replayClient}

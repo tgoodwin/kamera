@@ -133,4 +133,4 @@ require (
 
 replace github.com/tgoodwin/kamera => ../..
 
-replace github.com/syntasso/kratix => /Users/tgoodwin/projects/kratix
+replace github.com/syntasso/kratix => ../../artifact-deps/harnesses/kratix

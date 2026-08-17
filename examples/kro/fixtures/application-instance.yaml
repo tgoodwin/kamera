@@ -1,0 +1,11 @@
+apiVersion: kro.run/v1alpha1
+kind: Application
+metadata:
+  name: my-app-instance
+  namespace: default
+spec:
+  name: my-app
+  image: nginx
+  replicas: 1
+  ingress:
+    enabled: true

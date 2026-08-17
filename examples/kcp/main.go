@@ -16,12 +16,16 @@ func main() {
 
 	err := explore.RunHarnessCLI(context.Background(), explore.HarnessCLIOptions{
 		NewBuilder: func([]coverage.Input) (*tracecheck.ExplorerBuilder, error) {
-			return newCrossplaneExplorerBuilder(), nil
+			return newKCPExplorerBuilder(), nil
 		},
-		Compile:           scenariosFromInputs,
-		InputsAlwaysBatch: true,
+		Compile:              scenariosFromInputs,
+		InputsAlwaysBatch:    true,
+		DirectSingleScenario: true,
 		InteractiveInput: func(builder *tracecheck.ExplorerBuilder, _ []coverage.Input) (explore.RunInput, error) {
-			return explore.RunInput{EnvironmentState: buildInitialCrossplaneState(builder)}, nil
+			return explore.RunInput{
+				EnvironmentState: buildInitialKCPState(builder),
+				UserActions:      defaultInteractiveUserActions(),
+			}, nil
 		},
 	})
 	if err != nil {
