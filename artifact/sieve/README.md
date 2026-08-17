@@ -7,8 +7,10 @@ and tears the cluster down. The `duration` stored in Sieve's result JSON covers
 that complete operation; it is the measurement boundary used by the Sieve
 column in Table 6.
 
-These runs are not part of the short Kamera reproduction path. Budget several
-hours for all 11 rows and use a dedicated machine or VM.
+These runs are not part of the short Kamera reproduction path. The 11 reported
+Sieve durations total 4,719 seconds (about 79 minutes); budget approximately
+1.5–2 hours for a complete run with setup and cold-cache overhead, and use a
+dedicated machine or VM.
 
 ## Important safety and platform notes
 
@@ -127,7 +129,7 @@ All four images are `linux/arm64`. Their published manifest digests are:
 Keep the three exported variables set when invoking either Sieve directly or
 the Kamera wrapper. The patch changes no fault plans or oracles.
 
-## 2. Kick the tires with one row
+## 2. Optional: validate the environment with one row
 
 From the Kamera checkout, run RabbitMQ intermediate-state-1 through the same
 wrapper used for the full matrix. This row also checks the CSI setup:
@@ -146,11 +148,15 @@ remained at `10Gi` instead of the requested `15Gi`. It writes
 Kubernetes 1.24 image is compared with Sieve's stored reference state, so use
 the PVC mismatch—not the raw inconsistency count—as the row-specific check.
 
+This is only an environment check. It does not replace the complete 11-row
+command in the next section.
+
 Each invocation replaces `sieve_test_results`, so copy results before starting
 another row. The Kamera wrapper below does that automatically.
 
-## 3. Run all 11 Table 6 rows
+## 3. Run the complete 11-row Table 6 matrix
 
+This is the command that reproduces every Sieve result represented in Table 6.
 Return to the Kamera checkout and pass the Sieve checkout path to:
 
 ```bash
@@ -169,6 +175,9 @@ The wrapper invokes Sieve's own `reproduce_bugs.py` once per row. It does not
 simulate Sieve or substitute Kamera. It copies every result before Sieve clears
 its working output and writes `table6-sieve.tsv` with the paper time, observed
 Sieve duration, reproduced flag, error count, and preserved result path.
+With no `--only` option, the wrapper always runs all 11 rows: four ZooKeeper,
+four RabbitMQ, and three Cassandra bugs. Use `--only` solely for setup checks,
+reruns, or diagnosis of a particular row.
 
 Inspect the exact commands without creating a cluster:
 
@@ -176,21 +185,26 @@ Inspect the exact commands without creating a cluster:
 ./artifact/run-sieve-baselines.sh --dry-run /absolute/path/to/sieve
 ```
 
-The row mapping is:
+The complete mapping is:
 
-| Table 6 row | Sieve controller and bug |
-|---|---|
-| `zk/stale-state-1` | `zookeeper-operator`, `stale-state-1` |
-| `zk/stale-state-2` | `zookeeper-operator`, `stale-state-2` |
-| `zk/unobserved-state-1` | `zookeeper-operator`, `unobserved-state-1` |
-| `zk/indirect-1` | `zookeeper-operator`, `indirect-1` |
-| `rmq/stale-state-1` | `rabbitmq-operator`, `stale-state-1` |
-| `rmq/stale-state-2` | `rabbitmq-operator`, `stale-state-2` |
-| `rmq/unobserved-state-1` | `rabbitmq-operator`, `unobserved-state-1` |
-| `rmq/intermediate-state-1` | `rabbitmq-operator`, `intermediate-state-1` |
-| `cass/stale-state-1` | `cass-operator`, `stale-state-1` |
-| `cass/intermediate-state-1` | `cass-operator`, `intermediate-state-1` |
-| `cass/intermediate-state-2` | `cass-operator`, `intermediate-state-2` |
+| Table 6 row | Sieve controller and bug | Pinned Sieve test plan |
+|---|---|---|
+| `zk/stale-state-1` | `zookeeper-operator`, `stale-state-1` | `zookeeper-operator-stale-state-1.yaml` |
+| `zk/stale-state-2` | `zookeeper-operator`, `stale-state-2` | `zookeeper-operator-stale-state-2.yaml` |
+| `zk/unobserved-state-1` | `zookeeper-operator`, `unobserved-state-1` | `zookeeper-operator-unobserved-state-1.yaml` |
+| `zk/indirect-1` | `zookeeper-operator`, `indirect-1` | `zookeeper-operator-indirect-1.yaml` |
+| `rmq/stale-state-1` | `rabbitmq-operator`, `stale-state-1` | `rabbitmq-operator-stale-state-1.yaml` |
+| `rmq/stale-state-2` | `rabbitmq-operator`, `stale-state-2` | `rabbitmq-operator-stale-state-2.yaml` |
+| `rmq/unobserved-state-1` | `rabbitmq-operator`, `unobserved-state-1` | `rabbitmq-operator-unobserved-state-1.yaml` |
+| `rmq/intermediate-state-1` | `rabbitmq-operator`, `intermediate-state-1` | `rabbitmq-operator-intermediate-state-1.yaml` |
+| `cass/stale-state-1` | `cass-operator`, `stale-state-1` | `cass-operator-stale-state-1.yaml` |
+| `cass/intermediate-state-1` | `cass-operator`, `intermediate-state-1` | `cass-operator-intermediate-state-1.yaml` |
+| `cass/intermediate-state-2` | `cass-operator`, `intermediate-state-2` | `cass-operator-intermediate-state-2.yaml` |
+
+This mapping was audited against both `artifact/run-table6.sh` and the pinned
+Sieve revision's `reprod_map`: all 11 Table 6 IDs match, and every referenced
+test-plan file is present. The three published arm64 controller images cover
+all rows because the rows use only these three controller families.
 
 ## Troubleshooting
 

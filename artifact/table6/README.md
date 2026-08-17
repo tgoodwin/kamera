@@ -79,6 +79,8 @@ does not depend on treating convergence itself as an outcome oracle.
 
 To rerun the comparison side with Sieve itself, including its kind-cluster
 startup, controller execution, fault injection, oracle, and teardown, follow
-the [Sieve baseline guide](../sieve/README.md). Those runs are intentionally
-separate from `run-table6.sh` because their legacy toolchain, container images,
-and multi-minute measurement boundary are different from Kamera's simulator.
+the [Sieve baseline guide](../sieve/README.md). Its default command covers all
+11 rows listed above—four ZooKeeper, four RabbitMQ, and three Cassandra bugs—
+and preserves each result independently. Those runs are intentionally separate
+from `run-table6.sh` because their toolchain, container images, and multi-minute
+measurement boundary are different from Kamera's simulator.

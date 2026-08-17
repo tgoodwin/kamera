@@ -21,7 +21,7 @@ standard path, most of it dependency download, compilation, and simulation runs.
 | Table 6 | `./artifact/run-table6.sh` | 5–15 min | 11 perturbed-run durations, traces, status table |
 | Figure 8 | setup, then `./artifact/reproduce-figure8.sh` | 20–60 min including setup | 3 experimental reproductions + plotting |
 | Section 6.1 | setup, then `./artifact/reproduce-section61.sh` | 15–40 min | all 3 case studies, including the bounded KRO-2 outcome |
-| Optional Sieve baselines | follow the [Sieve guide](sieve/README.md) | several hours | real kind-cluster Sieve runs for all 11 Table 6 rows |
+| Optional Sieve baselines | follow the [Sieve guide](sieve/README.md) | approximately 1.5–2 hours | real kind-cluster Sieve runs for all 11 Table 6 rows |
 
 The Figure 8 reproduction workflow reruns every exhaustive baseline in addition to the tuned executions. One of the 3 experiments in Figure 8 is reported in the paper to time out after 2 hours. Thus, it takes up to two hours following the paper's two-hour exhaustive search timeout. We provide a pre-generated trace for this 2-hour exhaustive baseline if evaluators choose to not regenerate the exhaustive search trace until the 2 hour timeout fires. See the [Figure 8 guide](figure8/README.md).
 
@@ -202,8 +202,8 @@ The [Section 6.1 guide](section61/README.md) gives the exact checks.
   itself is excluded.
 - **Real-cluster Sieve baselines:** optional because they require Docker, kind,
   kubectl, a separate Python/Go environment, container-registry access, and
-  several hours. They are nevertheless documented and runnable for every
-  Table 6 row.
+  approximately 1.5–2 hours. They are nevertheless documented and runnable
+  for every Table 6 row.
 
 ## Results and troubleshooting
 
