@@ -130,3 +130,75 @@ index 61be4384..cd52f247 100755
  # Change default storage class
  kubectl patch storageclass standard -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"false"}}}'
  kubectl patch storageclass csi-hostpath-sc -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+diff --git a/examples/cass-operator/deploy/deploy.sh b/examples/cass-operator/deploy/deploy.sh
+index ea8acae0..75f8d098 100755
+--- a/examples/cass-operator/deploy/deploy.sh
++++ b/examples/cass-operator/deploy/deploy.sh
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-set -x
++set -eux
+ 
+ kubectl apply -f controller-manifest.yaml
+ kubectl apply -f storageClass.yaml
+diff --git a/examples/zookeeper-operator/deploy/deploy.sh b/examples/zookeeper-operator/deploy/deploy.sh
+index 3223872a..5da4c612 100755
+--- a/examples/zookeeper-operator/deploy/deploy.sh
++++ b/examples/zookeeper-operator/deploy/deploy.sh
+@@ -1,5 +1,5 @@
+ #!/bin/bash
+-set -x
++set -eux
+ 
+ kubectl create -f crds
+ kubectl create -f default_ns/rbac.yaml
+diff --git a/examples/cass-operator/test/cdc-1.yaml b/examples/cass-operator/test/cdc-1.yaml
+index a549a400..0021c4b4 100644
+--- a/examples/cass-operator/test/cdc-1.yaml
++++ b/examples/cass-operator/test/cdc-1.yaml
+@@ -8,6 +8,13 @@ spec:
+   serverVersion: 3.11.7
+   managementApiAuth:
+     insecure: {}
++  configBuilderResources:
++    requests:
++      cpu: 1
++      memory: 512Mi
++    limits:
++      cpu: 1
++      memory: 1Gi
+   size: 1
+   storageConfig:
+     cassandraDataVolumeClaimSpec:
+@@ -24,4 +31,4 @@ spec:
+       role_manager: org.apache.cassandra.auth.CassandraRoleManager
+     jvm-options:
+       initial_heap_size: 800M
+-      max_heap_size: 800M
+\ No newline at end of file
++      max_heap_size: 800M
+diff --git a/examples/cass-operator/test/cdc-2.yaml b/examples/cass-operator/test/cdc-2.yaml
+index 378016af..04fcffb2 100644
+--- a/examples/cass-operator/test/cdc-2.yaml
++++ b/examples/cass-operator/test/cdc-2.yaml
+@@ -8,6 +8,13 @@ spec:
+   serverVersion: 3.11.7
+   managementApiAuth:
+     insecure: {}
++  configBuilderResources:
++    requests:
++      cpu: 1
++      memory: 512Mi
++    limits:
++      cpu: 1
++      memory: 1Gi
+   size: 2
+   storageConfig:
+     cassandraDataVolumeClaimSpec:
+@@ -24,4 +31,4 @@ spec:
+       role_manager: org.apache.cassandra.auth.CassandraRoleManager
+     jvm-options:
+       initial_heap_size: 800M
+-      max_heap_size: 800M
+\ No newline at end of file
++      max_heap_size: 800M

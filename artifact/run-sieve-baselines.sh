@@ -39,7 +39,14 @@ output_root="${2:-artifact-results/table6-sieve-$(date +%Y%m%d-%H%M%S)}"
 python="${KAMERA_AE_SIEVE_PYTHON:-python3}"
 registry="${KAMERA_AE_SIEVE_REGISTRY:-ghcr.io/sieve-project/action}"
 script_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+python_path="$(command -v "$python" 2>/dev/null || true)"
+if [[ -n "$python_path" ]]; then
+  export PATH="$(dirname "$python_path"):$PATH"
+fi
 export SIEVE_CSI_MANIFEST_DIR="${SIEVE_CSI_MANIFEST_DIR:-$script_root/sieve/manifests}"
+if [[ "$registry" == "docker.io/tlg2132" ]]; then
+  export SIEVE_KIND_IMAGE="${SIEVE_KIND_IMAGE:-docker.io/tlg2132/node@sha256:2f1538ba2b9c7af70e80a5237959ffd8e02692e54d439d22546fd9a508a474a3}"
+fi
 expected_sieve_commit="6c97abeb79e644fa5eda889a2c174b2436dbc264"
 
 if [[ ! -f "$sieve_root/reproduce_bugs.py" ]]; then
@@ -134,10 +141,18 @@ for row in "${rows[@]}"; do
   run_dir="$output_root/runs/${experiment//\//-}"
   mkdir -p "$run_dir"
   echo "running Sieve baseline: $experiment"
+  set +e
   (
     cd "$sieve_root"
     "$python" reproduce_bugs.py -c "$controller" -b "$bug" -r "$registry"
   ) 2>&1 | tee "$run_dir/run.log"
+  sieve_status=${PIPESTATUS[0]}
+  set -e
+  if [[ "$sieve_status" -ne 0 ]]; then
+    echo "Sieve failed for $experiment; deleting its kind cluster" >&2
+    kind delete cluster --name kind || true
+    exit "$sieve_status"
+  fi
 
   stats_line="$(awk -F '\t' -v controller="$controller" -v bug="$bug" \
     '$1 == controller && $2 == bug { print; exit }' \

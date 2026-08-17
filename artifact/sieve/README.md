@@ -27,8 +27,9 @@ dedicated machine or VM.
   read packages if anonymous pulls are rejected. The Apple Silicon path uses
   the public `docker.io/tlg2132` images instead.
 - Absolute times vary with image-cache state, registry latency, and host
-  resources. Compare the produced result JSON rather than expecting exact
-  second-for-second agreement.
+  resources. Cassandra startup is notably slower under Apple Silicon's
+  emulation of its old workload images. Compare the produced result JSON
+  rather than expecting exact second-for-second agreement.
 
 ## 1. Install and check the Sieve environment
 
@@ -85,6 +86,12 @@ Use Sieve's longer workload timeout, matching its bug-reproduction workflow:
 printf '%s\n' '{"workload_conditional_wait_timeout": 1000}' > sieve_config.json
 ```
 
+This value is a failure ceiling, not a fixed delay: successful waits return as
+soon as their condition is met. Cassandra stale-state-1 separately contains
+explicit 200-second Pod and 10-second PVC termination waits. Those two waits
+are expected to expire when the stale-deletion bug reproduces and are reported
+as its detected errors; they are not the 1,000-second fallback.
+
 Confirm that Docker is running and that no existing cluster is named `kind`:
 
 ```bash
@@ -99,20 +106,22 @@ makes Sieve's server build target configurable, and lets the caller select an
 instrumented kind node image. It also matches Sieve's bundled v4.1.1 hostpath
 CSI driver with the corresponding snapshot CRDs, uses the artifact's vendored
 CSI manifests instead of GitHub Raw, and fails before changing the default
-StorageClass if CSI setup is incomplete. Apply it from the Sieve checkout,
-replacing `/path/to/kamera` with the artifact checkout:
+StorageClass if CSI setup is incomplete. For Cassandra, it raises the config
+builder init container's memory limit from 256 MiB to 1 GiB so that the old
+amd64-only helper can run under Docker Desktop's emulation. Apply it from the
+Sieve checkout, replacing `/path/to/kamera` with the artifact checkout:
 
 ```bash
 git apply /path/to/kamera/artifact/sieve/apple-silicon.patch
 export SIEVE_SERVER_GOARCH=arm64
-export SIEVE_KIND_IMAGE=docker.io/tlg2132/node:v1.24.10-macos-test
+export SIEVE_KIND_IMAGE=docker.io/tlg2132/node@sha256:2f1538ba2b9c7af70e80a5237959ffd8e02692e54d439d22546fd9a508a474a3
 export KAMERA_AE_SIEVE_REGISTRY=docker.io/tlg2132
 ```
 
 Pull the complete native image set before running:
 
 ```bash
-docker pull docker.io/tlg2132/node:v1.24.10-macos-test
+docker pull docker.io/tlg2132/node@sha256:2f1538ba2b9c7af70e80a5237959ffd8e02692e54d439d22546fd9a508a474a3
 docker pull docker.io/tlg2132/zookeeper-operator:test
 docker pull docker.io/tlg2132/rabbitmq-operator:test
 docker pull docker.io/tlg2132/cass-operator:test
@@ -122,7 +131,7 @@ All four images are `linux/arm64`. Their published manifest digests are:
 
 | Image | Manifest digest |
 |---|---|
-| `node:v1.24.10-macos-test` | `sha256:a6807c9f2cfeaffef2fee755374ced339ce9433a7929c9bbd2f453a6bdc1e991` |
+| `node:v1.21.14-macos-test` | `sha256:2f1538ba2b9c7af70e80a5237959ffd8e02692e54d439d22546fd9a508a474a3` |
 | `zookeeper-operator:test` | `sha256:208a0a00fa73216bd816082d3c809d2cb611e90271629c0b906a4479ac91663b` |
 | `rabbitmq-operator:test` | `sha256:8472f7abb71b5e8cb55431348de34ce4b899157ff0c848f64bd95f5b785e7a1e` |
 | `cass-operator:test` | `sha256:16fccdbcb912ea289e9b54e66b8e91f26589510939eb0c5ad29f40aca89d9089` |
@@ -155,9 +164,8 @@ Sieve should finish with `reproduced=True` and report that the RabbitMQ PVC
 remained at `10Gi` instead of the requested `15Gi`. It writes
 `bug_reproduction_stats.tsv` and places the detailed JSON under
 `sieve_test_results/`; the result JSON contains both `duration` and
-`number_errors`. Additional schema differences are expected when the arm64
-Kubernetes 1.24 image is compared with Sieve's stored reference state, so use
-the PVC mismatch—not the raw inconsistency count—as the row-specific check.
+`number_errors`. Use the PVC mismatch—not the raw inconsistency count—as the
+row-specific check.
 
 This is only an environment check. It does not replace the complete 11-row
 command in the next section.
@@ -231,5 +239,4 @@ all rows because the rows use only these three controller families.
   and `table6-sieve.tsv` when reporting a failure.
 - Sieve's `reproduced=True` means its oracle detected an error or inconsistency.
   Read `detected_errors` in the copied JSON to confirm the row-specific symptom;
-  older Kubernetes objects can also yield incidental schema differences on a
-  ported environment.
+  do not rely on the raw inconsistency count alone.
