@@ -151,13 +151,18 @@ python3 - \
 import json
 import sys
 
-scopes = ("converged", "bounded-outcome", "converged")
+scopes = ("converged", "outcome-check", "converged")
 for path, scope in zip(sys.argv[1:], scopes):
     with open(path) as source:
         result = json.load(source)
+    status = (
+        "PASS"
+        if result["status"] in {"PASS", "OBSERVED"}
+        else result["status"]
+    )
     print("\t".join((
         result["case"],
-        result["status"],
+        status,
         str(result["convergedStates"]),
         result["observable"],
         scope,

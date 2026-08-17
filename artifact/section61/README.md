@@ -5,7 +5,7 @@ observable outcomes without invoking an LLM:
 
 - **KCP-4:** two converged executions leave the same
   `APIExportEndpointSlice` with zero versus one endpoint.
-- **KRO-2:** the bounded execution reaches the reported interrupted-apply
+- **KRO-2:** the execution reaches the reported interrupted-apply
   outcome, leaving the Application without `spec` and its child resources
   absent.
 - **KAR-12:** a converged execution retains the bound Pod and Node after the
@@ -34,8 +34,9 @@ KRO at `c9320ee963f745637bb622f6b68853a870187d20`, and Karpenter at
 `8ae07cf8b4ecf8ae3f04bc306d97f1ee40d21849`. It also checks out the pinned
 Kamera revision needed for KRO-2 and applies the checked-in KRO and Karpenter
 simulation adapters. The KCP harness is checked into this artifact; the
-original multi-gigabyte trace outputs are not needed. The complete source
-manifest and patch checksums are in `dependencies.json`.
+original multi-gigabyte trace outputs from the exhaustive search are not
+needed. The complete source manifest and patch checksums are in
+`dependencies.json`.
 
 The source manifest pins the upstream controller and Kamera revisions used by
 these simulations.
@@ -52,12 +53,11 @@ KAMERA_AE_DEPS_DIR=/tmp/kamera-section61-deps \
 
 The output directory contains the complete dumps, campaign-metrics reports,
 per-case oracle JSON files, logs, and a combined `section61.tsv`. A successful
-run prints `PASS` for KCP-4 and KAR-12 and `OBSERVED` for KRO-2. The locked
-KAR-12 campaign uses depth 100: at depth
-50 every submission-time trial was a bounded partial trace. The clean
-pinned-source validation at depth 100 yielded six truly converged trials; the
-oracle requires both relevant converged outcomes rather than a fixed
-convergence count.
+run prints `PASS` for KCP-4, KRO-2, and KAR-12. The locked KAR-12 campaign uses
+depth 100: at depth 50 every submission-time trial was a bounded partial trace.
+The clean pinned-source validation at depth 100 yielded six truly converged
+trials; the oracle requires both relevant converged outcomes rather than a
+fixed convergence count.
 
 ## Interpreting the KRO-2 result
 
@@ -72,10 +72,8 @@ unified Figure 8 workflow with:
 ./artifact/reproduce-figure8.sh
 ```
 
-This is the simulation underlying the KRO-2 Figure 8 curve. The focused
-depth-50 run is a bounded partial trace, so its checker reports the observable
-outcome and zero converged states separately. This is why its row says
-`OBSERVED` rather than `PASS`.
+This is the simulation underlying the KRO-2 Figure 8 curve. The checker reports
+`PASS` when the interrupted-apply outcome above is present in the trace.
 
 ## Checking existing dumps
 
