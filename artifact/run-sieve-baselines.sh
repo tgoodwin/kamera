@@ -132,13 +132,20 @@ if kind get clusters 2>/dev/null | grep -qx 'kind'; then
   exit 1
 fi
 
-cleanup_failed_run() {
-  status=$?
-  if [[ "$status" -ne 0 ]] && kind get clusters 2>/dev/null | grep -qx 'kind'; then
-    echo "deleting kind cluster after unsuccessful Sieve run" >&2
-    kind delete cluster --name kind || true
+delete_kind_cluster() {
+  local reason="$1"
+  if kind get clusters 2>/dev/null | grep -qx 'kind'; then
+    echo "deleting kind cluster $reason" >&2
+    kind delete cluster --name kind
   fi
-  return "$status"
+}
+
+cleanup_failed_run() {
+  local exit_status=$?
+  if [[ "$exit_status" -ne 0 ]]; then
+    delete_kind_cluster "after unsuccessful Sieve run" || true
+  fi
+  return "$exit_status"
 }
 trap cleanup_failed_run EXIT
 
@@ -196,6 +203,7 @@ for row in "${rows[@]}"; do
     "$number_errors" "$result_copy" | tee -a "$tsv"
   if [[ "$reproduced" != "True" ]]; then
     failures=$((failures + 1))
+    delete_kind_cluster "after $experiment reported reproduced=False"
   fi
 done
 

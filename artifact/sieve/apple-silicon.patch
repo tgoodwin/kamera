@@ -17,7 +17,7 @@ index d5b87539..c4adbf44 100644
  
  def stop_sieve_server():
 -    os_system("docker exec kind-control-plane bash -c 'pkill sieve-server'")
-+    os_system("docker exec kind-control-plane bash -c 'pkill sieve-server || true'")
++    os_system("docker exec kind-control-plane bash -c 'pkill sieve-server || [ $? -eq 1 ]'")
  
  
  def setup_kind_cluster(test_context: TestContext):

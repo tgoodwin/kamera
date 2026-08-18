@@ -222,9 +222,10 @@ all rows because the rows use only these three controller families.
 
 ## Troubleshooting
 
-- The wrapper removes its `kind` cluster whenever a row exits unsuccessfully.
-  If cluster creation is interrupted outside the wrapper, or cleanup cannot
-  reach Docker, run `kind delete cluster --name kind` before retrying the row.
+- The wrapper removes its `kind` cluster before continuing after a
+  `reproduced=False` row and whenever the wrapper exits unsuccessfully. If
+  cluster creation is interrupted outside the wrapper, or cleanup cannot reach
+  Docker, run `kind delete cluster --name kind` before retrying the row.
 - If CSI setup fails, confirm `SIEVE_CSI_MANIFEST_DIR` is an absolute path to
   `artifact/sieve/manifests`. The patched installer checks all ten files and
   waits for the hostpath and snapshot-controller workloads before changing the
