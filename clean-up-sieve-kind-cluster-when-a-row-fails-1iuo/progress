@@ -1,1 +1,1 @@
-ff01b87 cleans up when reproduce_bugs.py exits nonzero, but a reproduced=False row exits zero and still leaves kind behind. cass/intermediate-state-1 reproduced this twice; cleanup remains open.
+Added an EXIT trap covering every nonzero wrapper exit, including reproduced=False; fault-injection test observed kind deletion and preserved exit status.
