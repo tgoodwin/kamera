@@ -1,0 +1,1 @@
+Made pinned Sieve teardown tolerate an already-exited sieve-server. Full Apple Silicon rerun: reproduced=True, injection/workload completed, no_exception=true, 95 findings including the two expected 1000-second timeouts.
