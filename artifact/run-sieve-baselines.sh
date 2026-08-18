@@ -131,6 +131,24 @@ if kind get clusters 2>/dev/null | grep -qx 'kind'; then
   echo "Sieve would delete it; use a dedicated host or remove it intentionally" >&2
   exit 1
 fi
+
+delete_kind_cluster() {
+  local reason="$1"
+  if kind get clusters 2>/dev/null | grep -qx 'kind'; then
+    echo "deleting kind cluster $reason" >&2
+    kind delete cluster --name kind
+  fi
+}
+
+cleanup_failed_run() {
+  local exit_status=$?
+  if [[ "$exit_status" -ne 0 ]]; then
+    delete_kind_cluster "after unsuccessful Sieve run" || true
+  fi
+  return "$exit_status"
+}
+trap cleanup_failed_run EXIT
+
 if [[ -e "$output_root" ]]; then
   echo "refusing to overwrite existing output: $output_root" >&2
   exit 1
@@ -155,8 +173,7 @@ for row in "${rows[@]}"; do
   sieve_status=${PIPESTATUS[0]}
   set -e
   if [[ "$sieve_status" -ne 0 ]]; then
-    echo "Sieve failed for $experiment; deleting its kind cluster" >&2
-    kind delete cluster --name kind || true
+    echo "Sieve failed for $experiment" >&2
     exit "$sieve_status"
   fi
 
@@ -186,6 +203,7 @@ for row in "${rows[@]}"; do
     "$number_errors" "$result_copy" | tee -a "$tsv"
   if [[ "$reproduced" != "True" ]]; then
     failures=$((failures + 1))
+    delete_kind_cluster "after $experiment reported reproduced=False"
   fi
 done
 
