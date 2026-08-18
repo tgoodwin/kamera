@@ -1,0 +1,1 @@
+ff01b87 cleans up when reproduce_bugs.py exits nonzero, but a reproduced=False row exits zero and still leaves kind behind. cass/intermediate-state-1 reproduced this twice; cleanup remains open.
