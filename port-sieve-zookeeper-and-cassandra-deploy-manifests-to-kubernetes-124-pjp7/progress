@@ -1,0 +1,1 @@
+Resolved at PR 86 ff01b87 by pinning the Apple Silicon kind node to Kubernetes 1.21. Clean gates and full matrix confirmed ZooKeeper and Cassandra beta manifests install successfully.
