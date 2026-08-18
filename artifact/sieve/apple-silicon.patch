@@ -12,6 +12,15 @@ index d5b87539..c4adbf44 100644
      os.chdir(org_dir)
      os_system("docker cp sieve_server kind-control-plane:/sieve_server")
  
+@@ -237,7 +238,7 @@ def start_sieve_server(test_context: TestContext):
+ 
+ 
+ def stop_sieve_server():
+-    os_system("docker exec kind-control-plane bash -c 'pkill sieve-server'")
++    os_system("docker exec kind-control-plane bash -c 'pkill sieve-server || true'")
+ 
+ 
+ def setup_kind_cluster(test_context: TestContext):
 @@ -251,6 +252,10 @@ def setup_kind_cluster(test_context: TestContext):
      k8s_image_tag = (
          test_context.controller_config.kubernetes_version + "-" + platform + test_context.image_tag

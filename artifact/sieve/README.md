@@ -222,8 +222,9 @@ all rows because the rows use only these three controller families.
 
 ## Troubleshooting
 
-- If cluster creation fails, run `kind delete cluster --name kind`, confirm the
-  Docker daemon has enough CPU and memory, and retry that row.
+- The wrapper removes its `kind` cluster whenever a row exits unsuccessfully.
+  If cluster creation is interrupted outside the wrapper, or cleanup cannot
+  reach Docker, run `kind delete cluster --name kind` before retrying the row.
 - If CSI setup fails, confirm `SIEVE_CSI_MANIFEST_DIR` is an absolute path to
   `artifact/sieve/manifests`. The patched installer checks all ten files and
   waits for the hostpath and snapshot-controller workloads before changing the
@@ -235,3 +236,7 @@ all rows because the rows use only these three controller families.
 - Sieve's `reproduced=True` means its oracle detected an error or inconsistency.
   Read `detected_errors` in the copied JSON to confirm the row-specific symptom;
   do not rely on the raw inconsistency count alone.
+- In `cass/intermediate-state-1`, the Sieve server can exit after completing its
+  injection while the Cassandra workload is still waiting for a missing secret.
+  The Apple Silicon patch treats that already-stopped server as a clean teardown
+  so post-processing can still evaluate the reproduction oracle.
