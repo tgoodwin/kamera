@@ -232,7 +232,6 @@ For instructions on how to generate these graphs for new projects using LLMs, se
 This guide provides heuristics for discovering controllers, extracting topology (Watches), and identifying interactions (Reads/Writes).
 
 ## Input Generation Strategy
-NOTE: this subsection is now obsolte. See [@docs/plans/2026-02-15-action-catalog-workflow-poc-design.md](this revised, smaller-scoped strategy) for context.
 
 To automatically generate valid resource inputs for fuzzing, we leverage the target project's own test builders.
 

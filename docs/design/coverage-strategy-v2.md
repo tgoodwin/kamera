@@ -9,8 +9,8 @@ bugs often manifest as race conditions, stale reads, or non-convergence in contr
 
 An earlier design (`coverage-strategy.md`) proposed a fully static pipeline: analyze a dependency
 graph to find structurally risky interaction patterns, then fabricate initial state (objects + pending
-reconciles) targeting those patterns and launch parallel explorations. Implementation work
-(`docs/plans/2026-01-28` through `2026-02-02`) revealed that the static-only approach has two
+reconciles) targeting those patterns and launch parallel explorations. Implementation work on
+that static-only approach revealed two
 fundamental challenges when trying to generate interesting inputs *before* any execution happens:
 
 **Fabricating valid intermediate objects.** Many resources in a control plane are not user-facing.

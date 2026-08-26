@@ -12,7 +12,7 @@ import (
 // semantics (reads/writes/watches/owns) rather than raw graph shape. Each
 // instance records the specific controllers/resources involved and minimal
 // attributes needed for downstream scenario generation (e.g., missing trigger
-// resources or convergence type). See docs/plans/2026-01-28-hotspot-detection-design.md.
+// resources or convergence type).
 
 type HotspotType string
 

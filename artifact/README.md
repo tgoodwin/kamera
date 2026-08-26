@@ -34,12 +34,11 @@ and documentation needed for evaluation. Kamera is released under the
 repository's MIT `LICENSE`; imported controller source retains its original
 copyright headers.
 
-The reviewed artifact revision is archived as
-[Kamera v0.0.17](https://zenodo.org/records/22108477) with the version-specific
-DOI [`10.5281/zenodo.22108477`](https://doi.org/10.5281/zenodo.22108477). The
-corresponding GitHub release was created from the `sosp-ae` branch; the main
-Kamera branch continues to undergo development as Kamera is an open-source
-tool.
+The reviewed artifact revision is published as the
+[Kamera v0.0.18 GitHub release](https://github.com/tgoodwin/kamera/releases/tag/v0.0.18),
+created from the `sosp-ae` branch. The release page links the immutable Zenodo
+archive and version-specific DOI. The main Kamera branch continues to undergo
+development as Kamera is an open-source tool.
 
 ## Badge: Functional
 
