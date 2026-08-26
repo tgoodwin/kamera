@@ -1,6 +1,6 @@
 SLEEVECTRL_IMG ?= docker.io/tlg2132/sleeve-controller-manager:latest
 GOBIN := $(shell pwd)/bin
-SKIPPED_CI_EXAMPLE_MODULE_DIRS := examples/cluster-api examples/knative-serving
+SKIPPED_CI_EXAMPLE_MODULE_DIRS := examples/knative-serving
 EXAMPLE_MODULE_DIRS := $(patsubst %/,%,$(sort $(dir $(wildcard examples/*/go.mod))))
 CI_EXAMPLE_MODULE_DIRS := $(filter-out $(SKIPPED_CI_EXAMPLE_MODULE_DIRS),$(EXAMPLE_MODULE_DIRS))
 

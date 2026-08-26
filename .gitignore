@@ -61,6 +61,10 @@ examples/crossplane/crossplane
 examples/knative-serving/knative-serving
 examples/kratix/kratix
 examples/kro/kro
+/webhook/bin/
+
+# Generated development TLS material
+/webhook/dev/manifests/webhook/webhook.tls.secret.yaml
 
 # === Post-paper cleanup (2026-04-25) ===
 
