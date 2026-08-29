@@ -6,6 +6,9 @@
 > successful path through the badge checks, reproduction scripts, expected
 > outputs, and runtime estimates.
 
+See the [full index of bug findings](artifact/bug-findings.md) reported in the
+SOSP 2026 paper, including their public reports and current status.
+
 ## Reproducing the Table 6 Sieve baselines
 
 The standard artifact workflow runs the 11 Table 6 cases in Kamera with
