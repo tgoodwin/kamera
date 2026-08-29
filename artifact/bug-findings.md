@@ -65,8 +65,8 @@ of the 31 bugs, including 3 fixed and 4 otherwise resolved findings.
 | KRA-5 | [#740](https://github.com/syntasso/kratix/issues/740) | Reported | Work and WorkPlacement status depends on controller ordering. |
 | KRA-6 | [#741](https://github.com/syntasso/kratix/issues/741) | Reported | A WorkController crash leaves a Work uninitialized. |
 | KRA-7 | [#742](https://github.com/syntasso/kratix/issues/742) | Reported | Destination deletion produces inconsistent final states. |
-| KRA-11 | — | Not publicly reported | Multiple Works amplify ordering divergence. |
-| KRA-13 | — | Not publicly reported | Multiple HealthRecords produce ordering-dependent health status. |
+| KRA-11 | [#740](https://github.com/syntasso/kratix/issues/740) | Reported | Multiple Works amplify ordering divergence. |
+| KRA-13 | [#898](https://github.com/syntasso/kratix/issues/898) | Reported | Multiple HealthRecords produce ordering-dependent health status. |
 
 ## KRO
 
