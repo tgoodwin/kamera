@@ -1,13 +1,22 @@
 # Kamera
 
+`kamera` is a toolkit for observing, analyzing, and verifying Kubernetes control
+planes. It uses implementation-level model checking and simulation testing to
+capture controller interactions and surface bugs that only appear under
+particular event orderings.
+
+**Note:** This project is a research artifact and is under active development.
+Its APIs and functionalities are subject to change and it is not yet
+recommended for production use.
+
+See the [full index of bug findings](artifact/bug-findings.md) reported in the
+SOSP 2026 paper, including their public reports and current status.
+
 > [!IMPORTANT]
 > **SOSP 2026 artifact evaluators:** use the `sosp-ae` branch and start with
 > the [artifact evaluation guide](artifact/README.md). It provides the shortest
 > successful path through the badge checks, reproduction scripts, expected
 > outputs, and runtime estimates.
-
-See the [full index of bug findings](artifact/bug-findings.md) reported in the
-SOSP 2026 paper, including their public reports and current status.
 
 ## Reproducing the Table 6 Sieve baselines
 
@@ -56,12 +65,6 @@ It preserves every Sieve result and writes a combined `table6-sieve.tsv` under
 `artifact-results/`; a successful row has `reproduced=True` in Sieve's oracle
 output. Budget approximately 1.5–2 hours, with additional time possible when
 old amd64 workload images run under Apple Silicon emulation.
-
-**Note:** This project is a research artifact and is under active development. Its APIs and functionalities are subject to change and it is not yet recommended for production use.
-
-`kamera` is a toolkit for observing, analyzing, and verifying the behavior of the Kubernetes control plane. It is designed specifically for controllers built with [controller-runtime](https://github.com/kubernetes-sigs/controller-runtime), providing targeted instrumentation to capture the behaviors of individual controllers as well as the interactions between them.
-
-The primary goal of Kamera is to help platform developers understand complex interactions within the control plane by capturing detailed execution traces, enabling offline analysis and functional replay. To ensure control plane reliability, Kamera also employs implementation-level model checking and simulation testing of control plane deployments, enabling developers to proactively catch problematic behaviors that only manifest under certain conditions before deploying their code.
 
 ## Try it out first!
 
