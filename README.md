@@ -1,22 +1,27 @@
 # Kamera
 
-`kamera` is a toolkit for observing, analyzing, and verifying Kubernetes control
-planes. It uses implementation-level model checking and simulation testing to
-capture controller interactions and surface bugs that only appear under
-particular event orderings.
+Kamera is the system and open-source artifact for the SOSP 2026 paper *Testing
+Custom Control Planes Without the Cluster*. It tests Kubernetes custom control
+planes by executing their real controller code against a lightweight model of
+the Kubernetes runtime. This partial-simulation approach makes it practical to
+explore multi-controller reconcile orderings, stale controller views, and
+faults without deploying a live cluster.
 
-**Note:** This project is a research artifact and is under active development.
-Its APIs and functionalities are subject to change and it is not yet
-recommended for production use.
-
-See the [full index of bug findings](artifact/bug-findings.md) reported in the
-SOSP 2026 paper, including their public reports and current status.
+In the paper's evaluation, Kamera found 31 new bugs across five popular
+open-source custom control planes and achieved a 1,781× speedup over
+cluster-based controller testing. See the
+[full index of bug findings](artifact/bug-findings.md), including their public
+reports and current status.
 
 > [!IMPORTANT]
 > **SOSP 2026 artifact evaluators:** use the `sosp-ae` branch and start with
 > the [artifact evaluation guide](artifact/README.md). It provides the shortest
 > successful path through the badge checks, reproduction scripts, expected
 > outputs, and runtime estimates.
+
+**Note:** This project is a research artifact and is under active development.
+Its APIs and functionalities are subject to change and it is not yet
+recommended for production use.
 
 ## Reproducing the Table 6 Sieve baselines
 
