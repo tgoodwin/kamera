@@ -1,13 +1,12 @@
 # Kamera
 
-Kamera is the system and open-source artifact for the SOSP 2026 paper *Testing
-Custom Control Planes Without the Cluster*. It tests Kubernetes custom control
-planes by executing their real controller code against a lightweight model of
-the Kubernetes runtime. This partial-simulation approach makes it practical to
-explore multi-controller reconcile orderings, stale controller views, and
-faults without deploying a live cluster.
+Kamera is a testing system for Kubernetes custom control planes, which compose
+multiple controllers to automate infrastructure management. It uses partial
+simulation—executing real controller code against a lightweight model of the
+Kubernetes runtime—to make it practical to explore multi-controller reconcile
+orderings, stale controller views, and faults without deploying a live cluster.
 
-In the paper's evaluation, Kamera found 31 new bugs across five popular
+In the SOSP 2026 evaluation, Kamera found 31 new bugs across five popular
 open-source custom control planes and achieved a 1,781× speedup over
 cluster-based controller testing. See the
 [full index of bug findings](artifact/bug-findings.md), including their public
@@ -19,58 +18,54 @@ reports and current status.
 > successful path through the badge checks, reproduction scripts, expected
 > outputs, and runtime estimates.
 
-**Note:** This project is a research artifact and is under active development.
-Its APIs and functionalities are subject to change and it is not yet
-recommended for production use.
-
-## Reproducing the Table 6 Sieve baselines
-
-The standard artifact workflow runs the 11 Table 6 cases in Kamera with
-`./artifact/run-table6.sh`. Evaluators who also want to rerun the comparison
-with Sieve itself can use the checked-in wrapper around Sieve's real
-kind-cluster reproducer.
-
-This optional workflow additionally requires Docker, kubectl, Helm 3, kind
-0.13.0, Go, Python, `jq`, a configured `GOPATH` and `KUBECONFIG`, and enough
-resources to run the target controllers in a local cluster. Use a dedicated
-host: Sieve creates and deletes a cluster named `kind`. The validated Python
-and container-image setup differs between Linux x86-64 and Apple Silicon, so
-complete the platform-specific preparation in the
-[Sieve baseline guide](artifact/sieve/README.md) before running the wrapper.
-
-The general process is:
-
-1. Clone `sieve-project/sieve` and check out the pinned revision
-   `6c97abeb79e644fa5eda889a2c174b2436dbc264`.
-2. Create Sieve's Python environment, then complete the platform-specific
-   image setup from the guide:
-
-   ```bash
-   ./artifact/setup-sieve-python.sh /absolute/path/to/sieve
-   ```
-
-   The baseline runner automatically uses the resulting virtual environment.
-3. Return to the Kamera repository root and validate the environment with one
-   RabbitMQ row:
-
-   ```bash
-   ./artifact/run-sieve-baselines.sh \
-     --only rmq/intermediate-state-1 \
-     /absolute/path/to/sieve
-   ```
-
-4. Run all 11 Table 6 rows:
-
-   ```bash
-   ./artifact/run-sieve-baselines.sh /absolute/path/to/sieve
-   ```
-
-The full run covers four ZooKeeper, four RabbitMQ, and three Cassandra bugs.
-It preserves every Sieve result and writes a combined `table6-sieve.tsv` under
-`artifact-results/`; a successful row has `reproduced=True` in Sieve's oracle
-output. Budget approximately 1.5–2 hours, with additional time possible when
-old amd64 workload images run under Apple Silicon emulation.
-
+<!--## Reproducing the Table 6 Sieve baselines-->
+<!---->
+<!--The standard artifact workflow runs the 11 Table 6 cases in Kamera with-->
+<!--`./artifact/run-table6.sh`. Evaluators who also want to rerun the comparison-->
+<!--with Sieve itself can use the checked-in wrapper around Sieve's real-->
+<!--kind-cluster reproducer.-->
+<!---->
+<!--This optional workflow additionally requires Docker, kubectl, Helm 3, kind-->
+<!--0.13.0, Go, Python, `jq`, a configured `GOPATH` and `KUBECONFIG`, and enough-->
+<!--resources to run the target controllers in a local cluster. Use a dedicated-->
+<!--host: Sieve creates and deletes a cluster named `kind`. The validated Python-->
+<!--and container-image setup differs between Linux x86-64 and Apple Silicon, so-->
+<!--complete the platform-specific preparation in the-->
+<!--[Sieve baseline guide](artifact/sieve/README.md) before running the wrapper.-->
+<!---->
+<!--The general process is:-->
+<!---->
+<!--1. Clone `sieve-project/sieve` and check out the pinned revision-->
+<!--   `6c97abeb79e644fa5eda889a2c174b2436dbc264`.-->
+<!--2. Create Sieve's Python environment, then complete the platform-specific-->
+<!--   image setup from the guide:-->
+<!---->
+<!--   ```bash-->
+<!--   ./artifact/setup-sieve-python.sh /absolute/path/to/sieve-->
+<!--   ```-->
+<!---->
+<!--   The baseline runner automatically uses the resulting virtual environment.-->
+<!--3. Return to the Kamera repository root and validate the environment with one-->
+<!--   RabbitMQ row:-->
+<!---->
+<!--   ```bash-->
+<!--   ./artifact/run-sieve-baselines.sh \-->
+<!--     --only rmq/intermediate-state-1 \-->
+<!--     /absolute/path/to/sieve-->
+<!--   ```-->
+<!---->
+<!--4. Run all 11 Table 6 rows:-->
+<!---->
+<!--   ```bash-->
+<!--   ./artifact/run-sieve-baselines.sh /absolute/path/to/sieve-->
+<!--   ```-->
+<!---->
+<!--The full run covers four ZooKeeper, four RabbitMQ, and three Cassandra bugs.-->
+<!--It preserves every Sieve result and writes a combined `table6-sieve.tsv` under-->
+<!--`artifact-results/`; a successful row has `reproduced=True` in Sieve's oracle-->
+<!--output. Budget approximately 1.5–2 hours, with additional time possible when-->
+<!--old amd64 workload images run under Apple Silicon emulation.-->
+<!---->
 ## Try it out first!
 
 Kick the tires with a [Knative Serving](https://knative.dev/docs/serving/) example. It wires the Knative Serving control plane up to Kamera and kicks off a simulation test which lets you inspect how Knative reconciles a `serving.knative.dev/v1/Service` across different interleavings.
