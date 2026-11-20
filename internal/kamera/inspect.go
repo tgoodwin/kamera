@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -184,7 +183,7 @@ func runDependencyGraph(args []string) int {
 		return 1
 	}
 
-	openCmdArgs := OpenArgs(pdfFile.Name())
+	openCmdArgs := interactive.OpenArgs(pdfFile.Name())
 	openCmd := exec.Command(openCmdArgs[0], openCmdArgs[1:]...)
 	if err := openCmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "open pdf: %v\n", err)
@@ -317,19 +316,6 @@ func DependencyGraphDOT(path string) (string, error) {
 	}
 
 	return analyze.RenderDependencyGraphDOT(graph), nil
-}
-
-func OpenArgs(path string) []string {
-	switch runtime.GOOS {
-	case "darwin":
-		return []string{"open", path}
-	case "linux":
-		return []string{"xdg-open", path}
-	case "windows":
-		return []string{"cmd", "/c", "start", "", path}
-	default:
-		return []string{"open", path}
-	}
 }
 
 func inspectUsage() string {
