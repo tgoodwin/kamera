@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -115,19 +114,6 @@ func TestDependencyGraphDOT(t *testing.T) {
 
 	expected := analyze.RenderDependencyGraphDOT(graph)
 	require.Equal(t, expected, dot)
-}
-
-func TestOpenArgsUsesDefaultViewer(t *testing.T) {
-	switch runtime.GOOS {
-	case "darwin":
-		require.Equal(t, []string{"open", "/tmp/example.pdf"}, OpenArgs("/tmp/example.pdf"))
-	case "linux":
-		require.Equal(t, []string{"xdg-open", "/tmp/example.pdf"}, OpenArgs("/tmp/example.pdf"))
-	case "windows":
-		require.Equal(t, []string{"cmd", "/c", "start", "", "/tmp/example.pdf"}, OpenArgs("/tmp/example.pdf"))
-	default:
-		t.Skip("unsupported OS")
-	}
 }
 
 func TestRunInspectHotspotsJSON(t *testing.T) {

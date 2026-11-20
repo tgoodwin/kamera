@@ -40,32 +40,28 @@ func openStateDAGGraph(states []tracecheck.ResultState) string {
 		DropSelfLoops: true,
 	})
 
-	// Write DOT to a temp file
-	tmpFile, err := os.CreateTemp("", "inspector-dag-*.dot")
+	pdfFile, err := os.CreateTemp("", "inspector-dag-*.pdf")
 	if err != nil {
-		return fmt.Sprintf("create temp file: %v", err)
+		return fmt.Sprintf("create temp pdf: %v", err)
 	}
-	dotPath := tmpFile.Name()
-	if _, err := tmpFile.WriteString(dot); err != nil {
-		tmpFile.Close()
-		os.Remove(dotPath)
-		return fmt.Sprintf("write dot: %v", err)
-	}
-	tmpFile.Close()
 
-	// Execute: dot -Tpdf <file> | open -fa Preview
-	// Use a shell to handle the pipe
-	cmd := exec.Command("sh", "-c", fmt.Sprintf("dot -Tpdf %q | open -fa Preview", dotPath))
+	cmd := exec.Command("dot", "-Tpdf")
+	cmd.Stdin = strings.NewReader(dot)
+	cmd.Stdout = pdfFile
 	if err := cmd.Run(); err != nil {
-		os.Remove(dotPath)
-		return fmt.Sprintf("render graph: %v", err)
+		_ = pdfFile.Close()
+		return fmt.Sprintf("render pdf: %v", err)
 	}
 
-	// Clean up temp file after a short delay to ensure Preview has read it
-	go func() {
-		time.Sleep(2 * time.Second)
-		os.Remove(dotPath)
-	}()
+	if err := pdfFile.Close(); err != nil {
+		return fmt.Sprintf("close pdf: %v", err)
+	}
+
+	openCmdArgs := OpenArgs(pdfFile.Name())
+	openCmd := exec.Command(openCmdArgs[0], openCmdArgs[1:]...)
+	if err := openCmd.Run(); err != nil {
+		return fmt.Sprintf("open pdf: %v", err)
+	}
 
 	return ""
 }
@@ -363,7 +359,7 @@ func buildStateInspectorRoot(
 				if errMsg != "" {
 					updateStatus(fmt.Sprintf("[red]graph failed: %s[-]", errMsg))
 				} else {
-					updateStatus("[green]graph opened in Preview[-]")
+					updateStatus("[green]graph opened[-]")
 				}
 			})
 		}()
