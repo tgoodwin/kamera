@@ -44,12 +44,12 @@ type EffectContextManager interface {
 // StalenessInterval defines a window during which a reconciler's view
 // of a specific resource kind lags behind the actual cluster state.
 type StalenessInterval struct {
-	ReconcilerID    ReconcilerID `json:"reconciler"`
-	Kind            string       `json:"kind"`  // canonical group/kind
-	StaleAt         int64        `json:"staleAt"`
-	CatchUpAt       int64        `json:"catchUpAt"`
-	Lag             int64        `json:"lag"`             // how far behind frontier; -1 = frozen
-	FreezeAtSequence int64       `json:"freezeAt,omitempty"` // when lag=-1 and set, freeze at this sequence instead of staleAt
+	ReconcilerID     ReconcilerID `json:"reconciler"`
+	Kind             string       `json:"kind"` // canonical group/kind
+	StaleAt          int64        `json:"staleAt"`
+	CatchUpAt        int64        `json:"catchUpAt"`
+	Lag              int64        `json:"lag"`                // how far behind frontier; -1 = frozen
+	FreezeAtSequence int64        `json:"freezeAt,omitempty"` // when lag=-1 and set, freeze at this sequence instead of staleAt
 }
 
 // PermuteDepthRange constrains ordering permutations to a specific depth window.
@@ -1666,7 +1666,10 @@ func (e *Explorer) emitAbortedState(
 }
 
 func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, stepResult *ReconcileResult) (ObjectVersions, KindSequences, []StateEvent) {
-	changes := stepResult.Changes.ObjectVersions
+	// Materialize each effect from its own version. ObjectVersions is a final
+	// writeset and therefore cannot represent multiple writes to the same key.
+	changes := make(ObjectVersions, len(stepResult.Changes.ObjectVersions))
+	stepResult.Changes.ObjectVersions = changes
 
 	// initialize outputs which the effects will be applied to
 	nextState := maps.Clone(stateView.Objects())
@@ -1681,6 +1684,11 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 
 	for _, effect := range stepResult.Changes.Effects {
 		existingKey, exists := nextState.HasNamespacedNameForKind(effect.Key.ResourceKey)
+		currentVersion := snapshot.VersionHash{}
+		if exists {
+			currentVersion = nextState[existingKey]
+		}
+		appliedVersion, noOp := resolveEffectVersion(e.versionManager, currentVersion, exists, effect)
 
 		switch effect.OpType {
 		case event.CREATE:
@@ -1689,172 +1697,18 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				// with an 'AlreadyExists' error, so panic if it does happen
 				panic("create effect object already exists in prev state: " + effect.Key.String())
 			}
-			// Mimic APIServer behavior: set Generation to 1 on CREATE if not already set
-			newObj := e.versionManager.Resolve(effect.Version)
-			if newObj != nil {
-				gen := util.GetObjectGeneration(newObj)
-				if gen == 0 {
-					newObj.SetGeneration(1)
-					// Update the version hash after modifying Generation
-					changes[effect.Key] = e.versionManager.Publish(newObj)
-				}
+			nextState[effect.Key] = appliedVersion
+		case event.UPDATE, event.PATCH, event.APPLY:
+			if !exists && (effect.OpType != event.APPLY || effect.Subresource == "status") {
+				panic("write effect object not found in prev state: " + effect.Key.String())
 			}
-			nextState[effect.Key] = changes[effect.Key]
-		case event.UPDATE, event.PATCH:
-			if !exists {
-				// it is possible that a stale read will cause a controller to update an object
-				// that no longer exists in the global state. The effect validation mechanism
-				// should cause the client operation to 404 and prevent the update effect from
-				// going through. If it does go through, we should panic cause something broke.
-				panic("update effect object not found in prev state: " + effect.Key.String())
-			}
-			oldVersion := nextState[existingKey]
-			if exists && existingKey != effect.Key {
-				delete(nextState, existingKey)
-			}
-			if effect.Subresource == "status" {
-				oldObj := e.versionManager.Resolve(oldVersion)
-				newObj := e.versionManager.Resolve(effect.Version)
-				mergedObj := mergeStatusSubresourceObject(oldObj, newObj, effect.OpType == event.PATCH || effect.OpType == event.APPLY)
-				mergedHash := e.versionManager.Publish(mergedObj)
-				// No-op: if merged result is identical to current state, skip.
-				// Real K8s API server detects identical status patches and
-				// skips the etcd write — no resourceVersion bump, no watch event.
-				if mergedHash == oldVersion {
-					continue
-				}
-				changes[effect.Key] = mergedHash
-				nextState[effect.Key] = changes[effect.Key]
-				break
-			}
-			// No-op detection: if the effect produces the same content hash as
-			// what's already in state, skip it. This matches real API server
-			// behavior where a PATCH that doesn't change anything is a no-op.
-			if effect.Version == oldVersion {
+			if noOp {
 				continue
 			}
-			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
-			oldObj := e.versionManager.Resolve(oldVersion)
-			newObj := e.versionManager.Resolve(effect.Version)
-			if oldObj != nil && newObj != nil {
-				// Compare specs to determine if Generation should be incremented
-				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
-				// Use a safe check to avoid panics if spec comparison fails
-				specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
-				if err != nil {
-					// If we can't determine if spec changed, conservatively increment Generation
-					// This is safer than not incrementing it
-					stepLogger.V(2).WithValues("key", effect.Key, "error", err).Info("error checking spec change, incrementing Generation conservatively")
-					specChanged = true
-				}
-				if specChanged {
-					oldGen := util.GetObjectGeneration(oldObj)
-					if oldGen == 0 {
-						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
-						// This can happen if the state snapshot has objects with Generation=0
-						newObj.SetGeneration(1)
-						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", 1).Info("set Generation to 1 on spec update (was 0)")
-					} else {
-						newObj.SetGeneration(oldGen + 1)
-						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", newObj.GetGeneration()).Info("incremented Generation on spec update")
-					}
-					// Update the version hash after modifying Generation
-					changes[effect.Key] = e.versionManager.Publish(newObj)
-				}
-			}
-			nextState[effect.Key] = changes[effect.Key]
-		case event.APPLY:
-			if effect.Subresource == "status" {
-				if !exists {
-					panic("status apply effect object not found in prev state: " + effect.Key.String())
-				}
-
-				oldVersion := nextState[existingKey]
-				if exists && existingKey != effect.Key {
-					delete(nextState, existingKey)
-				}
-
-				oldObj := e.versionManager.Resolve(oldVersion)
-				newObj := e.versionManager.Resolve(effect.Version)
-				mergedObj := mergeStatusSubresourceObject(oldObj, newObj, effect.OpType == event.PATCH || effect.OpType == event.APPLY)
-				changes[effect.Key] = e.versionManager.Publish(mergedObj)
-				nextState[effect.Key] = changes[effect.Key]
-				break
-			}
-
-			// Server-side apply has upsert semantics (create if missing, update if present).
-			if !exists {
-				// Apply has upsert semantics; if the object doesn't exist, treat as CREATE.
-				newObj := e.versionManager.Resolve(effect.Version)
-				if newObj != nil {
-					gen := util.GetObjectGeneration(newObj)
-					if gen == 0 {
-						newObj.SetGeneration(1)
-						// Update the version hash after modifying Generation
-						changes[effect.Key] = e.versionManager.Publish(newObj)
-					}
-				}
-				nextState[effect.Key] = changes[effect.Key]
-				break
-			}
-
-			// SSA idempotency: if the apply doesn't change the object content,
-			// treat it as a no-op. This prevents infinite reconcile cycles when
-			// controllers unconditionally re-apply the same desired state.
-			//
-			// We compare spec (the primary content) — if spec is unchanged,
-			// skip the effect entirely so it doesn't trigger re-enqueue.
-			oldVersion := nextState[existingKey]
-			oldObj := e.versionManager.Resolve(oldVersion)
-			newObj := e.versionManager.Resolve(effect.Version)
-			if oldObj != nil && newObj != nil {
-				// Real K8s API server (v1.21+) detects SSA no-op applies and
-				// skips the etcd write entirely — no resourceVersion bump, no
-				// watch event. Compare the full object content (not just spec)
-				// to match this behavior.
-				specChanged, _ := snapshot.CheckSpecChanged(oldObj, newObj)
-				metadataChanged := !metadataEqual(oldObj, newObj)
-				if !specChanged && !metadataChanged {
-					stepLogger.V(2).WithValues("key", effect.Key).Info("no-op SSA Apply: content unchanged, skipping effect")
-					continue
-				}
-			}
-
-			// Capture the existing version before any key replacement.
 			if exists && existingKey != effect.Key {
 				delete(nextState, existingKey)
 			}
-
-			// Mimic APIServer behavior: increment Generation on spec updates (not status-only updates)
-			oldObj = e.versionManager.Resolve(oldVersion)
-			newObj = e.versionManager.Resolve(effect.Version)
-			if oldObj != nil && newObj != nil {
-				// Compare specs to determine if Generation should be incremented
-				// In Kubernetes, Generation is only incremented when spec changes, not on status-only updates
-				// Use a safe check to avoid panics if spec comparison fails
-				specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
-				if err != nil {
-					// If we can't determine if spec changed, conservatively increment Generation
-					// This is safer than not incrementing it
-					stepLogger.V(2).WithValues("key", effect.Key, "error", err).Info("error checking spec change, incrementing Generation conservatively")
-					specChanged = true
-				}
-				if specChanged {
-					oldGen := util.GetObjectGeneration(oldObj)
-					if oldGen == 0 {
-						// If Generation is 0, set it to 1 (shouldn't happen in real K8s, but handle gracefully)
-						// This can happen if the state snapshot has objects with Generation=0
-						newObj.SetGeneration(1)
-						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", 1).Info("set Generation to 1 on spec update (was 0)")
-					} else {
-						newObj.SetGeneration(oldGen + 1)
-						stepLogger.V(2).WithValues("key", effect.Key, "oldGen", oldGen, "newGen", newObj.GetGeneration()).Info("incremented Generation on spec update")
-					}
-					// Update the version hash after modifying Generation
-					changes[effect.Key] = e.versionManager.Publish(newObj)
-				}
-			}
-			nextState[effect.Key] = changes[effect.Key]
+			nextState[effect.Key] = appliedVersion
 
 		// need to determine how to update state based on preconditions
 		case event.MARK_FOR_DELETION:
@@ -1869,7 +1723,7 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 				delete(nextState, existingKey)
 			}
 			// the delete effect is valid, so we should add it to the state
-			nextState[effect.Key] = changes[effect.Key]
+			nextState[effect.Key] = appliedVersion
 
 		case event.REMOVE:
 			if !exists {
@@ -1883,23 +1737,32 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			panic(fmt.Errorf("unknown effect type: %s", effect.OpType))
 		}
 
-		highestSequence++
-		newRV := highestSequence
+		changes[effect.Key] = appliedVersion
+
+		newRV := highestSequence + 1
+		if effect.ResourceVersion != 0 {
+			if effect.ResourceVersion != newRV {
+				panic(fmt.Sprintf("effect resourceVersion %d does not follow branch sequence %d", effect.ResourceVersion, highestSequence))
+			}
+			newRV = effect.ResourceVersion
+		}
+		highestSequence = newRV
 
 		// increment resourceversion for the kind
 		nextSequences[effect.Key.IdentityKey.CanonicalGroupKind()] = newRV
 
 		// Record the global ResourceVersion for this object version so that
 		// staleness analysis can compare observed vs current RV.
-		if vHash := changes[effect.Key]; vHash.Value != "" && e.resourceVersions != nil {
-			e.resourceVersions[vHash] = newRV
+		if appliedVersion.Value != "" && e.resourceVersions != nil {
+			e.resourceVersions[appliedVersion] = newRV
 		}
 
 		// Use the post-modification version hash (after Generation bumps, etc.)
 		// rather than the original effect's version, so that stateEvent hashes
 		// stay consistent with Contents.contents for staleness replay.
 		recordedEffect := effect
-		recordedEffect.Version = changes[effect.Key]
+		recordedEffect.Version = appliedVersion
+		recordedEffect.ResourceVersion = newRV
 		stateEvent := StateEvent{
 			ReconcileID: stepResult.FrameID,
 			Sequence:    newRV,
@@ -1989,6 +1852,7 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 	// create a new frameID for this reconcile state transition
 	frameID := util.UUID()
 	ctx = replay.WithFrameID(ctx, frameID)
+	ctx = withResourceVersionBase(ctx, state.Contents.highestSequence())
 
 	// increment simulated time by setting the simulated clock depth to match the depth of this state
 	// Tickers that fire during SetDepth will add enqueues to the global collector.
@@ -2025,11 +1889,11 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 		// reconcileResult is nil — the error occurred before any effects
 		// could be recorded (e.g., state preparation failure). Treat as no-op.
 		tolerableErrResult := &ReconcileResult{
-			ControllerID: pr.ReconcilerID,
-			FrameID:      frameID,
-			FrameType:    FrameTypeExplore,
-			Changes:      Changes{ObjectVersions: make(ObjectVersions)},
-			Error:        err.Error(),
+			ControllerID:     pr.ReconcilerID,
+			FrameID:          frameID,
+			FrameType:        FrameTypeExplore,
+			Changes:          Changes{ObjectVersions: make(ObjectVersions)},
+			Error:            err.Error(),
 			ReenqueueRequest: &pr,
 		}
 		return tolerableErrResult, nil
@@ -2058,6 +1922,7 @@ func (e *Explorer) takeUserActionStep(ctx context.Context, state StateNode) (*Re
 
 	stepLog.WithValues("ActionIdx", state.nextUserActionIdx).V(2).Info("about to execute user action")
 
+	ctx = withResourceVersionBase(ctx, state.Contents.highestSequence())
 	result, err := e.userController.ExecuteNextAction(ctx, state.Objects(), state.nextUserActionIdx)
 	if err != nil {
 		if result == nil {
