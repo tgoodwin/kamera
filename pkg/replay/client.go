@@ -341,10 +341,18 @@ func matchesFieldSelector(obj *unstructured.Unstructured, sel fields.Selector) b
 
 // TODO create or set an ObjectID here
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
-	if obj.GetCreationTimestamp().Time.IsZero() {
+	creationTimestamp := obj.GetCreationTimestamp()
+	if creationTimestamp.Time.IsZero() {
 		// Kubernetes assigns CreationTimestamp on create. Use the simulated clock
 		// so time-based controller behavior remains deterministic during replay.
 		obj.SetCreationTimestamp(v1.NewTime(simclock.Now()))
+	} else {
+		log.FromContext(ctx).Error(nil, "object already has creationTimestamp on create",
+			"type", fmt.Sprintf("%T", obj),
+			"namespace", obj.GetNamespace(),
+			"name", obj.GetName(),
+			"creationTimestamp", creationTimestamp.Time,
+		)
 	}
 	preconditions := ExtractCreatePreconditions(opts)
 	return c.handleEffect(ctx, obj, event.CREATE, &preconditions, nil)
