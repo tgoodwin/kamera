@@ -220,7 +220,7 @@ func TestResourceVersionSequenceIncludesRemoval(t *testing.T) {
 	require.Equal(t, "8", created.GetResourceVersion())
 }
 
-func TestResourceVersionConflict_UpdateRequiresRV(t *testing.T) {
+func TestResourceVersionConflict_UpdateWithoutRVIsAccepted(t *testing.T) {
 	rvMap := make(map[snapshot.VersionHash]int64)
 	mgr := newTestManager(func(vh snapshot.VersionHash) int64 { return rvMap[vh] })
 
@@ -233,11 +233,10 @@ func TestResourceVersionConflict_UpdateRequiresRV(t *testing.T) {
 	require.NoError(t, mgr.PrepareEffectContext(ctx, ObjectVersions{key: hash}))
 
 	err := mgr.RecordEffect(ctx, makeObj("test-cm", ""), event.UPDATE, nil, nil)
-	require.Error(t, err)
-	require.True(t, apierrors.IsInvalid(err), "expected Invalid for Update without RV, got: %v", err)
+	require.NoError(t, err)
 }
 
-// Test 4: No-RV write succeeds
+// Test 5: No-RV write succeeds
 func TestResourceVersionConflict_NoRVWriteSucceeds(t *testing.T) {
 	rvMap := make(map[snapshot.VersionHash]int64)
 	mgr := newTestManager(func(vh snapshot.VersionHash) int64 { return rvMap[vh] })

@@ -109,6 +109,25 @@ func canonicalResourceKeyString(group, kind, namespace, name string) string {
 	return fmt.Sprintf("%s/%s/%s", util.CanonicalGroupKind(group, kind), namespace, name)
 }
 
+// shortcut: Only verified built-in strategies are modeled; unknown kinds require an RV.
+func allowsUnconditionalUpdate(kind schema.GroupKind) bool {
+	switch kind.Group {
+	case "":
+		switch kind.Kind {
+		case "ConfigMap", "Secret", "Service", "Pod":
+			return true
+		}
+	case "apps":
+		switch kind.Kind {
+		case "Deployment", "StatefulSet", "ReplicaSet", "DaemonSet":
+			return true
+		}
+	case "batch":
+		return kind.Kind == "Job" || kind.Kind == "CronJob"
+	}
+	return false
+}
+
 func invalidResourceVersion(gvk schema.GroupVersionKind, name string, value any, detail string) error {
 	return apierrors.NewInvalid(
 		schema.GroupKind{Group: gvk.Group, Kind: gvk.Kind},
@@ -148,6 +167,12 @@ func (m *manager) advanceEffectResourceVersion(frameID, resourceKey string, obj 
 
 func resolveEffectVersion(versionManager VersionManager, currentVersion snapshot.VersionHash, exists bool, effect Effect) (snapshot.VersionHash, bool) {
 	if !exists {
+		newObj := versionManager.Resolve(effect.Version)
+		if newObj != nil && (effect.OpType == event.CREATE || effect.OpType == event.APPLY) && util.GetObjectGeneration(newObj) == 0 {
+			newObj = newObj.DeepCopy()
+			newObj.SetGeneration(1)
+			return versionManager.Publish(newObj), false
+		}
 		return effect.Version, false
 	}
 
@@ -159,14 +184,22 @@ func resolveEffectVersion(versionManager VersionManager, currentVersion snapshot
 		return mergedVersion, mergedVersion == currentVersion
 	}
 
-	switch effect.OpType {
-	case event.UPDATE, event.PATCH:
-		return effect.Version, effect.Version == currentVersion
-	case event.APPLY:
+	if effect.OpType == event.UPDATE || effect.OpType == event.PATCH || effect.OpType == event.APPLY {
 		if oldObj != nil && newObj != nil {
-			specChanged, _ := snapshot.CheckSpecChanged(oldObj, newObj)
-			metadataChanged := !metadataEqual(oldObj, newObj)
-			return effect.Version, !specChanged && !metadataChanged
+			specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
+			if effect.OpType == event.APPLY && !specChanged && metadataEqual(oldObj, newObj) {
+				return currentVersion, true
+			}
+			generation := util.GetObjectGeneration(oldObj)
+			if specChanged || err != nil {
+				generation++
+			}
+			if generation != util.GetObjectGeneration(newObj) {
+				newObj = newObj.DeepCopy()
+				newObj.SetGeneration(generation)
+				effect.Version = versionManager.Publish(newObj)
+			}
+			return effect.Version, effect.Version == currentVersion
 		}
 	}
 	return effect.Version, false
@@ -247,12 +280,19 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		resourceKey := canonicalResourceKeyString(gvk.Group, kind, obj.GetNamespace(), obj.GetName())
 		currentVersion, exists := m.effectVersions[frameID][resourceKey]
 		materializedVersion, noOp := resolveEffectVersion(m.versionStore, currentVersion, exists, eff)
+		if materialized := m.Resolve(materializedVersion); materialized != nil && (opType == event.CREATE || opType == event.UPDATE || opType == event.PATCH || opType == event.APPLY) {
+			obj.SetGeneration(util.GetObjectGeneration(materialized))
+		}
 		if noOp {
+			if rv := m.effectRVs[frameID][resourceKey]; rv > 0 {
+				obj.SetResourceVersion(strconv.FormatInt(rv, 10))
+			}
 			logger.V(2).Info("accepted no-op write", "frameID", frameID, "key", resourceKey, "opType", opType)
 			return nil
 		}
 
 		if opType != event.REMOVE {
+			eff.Version = materializedVersion
 			eff.ResourceVersion = m.advanceEffectResourceVersion(frameID, resourceKey, obj)
 			m.effectVersions[frameID][resourceKey] = materializedVersion
 		} else {
@@ -419,7 +459,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		var claimedRVStr string
 		if op == event.UPDATE {
 			claimedRVStr = obj.GetResourceVersion()
-			if claimedRVStr == "" {
+			if claimedRVStr == "" && !allowsUnconditionalUpdate(gvk.GroupKind()) {
 				return invalidResourceVersion(gvk, obj.GetName(), claimedRVStr, "must be specified for an update")
 			}
 		} else if precondition != nil && precondition.ResourceVersion != nil {

@@ -568,7 +568,31 @@ func TestApplyEffects_StateEventHashMatchesContents_Update(t *testing.T) {
 	require.Equal(t, stateEvents[0].Sequence, rv)
 }
 
-// TestApplyEffects_StateEventHashMatchesContents_Apply verifies the invariant
+func TestApplyEffects_MetadataOnlyUpdatePreservesGeneration(t *testing.T) {
+	store := snapshot.NewStore()
+	vs := NewVersionStore(store, nil)
+	explorer := &Explorer{versionManager: vs, resourceVersions: make(map[snapshot.VersionHash]int64)}
+
+	oldObj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1", "kind": "ConfigMap",
+		"metadata": map[string]any{"namespace": "default", "name": "cm", "generation": int64(3)},
+		"spec":     map[string]any{"value": "same"},
+	}}
+	newObj := oldObj.DeepCopy()
+	newObj.SetLabels(map[string]string{"changed": "true"})
+	newObj.SetGeneration(0)
+	oldHash := vs.Publish(oldObj)
+	newHash := vs.Publish(newObj)
+	key := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "cm", "obj")
+	state := StateNode{Contents: NewStateSnapshot(ObjectVersions{key: oldHash}, KindSequences{key.CanonicalGroupKind(): 1}, nil)}
+	result := &ReconcileResult{FrameID: "metadata-update", Changes: Changes{ObjectVersions: ObjectVersions{key: newHash}, Effects: []Effect{{OpType: event.UPDATE, Key: key, Version: newHash}}}}
+
+	next, _, _ := explorer.applyEffects(logr.Discard(), state, result)
+	updated := vs.Resolve(next[key])
+	require.Equal(t, int64(3), updated.GetGeneration())
+	require.Equal(t, map[string]string{"changed": "true"}, updated.GetLabels())
+}
+
 // for APPLY effects (server-side apply with upsert semantics) when the object
 // does not yet exist (create path).
 func TestApplyEffects_StateEventHashMatchesContents_Apply(t *testing.T) {
