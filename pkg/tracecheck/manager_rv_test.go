@@ -2,7 +2,6 @@ package tracecheck
 
 import (
 	"context"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 // newTestManager creates a manager wired for RV conflict testing.
@@ -236,6 +236,38 @@ func TestResourceVersionConflict_UpdateWithoutRVIsAccepted(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestResourceVersionConflict_AllowedKindsAcceptEmptyAndZeroRV(t *testing.T) {
+	for name, rv := range map[string]string{"omitted": "", "zero": "0"} {
+		t.Run(name, func(t *testing.T) {
+			mgr := newTestManager(func(snapshot.VersionHash) int64 { return 5 })
+			stored := makeObj("test", "")
+			stored.SetKind("ReplicationController")
+			hash := mgr.Publish(stored)
+			key := snapshot.NewCompositeKeyWithGroup("", "ReplicationController", "default", "test", "obj")
+			ctx := ctxWithFrame("frame-allowed")
+			require.NoError(t, mgr.PrepareEffectContext(ctx, ObjectVersions{key: hash}))
+			update := stored.DeepCopy()
+			update.SetLabels(map[string]string{"changed": "true"})
+			update.SetResourceVersion(rv)
+			require.NoError(t, mgr.RecordEffect(ctx, update, event.UPDATE, nil, nil))
+			require.Equal(t, "6", update.GetResourceVersion())
+		})
+	}
+}
+
+func TestResourceVersionConflict_CustomKindRequiresRV(t *testing.T) {
+	mgr := newTestManager(nil)
+	obj := makeObj("test", "")
+	obj.SetAPIVersion("example.com/v1")
+	obj.SetKind("Widget")
+	hash := mgr.Publish(obj)
+	key := snapshot.NewCompositeKeyWithGroup("example.com", "Widget", "default", "test", "obj")
+	ctx := ctxWithFrame("frame-custom-no-rv")
+	require.NoError(t, mgr.PrepareEffectContext(ctx, ObjectVersions{key: hash}))
+	err := mgr.RecordEffect(ctx, obj.DeepCopy(), event.UPDATE, nil, nil)
+	require.True(t, apierrors.IsInvalid(err), "expected Invalid, got %v", err)
+}
+
 // Test 5: No-RV write succeeds
 func TestResourceVersionConflict_NoRVWriteSucceeds(t *testing.T) {
 	rvMap := make(map[snapshot.VersionHash]int64)
@@ -280,74 +312,51 @@ func TestResourceVersionConflict_ApplySkipsRVCheck(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// Test 6: RV stamping in doReconcile
-func TestResourceVersionStamping_DoReconcile(t *testing.T) {
-	store := snapshot.NewStore()
-	vs := NewVersionStore(store, nil)
-
-	obj := &unstructured.Unstructured{}
-	obj.SetAPIVersion("v1")
-	obj.SetKind("ConfigMap")
-	obj.SetNamespace("default")
-	obj.SetName("test-cm")
-	hash := vs.Publish(obj)
-
-	rvMap := map[snapshot.VersionHash]int64{hash: 42}
-
-	container := &ReconcilerContainer{
-		Name:           "test",
-		versionManager: vs,
-		rvLookup: func(vh snapshot.VersionHash) int64 {
-			return rvMap[vh]
-		},
-	}
-
-	key := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "test-cm", "obj1")
-	ov := ObjectVersions{key: hash}
-
-	// Resolve objects as doReconcile would
-	var objects []runtime.Object
-	for _, h := range ov {
-		resolved := container.versionManager.Resolve(h)
-		require.NotNil(t, resolved)
-		if container.rvLookup != nil {
-			if rv := container.rvLookup(h); rv > 0 {
-				resolved.SetResourceVersion(strconv.FormatInt(rv, 10))
-			}
-		}
-		objects = append(objects, resolved)
-	}
-
-	require.Len(t, objects, 1)
-	u := objects[0].(*unstructured.Unstructured)
-	require.Equal(t, "42", u.GetResourceVersion(), "expected RV=42 stamped on served object")
+type customRVStrategy struct {
+	objects  []runtime.Object
+	recorder replay.EffectRecorder
 }
 
-func TestResourceVersionStamping_DistinguishesKindsWithSameName(t *testing.T) {
-	nn := types.NamespacedName{Namespace: "default", Name: "shared"}
-	configMap := makeObj("shared", "")
-	secret := makeObj("shared", "")
-	secret.SetKind("Secret")
+func (s *customRVStrategy) PrepareState(ctx context.Context, objects []runtime.Object) (context.Context, func(), error) {
+	s.objects = objects
+	return ctx, func() {}, nil
+}
 
-	configMapHash := snapshot.VersionHash{Value: "config-map"}
-	secretHash := snapshot.VersionHash{Value: "secret"}
-	versions := map[snapshot.VersionHash]int64{
-		configMapHash: 41,
-		secretHash:    73,
+func (s *customRVStrategy) ReconcileAtState(ctx context.Context, _ types.NamespacedName) (reconcile.Result, error) {
+	for _, obj := range s.objects {
+		u := obj.(*unstructured.Unstructured)
+		if u.GetKind() == "Widget" {
+			u.SetLabels(map[string]string{"updated": "true"})
+			return reconcile.Result{}, s.recorder.RecordEffect(ctx, u, event.UPDATE, nil, nil)
+		}
 	}
-	observable := ObjectVersions{
-		snapshot.NewCompositeKeyWithGroup("", "ConfigMap", nn.Namespace, nn.Name, "cm-id"):  configMapHash,
-		snapshot.NewCompositeKeyWithGroup("", "Secret", nn.Namespace, nn.Name, "secret-id"): secretHash,
-	}
-	frame := replay.CacheFrame{
-		"core/ConfigMap": {nn: configMap},
-		"core/Secret":    {nn: secret},
-	}
+	return reconcile.Result{}, nil
+}
 
-	stampCacheFrameResourceVersions(frame, observable, func(hash snapshot.VersionHash) int64 {
-		return versions[hash]
-	})
+func TestCustomStrategyCanUpdateObservedResource(t *testing.T) {
+	rvs := make(map[snapshot.VersionHash]int64)
+	lookup := func(hash snapshot.VersionHash) int64 { return rvs[hash] }
+	mgr := newTestManager(lookup)
+	widget := makeObj("shared", "")
+	widget.SetAPIVersion("example.com/v1")
+	widget.SetKind("Widget")
+	widgetHash := mgr.Publish(widget)
+	cmHash := mgr.Publish(makeObj("shared", ""))
+	rvs[widgetHash], rvs[cmHash] = 41, 73
+	widgetKey := snapshot.NewCompositeKeyWithGroup("example.com", "Widget", "default", "shared", "widget-id")
+	cmKey := snapshot.NewCompositeKeyWithGroup("", "ConfigMap", "default", "shared", "cm-id")
+	state := ObjectVersions{widgetKey: widgetHash, cmKey: cmHash}
+	ctx := ctxWithFrame("custom-strategy")
+	require.NoError(t, mgr.PrepareEffectContext(ctx, state))
+	strategy := &customRVStrategy{recorder: mgr}
+	container := &ReconcilerContainer{Strategy: strategy, versionManager: mgr, effectReader: mgr, rvLookup: lookup}
 
-	require.Equal(t, "41", configMap.GetResourceVersion())
-	require.Equal(t, "73", secret.GetResourceVersion())
+	result, err := container.doReconcile(ctx, state, reconcile.Request{})
+	require.NoError(t, err)
+	require.Len(t, result.Changes.Effects, 1)
+	effect := result.Changes.Effects[0]
+	require.Equal(t, widgetKey.ResourceKey, effect.Key.ResourceKey)
+	require.Equal(t, int64(74), effect.ResourceVersion)
+	require.Equal(t, "true", mgr.Resolve(effect.Version).GetLabels()["updated"])
+	require.Empty(t, mgr.Resolve(widgetHash).GetResourceVersion(), "must not stamp the stored object")
 }

@@ -593,8 +593,29 @@ func TestApplyEffects_MetadataOnlyUpdatePreservesGeneration(t *testing.T) {
 	require.Equal(t, map[string]string{"changed": "true"}, updated.GetLabels())
 }
 
-// for APPLY effects (server-side apply with upsert semantics) when the object
-// does not yet exist (create path).
+func TestApplyEffects_MainUpdateIgnoresBuiltInStatus(t *testing.T) {
+	store := snapshot.NewStore()
+	vs := NewVersionStore(store, nil)
+	explorer := &Explorer{versionManager: vs}
+	key := snapshot.NewCompositeKeyWithGroup("apps", "Deployment", "default", "dep", "obj")
+	oldObj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]any{"namespace": "default", "name": "dep", "generation": int64(2)},
+		"spec":     map[string]any{"replicas": int64(1)},
+		"status":   map[string]any{"readyReplicas": int64(1)},
+	}}
+	newObj := oldObj.DeepCopy()
+	newObj.Object["status"] = map[string]any{"readyReplicas": int64(0)}
+	oldHash := vs.Publish(oldObj)
+	newHash := vs.Publish(newObj)
+	state := StateNode{Contents: NewStateSnapshot(ObjectVersions{key: oldHash}, KindSequences{key.CanonicalGroupKind(): 1}, nil)}
+	result := &ReconcileResult{Changes: Changes{ObjectVersions: ObjectVersions{key: newHash}, Effects: []Effect{{OpType: event.UPDATE, Key: key, Version: newHash}}}}
+
+	next, _, events := explorer.applyEffects(logr.Discard(), state, result)
+	require.Equal(t, oldHash, next[key], "main-resource status must be ignored")
+	require.Len(t, events, 0)
+}
+
 func TestApplyEffects_StateEventHashMatchesContents_Apply(t *testing.T) {
 	store := snapshot.NewStore()
 	vs := NewVersionStore(store, nil)

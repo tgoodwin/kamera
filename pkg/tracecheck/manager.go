@@ -109,21 +109,95 @@ func canonicalResourceKeyString(group, kind, namespace, name string) string {
 	return fmt.Sprintf("%s/%s/%s", util.CanonicalGroupKind(group, kind), namespace, name)
 }
 
-// shortcut: Only verified built-in strategies are modeled; unknown kinds require an RV.
+// These Kubernetes 1.35 registry strategies allow updates without an RV.
 func allowsUnconditionalUpdate(kind schema.GroupKind) bool {
 	switch kind.Group {
 	case "":
 		switch kind.Kind {
-		case "ConfigMap", "Secret", "Service", "Pod":
+		case "ConfigMap", "Secret", "Service", "Pod", "ReplicationController",
+			"PodTemplate", "PersistentVolumeClaim", "Namespace", "PersistentVolume",
+			"ServiceAccount", "ResourceQuota", "Endpoints", "Node", "Event", "LimitRange":
 			return true
 		}
 	case "apps":
 		switch kind.Kind {
-		case "Deployment", "StatefulSet", "ReplicaSet", "DaemonSet":
+		case "Deployment", "StatefulSet", "ReplicaSet", "DaemonSet", "ControllerRevision":
 			return true
 		}
 	case "batch":
 		return kind.Kind == "Job" || kind.Kind == "CronJob"
+	case "autoscaling":
+		return kind.Kind == "HorizontalPodAutoscaler"
+	case "certificates.k8s.io":
+		return kind.Kind == "CertificateSigningRequest"
+	case "discovery.k8s.io":
+		return kind.Kind == "EndpointSlice"
+	case "networking.k8s.io":
+		switch kind.Kind {
+		case "Ingress", "IngressClass", "NetworkPolicy", "IPAddress", "ServiceCIDR":
+			return true
+		}
+	case "rbac.authorization.k8s.io":
+		switch kind.Kind {
+		case "Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding":
+			return true
+		}
+	case "scheduling.k8s.io":
+		return kind.Kind == "PriorityClass" || kind.Kind == "Workload"
+	case "storage.k8s.io":
+		switch kind.Kind {
+		case "StorageClass", "VolumeAttributesClass":
+			return true
+		}
+	case "events.k8s.io":
+		return kind.Kind == "Event"
+	case "flowcontrol.apiserver.k8s.io":
+		return kind.Kind == "FlowSchema" || kind.Kind == "PriorityLevelConfiguration"
+	case "resource.k8s.io":
+		switch kind.Kind {
+		case "DeviceClass", "ResourceSlice", "DeviceTaintRule", "ResourceClaim", "ResourceClaimTemplate":
+			return true
+		}
+	}
+	return false
+}
+
+// shortcut: This models Kubernetes built-ins; external CRDs need their own status policy.
+func hasBuiltInStatusSubresource(group, kind string) bool {
+	switch group {
+	case "":
+		switch kind {
+		case "Namespace", "Node", "PersistentVolume", "PersistentVolumeClaim", "Pod", "ReplicationController", "ResourceQuota", "Service":
+			return true
+		}
+	case "apps":
+		return kind == "Deployment" || kind == "DaemonSet" || kind == "ReplicaSet" || kind == "StatefulSet"
+	case "autoscaling":
+		return kind == "HorizontalPodAutoscaler"
+	case "batch":
+		return kind == "Job" || kind == "CronJob"
+	case "certificates.k8s.io":
+		return kind == "CertificateSigningRequest" || kind == "PodCertificateRequest"
+	case "policy":
+		return kind == "PodDisruptionBudget"
+	case "networking.k8s.io":
+		return kind == "Ingress" || kind == "ServiceCIDR"
+	case "storage.k8s.io":
+		return kind == "VolumeAttachment"
+	case "resource.k8s.io":
+		return kind == "ResourceClaim" || kind == "DeviceTaintRule"
+	case "flowcontrol.apiserver.k8s.io":
+		return kind == "FlowSchema" || kind == "PriorityLevelConfiguration"
+	case "admissionregistration.k8s.io":
+		return kind == "ValidatingAdmissionPolicy"
+	case "internal.apiserver.k8s.io":
+		return kind == "StorageVersion"
+	case "storagemigration.k8s.io":
+		return kind == "StorageVersionMigration"
+	case "apiextensions.k8s.io":
+		return kind == "CustomResourceDefinition"
+	case "apiregistration.k8s.io":
+		return kind == "APIService"
 	}
 	return false
 }
@@ -186,6 +260,14 @@ func resolveEffectVersion(versionManager VersionManager, currentVersion snapshot
 
 	if effect.OpType == event.UPDATE || effect.OpType == event.PATCH || effect.OpType == event.APPLY {
 		if oldObj != nil && newObj != nil {
+			if effect.Subresource == "" && hasBuiltInStatusSubresource(effect.Key.ResourceKey.Group, effect.Key.ResourceKey.Kind) {
+				newObj = newObj.DeepCopy()
+				delete(newObj.Object, "status")
+				if status, ok := oldObj.Object["status"]; ok {
+					newObj.Object["status"] = status
+				}
+				effect.Version = versionManager.Publish(newObj)
+			}
 			specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
 			if effect.OpType == event.APPLY && !specChanged && metadataEqual(oldObj, newObj) {
 				return currentVersion, true
@@ -459,11 +541,14 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		var claimedRVStr string
 		if op == event.UPDATE {
 			claimedRVStr = obj.GetResourceVersion()
-			if claimedRVStr == "" && !allowsUnconditionalUpdate(gvk.GroupKind()) {
-				return invalidResourceVersion(gvk, obj.GetName(), claimedRVStr, "must be specified for an update")
-			}
 		} else if precondition != nil && precondition.ResourceVersion != nil {
 			claimedRVStr = *precondition.ResourceVersion
+		}
+		if op == event.UPDATE && (claimedRVStr == "" || claimedRVStr == "0") {
+			if !allowsUnconditionalUpdate(gvk.GroupKind()) {
+				return invalidResourceVersion(gvk, obj.GetName(), claimedRVStr, "must be specified for an update")
+			}
+			return nil
 		}
 		if claimedRVStr != "" {
 			claimedRV, err := strconv.ParseInt(claimedRVStr, 10, 64)

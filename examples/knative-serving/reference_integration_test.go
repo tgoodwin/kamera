@@ -40,8 +40,9 @@ func TestTwoStepWorkflowReferenceRunConverges(t *testing.T) {
 				userSteps = append(userSteps, idx)
 			}
 		}
-		if !reflect.DeepEqual(userSteps, []int{0, 73}) {
-			t.Fatalf("trial %d: expected user action steps [0 73], got %v", trial, userSteps)
+		wantUserSteps := []int{0, 79}
+		if !reflect.DeepEqual(userSteps, wantUserSteps) {
+			t.Fatalf("trial %d: expected user action steps %v, got %v", trial, wantUserSteps, userSteps)
 		}
 	}
 }

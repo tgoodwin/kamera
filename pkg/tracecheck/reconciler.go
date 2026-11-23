@@ -45,8 +45,7 @@ type ControllerRuntimeStrategy struct {
 	frameInserter
 	name ReconcilerID
 	effectReader
-	scheme    *runtime.Scheme
-	rvStamper func(replay.CacheFrame) // stamps resourceVersion onto cache frame objects
+	scheme *runtime.Scheme
 }
 
 func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er effectReader, name ReconcilerID) *ControllerRuntimeStrategy {
@@ -61,12 +60,6 @@ func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er e
 func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
 	frameID := replay.FrameIDFromContext(ctx)
 	frameData := runtimeObjectsToCacheFrame(state, s.scheme)
-	// Stamp resourceVersion onto cache frame objects so controllers carry
-	// correct RVs through read-modify-write. This is done on the cache frame
-	// (not the store copies) so version hashes are not affected.
-	if s.rvStamper != nil {
-		s.rvStamper(frameData)
-	}
 	s.InsertCacheFrame(frameID, frameData)
 	cleanup := func() {}
 	return ctx, cleanup, nil
@@ -159,38 +152,6 @@ type ReconcilerContainer struct {
 	rvLookup func(snapshot.VersionHash) int64
 }
 
-type cacheObjectKey struct {
-	canonicalKind  string
-	namespacedName types.NamespacedName
-}
-
-func stampCacheFrameResourceVersions(frame replay.CacheFrame, observableState ObjectVersions, rvLookup func(snapshot.VersionHash) int64) {
-	if rvLookup == nil {
-		return
-	}
-
-	rvByKey := make(map[cacheObjectKey]int64, len(observableState))
-	for key, hash := range observableState {
-		if rv := rvLookup(hash); rv > 0 {
-			rvByKey[cacheObjectKey{
-				canonicalKind: util.CanonicalGroupKind(key.ResourceKey.Group, key.ResourceKey.Kind),
-				namespacedName: types.NamespacedName{
-					Namespace: key.ResourceKey.Namespace,
-					Name:      key.ResourceKey.Name,
-				},
-			}] = rv
-		}
-	}
-
-	for canonicalKind, objects := range frame {
-		for namespacedName, obj := range objects {
-			if rv, ok := rvByKey[cacheObjectKey{canonicalKind: canonicalKind, namespacedName: namespacedName}]; ok {
-				obj.SetResourceVersion(strconv.FormatInt(rv, 10))
-			}
-		}
-	}
-}
-
 func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState ObjectVersions, req reconcile.Request) (*ReconcileResult, error) {
 	frameID := replay.FrameIDFromContext(ctx)
 
@@ -200,6 +161,13 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 	for key, hash := range observableState {
 		obj := r.versionManager.Resolve(hash)
 		if obj != nil {
+			// Resolve returns a copy. Stamp before handing it to any strategy,
+			// including strategies that serve objects through their own clients.
+			if r.rvLookup != nil {
+				if rv := r.rvLookup(hash); rv > 0 {
+					obj.SetResourceVersion(strconv.FormatInt(rv, 10))
+				}
+			}
 			objects = append(objects, obj)
 		} else {
 			unresolvedKeys = append(unresolvedKeys, key.String())
@@ -211,18 +179,6 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 			len(unresolvedKeys), len(observableState), r.Name, unresolvedKeys)
 		logger.Error(errors.New(errMsg), "error resolving objects")
 		panic(errMsg)
-	}
-
-	// Stamp resourceVersions by full resource identity. Namespace/name alone is
-	// not unique because different resource kinds may share both values.
-	// This must be done on cache frame copies (not store copies) to avoid
-	// contaminating version hashes used for state comparison.
-	if r.rvLookup != nil {
-		if crs, ok := r.Strategy.(*ControllerRuntimeStrategy); ok {
-			crs.rvStamper = func(frame replay.CacheFrame) {
-				stampCacheFrameResourceVersions(frame, observableState, r.rvLookup)
-			}
-		}
 	}
 
 	ctx, cleanup, err := r.Strategy.PrepareState(ctx, objects)
