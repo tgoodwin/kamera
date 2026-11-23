@@ -7,8 +7,7 @@ Pending Pod → Provisioner → NodeClaim → Node registration.
 - We wrap the fake CloudProvider with `deterministicCloudProvider` so that ProviderIDs
   are derived from the NodeClaim name (deterministic across runs), rather than using
   the time-seeded `test.RandomProviderID()`.
-- We simulate API server `generateName` and `creationTimestamp` defaults for created
-  objects via `nameGeneratingClient`.
+- We simulate API server `generateName` for NodeClaims via `nameGeneratingClient`.
 - We simulate Node registration via `nodeRegistrar`, which creates a ready Node from
   the NodeClaim's ProviderID with labels, allocatable/capacity, and `NodeReady` condition.
 - Karpenter's `nodeclaim.lifecycle` controller runs in simulation mode. The registrar

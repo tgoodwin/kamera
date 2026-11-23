@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/awslabs/operatorpkg/reconciler"
-	"github.com/tgoodwin/kamera/pkg/simclock"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -43,11 +42,5 @@ func TestNameGeneratingClientAssignsName(t *testing.T) {
 	}
 	if obj.Name == "" {
 		t.Fatalf("expected generated name to be set")
-	}
-	if obj.CreationTimestamp.Time.IsZero() {
-		t.Fatalf("expected creation timestamp to be set")
-	}
-	if !obj.CreationTimestamp.Time.Equal(simclock.Now()) {
-		t.Fatalf("expected creation timestamp %v, got %v", simclock.Now(), obj.CreationTimestamp.Time)
 	}
 }
