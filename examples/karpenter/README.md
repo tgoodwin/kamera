@@ -4,16 +4,15 @@ This example wires a minimal Karpenter provisioning flow into Kamera:
 Pending Pod → Provisioner → NodeClaim → Node registration.
 
 ## Approximations
-- We simulate API server `generateName` for NodeClaims via `nameGeneratingClient`.
 - We wrap the fake CloudProvider with `deterministicCloudProvider` so that ProviderIDs
   are derived from the NodeClaim name (deterministic across runs), rather than using
   the time-seeded `test.RandomProviderID()`.
+- We simulate API server `generateName` and `creationTimestamp` defaults for created
+  objects via `nameGeneratingClient`.
 - We simulate Node registration via `nodeRegistrar`, which creates a ready Node from
   the NodeClaim's ProviderID with labels, allocatable/capacity, and `NodeReady` condition.
-- Karpenter's full `nodeclaim.lifecycle` and `nodeclaim.consistency` controllers are
-  **not** used. They rely on `MatchingFields` queries (unsupported by the replay client)
-  and generate `RequeueAfter` results that create unbounded exploration depth. Instead,
-  a lightweight `nodeClaimLauncher` handles only the launch stage (`cp.Create()`).
+- Karpenter's `nodeclaim.lifecycle` controller runs in simulation mode. The registrar
+  supplies the external kubelet/CCM event that lets lifecycle complete registration.
 
 ## Usage
 
@@ -84,11 +83,12 @@ pending work from simulation semantics (subscriptions/watches/dependencies).
 1. `state.pod` records the seeded pending pod in cluster state.
 2. `provisioner.trigger.pod` marks the pod for provisioning (batcher trigger).
 3. `provisioner` drains the batch and creates a `NodeClaim`.
-4. `nodeclaim.launcher` calls `cp.Create()` to assign a ProviderID and populate instance details.
+4. `nodeclaim.lifecycle` launches the NodeClaim, calling `cp.Create()` to assign a ProviderID and populate instance details.
 5. `nodeclaim.hydration` adds NodeClass labels to the NodeClaim.
 6. `node.registrar` creates a ready `Node` with the ProviderID, labels, and allocatable/capacity.
-7. State informers (`state.node`, `state.nodeclaim`) update the in-memory cluster state.
-8. `External User` later appears as the replayed user input action.
+7. `nodeclaim.lifecycle` observes the Node and marks the NodeClaim registered and initialized.
+8. State informers (`state.node`, `state.nodeclaim`) update the in-memory cluster state.
+9. `External User` later appears as the replayed user input action.
 
 ## Monte Carlo mode
 

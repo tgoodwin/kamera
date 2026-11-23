@@ -13,10 +13,9 @@ import (
 )
 
 // nodeRegistrar simulates kubelet/CCM node registration by creating a Node from a NodeClaim.
-// Because the karpenter lifecycle controller is not used in this harness, the
-// registrar creates Nodes that are immediately "ready": labels are synced from
-// the NodeClaim, allocatable/capacity are copied, and the Node is marked as
-// registered + initialized (no startup taint).
+// The real lifecycle controller launches the NodeClaim and waits for this external
+// registration event before marking it registered and initialized. The registrar
+// creates a ready Node with labels, allocatable/capacity, and no startup taint.
 type nodeRegistrar struct {
 	client client.Client
 }
