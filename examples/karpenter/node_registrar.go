@@ -21,12 +21,19 @@ type nodeRegistrar struct {
 }
 
 func (r nodeRegistrar) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	return reconcile.Result{}, r.Register(ctx, req)
+}
+
+// Register creates the Node corresponding to a launched NodeClaim. In the
+// explorer this is called immediately after lifecycle assigns a ProviderID,
+// representing the external kubelet/CCM registration event.
+func (r nodeRegistrar) Register(ctx context.Context, req reconcile.Request) error {
 	nc := &v1.NodeClaim{}
 	if err := r.client.Get(ctx, req.NamespacedName, nc); err != nil {
-		return reconcile.Result{}, client.IgnoreNotFound(err)
+		return client.IgnoreNotFound(err)
 	}
-	if nc.Status.ProviderID == "" {
-		return reconcile.Result{}, nil
+	if nc.Status.ProviderID == "" || !nc.DeletionTimestamp.IsZero() {
+		return nil
 	}
 
 	node := &corev1.Node{}
@@ -36,8 +43,8 @@ func (r nodeRegistrar) Reconcile(ctx context.Context, req reconcile.Request) (re
 	// Copy labels from NodeClaim (instance-type, topology, capacity-type, etc.)
 	// and mark the Node as registered and initialized.
 	node.Labels = lo.Assign(nc.Labels, map[string]string{
-		v1.NodeRegisteredLabelKey:      "true",
-		v1.NodeInitializedLabelKey:     "true",
+		v1.NodeRegisteredLabelKey:     "true",
+		v1.NodeInitializedLabelKey:    "true",
 		"karpenter.sh/nodeclaim-name": nc.Name,
 	})
 
@@ -50,9 +57,9 @@ func (r nodeRegistrar) Reconcile(ctx context.Context, req reconcile.Request) (re
 
 	if err := r.client.Create(ctx, node); err != nil {
 		if errors.IsAlreadyExists(err) {
-			return reconcile.Result{}, nil
+			return nil
 		}
-		return reconcile.Result{}, err
+		return err
 	}
-	return reconcile.Result{}, nil
+	return nil
 }

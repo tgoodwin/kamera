@@ -12,7 +12,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
-	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -24,12 +23,12 @@ import (
 	nodeclaimdisruption "sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/disruption"
 	nodeclaimhydration "sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/hydration"
 	"sigs.k8s.io/karpenter/pkg/controllers/nodeclaim/lifecycle"
-	"sigs.k8s.io/karpenter/pkg/state/nodepoolhealth"
+	nodepoolreadiness "sigs.k8s.io/karpenter/pkg/controllers/nodepool/readiness"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
 	"sigs.k8s.io/karpenter/pkg/controllers/state/informer"
-	nodepoolreadiness "sigs.k8s.io/karpenter/pkg/controllers/nodepool/readiness"
 	"sigs.k8s.io/karpenter/pkg/operator/options"
+	"sigs.k8s.io/karpenter/pkg/state/nodepoolhealth"
 	"sigs.k8s.io/karpenter/pkg/test"
 )
 
@@ -57,7 +56,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	}).For("disabled/PodLifecycle")
 
 	cp := &deterministicCloudProvider{fake.NewCloudProvider()}
-	clk := clock.RealClock{}
+	clk := simclock.DeterministicClock{}
 	opts := test.Options()
 	switcher := newSwitchingClient()
 	provisionerClient := &nameGeneratingClient{Client: switcher}
@@ -144,7 +143,20 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	b.WithReconciler("nodeclaim.lifecycle", func(c client.Client) tracecheck.Reconciler {
 		rec := lifecycle.NewController(clk, c, cp, recorder, getNpHealth())
 		rec.Simulation = true
-		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
+		lifecycleReconciler := reconcile.AsReconciler(c, rec)
+		return wrapWithOptions(c, reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+			result, err := lifecycleReconciler.Reconcile(ctx, req)
+			if err != nil {
+				return result, err
+			}
+			// Node registration is an external follow-up to a successful launch.
+			// Perform it immediately after lifecycle observes the ProviderID so
+			// exploration cannot delay kubelet/CCM registration past the timeout.
+			if err := (nodeRegistrar{client: c}).Register(ctx, req); err != nil {
+				return result, err
+			}
+			return result, nil
+		}))
 	}).For("karpenter.sh/NodeClaim")
 
 	// NodePool readiness: propagates NodeClass readiness into NodePool status conditions.
@@ -162,12 +174,9 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
 	}).For("Node")
 
-	// NodeRegistrar shim: creates a Node object when a NodeClaim has a ProviderID.
-	// In real Karpenter, the kubelet registers the Node. The lifecycle controller's
-	// registration step then finds the Node by ProviderID (via MatchingFields query).
-	b.WithReconciler("node.registrar", func(c client.Client) tracecheck.Reconciler {
-		return wrapWithOptions(c, nodeRegistrar{client: c})
-	}).For("karpenter.sh/NodeClaim")
+	// Node registration is modeled as an external follow-up to lifecycle launch,
+	// rather than as an independently scheduled controller. This keeps the fake
+	// kubelet/CCM event from being delayed behind Karpenter's registration timeout.
 
 	// --- Disruption controllers ---
 

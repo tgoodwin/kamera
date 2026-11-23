@@ -439,7 +439,7 @@ func initialDependentControllers(obj client.Object) []tracecheck.ReconcilerID {
 		return []tracecheck.ReconcilerID{"state.nodepool"}
 	}
 	if isKarpenterNodeClaim(obj) {
-		return []tracecheck.ReconcilerID{"state.nodeclaim", "nodeclaim.hydration", "nodeclaim.lifecycle", "node.registrar"}
+		return []tracecheck.ReconcilerID{"state.nodeclaim", "nodeclaim.hydration", "nodeclaim.lifecycle"}
 	}
 	if isKarpenterNode(obj) {
 		return []tracecheck.ReconcilerID{"state.node", "node.hydration"}

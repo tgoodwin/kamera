@@ -10,7 +10,6 @@
     { "kind": "controller", "id": "nodeclaim.lifecycle" },
     { "kind": "controller", "id": "nodepool.readiness" },
     { "kind": "controller", "id": "node.hydration" },
-    { "kind": "controller", "id": "node.registrar" },
     { "kind": "controller", "id": "nodeclaim.disruption" },
     { "kind": "controller", "id": "disruption" },
     { "kind": "controller", "id": "disruption.queue" },
@@ -53,6 +52,7 @@
     { "kind": "triggers", "from": "nodeclaim.lifecycle", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
     { "kind": "reads", "from": "nodeclaim.lifecycle", "to": "karpenter.sh/v1/NodeClaim", "surface": "any" },
     { "kind": "writes", "from": "nodeclaim.lifecycle", "to": "karpenter.sh/v1/NodeClaim", "surface": "status" },
+    { "kind": "writes", "from": "nodeclaim.lifecycle", "to": "core/v1/Node", "surface": "spec" },
 
     { "kind": "triggers", "from": "nodepool.readiness", "to": "karpenter.sh/v1/NodePool", "trigger": "primary" },
     { "kind": "triggers", "from": "nodepool.readiness", "to": "karpenter.test.sh/v1alpha1/TestNodeClass", "trigger": "secondary" },
@@ -64,10 +64,6 @@
     { "kind": "reads", "from": "node.hydration", "to": "core/v1/Node", "surface": "metadata" },
     { "kind": "reads", "from": "node.hydration", "to": "karpenter.sh/v1/NodeClaim", "surface": "metadata" },
     { "kind": "writes", "from": "node.hydration", "to": "core/v1/Node", "surface": "metadata" },
-
-    { "kind": "triggers", "from": "node.registrar", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
-    { "kind": "reads", "from": "node.registrar", "to": "karpenter.sh/v1/NodeClaim", "surface": "status" },
-    { "kind": "writes", "from": "node.registrar", "to": "core/v1/Node", "surface": "spec" },
 
     { "kind": "triggers", "from": "nodeclaim.disruption", "to": "karpenter.sh/v1/NodeClaim", "trigger": "primary" },
     { "kind": "reads", "from": "nodeclaim.disruption", "to": "karpenter.sh/v1/NodeClaim", "surface": "any" },
