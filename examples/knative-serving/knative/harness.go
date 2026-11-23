@@ -702,12 +702,12 @@ func newReactor(ctx context.Context, recorder replay.EffectRecorder, trackers ..
 					"kind", co.GetObjectKind().GroupVersionKind().Kind,
 				)
 				var effectOptions *replay.EffectOptions
-				if action.GetVerb() == "updatesubresource" {
-					if updateSubAction, ok := action.(interface{ GetSubresource() string }); ok && updateSubAction.GetSubresource() == "status" {
-						effectOptions = &replay.EffectOptions{Subresource: "status"}
-					}
+				if action.GetSubresource() == "status" {
+					effectOptions = &replay.EffectOptions{Subresource: "status"}
 				}
-				recorder.RecordEffect(ctx, co, op, nil, effectOptions)
+				if err := recorder.RecordEffect(ctx, co, op, nil, effectOptions); err != nil {
+					return true, nil, err
+				}
 			} else {
 				logger.V(1).Info("object does not implement client.Object", "operation", op, "type", fmt.Sprintf("%T", obj))
 			}

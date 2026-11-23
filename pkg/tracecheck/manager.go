@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -88,6 +89,12 @@ type manager struct {
 	// within a reconcile frame, used for optimistic concurrency conflict checking.
 	// frameID → resourceKey → current integer RV
 	effectRVs map[string]map[string]int64
+	// effectVersions tracks the latest accepted object version for each resource
+	// within a frame. It lets the simulated write path identify no-op patches
+	// before advancing the optimistic-concurrency baseline.
+	effectVersions map[string]map[string]snapshot.VersionHash
+	// effectNextRVs is the next branch-local global sequence to assign.
+	effectNextRVs map[string]int64
 
 	// effectObjects is the synchronous API-server view for a reconcile frame.
 	// Unlike the cache frame, it advances after each successful write.
@@ -107,6 +114,198 @@ type manager struct {
 
 func canonicalResourceKeyString(group, kind, namespace, name string) string {
 	return fmt.Sprintf("%s/%s/%s", util.CanonicalGroupKind(group, kind), namespace, name)
+}
+
+// See docs/design/kubernetes-registry-policy.md for the upstream audit.
+func allowsUnconditionalUpdate(kind schema.GroupKind) bool {
+	switch kind.Group {
+	case "":
+		switch kind.Kind {
+		case "ConfigMap", "Secret", "Service", "Pod", "ReplicationController",
+			"PodTemplate", "PersistentVolumeClaim", "Namespace", "PersistentVolume",
+			"ServiceAccount", "ResourceQuota", "Endpoints", "Node", "Event", "LimitRange":
+			return true
+		}
+	case "apps":
+		switch kind.Kind {
+		case "Deployment", "StatefulSet", "ReplicaSet", "DaemonSet", "ControllerRevision":
+			return true
+		}
+	case "batch":
+		return kind.Kind == "Job" || kind.Kind == "CronJob"
+	case "autoscaling":
+		return kind.Kind == "HorizontalPodAutoscaler"
+	case "certificates.k8s.io":
+		return kind.Kind == "CertificateSigningRequest"
+	case "discovery.k8s.io":
+		return kind.Kind == "EndpointSlice"
+	case "networking.k8s.io":
+		switch kind.Kind {
+		case "Ingress", "IngressClass", "NetworkPolicy", "IPAddress", "ServiceCIDR":
+			return true
+		}
+	case "rbac.authorization.k8s.io":
+		switch kind.Kind {
+		case "Role", "RoleBinding", "ClusterRole", "ClusterRoleBinding":
+			return true
+		}
+	case "scheduling.k8s.io":
+		return kind.Kind == "PriorityClass" || kind.Kind == "Workload"
+	case "storage.k8s.io":
+		switch kind.Kind {
+		case "StorageClass", "VolumeAttributesClass":
+			return true
+		}
+	case "events.k8s.io":
+		return kind.Kind == "Event"
+	case "flowcontrol.apiserver.k8s.io":
+		return kind.Kind == "FlowSchema" || kind.Kind == "PriorityLevelConfiguration"
+	case "resource.k8s.io":
+		switch kind.Kind {
+		case "DeviceClass", "ResourceSlice", "DeviceTaintRule", "ResourceClaim", "ResourceClaimTemplate":
+			return true
+		}
+	}
+	return false
+}
+
+// shortcut: This models Kubernetes built-ins; external CRDs need their own status policy.
+func hasBuiltInStatusSubresource(group, kind string) bool {
+	switch group {
+	case "":
+		switch kind {
+		case "Namespace", "Node", "PersistentVolume", "PersistentVolumeClaim", "Pod", "ReplicationController", "ResourceQuota", "Service":
+			return true
+		}
+	case "apps":
+		return kind == "Deployment" || kind == "DaemonSet" || kind == "ReplicaSet" || kind == "StatefulSet"
+	case "autoscaling":
+		return kind == "HorizontalPodAutoscaler"
+	case "batch":
+		return kind == "Job" || kind == "CronJob"
+	case "certificates.k8s.io":
+		return kind == "CertificateSigningRequest" || kind == "PodCertificateRequest"
+	case "policy":
+		return kind == "PodDisruptionBudget"
+	case "networking.k8s.io":
+		return kind == "Ingress" || kind == "ServiceCIDR"
+	case "storage.k8s.io":
+		return kind == "VolumeAttachment"
+	case "resource.k8s.io":
+		return kind == "ResourceClaim" || kind == "DeviceTaintRule"
+	case "flowcontrol.apiserver.k8s.io":
+		return kind == "FlowSchema" || kind == "PriorityLevelConfiguration"
+	case "admissionregistration.k8s.io":
+		return kind == "ValidatingAdmissionPolicy"
+	case "internal.apiserver.k8s.io":
+		return kind == "StorageVersion"
+	case "storagemigration.k8s.io":
+		return kind == "StorageVersionMigration"
+	case "apiextensions.k8s.io":
+		return kind == "CustomResourceDefinition"
+	case "apiregistration.k8s.io":
+		return kind == "APIService"
+	}
+	return false
+}
+
+func invalidResourceVersion(gvk schema.GroupVersionKind, name string, value any, detail string) error {
+	return apierrors.NewInvalid(
+		schema.GroupKind{Group: gvk.Group, Kind: gvk.Kind},
+		name,
+		field.ErrorList{field.Invalid(field.NewPath("metadata", "resourceVersion"), value, detail)},
+	)
+}
+
+type resourceVersionBaseContextKey struct{}
+
+func withResourceVersionBase(ctx context.Context, base int64) context.Context {
+	return context.WithValue(ctx, resourceVersionBaseContextKey{}, base)
+}
+
+func resourceVersionBaseFromContext(ctx context.Context) int64 {
+	base, _ := ctx.Value(resourceVersionBaseContextKey{}).(int64)
+	return base
+}
+
+func (m *manager) allocateEffectResourceVersion(frameID string) int64 {
+	nextRV := m.effectNextRVs[frameID]
+	m.effectNextRVs[frameID] = nextRV + 1
+	return nextRV
+}
+
+func (m *manager) advanceEffectResourceVersion(frameID, resourceKey string, obj client.Object) int64 {
+	rvs, ok := m.effectRVs[frameID]
+	if !ok {
+		return 0
+	}
+
+	nextRV := m.allocateEffectResourceVersion(frameID)
+	rvs[resourceKey] = nextRV
+	obj.SetResourceVersion(strconv.FormatInt(nextRV, 10))
+	return nextRV
+}
+
+func resolveEffectVersion(versionManager VersionManager, currentVersion snapshot.VersionHash, exists bool, effect Effect) (snapshot.VersionHash, bool) {
+	if !exists {
+		if effect.OpType != event.CREATE && effect.OpType != event.APPLY {
+			return effect.Version, false
+		}
+		newObj := versionManager.Resolve(effect.Version)
+		if newObj == nil {
+			return effect.Version, false
+		}
+		_, hasStatus := newObj.Object["status"]
+		stripStatus := hasStatus && effect.Subresource == "" && hasBuiltInStatusSubresource(effect.Key.ResourceKey.Group, effect.Key.ResourceKey.Kind)
+		setGeneration := util.GetObjectGeneration(newObj) == 0
+		if !stripStatus && !setGeneration {
+			return effect.Version, false
+		}
+		newObj = newObj.DeepCopy()
+		if stripStatus {
+			delete(newObj.Object, "status")
+		}
+		if setGeneration {
+			newObj.SetGeneration(1)
+		}
+		return versionManager.Publish(newObj), false
+	}
+
+	oldObj := versionManager.Resolve(currentVersion)
+	newObj := versionManager.Resolve(effect.Version)
+	if effect.Subresource == "status" && (effect.OpType == event.UPDATE || effect.OpType == event.PATCH || effect.OpType == event.APPLY) {
+		merged := mergeStatusSubresourceObject(oldObj, newObj, effect.OpType == event.PATCH || effect.OpType == event.APPLY)
+		mergedVersion := versionManager.Publish(merged)
+		return mergedVersion, mergedVersion == currentVersion
+	}
+
+	if effect.OpType == event.UPDATE || effect.OpType == event.PATCH || effect.OpType == event.APPLY {
+		if oldObj != nil && newObj != nil {
+			if effect.Subresource == "" && hasBuiltInStatusSubresource(effect.Key.ResourceKey.Group, effect.Key.ResourceKey.Kind) {
+				newObj = newObj.DeepCopy()
+				delete(newObj.Object, "status")
+				if status, ok := oldObj.Object["status"]; ok {
+					newObj.Object["status"] = status
+				}
+				effect.Version = versionManager.Publish(newObj)
+			}
+			specChanged, err := snapshot.CheckSpecChanged(oldObj, newObj)
+			if effect.OpType == event.APPLY && !specChanged && metadataEqual(oldObj, newObj) {
+				return currentVersion, true
+			}
+			generation := util.GetObjectGeneration(oldObj)
+			if specChanged || err != nil {
+				generation++
+			}
+			if generation != util.GetObjectGeneration(newObj) {
+				newObj = newObj.DeepCopy()
+				newObj.SetGeneration(generation)
+				effect.Version = versionManager.Publish(newObj)
+			}
+			return effect.Version, effect.Version == currentVersion
+		}
+	}
+	return effect.Version, false
 }
 
 func (m *manager) Summary() {
@@ -183,6 +382,10 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	if err != nil {
 		return err
 	}
+	// resourceVersion is API-server metadata, not part of the logical object
+	// version stored in exploration state. Keep it on the caller's object for
+	// OCC and return-value fidelity, but exclude it from content hashing.
+	u.SetResourceVersion("")
 
 	// A successful no-op returns the current version. Publishing the response
 	// would create a different hash when its served resourceVersion was stamped
@@ -215,13 +418,30 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	if opType == event.GET || opType == event.LIST {
 		reffects.reads = append(reffects.reads, eff)
 	} else {
-		reffects.writes = append(reffects.writes, eff)
+		resourceKey := canonicalResourceKeyString(gvk.Group, kind, obj.GetNamespace(), obj.GetName())
+		currentVersion, exists := m.effectVersions[frameID][resourceKey]
+		materializedVersion, noOp := resolveEffectVersion(m.versionStore, currentVersion, exists, eff)
+		if materialized := m.Resolve(materializedVersion); materialized != nil && (opType == event.CREATE || opType == event.UPDATE || opType == event.PATCH || opType == event.APPLY) {
+			obj.SetGeneration(util.GetObjectGeneration(materialized))
+		}
+		if noOp {
+			if rv := m.effectRVs[frameID][resourceKey]; rv > 0 {
+				obj.SetResourceVersion(strconv.FormatInt(rv, 10))
+			}
+			logger.V(2).Info("accepted no-op write", "frameID", frameID, "key", resourceKey, "opType", opType)
+			return nil
+		}
 
-		// Note: we do NOT advance effectRVs here. The tracked RV stays at
-		// the pre-reconcile ground truth value. This means all writes within
-		// a single reconcile are checked against the same baseline. The conflict
-		// only fires when the controller was served a stale cache frame (RV=N)
-		// but the ground truth is already at RV=N+1 from a prior reconcile step.
+		if opType != event.REMOVE {
+			eff.Version = materializedVersion
+			eff.ResourceVersion = m.advanceEffectResourceVersion(frameID, resourceKey, obj)
+			m.effectVersions[frameID][resourceKey] = materializedVersion
+		} else {
+			eff.ResourceVersion = m.allocateEffectResourceVersion(frameID)
+			delete(m.effectVersions[frameID], resourceKey)
+			delete(m.effectRVs[frameID], resourceKey)
+		}
+		reffects.writes = append(reffects.writes, eff)
 	}
 	m.effects[frameID] = reffects
 	logger.V(2).Info("recorded effects", "frameID", frameID, "numReads", len(reffects.reads), "numWrites", len(reffects.writes))
@@ -396,22 +616,29 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		} else if precondition != nil && precondition.ResourceVersion != nil {
 			claimedRVStr = *precondition.ResourceVersion
 		}
+		if op == event.UPDATE && (claimedRVStr == "" || claimedRVStr == "0") {
+			if !allowsUnconditionalUpdate(gvk.GroupKind()) {
+				return invalidResourceVersion(gvk, obj.GetName(), claimedRVStr, "must be specified for an update")
+			}
+			return nil
+		}
 		if claimedRVStr != "" {
+			claimedRV, err := strconv.ParseInt(claimedRVStr, 10, 64)
+			if err != nil || claimedRV <= 0 {
+				return invalidResourceVersion(gvk, obj.GetName(), claimedRVStr, "must be a positive integer")
+			}
 			if rvs, ok := m.effectRVs[frameID]; ok {
 				currentRV, tracked := rvs[resourceKey]
-				if tracked {
-					claimedRV, err := strconv.ParseInt(claimedRVStr, 10, 64)
-					if err == nil && claimedRV != currentRV {
-						logger.V(1).Info("resourceVersion conflict",
-							"key", resourceKey,
-							"claimedRV", claimedRV,
-							"currentRV", currentRV)
-						return apierrors.NewConflict(
-							schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
-							obj.GetName(),
-							fmt.Errorf("the object has been modified; please apply your changes to the latest version"),
-						)
-					}
+				if tracked && claimedRV != currentRV {
+					logger.V(1).Info("resourceVersion conflict",
+						"key", resourceKey,
+						"claimedRV", claimedRV,
+						"currentRV", currentRV)
+					return apierrors.NewConflict(
+						schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind},
+						obj.GetName(),
+						fmt.Errorf("the object has been modified; please apply your changes to the latest version"),
+					)
 				}
 			}
 		}

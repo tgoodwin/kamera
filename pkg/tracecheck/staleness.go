@@ -86,6 +86,13 @@ func (s *StateSnapshot) All() ObjectVersions {
 	return s.contents
 }
 
+func (s *StateSnapshot) highestSequence() int64 {
+	if len(s.stateEvents) == 0 {
+		return 0
+	}
+	return s.stateEvents[len(s.stateEvents)-1].Sequence
+}
+
 func (s *StateSnapshot) Observable() ObjectVersions {
 	ss := replayEventsAtSequence(s.stateEvents, s.KindSequences)
 	return ss.contents

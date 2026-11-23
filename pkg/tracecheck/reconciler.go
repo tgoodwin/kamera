@@ -45,8 +45,7 @@ type ControllerRuntimeStrategy struct {
 	frameInserter
 	name ReconcilerID
 	effectReader
-	scheme    *runtime.Scheme
-	rvStamper func(replay.CacheFrame) // stamps resourceVersion onto cache frame objects
+	scheme *runtime.Scheme
 }
 
 func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er effectReader, name ReconcilerID) *ControllerRuntimeStrategy {
@@ -61,12 +60,6 @@ func NewControllerRuntimeStrategy(r reconcile.Reconciler, fi frameInserter, er e
 func (s *ControllerRuntimeStrategy) PrepareState(ctx context.Context, state []runtime.Object) (context.Context, func(), error) {
 	frameID := replay.FrameIDFromContext(ctx)
 	frameData := runtimeObjectsToCacheFrame(state, s.scheme)
-	// Stamp resourceVersion onto cache frame objects so controllers carry
-	// correct RVs through read-modify-write. This is done on the cache frame
-	// (not the store copies) so version hashes are not affected.
-	if s.rvStamper != nil {
-		s.rvStamper(frameData)
-	}
 	s.InsertCacheFrame(frameID, frameData)
 	cleanup := func() {}
 	return ctx, cleanup, nil
@@ -168,6 +161,13 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 	for key, hash := range observableState {
 		obj := r.versionManager.Resolve(hash)
 		if obj != nil {
+			// Resolve returns a copy. Stamp before handing it to any strategy,
+			// including strategies that serve objects through their own clients.
+			if r.rvLookup != nil {
+				if rv := r.rvLookup(hash); rv > 0 {
+					obj.SetResourceVersion(strconv.FormatInt(rv, 10))
+				}
+			}
 			objects = append(objects, obj)
 		} else {
 			unresolvedKeys = append(unresolvedKeys, key.String())
@@ -179,31 +179,6 @@ func (r *ReconcilerContainer) doReconcile(ctx context.Context, observableState O
 			len(unresolvedKeys), len(observableState), r.Name, unresolvedKeys)
 		logger.Error(errors.New(errMsg), "error resolving objects")
 		panic(errMsg)
-	}
-
-	// Build a name→RV map for stamping cache frame objects with resourceVersion.
-	// This must be done on cache frame copies (not store copies) to avoid
-	// contaminating version hashes used for state comparison.
-	if r.rvLookup != nil {
-		if crs, ok := r.Strategy.(*ControllerRuntimeStrategy); ok {
-			rvByName := make(map[string]int64)
-			for key, hash := range observableState {
-				if rv := r.rvLookup(hash); rv > 0 {
-					nameKey := key.ResourceKey.Namespace + "/" + key.ResourceKey.Name
-					rvByName[nameKey] = rv
-				}
-			}
-			crs.rvStamper = func(frame replay.CacheFrame) {
-				for _, objs := range frame {
-					for nn, obj := range objs {
-						nameKey := nn.Namespace + "/" + nn.Name
-						if rv, ok := rvByName[nameKey]; ok {
-							obj.SetResourceVersion(strconv.FormatInt(rv, 10))
-						}
-					}
-				}
-			}
-		}
 	}
 
 	ctx, cleanup, err := r.Strategy.PrepareState(ctx, objects)
