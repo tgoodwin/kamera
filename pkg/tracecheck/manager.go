@@ -109,7 +109,7 @@ func canonicalResourceKeyString(group, kind, namespace, name string) string {
 	return fmt.Sprintf("%s/%s/%s", util.CanonicalGroupKind(group, kind), namespace, name)
 }
 
-// These Kubernetes 1.35 registry strategies allow updates without an RV.
+// See docs/design/kubernetes-registry-policy.md for the upstream audit.
 func allowsUnconditionalUpdate(kind schema.GroupKind) bool {
 	switch kind.Group {
 	case "":
@@ -241,13 +241,27 @@ func (m *manager) advanceEffectResourceVersion(frameID, resourceKey string, obj 
 
 func resolveEffectVersion(versionManager VersionManager, currentVersion snapshot.VersionHash, exists bool, effect Effect) (snapshot.VersionHash, bool) {
 	if !exists {
-		newObj := versionManager.Resolve(effect.Version)
-		if newObj != nil && (effect.OpType == event.CREATE || effect.OpType == event.APPLY) && util.GetObjectGeneration(newObj) == 0 {
-			newObj = newObj.DeepCopy()
-			newObj.SetGeneration(1)
-			return versionManager.Publish(newObj), false
+		if effect.OpType != event.CREATE && effect.OpType != event.APPLY {
+			return effect.Version, false
 		}
-		return effect.Version, false
+		newObj := versionManager.Resolve(effect.Version)
+		if newObj == nil {
+			return effect.Version, false
+		}
+		_, hasStatus := newObj.Object["status"]
+		stripStatus := hasStatus && effect.Subresource == "" && hasBuiltInStatusSubresource(effect.Key.ResourceKey.Group, effect.Key.ResourceKey.Kind)
+		setGeneration := util.GetObjectGeneration(newObj) == 0
+		if !stripStatus && !setGeneration {
+			return effect.Version, false
+		}
+		newObj = newObj.DeepCopy()
+		if stripStatus {
+			delete(newObj.Object, "status")
+		}
+		if setGeneration {
+			newObj.SetGeneration(1)
+		}
+		return versionManager.Publish(newObj), false
 	}
 
 	oldObj := versionManager.Resolve(currentVersion)

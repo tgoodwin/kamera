@@ -616,6 +616,55 @@ func TestApplyEffects_MainUpdateIgnoresBuiltInStatus(t *testing.T) {
 	require.Len(t, events, 0)
 }
 
+func TestApplyEffects_MainUpdateAppliesSpecButIgnoresBuiltInStatus(t *testing.T) {
+	store := snapshot.NewStore()
+	vs := NewVersionStore(store, nil)
+	explorer := &Explorer{versionManager: vs, resourceVersions: make(map[snapshot.VersionHash]int64)}
+	key := snapshot.NewCompositeKeyWithGroup("apps", "Deployment", "default", "dep-mixed", "obj")
+	oldObj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]any{"namespace": "default", "name": "dep-mixed", "generation": int64(2)},
+		"spec":     map[string]any{"replicas": int64(1)},
+		"status":   map[string]any{"readyReplicas": int64(1)},
+	}}
+	newObj := oldObj.DeepCopy()
+	newObj.Object["spec"].(map[string]any)["replicas"] = int64(2)
+	newObj.Object["status"] = map[string]any{"readyReplicas": int64(0)}
+	oldHash := vs.Publish(oldObj)
+	newHash := vs.Publish(newObj)
+	state := StateNode{Contents: NewStateSnapshot(ObjectVersions{key: oldHash}, KindSequences{key.CanonicalGroupKind(): 1}, nil)}
+	result := &ReconcileResult{Changes: Changes{ObjectVersions: ObjectVersions{key: newHash}, Effects: []Effect{{OpType: event.UPDATE, Key: key, Version: newHash}}}}
+
+	next, _, events := explorer.applyEffects(logr.Discard(), state, result)
+	updated := vs.Resolve(next[key])
+	require.Equal(t, int64(2), updated.Object["spec"].(map[string]any)["replicas"])
+	require.Equal(t, int64(1), updated.Object["status"].(map[string]any)["readyReplicas"])
+	require.Equal(t, int64(3), updated.GetGeneration())
+	require.Len(t, events, 1)
+}
+
+func TestApplyEffects_CreateClearsBuiltInStatus(t *testing.T) {
+	store := snapshot.NewStore()
+	vs := NewVersionStore(store, nil)
+	explorer := &Explorer{versionManager: vs, resourceVersions: make(map[snapshot.VersionHash]int64)}
+	key := snapshot.NewCompositeKeyWithGroup("apps", "Deployment", "default", "dep-create", "obj")
+	obj := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "apps/v1", "kind": "Deployment",
+		"metadata": map[string]any{"namespace": "default", "name": "dep-create"},
+		"spec":     map[string]any{"replicas": int64(1)},
+		"status":   map[string]any{"readyReplicas": int64(1)},
+	}}
+	hash := vs.Publish(obj)
+	state := StateNode{Contents: NewStateSnapshot(ObjectVersions{}, KindSequences{}, nil)}
+	result := &ReconcileResult{Changes: Changes{ObjectVersions: ObjectVersions{key: hash}, Effects: []Effect{{OpType: event.CREATE, Key: key, Version: hash}}}}
+
+	next, _, _ := explorer.applyEffects(logr.Discard(), state, result)
+	created := vs.Resolve(next[key])
+	_, hasStatus := created.Object["status"]
+	require.False(t, hasStatus)
+	require.Equal(t, int64(1), created.GetGeneration())
+}
+
 func TestApplyEffects_StateEventHashMatchesContents_Apply(t *testing.T) {
 	store := snapshot.NewStore()
 	vs := NewVersionStore(store, nil)

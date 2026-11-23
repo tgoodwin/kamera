@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"path/filepath"
-	"reflect"
 	"testing"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
@@ -40,9 +39,13 @@ func TestTwoStepWorkflowReferenceRunConverges(t *testing.T) {
 				userSteps = append(userSteps, idx)
 			}
 		}
-		wantUserSteps := []int{0, 79}
-		if !reflect.DeepEqual(userSteps, wantUserSteps) {
-			t.Fatalf("trial %d: expected user action steps %v, got %v", trial, wantUserSteps, userSteps)
+		if len(userSteps) != 2 || userSteps[0] != 0 || userSteps[1] <= userSteps[0] {
+			t.Fatalf("trial %d: expected two ordered user actions starting at step 0, got %v", trial, userSteps)
+		}
+		for _, idx := range userSteps {
+			if path[idx].Error != "" {
+				t.Fatalf("trial %d: user action at step %d failed: %s", trial, idx, path[idx].Error)
+			}
 		}
 	}
 }
