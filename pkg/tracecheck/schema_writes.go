@@ -82,6 +82,12 @@ func (m *manager) materializeSchemaWrite(
 		}
 		result, err = resourceSchema.Create(intent, manager)
 	case event.UPDATE:
+		// Materialization replaces the request's resourceVersion with the live one.
+		if live != nil {
+			if err := m.validateEffect(ctx, op, intent, precondition, options); err != nil {
+				return obj, false, false, primary, err
+			}
+		}
 		result, err = resourceSchema.Update(live, intent, manager, subresource)
 	case event.APPLY:
 		if subresource == "status" && live == nil {
@@ -97,8 +103,10 @@ func (m *manager) materializeSchemaWrite(
 	}
 
 	rKeyExisted := m.effectRKeys[frameID].Contains(primary)
-	if err := m.validateEffect(ctx, op, result, precondition, options); err != nil {
-		return obj, false, false, primary, err
+	if op != event.UPDATE {
+		if err := m.validateEffect(ctx, op, result, precondition, options); err != nil {
+			return obj, false, false, primary, err
+		}
 	}
 	if precondition != nil && precondition.DryRun {
 		if !rKeyExisted {

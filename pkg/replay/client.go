@@ -404,7 +404,7 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 	if op != event.APPLY {
 		return c.handleEffect(ctx, obj, op, &preconditions, options)
 	}
-	applyObj, err := patchToUnstructured(obj, patch)
+	applyObj, err := c.patchToUnstructured(obj, patch)
 	if err != nil {
 		return err
 	}
@@ -454,7 +454,7 @@ func applyConfigToUnstructured(obj runtime.ApplyConfiguration) (*unstructured.Un
 	return u, nil
 }
 
-func patchToUnstructured(obj client.Object, patch client.Patch) (*unstructured.Unstructured, error) {
+func (c *Client) patchToUnstructured(obj client.Object, patch client.Patch) (*unstructured.Unstructured, error) {
 	data, err := patch.Data(obj)
 	if err != nil {
 		return nil, fmt.Errorf("building %s patch: %w", patch.Type(), err)
@@ -469,18 +469,25 @@ func patchToUnstructured(obj client.Object, patch client.Patch) (*unstructured.U
 			return nil, fmt.Errorf("decoding %s patch: %w", patch.Type(), jsonErr)
 		}
 	}
-	gvk := util.GetGroupVersionKind(obj)
+	gvk := c.objectGVK(obj)
 	if intent.GetAPIVersion() == "" {
 		intent.SetAPIVersion(gvk.GroupVersion().String())
 	}
 	if intent.GetKind() == "" {
 		intent.SetKind(gvk.Kind)
 	}
+	if intent.GetAPIVersion() != gvk.GroupVersion().String() || intent.GetKind() != gvk.Kind {
+		return nil, apierrors.NewBadRequest("apply patch type or version does not match the target object")
+	}
 	if intent.GetName() == "" {
 		intent.SetName(obj.GetName())
+	} else if intent.GetName() != obj.GetName() {
+		return nil, apierrors.NewBadRequest("apply patch name does not match the target object")
 	}
 	if intent.GetNamespace() == "" {
 		intent.SetNamespace(obj.GetNamespace())
+	} else if intent.GetNamespace() != obj.GetNamespace() {
+		return nil, apierrors.NewBadRequest("apply patch namespace does not match the target object")
 	}
 	return intent, nil
 }
@@ -514,7 +521,7 @@ func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch 
 	if op != event.APPLY {
 		return c.wrapped.handleEffect(ctx, obj, op, &preconditions, options)
 	}
-	applyObj, err := patchToUnstructured(obj, patch)
+	applyObj, err := c.wrapped.patchToUnstructured(obj, patch)
 	if err != nil {
 		return err
 	}

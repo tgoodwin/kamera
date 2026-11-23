@@ -117,6 +117,13 @@ func TestManagerMaterializesRegisteredApplySynchronously(t *testing.T) {
 	ctx := ctxWithFrame("schema-apply")
 	require.NoError(t, mgr.PrepareEffectContext(ctx, ObjectVersions{key: hash}))
 
+	stale := schemaWriteWidget(map[string]interface{}{
+		"spec": map[string]interface{}{"first": "stale"},
+	})
+	stale.SetResourceVersion("4")
+	err = mgr.RecordEffect(ctx, stale, event.UPDATE, &replay.PreconditionInfo{FieldManager: "stale-manager"}, nil)
+	require.True(t, apierrors.IsConflict(err), "stale schema-backed update must conflict: %v", err)
+
 	intent := schemaWriteWidget(map[string]interface{}{
 		"spec": map[string]interface{}{"second": "two"},
 	})

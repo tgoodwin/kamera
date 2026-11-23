@@ -9,6 +9,7 @@ import (
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
@@ -96,6 +97,22 @@ data:
 	applyObj := recorder.obj.(*unstructured.Unstructured)
 	require.Equal(t, "value", applyObj.Object["data"].(map[string]interface{})["key"])
 	require.Equal(t, "raw-manager", recorder.preconditions.FieldManager)
+}
+
+func TestClientRawYAMLApplyRejectsMismatchedIdentity(t *testing.T) {
+	recorder := &recordingRecorder{}
+	c := NewClient("test", nil, noopFrameReader{}, recorder)
+	target := &unstructured.Unstructured{}
+	target.SetAPIVersion("v1")
+	target.SetKind("ConfigMap")
+	target.SetNamespace("default")
+	target.SetName("example")
+	patch := client.RawPatch(types.ApplyPatchType, []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"other","namespace":"default"}}`))
+
+	err := c.Patch(context.Background(), target, patch, client.FieldOwner("raw-manager"))
+	require.Error(t, err)
+	require.True(t, apierrors.IsBadRequest(err), "expected bad request, got %v", err)
+	require.Nil(t, recorder.obj)
 }
 
 func TestClientStatusPatchApplyUsesApplyOp(t *testing.T) {
