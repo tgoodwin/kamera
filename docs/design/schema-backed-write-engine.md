@@ -110,9 +110,8 @@ defaulting for built-in resources.
 Non-apply JSON, merge, and strategic patches still use Kamera's legacy patch
 materialization path. Registered CREATE, UPDATE, APPLY, and status APPLY use the
 schema-backed engine; non-apply patch ownership will be added separately.
-During incremental migration, resource-version values returned by a registered
-write can be approximate if the same reconcile interleaves it with legacy
-writes. Strict, fully registered operation sequences advance synchronously.
+Schema-backed and legacy writes share the branch's resource-version sequence.
+Only writes that change stored state advance that sequence.
 
 Registries are static for an exploration run. Creating, updating, or deleting a
 CRD during a branch does not yet change branch-local schema availability.

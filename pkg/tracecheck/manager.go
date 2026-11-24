@@ -33,11 +33,15 @@ type VersionManager interface {
 }
 
 type Effect struct {
-	OpType       event.OperationType
-	Key          snapshot.CompositeKey
-	Version      snapshot.VersionHash
-	Subresource  string `json:"subresource,omitempty"`
-	Materialized bool   `json:"materialized,omitempty"`
+	OpType  event.OperationType
+	Key     snapshot.CompositeKey
+	Version snapshot.VersionHash
+	// ResourceVersion is the API-server sequence assigned when this write was
+	// accepted. A zero value is retained for imported/legacy effects whose
+	// sequence is assigned during materialization.
+	ResourceVersion int64  `json:"resourceVersion,omitempty"`
+	Subresource     string `json:"subresource,omitempty"`
+	Materialized    bool   `json:"materialized,omitempty"`
 
 	Precondition *replay.PreconditionInfo
 }
@@ -95,12 +99,7 @@ type manager struct {
 	effectVersions map[string]map[string]snapshot.VersionHash
 	// effectNextRVs is the next branch-local global sequence to assign.
 	effectNextRVs map[string]int64
-
-	// effectObjects is the synchronous API-server view for a reconcile frame.
-	// Unlike the cache frame, it advances after each successful write.
-	effectObjects  map[string]map[string]*unstructured.Unstructured
-	effectNextRV   map[string]int64
-	effectVersions map[string]map[string]snapshot.VersionHash
+	// Resource schemas enable synchronous materialization of API writes.
 
 	schemaRegistry *apiserver.Registry
 	requireSchemas bool
@@ -247,6 +246,9 @@ func (m *manager) advanceEffectResourceVersion(frameID, resourceKey string, obj 
 }
 
 func resolveEffectVersion(versionManager VersionManager, currentVersion snapshot.VersionHash, exists bool, effect Effect) (snapshot.VersionHash, bool) {
+	if effect.Materialized {
+		return effect.Version, exists && effect.Version == currentVersion
+	}
 	if !exists {
 		if effect.OpType != event.CREATE && effect.OpType != event.APPLY {
 			return effect.Version, false
@@ -337,22 +339,18 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	materialized := false
-	materializedChanged := false
-	materializedKey := ""
+	var materialized bool
 	if event.IsWriteOp(opType) && opType != event.MARK_FOR_DELETION && opType != event.REMOVE {
 		var err error
-		obj, materialized, materializedChanged, materializedKey, err = m.materializeSchemaWrite(ctx, obj, opType, precondition, options)
+		var changed bool
+		materialized, changed, err = m.materializeSchemaWrite(ctx, obj, opType, precondition, options)
 		if err != nil {
 			return err
 		}
-		if precondition != nil && precondition.DryRun && materialized {
+		if materialized && !changed {
 			return nil
 		}
 	}
-
-	// Schema-backed writes were validated against the synchronous object view
-	// while being materialized. Legacy effects retain the existing validator.
 	if !materialized {
 		if err := m.validateEffect(ctx, opType, obj, precondition, options); err != nil {
 			return err
@@ -387,22 +385,7 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	// OCC and return-value fidelity, but exclude it from content hashing.
 	u.SetResourceVersion("")
 
-	// A successful no-op returns the current version. Publishing the response
-	// would create a different hash when its served resourceVersion was stamped
-	// from frame bookkeeping rather than stored object metadata.
-	var versionHash snapshot.VersionHash
-	if materialized && !materializedChanged {
-		var found bool
-		versionHash, found = m.effectVersions[frameID][materializedKey]
-		if !found {
-			return fmt.Errorf("schema-backed no-op has no live version for %s", materializedKey)
-		}
-	} else {
-		versionHash = m.Publish(u)
-	}
-	if materialized {
-		m.effectVersions[frameID][materializedKey] = versionHash
-	}
+	versionHash := m.Publish(u)
 
 	reffects, ok := m.effects[frameID]
 	if !ok {
@@ -421,8 +404,10 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		resourceKey := canonicalResourceKeyString(gvk.Group, kind, obj.GetNamespace(), obj.GetName())
 		currentVersion, exists := m.effectVersions[frameID][resourceKey]
 		materializedVersion, noOp := resolveEffectVersion(m.versionStore, currentVersion, exists, eff)
-		if materialized := m.Resolve(materializedVersion); materialized != nil && (opType == event.CREATE || opType == event.UPDATE || opType == event.PATCH || opType == event.APPLY) {
-			obj.SetGeneration(util.GetObjectGeneration(materialized))
+		if !materialized && (opType == event.CREATE || opType == event.UPDATE || opType == event.PATCH || opType == event.APPLY) {
+			if resolved := m.Resolve(materializedVersion); resolved != nil {
+				obj.SetGeneration(util.GetObjectGeneration(resolved))
+			}
 		}
 		if noOp {
 			if rv := m.effectRVs[frameID][resourceKey]; rv > 0 {
@@ -450,16 +435,13 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 }
 
 func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) error {
-	frameID := replay.FrameIDFromContext(ctx)
-	if m.effectObjects == nil {
-		m.effectObjects = make(map[string]map[string]*unstructured.Unstructured)
-	}
-	if m.effectNextRV == nil {
-		m.effectNextRV = make(map[string]int64)
-	}
 	if m.effectVersions == nil {
 		m.effectVersions = make(map[string]map[string]snapshot.VersionHash)
 	}
+	if m.effectNextRVs == nil {
+		m.effectNextRVs = make(map[string]int64)
+	}
+	frameID := replay.FrameIDFromContext(ctx)
 	cKeys := lo.Keys(ov)
 	// holds objectID
 	iKeys := lo.Map(cKeys, func(k snapshot.CompositeKey, _ int) snapshot.IdentityKey {
@@ -469,9 +451,8 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 	// holds kind/namespace/name
 	rKeySet := util.NewSet[string]()
 	rvs := make(map[string]int64, len(ov))
-	objects := make(map[string]*unstructured.Unstructured, len(ov))
 	versions := make(map[string]snapshot.VersionHash, len(ov))
-	var highestRV int64
+	baseRV := resourceVersionBaseFromContext(ctx)
 	for ck, vh := range ov {
 		primary := canonicalResourceKeyString(ck.ResourceKey.Group, ck.ResourceKey.Kind, ck.ResourceKey.Namespace, ck.ResourceKey.Name)
 		rKeySet.Add(primary)
@@ -480,25 +461,19 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 		if m.rvLookup != nil {
 			if rv := m.rvLookup(vh); rv > 0 {
 				rvs[primary] = rv
-				if rv > highestRV {
-					highestRV = rv
-				}
 			}
-		}
-		if obj := m.Resolve(vh); obj != nil {
-			copy := obj.DeepCopy()
-			if rv := rvs[primary]; rv > 0 {
-				copy.SetResourceVersion(strconv.FormatInt(rv, 10))
-			}
-			objects[primary] = copy
 		}
 	}
 	m.effectRKeys[frameID] = rKeySet
 	m.effectIKeys[frameID] = util.NewSet(iKeys...)
 	m.effectRVs[frameID] = rvs
-	m.effectObjects[frameID] = objects
-	m.effectNextRV[frameID] = highestRV
 	m.effectVersions[frameID] = versions
+	if baseRV == 0 {
+		for _, rv := range rvs {
+			baseRV = max(baseRV, rv)
+		}
+	}
+	m.effectNextRVs[frameID] = baseRV + 1
 	return nil
 }
 
@@ -507,9 +482,8 @@ func (m *manager) CleanupEffectContext(ctx context.Context) {
 	delete(m.effectRKeys, frameID)
 	delete(m.effectIKeys, frameID)
 	delete(m.effectRVs, frameID)
-	delete(m.effectObjects, frameID)
-	delete(m.effectNextRV, frameID)
 	delete(m.effectVersions, frameID)
+	delete(m.effectNextRVs, frameID)
 }
 
 func (m *manager) GetEffects(ctx context.Context) (Changes, error) {

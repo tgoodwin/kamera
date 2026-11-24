@@ -3,6 +3,8 @@ package tracecheck
 import (
 	"testing"
 
+	"github.com/go-logr/logr"
+
 	"github.com/stretchr/testify/require"
 	"github.com/tgoodwin/kamera/pkg/apiserver"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -94,14 +96,13 @@ func TestManagerMaterializesRegisteredApplySynchronously(t *testing.T) {
 
 	store := snapshot.NewStore()
 	mgr := &manager{
-		versionStore:   NewVersionStore(store, nil),
-		effects:        make(map[string]reconcileEffects),
-		scheme:         runtime.NewScheme(),
-		effectRKeys:    make(map[string]util.Set[string]),
-		effectIKeys:    make(map[string]util.Set[snapshot.IdentityKey]),
-		effectRVs:      make(map[string]map[string]int64),
-		effectObjects:  make(map[string]map[string]*unstructured.Unstructured),
-		effectNextRV:   make(map[string]int64),
+		versionStore: NewVersionStore(store, nil),
+		effects:      make(map[string]reconcileEffects),
+		scheme:       runtime.NewScheme(),
+		effectRKeys:  make(map[string]util.Set[string]),
+		effectIKeys:  make(map[string]util.Set[snapshot.IdentityKey]),
+		effectRVs:    make(map[string]map[string]int64),
+
 		schemaRegistry: registry,
 	}
 	hash := mgr.Publish(live)
@@ -140,7 +141,8 @@ func TestManagerMaterializesRegisteredApplySynchronously(t *testing.T) {
 	materialized := mgr.Resolve(changes.Effects[0].Version)
 	require.Equal(t, "one", materialized.Object["spec"].(map[string]interface{})["first"])
 	require.Equal(t, "two", materialized.Object["spec"].(map[string]interface{})["second"])
-	require.Equal(t, "6", materialized.GetResourceVersion())
+	require.Equal(t, int64(6), changes.Effects[0].ResourceVersion)
+	require.Empty(t, materialized.GetResourceVersion(), "stored objects must not contain resourceVersion")
 }
 
 func TestManagerTreatsRepeatedApplyAcrossFramesAsNoOp(t *testing.T) {
@@ -172,9 +174,46 @@ func TestManagerTreatsRepeatedApplyAcrossFramesAsNoOp(t *testing.T) {
 	require.NoError(t, mgr.RecordEffect(secondCtx, second, event.APPLY, &replay.PreconditionInfo{FieldManager: "manager"}, nil))
 	secondChanges, err := mgr.GetEffects(secondCtx)
 	require.NoError(t, err)
-	require.Len(t, secondChanges.Effects, 1)
-	require.Equal(t, firstEffect.Version, secondChanges.Effects[0].Version)
+	require.Empty(t, secondChanges.Effects)
+	require.Equal(t, first.GetResourceVersion(), second.GetResourceVersion())
 	require.Equal(t, int64(1), second.GetGeneration())
+}
+
+func TestMixedWritesShareResourceVersionSequence(t *testing.T) {
+	mgr := newTestManager(nil)
+	mgr.schemaRegistry = configMapTestRegistry(t)
+	ctx := ctxWithFrame("mixed-writes")
+	require.NoError(t, mgr.PrepareEffectContext(ctx, ObjectVersions{}))
+
+	apply := func() *unstructured.Unstructured {
+		obj := makeObj("example", "")
+		obj.Object["data"] = map[string]any{"key": "value"}
+		require.NoError(t, mgr.RecordEffect(ctx, obj, event.APPLY, &replay.PreconditionInfo{FieldManager: "apply-manager"}, nil))
+		return obj
+	}
+	first := apply()
+	require.Equal(t, "1", first.GetResourceVersion())
+
+	patch := first.DeepCopy()
+	patch.SetLabels(map[string]string{"added-by-patch": "true"})
+	require.NoError(t, mgr.RecordEffect(ctx, patch, event.PATCH, nil, nil))
+	require.Equal(t, "2", patch.GetResourceVersion())
+
+	repeated := apply()
+	require.Equal(t, "3", repeated.GetResourceVersion(), "the schema-backed apply must continue after the legacy patch")
+	require.Equal(t, "true", repeated.GetLabels()["added-by-patch"])
+
+	changes, err := mgr.GetEffects(ctx)
+	require.NoError(t, err)
+	require.Len(t, changes.Effects, 3)
+	explorer := &Explorer{versionManager: mgr}
+	start := StateNode{Contents: NewStateSnapshot(ObjectVersions{}, KindSequences{}, nil)}
+	next, _, events := explorer.applyEffects(logr.Discard(), start, &ReconcileResult{Changes: changes})
+	require.Len(t, events, 3)
+	require.Equal(t, int64(1), events[0].Sequence)
+	require.Equal(t, int64(2), events[1].Sequence)
+	require.Equal(t, int64(3), events[2].Sequence)
+	require.Equal(t, changes.Effects[2].Version, next[changes.Effects[2].Key])
 }
 
 func TestManagerStrictModeRejectsUnregisteredWrites(t *testing.T) {

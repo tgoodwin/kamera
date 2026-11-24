@@ -44,11 +44,11 @@ type EffectContextManager interface {
 // StalenessInterval defines a window during which a reconciler's view
 // of a specific resource kind lags behind the actual cluster state.
 type StalenessInterval struct {
-	ReconcilerID    ReconcilerID `json:"reconciler"`
-	Kind            string       `json:"kind"`  // canonical group/kind
-	StaleAt         int64        `json:"staleAt"`
-	CatchUpAt       int64        `json:"catchUpAt"`
-	Lag             int64        `json:"lag"`             // how far behind frontier; -1 = frozen
+	ReconcilerID     ReconcilerID `json:"reconciler"`
+	Kind             string       `json:"kind"` // canonical group/kind
+	StaleAt          int64        `json:"staleAt"`
+	CatchUpAt        int64        `json:"catchUpAt"`
+	Lag              int64        `json:"lag"`                // how far behind frontier; -1 = frozen
 	FreezeAtSequence int64        `json:"freezeAt,omitempty"` // when lag=-1 and set, freeze at this sequence instead of staleAt
 }
 
@@ -1690,30 +1690,6 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 		}
 		appliedVersion, noOp := resolveEffectVersion(e.versionManager, currentVersion, exists, effect)
 
-		if effect.Materialized {
-			switch effect.OpType {
-			case event.CREATE:
-				if exists {
-					panic("materialized create effect object already exists: " + effect.Key.String())
-				}
-			case event.UPDATE, event.APPLY:
-				if effect.OpType == event.UPDATE && !exists {
-					panic("materialized update effect object not found: " + effect.Key.String())
-				}
-			default:
-				panic(fmt.Sprintf("unsupported materialized effect type: %s", effect.OpType))
-			}
-			if exists && nextState[existingKey] == effect.Version {
-				continue
-			}
-			if exists && existingKey != effect.Key {
-				delete(nextState, existingKey)
-			}
-			changes[effect.Key] = effect.Version
-			nextState[effect.Key] = effect.Version
-			goto recordMaterializedEffect
-		}
-
 		switch effect.OpType {
 		case event.CREATE:
 			if exists {
@@ -1761,9 +1737,16 @@ func (e *Explorer) applyEffects(stepLogger logr.Logger, stateView StateNode, ste
 			panic(fmt.Errorf("unknown effect type: %s", effect.OpType))
 		}
 
-	recordMaterializedEffect:
-		highestSequence++
-		newRV := highestSequence
+		changes[effect.Key] = appliedVersion
+
+		newRV := highestSequence + 1
+		if effect.ResourceVersion != 0 {
+			if effect.ResourceVersion != newRV {
+				panic(fmt.Sprintf("effect resourceVersion %d does not follow branch sequence %d", effect.ResourceVersion, highestSequence))
+			}
+			newRV = effect.ResourceVersion
+		}
+		highestSequence = newRV
 
 		// increment resourceversion for the kind
 		nextSequences[effect.Key.IdentityKey.CanonicalGroupKind()] = newRV

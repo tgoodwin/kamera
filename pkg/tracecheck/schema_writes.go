@@ -20,17 +20,17 @@ import (
 )
 
 // materializeSchemaWrite applies API-server semantics before the effect is
-// published. The returned bool distinguishes exact, schema-backed effects from
-// legacy effects that apply their approximation later in Explorer.applyEffects.
+// published. Dry runs and unchanged writes return a response without recording
+// an effect. RecordEffect owns version allocation for every durable write.
 func (m *manager) materializeSchemaWrite(
 	ctx context.Context,
 	obj client.Object,
 	op event.OperationType,
 	precondition *replay.PreconditionInfo,
 	options *replay.EffectOptions,
-) (client.Object, bool, bool, string, error) {
+) (materialized bool, changed bool, err error) {
 	if obj == nil {
-		return obj, false, false, "", apierrors.NewBadRequest("write object is nil")
+		return false, false, apierrors.NewBadRequest("write object is nil")
 	}
 	gvk := ensureObjectGVK(obj, m.scheme)
 	resourceSchema, registered := m.schemaRegistry.Lookup(gvk)
@@ -40,28 +40,33 @@ func (m *manager) materializeSchemaWrite(
 			if options != nil && options.ReconcilerID != "" {
 				reconcilerID = options.ReconcilerID
 			}
-			return obj, false, false, "", fmt.Errorf(
+			return false, false, fmt.Errorf(
 				"schema-backed %s by reconciler %q requires a registered schema for %s; register it with WithCRD, WithResourceSchema, or WithOpenAPIV3",
 				op, reconcilerID, gvk,
 			)
 		}
-		return obj, false, false, "", nil
+		return false, false, nil
 	}
 
 	// Non-apply patch payload materialization remains on the legacy path. SSA
 	// patches arrive as APPLY and are handled below.
 	if op == event.PATCH {
-		return obj, false, false, "", nil
+		return false, false, nil
 	}
 
 	intent, err := util.ConvertToUnstructured(obj)
 	if err != nil {
-		return obj, false, false, "", err
+		return false, false, err
 	}
 	intent.SetGroupVersionKind(gvk)
 	frameID := replay.FrameIDFromContext(ctx)
 	primary := canonicalResourceKeyString(gvk.Group, gvk.Kind, intent.GetNamespace(), intent.GetName())
-	live := m.effectObjects[frameID][primary]
+	live := m.Resolve(m.effectVersions[frameID][primary])
+	if live != nil {
+		if rv := m.effectRVs[frameID][primary]; rv > 0 {
+			live.SetResourceVersion(strconv.FormatInt(rv, 10))
+		}
+	}
 	subresource := ""
 	if options != nil {
 		subresource = options.Subresource
@@ -77,7 +82,7 @@ func (m *manager) materializeSchemaWrite(
 	switch op {
 	case event.CREATE:
 		if live != nil {
-			return obj, false, false, primary, apierrors.NewAlreadyExists(
+			return false, false, apierrors.NewAlreadyExists(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, intent.GetName())
 		}
 		result, err = resourceSchema.Create(intent, manager)
@@ -85,27 +90,27 @@ func (m *manager) materializeSchemaWrite(
 		// Materialization replaces the request's resourceVersion with the live one.
 		if live != nil {
 			if err := m.validateEffect(ctx, op, intent, precondition, options); err != nil {
-				return obj, false, false, primary, err
+				return false, false, err
 			}
 		}
 		result, err = resourceSchema.Update(live, intent, manager, subresource)
 	case event.APPLY:
 		if subresource == "status" && live == nil {
-			return obj, false, false, primary, apierrors.NewNotFound(
+			return false, false, apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, intent.GetName())
 		}
 		result, err = resourceSchema.Apply(live, intent, manager, force, subresource)
 	default:
-		return obj, false, false, "", nil
+		return false, false, nil
 	}
 	if err != nil {
-		return obj, false, false, primary, err
+		return false, false, err
 	}
 
 	rKeyExisted := m.effectRKeys[frameID].Contains(primary)
 	if op != event.UPDATE {
 		if err := m.validateEffect(ctx, op, result, precondition, options); err != nil {
-			return obj, false, false, primary, err
+			return false, false, err
 		}
 	}
 	if precondition != nil && precondition.DryRun {
@@ -113,30 +118,21 @@ func (m *manager) materializeSchemaWrite(
 			m.effectRKeys[frameID].Delete(primary)
 		}
 		if err := copyUnstructuredInto(obj, result, m.scheme); err != nil {
-			return obj, false, false, primary, fmt.Errorf("copying schema-backed dry-run response into %T: %w", obj, err)
+			return false, false, fmt.Errorf("copying schema-backed dry-run response into %T: %w", obj, err)
 		}
-		return obj, true, false, primary, nil
+		return true, false, nil
 	}
 
-	changed := live == nil || !sameUnstructuredJSON(live, result)
-	if changed {
-		m.effectNextRV[frameID]++
-		result.SetResourceVersion(strconv.FormatInt(m.effectNextRV[frameID], 10))
-		m.effectRVs[frameID][primary] = m.effectNextRV[frameID]
-	} else if live != nil {
-		result.SetResourceVersion(live.GetResourceVersion())
-	}
-	m.effectObjects[frameID][primary] = result.DeepCopy()
+	changed = live == nil || !sameUnstructuredJSON(live, result)
 	if live == nil {
 		m.effectIKeys[frameID].Add(snapshot.IdentityKey{
 			Group: gvk.Group, Kind: gvk.Kind, ObjectID: tag.GetSleeveObjectID(result),
 		})
 	}
-
 	if err := copyUnstructuredInto(obj, result, m.scheme); err != nil {
-		return obj, false, false, primary, fmt.Errorf("copying schema-backed response into %T: %w", obj, err)
+		return false, false, fmt.Errorf("copying schema-backed response into %T: %w", obj, err)
 	}
-	return obj, true, changed, primary, nil
+	return true, changed, nil
 }
 
 func sameUnstructuredJSON(left, right *unstructured.Unstructured) bool {
