@@ -34,11 +34,12 @@ import (
 
 func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	b := tracecheck.NewExplorerBuilder(newScheme())
-	// Use a 30-second step so that karpenter's 1-minute state-informer
-	// RequeueAfter translates to only 2 simulated steps instead of 60.
-	// This lets the stable-requeue-after convergence mechanism build its
-	// streak (threshold=3) within a reasonable depth budget.
-	simclock.Configure(time.Unix(0, 0), 30*time.Second)
+	// Use a 5-second step so that Karpenter's 1-minute state-informer
+	// requeue advances by 12 simulated steps. This leaves enough scheduling
+	// opportunities for simulated node registration before the 15-minute
+	// registration timeout while still allowing the stable-requeue-after
+	// convergence mechanism to finish within a reasonable depth budget.
+	simclock.Configure(time.Unix(0, 0), 5*time.Second)
 
 	// Zero out retry backoff to avoid real-time sleeps during simulation.
 	retry.DefaultBackoff = wait.Backoff{Steps: 1, Duration: 0}
