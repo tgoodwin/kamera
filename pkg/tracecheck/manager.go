@@ -357,6 +357,9 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 		}
 	}
 
+	if !materialized && opType == event.APPLY {
+		tag.EnsureDeterministicIdentity(obj)
+	}
 	gvk := ensureObjectGVK(obj, m.scheme)
 	kind := gvk.Kind
 
@@ -385,7 +388,12 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	// OCC and return-value fidelity, but exclude it from content hashing.
 	u.SetResourceVersion("")
 
-	versionHash := m.Publish(u)
+	var versionHash snapshot.VersionHash
+	if materialized {
+		versionHash = m.versionStore.PublishWithStrategy(u, snapshot.ExactHash)
+	} else {
+		versionHash = m.Publish(u)
+	}
 
 	reffects, ok := m.effects[frameID]
 	if !ok {
@@ -675,6 +683,7 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 		if !rKeyExists {
 			// Add it for a new resource
 			rKeys.Add(resourceKey)
+			m.effectIKeys[frameID].Add(iKey)
 		}
 		// Existing resource just gets updated, no change to tracking state
 

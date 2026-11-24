@@ -317,7 +317,10 @@ func newResourceSchema(
 	var statusManager *managedfields.FieldManager
 	if hasStatus {
 		statusReset := map[fieldpath.APIVersion]*fieldpath.Set{
-			apiVersion: fieldpath.NewSet(fieldpath.MakePathOrDie("spec")),
+			apiVersion: fieldpath.NewSet(
+				fieldpath.MakePathOrDie("spec"),
+				fieldpath.MakePathOrDie("metadata", "labels"),
+			),
 		}
 		statusManager, err = managedfields.NewDefaultCRDFieldManager(
 			typeConverter,

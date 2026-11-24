@@ -125,6 +125,13 @@ func TestManagerMaterializesRegisteredApplySynchronously(t *testing.T) {
 	err = mgr.RecordEffect(ctx, stale, event.UPDATE, &replay.PreconditionInfo{FieldManager: "stale-manager"}, nil)
 	require.True(t, apierrors.IsConflict(err), "stale schema-backed update must conflict: %v", err)
 
+	staleApply := schemaWriteWidget(map[string]interface{}{
+		"spec": map[string]interface{}{"second": "stale"},
+	})
+	staleApply.SetResourceVersion("4")
+	err = mgr.RecordEffect(ctx, staleApply, event.APPLY, &replay.PreconditionInfo{FieldManager: "second-manager"}, nil)
+	require.True(t, apierrors.IsConflict(err), "stale schema-backed apply must conflict: %v", err)
+
 	intent := schemaWriteWidget(map[string]interface{}{
 		"spec": map[string]interface{}{"second": "two"},
 	})
@@ -141,6 +148,9 @@ func TestManagerMaterializesRegisteredApplySynchronously(t *testing.T) {
 	materialized := mgr.Resolve(changes.Effects[0].Version)
 	require.Equal(t, "one", materialized.Object["spec"].(map[string]interface{})["first"])
 	require.Equal(t, "two", materialized.Object["spec"].(map[string]interface{})["second"])
+	initialStored := mgr.Resolve(hash)
+	require.Equal(t, "one", initialStored.Object["spec"].(map[string]interface{})["first"])
+	require.NotContains(t, initialStored.Object["spec"].(map[string]interface{}), "second")
 	require.Equal(t, int64(6), changes.Effects[0].ResourceVersion)
 	require.Empty(t, materialized.GetResourceVersion(), "stored objects must not contain resourceVersion")
 }
@@ -179,6 +189,74 @@ func TestManagerTreatsRepeatedApplyAcrossFramesAsNoOp(t *testing.T) {
 	require.Equal(t, int64(1), second.GetGeneration())
 }
 
+func TestManagerKeepsDistinctSchemaVersionsForNormalizedTimestampChanges(t *testing.T) {
+	mgr := newTestManager(nil)
+	mgr.schemaRegistry = configMapTestRegistry(t)
+
+	firstCtx := ctxWithFrame("timestamp-first")
+	require.NoError(t, mgr.PrepareEffectContext(firstCtx, ObjectVersions{}))
+	first := makeObj("example", "")
+	first.Object["data"] = map[string]interface{}{"lastRun": "2026-11-23T10:00:00Z"}
+	require.NoError(t, mgr.RecordEffect(firstCtx, first, event.APPLY, &replay.PreconditionInfo{FieldManager: "manager"}, nil))
+	firstChanges, err := mgr.GetEffects(firstCtx)
+	require.NoError(t, err)
+	require.Len(t, firstChanges.Effects, 1)
+	firstVersion := firstChanges.Effects[0].Version
+	mgr.CleanupEffectContext(firstCtx)
+
+	mgr.rvLookup = func(candidate snapshot.VersionHash) int64 {
+		if candidate == firstVersion {
+			return 1
+		}
+		return 0
+	}
+
+	secondCtx := ctxWithFrame("timestamp-second")
+	key := firstChanges.Effects[0].Key
+	require.NoError(t, mgr.PrepareEffectContext(secondCtx, ObjectVersions{key: firstVersion}))
+	second := makeObj("example", "")
+	second.Object["data"] = map[string]interface{}{"lastRun": "2026-11-23T10:01:00Z"}
+	require.NoError(t, mgr.RecordEffect(secondCtx, second, event.APPLY, &replay.PreconditionInfo{FieldManager: "manager"}, nil))
+	secondChanges, err := mgr.GetEffects(secondCtx)
+	require.NoError(t, err)
+	require.Len(t, secondChanges.Effects, 1)
+	require.NotEqual(t, firstVersion, secondChanges.Effects[0].Version)
+
+	firstStored := mgr.Resolve(firstVersion)
+	require.Equal(t, "2026-11-23T10:00:00Z", firstStored.Object["data"].(map[string]interface{})["lastRun"])
+}
+
+func TestRegisteredMergePatchUsesFrameLiveObject(t *testing.T) {
+	mgr := newTestManager(nil)
+	mgr.schemaRegistry = configMapTestRegistry(t)
+	ctx := ctxWithFrame("merge-patch-live")
+	require.NoError(t, mgr.PrepareEffectContext(ctx, ObjectVersions{}))
+
+	apply := makeObj("example", "")
+	apply.Object["data"] = map[string]interface{}{"key": "value"}
+	require.NoError(t, mgr.RecordEffect(ctx, apply, event.APPLY, &replay.PreconditionInfo{FieldManager: "manager"}, nil))
+	firstChanges, err := mgr.GetEffects(ctx)
+	require.NoError(t, err)
+	require.Len(t, firstChanges.Effects, 1)
+
+	patch := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name":      "example",
+			"namespace": "default",
+			"labels":    map[string]interface{}{"patched": "true"},
+		},
+	}}
+	require.NoError(t, mgr.RecordEffect(ctx, patch, event.PATCH, nil, &replay.EffectOptions{PatchType: types.MergePatchType}))
+	changes, err := mgr.GetEffects(ctx)
+	require.NoError(t, err)
+	require.Len(t, changes.Effects, 2)
+	patched := mgr.Resolve(changes.Effects[1].Version)
+	require.Equal(t, "value", patched.Object["data"].(map[string]interface{})["key"])
+	require.Equal(t, "true", patched.GetLabels()["patched"])
+}
+
 func TestMixedWritesShareResourceVersionSequence(t *testing.T) {
 	mgr := newTestManager(nil)
 	mgr.schemaRegistry = configMapTestRegistry(t)
@@ -200,20 +278,42 @@ func TestMixedWritesShareResourceVersionSequence(t *testing.T) {
 	require.Equal(t, "2", patch.GetResourceVersion())
 
 	repeated := apply()
-	require.Equal(t, "3", repeated.GetResourceVersion(), "the schema-backed apply must continue after the legacy patch")
+	require.Equal(t, "2", repeated.GetResourceVersion(), "unchanged apply must return the patch's version")
 	require.Equal(t, "true", repeated.GetLabels()["added-by-patch"])
 
 	changes, err := mgr.GetEffects(ctx)
 	require.NoError(t, err)
-	require.Len(t, changes.Effects, 3)
+	require.Len(t, changes.Effects, 2)
 	explorer := &Explorer{versionManager: mgr}
 	start := StateNode{Contents: NewStateSnapshot(ObjectVersions{}, KindSequences{}, nil)}
 	next, _, events := explorer.applyEffects(logr.Discard(), start, &ReconcileResult{Changes: changes})
-	require.Len(t, events, 3)
+	require.Len(t, events, 2)
 	require.Equal(t, int64(1), events[0].Sequence)
 	require.Equal(t, int64(2), events[1].Sequence)
-	require.Equal(t, int64(3), events[2].Sequence)
-	require.Equal(t, changes.Effects[2].Version, next[changes.Effects[2].Key])
+	require.Equal(t, changes.Effects[1].Version, next[changes.Effects[1].Key])
+}
+
+func TestLegacyApplyKeepsIdentityForUIDDelete(t *testing.T) {
+	mgr := newTestManager(nil)
+	ctx := ctxWithFrame("legacy-apply")
+	require.NoError(t, mgr.PrepareEffectContext(ctx, ObjectVersions{}))
+
+	applied := makeObj("example", "")
+	require.NoError(t, mgr.RecordEffect(ctx, applied, event.APPLY, &replay.PreconditionInfo{FieldManager: "manager"}, nil))
+	changes, err := mgr.GetEffects(ctx)
+	require.NoError(t, err)
+	require.Len(t, changes.Effects, 1)
+	require.NotEmpty(t, applied.GetUID())
+	require.Equal(t, string(applied.GetUID()), changes.Effects[0].Key.ObjectID)
+
+	mgr.CleanupEffectContext(ctx)
+	mgr.rvLookup = func(snapshot.VersionHash) int64 { return 1 }
+	deleteCtx := ctxWithFrame("legacy-delete")
+	require.NoError(t, mgr.PrepareEffectContext(deleteCtx, ObjectVersions{changes.Effects[0].Key: changes.Effects[0].Version}))
+	uid := applied.GetUID()
+	toDelete := makeObj("example", "1")
+	toDelete.SetUID(uid)
+	require.NoError(t, mgr.RecordEffect(deleteCtx, toDelete, event.MARK_FOR_DELETION, &replay.PreconditionInfo{UID: &uid}, nil))
 }
 
 func TestManagerStrictModeRejectsUnregisteredWrites(t *testing.T) {

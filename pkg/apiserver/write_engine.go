@@ -3,6 +3,7 @@ package apiserver
 import (
 	"fmt"
 	"reflect"
+	"strconv"
 
 	"github.com/tgoodwin/kamera/pkg/tag"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -125,6 +126,26 @@ func (s *ResourceSchema) Update(
 	return updated, nil
 }
 
+// Patch applies an already-materialized merge patch without replacing fields that
+// were omitted from the patch or transferring their managed-field ownership.
+func (s *ResourceSchema) Patch(
+	live *unstructured.Unstructured,
+	patch *unstructured.Unstructured,
+	subresource string,
+) (*unstructured.Unstructured, error) {
+	if live == nil {
+		return nil, apierrors.NewNotFound(schema.GroupResource{Group: s.GVK.Group, Resource: s.GVK.Kind}, patch.GetName())
+	}
+	result := s.enforceSubresource(live, patch.DeepCopy(), subresource, false)
+	result.SetManagedFields(live.GetManagedFields())
+	normalizeManagedFieldTimes(result)
+	s.finishServerMetadata(live, result, subresource, false)
+	if err := s.validate(result, live, false); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
 func (s *ResourceSchema) managerFor(subresource string) (*managedfields.FieldManager, error) {
 	switch subresource {
 	case "":
@@ -183,7 +204,7 @@ func (s *ResourceSchema) finishServerMetadata(
 		if result.GetResourceVersion() == "" {
 			result.SetResourceVersion("1")
 		}
-		if result.GetGeneration() == 0 {
+		if objectGeneration(result) == 0 {
 			result.SetGeneration(1)
 		}
 		return
@@ -193,11 +214,11 @@ func (s *ResourceSchema) finishServerMetadata(
 	result.SetCreationTimestamp(live.GetCreationTimestamp())
 	result.SetResourceVersion(live.GetResourceVersion())
 	if subresource == "status" {
-		result.SetGeneration(live.GetGeneration())
+		result.SetGeneration(objectGeneration(live))
 		return
 	}
 	if !reflect.DeepEqual(live.Object["spec"], result.Object["spec"]) {
-		generation := live.GetGeneration()
+		generation := objectGeneration(live)
 		if generation == 0 {
 			generation = 1
 		} else {
@@ -205,8 +226,37 @@ func (s *ResourceSchema) finishServerMetadata(
 		}
 		result.SetGeneration(generation)
 	} else {
-		result.SetGeneration(live.GetGeneration())
+		result.SetGeneration(objectGeneration(live))
 	}
+}
+
+func objectGeneration(obj *unstructured.Unstructured) int64 {
+	if obj == nil {
+		return 0
+	}
+	if generation := obj.GetGeneration(); generation != 0 {
+		return generation
+	}
+	raw, found, err := unstructured.NestedFieldNoCopy(obj.Object, "metadata", "generation")
+	if err != nil || !found || raw == nil {
+		return 0
+	}
+	switch value := raw.(type) {
+	case int:
+		return int64(value)
+	case int32:
+		return int64(value)
+	case int64:
+		return value
+	case float32:
+		return int64(value)
+	case float64:
+		return int64(value)
+	case string:
+		generation, _ := strconv.ParseInt(value, 10, 64)
+		return generation
+	}
+	return 0
 }
 
 func (s *ResourceSchema) validate(

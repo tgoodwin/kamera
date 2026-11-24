@@ -241,6 +241,29 @@ func TestStatusApplyPreservesSpecAndGeneration(t *testing.T) {
 	})
 }
 
+func TestStatusApplyDoesNotOwnMainResourceLabels(t *testing.T) {
+	rs := testResourceSchema(t, true)
+	initial := widget("example", map[string]interface{}{
+		"spec": map[string]interface{}{"first": "one"},
+	})
+	initial.SetLabels(map[string]string{"owner": "main"})
+	live, err := rs.Apply(nil, initial, "main-manager", false, "")
+	require.NoError(t, err)
+
+	status := widget("example", map[string]interface{}{
+		"status": map[string]interface{}{"phase": "Ready"},
+	})
+	status.SetLabels(map[string]string{"owner": "status"})
+	merged, err := rs.Apply(live, status, "status-manager", true, "status")
+	require.NoError(t, err)
+	require.Equal(t, "main", merged.GetLabels()["owner"])
+	for _, field := range merged.GetManagedFields() {
+		if field.Manager == "status-manager" {
+			require.NotContains(t, string(field.FieldsV1.Raw), "f:labels", "status apply must not claim main-resource labels")
+		}
+	}
+}
+
 func TestRegisterCRDRejectsMultipleServedVersionsWithoutConversion(t *testing.T) {
 	registry := NewRegistry()
 	crd := &apiextensionsv1.CustomResourceDefinition{

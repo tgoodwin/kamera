@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/evanphx/json-patch/v5"
+
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
@@ -16,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -48,9 +51,9 @@ func (m *manager) materializeSchemaWrite(
 		return false, false, nil
 	}
 
-	// Non-apply patch payload materialization remains on the legacy path. SSA
-	// patches arrive as APPLY and are handled below.
-	if op == event.PATCH {
+	// Non-apply patches use the legacy path for unregistered resources. Registered
+	// resources can materialize merge patches against the frame-live object.
+	if op == event.PATCH && (options == nil || options.PatchType != types.MergePatchType) {
 		return false, false, nil
 	}
 
@@ -67,13 +70,38 @@ func (m *manager) materializeSchemaWrite(
 			live.SetResourceVersion(strconv.FormatInt(rv, 10))
 		}
 	}
+	if op == event.PATCH {
+		if live == nil {
+			return false, false, apierrors.NewNotFound(
+				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, intent.GetName())
+		}
+		liveJSON, err := json.Marshal(live.Object)
+		if err != nil {
+			return false, false, fmt.Errorf("encoding live object for merge patch: %w", err)
+		}
+		patchJSON, err := json.Marshal(intent.Object)
+		if err != nil {
+			return false, false, fmt.Errorf("encoding merge patch: %w", err)
+		}
+		mergedJSON, err := jsonpatch.MergePatch(liveJSON, patchJSON)
+		if err != nil {
+			return false, false, fmt.Errorf("applying merge patch: %w", err)
+		}
+		merged := &unstructured.Unstructured{}
+		if err := json.Unmarshal(mergedJSON, &merged.Object); err != nil {
+			return false, false, fmt.Errorf("decoding merged object: %w", err)
+		}
+		merged.SetGroupVersionKind(gvk)
+		intent = merged
+	}
+
 	subresource := ""
 	if options != nil {
 		subresource = options.Subresource
 	}
 	manager := ""
 	force := false
-	if precondition != nil {
+	if op != event.PATCH && precondition != nil {
 		manager = precondition.FieldManager
 		force = precondition.Force
 	}
@@ -94,7 +122,22 @@ func (m *manager) materializeSchemaWrite(
 			}
 		}
 		result, err = resourceSchema.Update(live, intent, manager, subresource)
+	case event.PATCH:
+		result, err = resourceSchema.Patch(live, intent, subresource)
 	case event.APPLY:
+		if live != nil && intent.GetResourceVersion() != "" {
+			claimedRV, parseErr := strconv.ParseInt(intent.GetResourceVersion(), 10, 64)
+			currentRV := m.effectRVs[frameID][primary]
+			if parseErr != nil || claimedRV <= 0 {
+				return false, false, invalidResourceVersion(gvk, intent.GetName(), intent.GetResourceVersion(), "must be a positive integer")
+			}
+			if currentRV > 0 && claimedRV != currentRV {
+				return false, false, apierrors.NewConflict(
+					schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, intent.GetName(),
+					fmt.Errorf("the object has been modified; please apply your changes to the latest version"),
+				)
+			}
+		}
 		if subresource == "status" && live == nil {
 			return false, false, apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, intent.GetName())
