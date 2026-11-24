@@ -130,7 +130,6 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	recorder := newNoopRecorder()
 
 	// NodeClaim lifecycle: launch → registration → initialization → liveness.
-	// Replaces the previous nodeClaimLauncher shim + nodeRegistrar shim.
 	var npHealthOnce sync.Once
 	var npHealth *nodepoolhealth.State
 	getNpHealth := func() *nodepoolhealth.State {
@@ -143,20 +142,7 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 	b.WithReconciler("nodeclaim.lifecycle", func(c client.Client) tracecheck.Reconciler {
 		rec := lifecycle.NewController(clk, c, cp, recorder, getNpHealth())
 		rec.Simulation = true
-		lifecycleReconciler := reconcile.AsReconciler(c, rec)
-		return wrapWithOptions(c, reconcile.Func(func(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
-			result, err := lifecycleReconciler.Reconcile(ctx, req)
-			if err != nil {
-				return result, err
-			}
-			// Node registration is an external follow-up to a successful launch.
-			// Perform it immediately after lifecycle observes the ProviderID so
-			// exploration cannot delay kubelet/CCM registration past the timeout.
-			if err := (nodeRegistrar{client: c}).Register(ctx, req); err != nil {
-				return result, err
-			}
-			return result, nil
-		}))
+		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
 	}).For("karpenter.sh/NodeClaim")
 
 	// NodePool readiness: propagates NodeClass readiness into NodePool status conditions.
@@ -174,9 +160,12 @@ func newKarpenterExplorerBuilder() *tracecheck.ExplorerBuilder {
 		return wrapWithOptions(c, reconcile.AsReconciler(c, rec))
 	}).For("Node")
 
-	// Node registration is modeled as an external follow-up to lifecycle launch,
-	// rather than as an independently scheduled controller. This keeps the fake
-	// kubelet/CCM event from being delayed behind Karpenter's registration timeout.
+	// NodeRegistrar shim: creates a Node object when a NodeClaim has a ProviderID.
+	// In real Karpenter, the kubelet registers the Node. The lifecycle controller's
+	// registration step then finds the Node by ProviderID (via MatchingFields query).
+	b.WithReconciler("node.registrar", func(c client.Client) tracecheck.Reconciler {
+		return wrapWithOptions(c, nodeRegistrar{client: c})
+	}).For("karpenter.sh/NodeClaim")
 
 	// --- Disruption controllers ---
 

@@ -25,8 +25,7 @@ func (r nodeRegistrar) Reconcile(ctx context.Context, req reconcile.Request) (re
 }
 
 // Register creates the Node corresponding to a launched NodeClaim. In the
-// explorer this is called immediately after lifecycle assigns a ProviderID,
-// representing the external kubelet/CCM registration event.
+// explorer this is an independently scheduled external kubelet/CCM event.
 func (r nodeRegistrar) Register(ctx context.Context, req reconcile.Request) error {
 	nc := &v1.NodeClaim{}
 	if err := r.client.Get(ctx, req.NamespacedName, nc); err != nil {

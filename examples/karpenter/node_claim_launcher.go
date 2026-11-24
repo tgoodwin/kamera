@@ -19,8 +19,7 @@ import (
 // Registration, initialization, and liveness are intentionally omitted:
 //   - Registration uses MatchingFields queries unsupported by the replay client
 //   - Liveness generates RequeueAfter that creates unbounded exploration depth
-//   - The lifecycle wrapper simulates Node creation after launch to model the
-//     external kubelet/CCM registration event.
+//   - The nodeRegistrar shim handles Node creation separately
 type nodeClaimLauncher struct {
 	cloudProvider cloudprovider.CloudProvider
 	kubeClient    client.Client
@@ -41,7 +40,7 @@ func (l *nodeClaimLauncher) Reconcile(ctx context.Context, nodeClaim *v1.NodeCla
 	nodeClaim.StatusConditions().SetTrue(v1.ConditionTypeInitialized)
 
 	// Persist labels and status (ProviderID, allocatable, etc.) back to the API
-	// so that downstream controllers and the lifecycle wrapper see them.
+	// so that downstream controllers (nodeRegistrar, state informers) see them.
 	if err := l.kubeClient.Patch(ctx, nodeClaim, client.MergeFrom(stored)); err != nil {
 		return reconcile.Result{}, client.IgnoreNotFound(err)
 	}

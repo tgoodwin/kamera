@@ -180,6 +180,9 @@ func extractMergePatchRV(_ client.Object, patch client.Patch, preconditions *Pre
 func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType, preconditions *PreconditionInfo, options *EffectOptions) error {
 	// TODO validate preconditions
 	tag.EnsureDeterministicIdentity(obj)
+	if options != nil && options.Subresource == "status" {
+		normalizeSimulatedConditionTimes(obj)
+	}
 	return c.recorder.RecordEffect(ctx, obj, opType, preconditions, options)
 }
 
