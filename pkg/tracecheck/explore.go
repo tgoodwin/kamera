@@ -691,10 +691,7 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 
 	exploreStart := time.Now()
 	go func() {
-		err := e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, abortedStateChan)
-		if err != nil {
-			errChan <- err
-		}
+		errChan <- e.explore(exploreCtx, initialState, convergedStateChan, executionHistoryChan, abortedStateChan)
 	}()
 
 	sigs := make(chan os.Signal, 1)
@@ -748,8 +745,10 @@ func (e *Explorer) Explore(ctx context.Context, initialState StateNode) *Result 
 		}
 	}
 
-	// if we broke out early, collect partial results, summarize them, and return
-	result := &Result{ConvergedStates: make([]ResultState, 0), AbortedStates: abortedCollected}
+	result := &Result{ConvergedStates: make([]ResultState, 0), AbortedStates: abortedCollected, Error: <-errChan}
+	if result.Error != nil {
+		logger.Error(result.Error, "exploration failed")
+	}
 	for i, stateKey := range lo.Keys(seenConvergedStates) {
 		state := seenConvergedStates[stateKey]
 		paths := dedupePathsByUniqueKey(executionPathsToState[stateKey])
@@ -1012,6 +1011,9 @@ func (e *Explorer) explore(
 
 			stepLogger.WithValues("ActionIdx", stateView.nextUserActionIdx).Info("Taking user action step")
 			stepResult, err := e.takeUserActionStep(stepCtx, stateView)
+			if isMissingSchemaError(err) {
+				return err
+			}
 			if err != nil {
 				stepLogger.Error(err, "error taking user action step; abandoning branch")
 				failurePath := stateView.ExecutionHistory
@@ -1260,6 +1262,9 @@ func (e *Explorer) explore(
 			}
 
 			stepResult, err := e.takeReconcileStep(stepCtx, stateView, pendingReconcile)
+			if isMissingSchemaError(err) {
+				return err
+			}
 
 			// Handle fault injection crash: if the reconcile was aborted by crash
 			// injection, clear the error (it's expected) and call crash callbacks.
@@ -1870,6 +1875,9 @@ func (e *Explorer) takeReconcileStep(ctx context.Context, state StateNode, pr Pe
 
 	reconcileResult, err := e.reconcileAtState(ctx, observableState, pr)
 	if err != nil {
+		if isMissingSchemaError(err) {
+			return reconcileResult, err
+		}
 		// Reconciler errors in real Kubernetes cause a requeue with backoff.
 		// Crucially, any API writes that occurred before the error are durable —
 		// they already landed on the API server. We preserve those effects in the

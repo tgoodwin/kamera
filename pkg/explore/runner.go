@@ -116,7 +116,7 @@ func (r *Runner) Run(ctx context.Context, input RunInput) error {
 
 		start := time.Now()
 		result := explorer.Explore(runCtx, state)
-		return result, explorer.VersionManager(), explorer.Stats(), time.Since(start), nil
+		return result, explorer.VersionManager(), explorer.Stats(), time.Since(start), result.Error
 	}
 
 	resolver := tracecheck.VersionManager(nil)

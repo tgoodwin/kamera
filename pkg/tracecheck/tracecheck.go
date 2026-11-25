@@ -52,12 +52,13 @@ func NewTraceChecker(scheme *runtime.Scheme) *TraceChecker {
 	KnowledgeManager := NewKnowledgeManager(snapStore)
 
 	mgr := &manager{
-		versionStore:   vStore,
-		effects:        make(map[string]reconcileEffects),
-		scheme:         scheme,
-		effectRVs:      make(map[string]map[string]int64),
-		effectVersions: make(map[string]map[string]snapshot.VersionHash),
-		effectNextRVs:  make(map[string]int64),
+		versionStore:       vStore,
+		effects:            make(map[string]reconcileEffects),
+		scheme:             scheme,
+		effectRVs:          make(map[string]map[string]int64),
+		effectVersions:     make(map[string]map[string]snapshot.VersionHash),
+		effectNextRVs:      make(map[string]int64),
+		requireApplySchema: true,
 	}
 
 	return &TraceChecker{

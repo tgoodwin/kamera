@@ -162,8 +162,8 @@ func NewExplorerBuilder(scheme *runtime.Scheme) *ExplorerBuilder {
 	return builder
 }
 
-// RequireSchemas makes schema registration mandatory for every API write that
-// needs type topology. Reads and deletes do not require a schema.
+// RequireSchemas also requires schemas for non-apply writes, except deletions.
+// Reads and initial fixtures do not require a schema.
 func (b *ExplorerBuilder) RequireSchemas() *ExplorerBuilder {
 	b.requireSchemas = true
 	return b
@@ -191,11 +191,9 @@ func (b *ExplorerBuilder) WithResourceSchema(
 	return b
 }
 
-// WithOpenAPIV3 registers GVK schemas from a complete OpenAPI v3 document.
-// OpenAPI does not describe resource scope or status-subresource availability;
-// use WithCRD or WithResourceSchema when those semantics matter.
-func (b *ExplorerBuilder) WithOpenAPIV3(doc *spec3.OpenAPI) *ExplorerBuilder {
-	if err := b.schemaRegistry.RegisterOpenAPIV3(doc); err != nil {
+// WithOpenAPIV3 registers selected GVKs with explicit scope and status metadata.
+func (b *ExplorerBuilder) WithOpenAPIV3(doc *spec3.OpenAPI, resources ...apiserver.OpenAPIResource) *ExplorerBuilder {
+	if err := b.schemaRegistry.RegisterOpenAPIV3(doc, resources...); err != nil {
 		b.schemaErrors = append(b.schemaErrors, err)
 	}
 	return b
@@ -1029,8 +1027,9 @@ func (b *ExplorerBuilder) Build(modes ...string) (*Explorer, error) {
 
 		effectNextRVs: make(map[string]int64),
 
-		schemaRegistry: b.schemaRegistry,
-		requireSchemas: b.requireSchemas,
+		schemaRegistry:     b.schemaRegistry,
+		requireSchemas:     b.requireSchemas,
+		requireApplySchema: mode != "traced",
 	}
 
 	// Initialize reconcilers with appropriate clients

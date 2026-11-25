@@ -293,8 +293,9 @@ func TestMixedWritesShareResourceVersionSequence(t *testing.T) {
 	require.Equal(t, changes.Effects[1].Version, next[changes.Effects[1].Key])
 }
 
-func TestLegacyApplyKeepsIdentityForUIDDelete(t *testing.T) {
+func TestApplyKeepsIdentityForUIDDelete(t *testing.T) {
 	mgr := newTestManager(nil)
+	mgr.schemaRegistry = configMapTestRegistry(t)
 	ctx := ctxWithFrame("legacy-apply")
 	require.NoError(t, mgr.PrepareEffectContext(ctx, ObjectVersions{}))
 
@@ -364,14 +365,15 @@ func TestManagerRejectsForcedApplyWithSecondControllerOwner(t *testing.T) {
 	require.Empty(t, changes.Effects, "invalid write must not record a durable effect")
 }
 
-func TestBuildStartStateSeedsOwnershipAndStrictlyRequiresSchemas(t *testing.T) {
+func TestBuildStartStateLeavesUnregisteredFixtureWithoutOwnership(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 	builder := NewExplorerBuilder(scheme).RequireSchemas()
 	obj := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "example", Namespace: "default"}}
 
 	_, err := builder.BuildStartStateFromObjects([]client.Object{obj}, nil)
-	require.ErrorContains(t, err, "requires a registered schema for /v1, Kind=ConfigMap")
+	require.NoError(t, err)
+	require.Empty(t, obj.GetManagedFields())
 }
 
 func TestBuildStartStateSeedsOwnershipAndForkRetainsSchemas(t *testing.T) {

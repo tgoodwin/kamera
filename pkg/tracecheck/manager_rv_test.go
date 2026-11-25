@@ -21,15 +21,16 @@ import (
 func newTestManager(rvLookup func(snapshot.VersionHash) int64) *manager {
 	store := snapshot.NewStore()
 	return &manager{
-		versionStore:   NewVersionStore(store, nil),
-		effects:        make(map[string]reconcileEffects),
-		scheme:         runtime.NewScheme(),
-		effectRKeys:    make(map[string]util.Set[string]),
-		effectIKeys:    make(map[string]util.Set[snapshot.IdentityKey]),
-		effectRVs:      make(map[string]map[string]int64),
-		effectVersions: make(map[string]map[string]snapshot.VersionHash),
-		effectNextRVs:  make(map[string]int64),
-		rvLookup:       rvLookup,
+		versionStore:       NewVersionStore(store, nil),
+		effects:            make(map[string]reconcileEffects),
+		scheme:             runtime.NewScheme(),
+		effectRKeys:        make(map[string]util.Set[string]),
+		effectIKeys:        make(map[string]util.Set[snapshot.IdentityKey]),
+		effectRVs:          make(map[string]map[string]int64),
+		effectVersions:     make(map[string]map[string]snapshot.VersionHash),
+		effectNextRVs:      make(map[string]int64),
+		rvLookup:           rvLookup,
+		requireApplySchema: true,
 	}
 }
 
@@ -291,7 +292,7 @@ func TestResourceVersionConflict_NoRVWriteSucceeds(t *testing.T) {
 }
 
 // Test 5: APPLY skips RV check (SSA semantics)
-func TestResourceVersionConflict_ApplySkipsRVCheck(t *testing.T) {
+func TestResourceVersionConflict_UnregisteredApplyRequiresSchema(t *testing.T) {
 	rvMap := make(map[snapshot.VersionHash]int64)
 	mgr := newTestManager(func(vh snapshot.VersionHash) int64 { return rvMap[vh] })
 
@@ -305,11 +306,11 @@ func TestResourceVersionConflict_ApplySkipsRVCheck(t *testing.T) {
 	ctx := ctxWithFrame("frame-5")
 	require.NoError(t, mgr.PrepareEffectContext(ctx, ov))
 
-	// APPLY with stale RV — should succeed (SSA doesn't use RV)
-	applyObj := makeObj("test-cm", "1") // deliberately stale
+	// APPLY to an unregistered GVK is a simulation setup error.
+	applyObj := makeObj("test-cm", "1")
 	applyObj.Object["data"] = map[string]any{"key": "value"}
-	err := mgr.RecordEffect(ctx, applyObj, event.APPLY, nil, nil)
-	require.NoError(t, err)
+	err := mgr.RecordEffect(ctx, applyObj, event.APPLY, &replay.PreconditionInfo{FieldManager: "manager"}, nil)
+	require.ErrorContains(t, err, "requires a registered schema")
 }
 
 type customRVStrategy struct {

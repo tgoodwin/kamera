@@ -125,7 +125,7 @@ func resourceOpenAPISchema(gvk schema.GroupVersionKind, input *apiextensionsv1.J
 	root.Properties["apiVersion"] = *spec.StringProperty()
 	root.Properties["kind"] = *spec.StringProperty()
 	root.Properties["metadata"] = *spec.RefSchema(objectMetaRef())
-	root.AddExtension("x-kubernetes-group-version-kind", []interface{}{
+	root.AddExtension(openAPIGVKExtension, []interface{}{
 		map[string]interface{}{
 			"group": gvk.Group, "version": gvk.Version, "kind": gvk.Kind,
 		},
@@ -200,49 +200,97 @@ func (r *Registry) RegisterResourceSchema(
 	return r.RegisterCRD(crd)
 }
 
-// RegisterOpenAPIV3 registers every GVK described by a complete OpenAPI v3
-// document. Resource scope and status-subresource availability are not present
-// in OpenAPI, so callers that need exact metadata/subresource behavior should
-// prefer RegisterCRD or RegisterResourceSchema.
-func (r *Registry) RegisterOpenAPIV3(doc *spec3.OpenAPI) error {
+// OpenAPIResource identifies a resource to register from a document and its
+// scope and status-subresource availability from outside the schema.
+type OpenAPIResource struct {
+	GVK       schema.GroupVersionKind
+	Scope     apiextensionsv1.ResourceScope
+	HasStatus bool
+}
+
+// RegisterOpenAPIV3 registers selected resource schemas with explicit route metadata.
+// Other components are available to resolve schema references, not registered as resources.
+func (r *Registry) RegisterOpenAPIV3(doc *spec3.OpenAPI, resources ...OpenAPIResource) error {
 	if r == nil {
 		return errors.New("schema registry is nil")
+	}
+	if len(resources) == 0 {
+		return errors.New("OpenAPI v3 registration requires explicit GVK, scope, and status-subresource metadata")
 	}
 	if doc == nil || doc.Components == nil {
 		return errors.New("OpenAPI v3 document has no components")
 	}
-	typeConverter, err := managedfields.NewTypeConverter(doc.Components.Schemas, false)
+
+	schemas := maps.Clone(doc.Components.Schemas)
+	models := make(map[schema.GroupVersionKind]int)
+	for name, model := range schemas {
+		model = normalizeOpenAPIGVKExtension(model)
+		schemas[name] = model
+		for _, gvk := range schemaGVKs(model) {
+			models[gvk]++
+		}
+	}
+	groupKinds := make(map[schema.GroupKind]schema.GroupVersionKind)
+	for _, resource := range resources {
+		gvk := resource.GVK
+		if resource.Scope != apiextensionsv1.NamespaceScoped && resource.Scope != apiextensionsv1.ClusterScoped {
+			return fmt.Errorf("OpenAPI v3 registration for %s requires an explicit resource scope", gvk)
+		}
+		if models[gvk] != 1 {
+			return fmt.Errorf("OpenAPI v3 document requires exactly one schema with x-kubernetes-group-version-kind for %s, found %d", gvk, models[gvk])
+		}
+		if previous, found := groupKinds[gvk.GroupKind()]; found {
+			return fmt.Errorf("multiple OpenAPI registrations for %s (%s and %s); register one version", gvk.GroupKind(), previous.Version, gvk.Version)
+		}
+		groupKinds[gvk.GroupKind()] = gvk
+	}
+	typeConverter, err := managedfields.NewTypeConverter(schemas, false)
 	if err != nil {
 		return fmt.Errorf("build OpenAPI type converter: %w", err)
 	}
-
-	registered := 0
-	groupKinds := make(map[schema.GroupKind]schema.GroupVersionKind)
-	for _, model := range doc.Components.Schemas {
-		for _, gvk := range schemaGVKs(model) {
-			if previous, found := groupKinds[gvk.GroupKind()]; found && previous.Version != gvk.Version {
-				return fmt.Errorf("OpenAPI document contains multiple versions for %s (%s and %s); schema-backed writes currently require one version", gvk.GroupKind(), previous.Version, gvk.Version)
-			}
-			groupKinds[gvk.GroupKind()] = gvk
-			rs, err := newResourceSchema(gvk, true, false, typeConverter)
-			if err != nil {
-				return fmt.Errorf("configure field manager for %s: %w", gvk, err)
-			}
-			r.resources[gvk] = rs
-			registered++
+	registered := make(map[schema.GroupVersionKind]*ResourceSchema, len(resources))
+	for _, resource := range resources {
+		gvk := resource.GVK
+		rs, err := newResourceSchema(gvk, resource.Scope == apiextensionsv1.NamespaceScoped, resource.HasStatus, typeConverter)
+		if err != nil {
+			return fmt.Errorf("configure field manager for %s: %w", gvk, err)
 		}
+		registered[gvk] = rs
 	}
-	if registered == 0 {
-		return errors.New("OpenAPI v3 document contains no x-kubernetes-group-version-kind schemas")
-	}
+	maps.Copy(r.resources, registered)
 	return nil
+}
+
+const openAPIGVKExtension = "x-kubernetes-group-version-kind"
+
+func normalizeOpenAPIGVKExtension(model *spec.Schema) *spec.Schema {
+	if model == nil {
+		return nil
+	}
+	entries, ok := model.Extensions[openAPIGVKExtension].([]map[string]string)
+	if !ok {
+		return model
+	}
+	// Kubernetes' type converter expects the JSON-decoded representation.
+	values := make([]interface{}, len(entries))
+	for i, entry := range entries {
+		value := make(map[string]interface{}, len(entry))
+		for key, field := range entry {
+			value[key] = field
+		}
+		values[i] = value
+	}
+	copy := *model
+	copy.Extensions = maps.Clone(model.Extensions)
+	copy.Extensions[openAPIGVKExtension] = values
+	return &copy
 }
 
 func schemaGVKs(model *spec.Schema) []schema.GroupVersionKind {
 	if model == nil {
 		return nil
 	}
-	raw, ok := model.Extensions["x-kubernetes-group-version-kind"]
+	raw, ok := model.Extensions[openAPIGVKExtension]
 	if !ok {
 		return nil
 	}
@@ -253,10 +301,6 @@ func schemaGVKs(model *spec.Schema) []schema.GroupVersionKind {
 		}
 	}
 	switch values := raw.(type) {
-	case []map[string]string:
-		for _, value := range values {
-			appendGVK(value["group"], value["version"], value["kind"])
-		}
 	case []interface{}:
 		for _, item := range values {
 			switch value := item.(type) {

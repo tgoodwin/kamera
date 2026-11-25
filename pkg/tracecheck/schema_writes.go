@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -19,8 +20,30 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	kubejson "k8s.io/apimachinery/pkg/util/json"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+type missingSchemaError struct {
+	op          event.OperationType
+	subresource string
+	reconciler  ReconcilerID
+	gvk         schema.GroupVersionKind
+	key         client.ObjectKey
+}
+
+func (e *missingSchemaError) Error() string {
+	op := string(e.op)
+	if e.subresource != "" {
+		op += " /" + e.subresource
+	}
+	return fmt.Sprintf("schema-backed %s by reconciler %q requires a registered schema for %s resource %s; register it with WithCRD, WithResourceSchema, or WithOpenAPIV3 with explicit resource metadata", op, e.reconciler, e.gvk, e.key)
+}
+
+func isMissingSchemaError(err error) bool {
+	var missing *missingSchemaError
+	return errors.As(err, &missing)
+}
 
 // materializeSchemaWrite applies API-server semantics before the effect is
 // published. Dry runs and unchanged writes return a response without recording
@@ -38,15 +61,20 @@ func (m *manager) materializeSchemaWrite(
 	gvk := ensureObjectGVK(obj, m.scheme)
 	resourceSchema, registered := m.schemaRegistry.Lookup(gvk)
 	if !registered {
-		if m.requireSchemas {
+		if m.requireSchemas || (m.requireApplySchema && op == event.APPLY) {
 			reconcilerID := "unknown"
 			if options != nil && options.ReconcilerID != "" {
 				reconcilerID = options.ReconcilerID
 			}
-			return false, false, fmt.Errorf(
-				"schema-backed %s by reconciler %q requires a registered schema for %s; register it with WithCRD, WithResourceSchema, or WithOpenAPIV3",
-				op, reconcilerID, gvk,
-			)
+			setupErr := &missingSchemaError{op: op, reconciler: ReconcilerID(reconcilerID), gvk: gvk, key: client.ObjectKeyFromObject(obj)}
+			if options != nil {
+				setupErr.subresource = options.Subresource
+				if options.ReconcilerID != "" {
+					setupErr.reconciler = ReconcilerID(options.ReconcilerID)
+				}
+			}
+			m.rememberFrameError(ctx, setupErr)
+			return false, false, setupErr
 		}
 		return false, false, nil
 	}
@@ -75,23 +103,38 @@ func (m *manager) materializeSchemaWrite(
 			return false, false, apierrors.NewNotFound(
 				schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, intent.GetName())
 		}
+		patchJSON := options.PatchData
+		if len(patchJSON) == 0 {
+			patchJSON, err = json.Marshal(intent.Object)
+			if err != nil {
+				return false, false, fmt.Errorf("encoding merge patch: %w", err)
+			}
+		}
+		patchObject := map[string]interface{}{}
+		if err := kubejson.Unmarshal(patchJSON, &patchObject); err != nil {
+			return false, false, apierrors.NewBadRequest(fmt.Sprintf("decoding merge patch: %v", err))
+		}
+		patchIntent := &unstructured.Unstructured{Object: patchObject}
+		if claimed := patchIntent.GetResourceVersion(); claimed != "" {
+			if err := checkWriteResourceVersion(gvk, intent.GetName(), claimed, m.effectRVs[frameID][primary]); err != nil {
+				return false, false, err
+			}
+		}
 		liveJSON, err := json.Marshal(live.Object)
 		if err != nil {
 			return false, false, fmt.Errorf("encoding live object for merge patch: %w", err)
-		}
-		patchJSON, err := json.Marshal(intent.Object)
-		if err != nil {
-			return false, false, fmt.Errorf("encoding merge patch: %w", err)
 		}
 		mergedJSON, err := jsonpatch.MergePatch(liveJSON, patchJSON)
 		if err != nil {
 			return false, false, fmt.Errorf("applying merge patch: %w", err)
 		}
 		merged := &unstructured.Unstructured{}
-		if err := json.Unmarshal(mergedJSON, &merged.Object); err != nil {
-			return false, false, fmt.Errorf("decoding merged object: %w", err)
+		if err := kubejson.Unmarshal(mergedJSON, &merged.Object); err != nil {
+			return false, false, apierrors.NewBadRequest(fmt.Sprintf("decoding merged object: %v", err))
 		}
-		merged.SetGroupVersionKind(gvk)
+		if merged.GroupVersionKind() != gvk {
+			return false, false, apierrors.NewBadRequest("merge patch type or version does not match the target object")
+		}
 		intent = merged
 	}
 
@@ -101,7 +144,7 @@ func (m *manager) materializeSchemaWrite(
 	}
 	manager := ""
 	force := false
-	if op != event.PATCH && precondition != nil {
+	if precondition != nil {
 		manager = precondition.FieldManager
 		force = precondition.Force
 	}
@@ -123,7 +166,7 @@ func (m *manager) materializeSchemaWrite(
 		}
 		result, err = resourceSchema.Update(live, intent, manager, subresource)
 	case event.PATCH:
-		result, err = resourceSchema.Patch(live, intent, subresource)
+		result, err = resourceSchema.Update(live, intent, manager, subresource)
 	case event.APPLY:
 		if live != nil && intent.GetResourceVersion() != "" {
 			claimedRV, parseErr := strconv.ParseInt(intent.GetResourceVersion(), 10, 64)
@@ -159,6 +202,9 @@ func (m *manager) materializeSchemaWrite(
 	if precondition != nil && precondition.DryRun {
 		if !rKeyExisted {
 			m.effectRKeys[frameID].Delete(primary)
+			m.effectIKeys[frameID].Delete(snapshot.IdentityKey{
+				Group: gvk.Group, Kind: gvk.Kind, ObjectID: tag.GetSleeveObjectID(result),
+			})
 		}
 		if err := copyUnstructuredInto(obj, result, m.scheme); err != nil {
 			return false, false, fmt.Errorf("copying schema-backed dry-run response into %T: %w", obj, err)
@@ -167,15 +213,27 @@ func (m *manager) materializeSchemaWrite(
 	}
 
 	changed = live == nil || !sameUnstructuredJSON(live, result)
-	if live == nil {
-		m.effectIKeys[frameID].Add(snapshot.IdentityKey{
-			Group: gvk.Group, Kind: gvk.Kind, ObjectID: tag.GetSleeveObjectID(result),
-		})
-	}
 	if err := copyUnstructuredInto(obj, result, m.scheme); err != nil {
 		return false, false, fmt.Errorf("copying schema-backed response into %T: %w", obj, err)
 	}
 	return true, changed, nil
+}
+
+func checkWriteResourceVersion(gvk schema.GroupVersionKind, name, claimed string, current int64) error {
+	if claimed == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseInt(claimed, 10, 64)
+	if err != nil || parsed <= 0 {
+		return invalidResourceVersion(gvk, name, claimed, "must be a positive integer")
+	}
+	if current > 0 && parsed != current {
+		return apierrors.NewConflict(
+			schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, name,
+			fmt.Errorf("the object has been modified; please apply your changes to the latest version"),
+		)
+	}
+	return nil
 }
 
 func sameUnstructuredJSON(left, right *unstructured.Unstructured) bool {

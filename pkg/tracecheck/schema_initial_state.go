@@ -26,9 +26,9 @@ func (b *ExplorerBuilder) seedInitialFieldOwnership(objs []client.Object) error 
 		gvk := ensureObjectGVK(obj, b.scheme)
 		resourceSchema, registered := b.schemaRegistry.Lookup(gvk)
 		if !registered {
-			if b.requireSchemas {
-				return fmt.Errorf("initial object %d requires a registered schema for %s", idx, gvk)
-			}
+			// Initial fixtures are state, not API writes. Seed ownership only for
+			// registered kinds; requiring schemas here would reject readable live
+			// fixtures before a controller ever writes them.
 			continue
 		}
 		if len(obj.GetManagedFields()) > 0 {

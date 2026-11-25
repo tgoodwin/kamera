@@ -18,6 +18,7 @@ type EffectRecorder interface {
 type EffectOptions struct {
 	Subresource  string
 	PatchType    types.PatchType
+	PatchData    []byte
 	ReconcilerID string
 }
 

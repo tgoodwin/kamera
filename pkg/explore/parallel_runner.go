@@ -1044,6 +1044,10 @@ func (r *ParallelRunner) runScenarioPhase(
 	phase.Result = res
 	phase.VersionManager = explorer.VersionManager()
 	phase.Stats = explorer.Stats()
+	if res.Error != nil {
+		phase.Err = res.Error
+		return phase
+	}
 
 	if scenario.Invariant != nil && res != nil {
 		for _, state := range res.ConvergedStates {
@@ -1150,7 +1154,7 @@ func (r *ParallelRunner) runScenarioPhaseMetricsOnly(
 	res := explorer.Explore(runCtx, startState)
 	duration := time.Since(start)
 
-	if accumulator != nil {
+	if accumulator != nil && res.Error == nil {
 		accumulator.Add(metricsFromPhase(scenario, phaseName, phaseCtx, explorer.Stats(), res, duration))
 	}
 }

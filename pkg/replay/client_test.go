@@ -115,6 +115,24 @@ func TestClientRawYAMLApplyRejectsMismatchedIdentity(t *testing.T) {
 	require.Nil(t, recorder.obj)
 }
 
+func TestClientRawMergePatchPassesPatchBodyToRecorder(t *testing.T) {
+	recorder := &recordingRecorder{}
+	c := NewClient("patch-manager", nil, noopFrameReader{}, recorder)
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]interface{}{
+			"name":      "example",
+			"namespace": "default",
+		},
+		"data": map[string]interface{}{"old": "value"},
+	}}
+	patch := client.RawPatch(types.MergePatchType, []byte(`{"metadata":{"labels":null},"data":{"new":"value"}}`))
+
+	require.NoError(t, c.Patch(context.Background(), obj, patch))
+	require.NotNil(t, recorder.options)
+	require.Equal(t, []byte(`{"metadata":{"labels":null},"data":{"new":"value"}}`), recorder.options.PatchData)
+}
 func TestClientStatusPatchApplyUsesApplyOp(t *testing.T) {
 	recorder := &recordingRecorder{}
 	c := NewClient("test", nil, noopFrameReader{}, recorder)

@@ -99,10 +99,14 @@ type manager struct {
 	effectVersions map[string]map[string]snapshot.VersionHash
 	// effectNextRVs is the next branch-local global sequence to assign.
 	effectNextRVs map[string]int64
-	// Resource schemas enable synchronous materialization of API writes.
+	// frameErrors retains setup errors until the exploration boundary observes them.
+	// A reconciler may swallow a client error, but an invalid simulation setup must
+	// still abort the frame rather than become a Kubernetes retry.
+	frameErrors map[string]error
 
-	schemaRegistry *apiserver.Registry
-	requireSchemas bool
+	schemaRegistry     *apiserver.Registry
+	requireSchemas     bool
+	requireApplySchema bool
 
 	// rvLookup maps VersionHash → integer resourceVersion.
 	// Set from the explorer's resourceVersions map.
@@ -441,6 +445,15 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 	return nil
 }
+func (m *manager) rememberFrameError(ctx context.Context, err error) {
+	if m.frameErrors == nil {
+		m.frameErrors = make(map[string]error)
+	}
+	frameID := replay.FrameIDFromContext(ctx)
+	if m.frameErrors[frameID] == nil {
+		m.frameErrors[frameID] = err
+	}
+}
 
 func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) error {
 	if m.effectVersions == nil {
@@ -484,14 +497,17 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 	m.effectNextRVs[frameID] = baseRV + 1
 	return nil
 }
-
 func (m *manager) CleanupEffectContext(ctx context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	frameID := replay.FrameIDFromContext(ctx)
 	delete(m.effectRKeys, frameID)
 	delete(m.effectIKeys, frameID)
 	delete(m.effectRVs, frameID)
 	delete(m.effectVersions, frameID)
 	delete(m.effectNextRVs, frameID)
+	delete(m.frameErrors, frameID)
 }
 
 func (m *manager) GetEffects(ctx context.Context) (Changes, error) {
@@ -503,6 +519,9 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if err := m.frameErrors[frameID]; err != nil {
+		return Changes{}, err
+	}
 	effects := m.effects[frameID]
 	out := make(ObjectVersions)
 	for _, eff := range effects.writes {
@@ -678,7 +697,6 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 			}
 			return nil
 		}
-
 		// APPLY implements upsert semantics - creates or updates as needed
 		if !rKeyExists {
 			// Add it for a new resource

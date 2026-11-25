@@ -38,11 +38,13 @@ builder.WithResourceSchema(
 )
 ```
 
-A complete OpenAPI v3 document can also be registered with
-`WithOpenAPIV3(document)`. Its component schemas must contain
-`x-kubernetes-group-version-kind`. OpenAPI alone does not describe resource
-scope or whether status is a subresource, so `WithCRD` or
-`WithResourceSchema` is preferred when those details matter.
+A complete OpenAPI v3 document must be paired with authoritative route
+metadata; OpenAPI alone does not identify resource scope or status-subresource
+availability. `WithOpenAPIV3(document, apiserver.OpenAPIResource{...})` accepts
+that explicit metadata, while a document without it is rejected rather than
+being guessed. For the simplest setup, use `WithCRD` for CRDs or
+`WithResourceSchema(gvk, namespaced, hasStatus, schema)` for built-in and
+aggregated resources.
 
 Schema registration errors are returned by `Build` or
 `BuildStartStateFromObjects` rather than being deferred into exploration.
@@ -53,17 +55,12 @@ Registration is incremental by default. A registered GVK uses the new engine;
 an unregistered GVK keeps Kamera's existing write behavior. This permits a
 harness to migrate one interaction hotspot at a time.
 
-Call `RequireSchemas()` to fail closed:
-
-```go
-builder := tracecheck.NewExplorerBuilder(scheme).
-    RequireSchemas().
-    WithCRD(widgetCRD)
-```
-
-In strict mode, the first mutating request whose GVK is not registered returns
-an error identifying the operation and GVK, along with the registration APIs.
-Reads and deletes do not need merge topology.
+Call `RequireSchemas()` to fail closed for non-apply writes, while APPLY is
+always fail-closed: an APPLY to an unregistered GVK is a simulation setup error
+in both modes. The error names the reconciler, GVK, resource, and registration
+path. Reads, deletes, and (when strict mode is off) legacy non-apply writes do
+not require a schema. Initial objects are fixtures, not writes; unregistered
+fixtures remain readable and are not given inferred ownership.
 
 Forked builders retain the same immutable schema configuration and strictness.
 The mutable ownership state is not kept in the registry; it lives in each
@@ -89,10 +86,12 @@ The first milestone models:
 - commit-only handling in `applyEffects` for already materialized results.
 
 Fixture objects with no managed fields are processed through CREATE ownership
-using the deterministic manager `kamera-initial-state`. Existing
-`metadata.managedFields` from captured objects are preserved. If a registered
-resource exposes status, fixture status ownership is seeded separately with
-`kamera-initial-state-status`.
+using the deterministic manager `kamera-initial-state` only when their GVK is
+registered. Authored manifests therefore get deterministic installer
+ownership. Captured/live fixtures must carry real `metadata.managedFields` for
+ownership fidelity; the simulator cannot infer those historical owners. An
+unregistered fixture is still available to reads and does not require a
+schema.
 
 Managed-field timestamps are cleared after upstream field management. They are
 observational wall-clock data that would otherwise distinguish identical
@@ -107,16 +106,20 @@ defaulting, unknown-field pruning, structural/CEL validation, admission
 webhooks, conversion webhooks, or complete handwritten validation and
 defaulting for built-in resources.
 
-Non-apply JSON, merge, and strategic patches still use Kamera's legacy patch
-materialization path. Registered CREATE, UPDATE, APPLY, and status APPLY use the
-schema-backed engine; non-apply patch ownership will be added separately.
+Schema-backed merge patches consume the actual patch body, merge it into the
+frame-live object (including null deletion), validate an explicit patch
+resourceVersion before server metadata replaces it, and run the merged object
+through Kubernetes ownership update semantics. Patch field-manager identity is
+preserved, and dry runs do not alter frame bookkeeping. Unsupported strategic,
+JSON, and CBOR patch ownership semantics remain outside this milestone; only
+JSON/YAML merge patches use this schema-aware path.
 Schema-backed and legacy writes share the branch's resource-version sequence.
 Only writes that change stored state advance that sequence.
 
 Registries are static for an exploration run. Creating, updating, or deleting a
 CRD during a branch does not yet change branch-local schema availability.
-Multi-version CRDs and OpenAPI documents are rejected rather than run with
-identity conversion. Scale subresources, aggregated API-server-specific
+Multi-version CRDs and OpenAPI registrations without explicit route metadata
+are rejected rather than run with identity conversion. Scale subresources, aggregated API-server-specific
 behavior, and versioned built-in schema bundles are also outside this milestone.
 
 The Crossplane example registers ConfigMap explicitly because it is the shared

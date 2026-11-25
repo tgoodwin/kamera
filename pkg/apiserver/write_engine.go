@@ -126,8 +126,9 @@ func (s *ResourceSchema) Update(
 	return updated, nil
 }
 
-// Patch applies an already-materialized merge patch without replacing fields that
-// were omitted from the patch or transferring their managed-field ownership.
+// Patch applies an already-materialized merge patch without transferring
+// managed-field ownership. New schema-backed callers use Update after merging
+// the actual patch body so the patch manager participates in later SSA.
 func (s *ResourceSchema) Patch(
 	live *unstructured.Unstructured,
 	patch *unstructured.Unstructured,
@@ -145,7 +146,6 @@ func (s *ResourceSchema) Patch(
 	}
 	return result, nil
 }
-
 func (s *ResourceSchema) managerFor(subresource string) (*managedfields.FieldManager, error) {
 	switch subresource {
 	case "":

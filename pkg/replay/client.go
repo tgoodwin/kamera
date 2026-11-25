@@ -131,9 +131,8 @@ func init() {
 // RV and sets it as a precondition for conflict checking.
 //
 // We use unsafe.Pointer to read the unexported opts.OptimisticLock and from
-// fields on controller-runtime's mergeFromPatch struct. This avoids calling
-// patch.Data() which is too expensive to run on every PATCH (DeepCopy + double
-// JSON marshal per call). The required struct layout is asserted in init().
+// fields on controller-runtime's mergeFromPatch struct for the legacy write
+// path, which does not materialize patch bytes. The layout is asserted in init().
 func extractMergePatchRV(_ client.Object, patch client.Patch, preconditions *PreconditionInfo) {
 	if patch.Type() != types.MergePatchType && patch.Type() != types.StrategicMergePatchType {
 		return
@@ -391,24 +390,25 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	preconditions := ExtractPatchPreconditions(opts)
-	op := event.PATCH
-	if patch.Type() == types.ApplyPatchType {
-		// Server-side apply uses PATCH with apply semantics; model it separately.
-		op = event.APPLY
+	return c.patch(ctx, obj, patch, ExtractPatchPreconditions(opts), "", obj)
+}
+
+func (c *Client) patch(ctx context.Context, obj client.Object, patch client.Patch, preconditions PreconditionInfo, subresource string, body client.Object) error {
+	options := &EffectOptions{Subresource: subresource, PatchType: patch.Type()}
+	data, err := patch.Data(body)
+	if err != nil {
+		return fmt.Errorf("building %s patch: %w", patch.Type(), err)
 	}
-	if op == event.PATCH {
+	options.PatchData = data
+	if options.PatchType != types.ApplyPatchType {
 		extractMergePatchRV(obj, patch, &preconditions)
+		return c.handleEffect(ctx, obj, event.PATCH, &preconditions, options)
 	}
-	options := &EffectOptions{PatchType: patch.Type()}
-	if op != event.APPLY {
-		return c.handleEffect(ctx, obj, op, &preconditions, options)
-	}
-	applyObj, err := c.patchToUnstructured(obj, patch)
+	applyObj, err := c.patchToUnstructuredData(obj, data)
 	if err != nil {
 		return err
 	}
-	if err := c.handleEffect(ctx, applyObj, op, &preconditions, options); err != nil {
+	if err := c.handleEffect(ctx, applyObj, event.APPLY, &preconditions, options); err != nil {
 		return err
 	}
 	return c.copyInto(obj, applyObj)
@@ -417,7 +417,6 @@ func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patc
 // Apply models server-side apply operations introduced in controller-runtime v0.22+.
 func (c *Client) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 	preconditions := ExtractApplyPreconditions(opts)
-	// NOTE: We only record the APPLY effect; we do not materialize merged fields.
 	applyObj, err := applyConfigToUnstructured(obj)
 	if err != nil {
 		return err
@@ -459,14 +458,18 @@ func (c *Client) patchToUnstructured(obj client.Object, patch client.Patch) (*un
 	if err != nil {
 		return nil, fmt.Errorf("building %s patch: %w", patch.Type(), err)
 	}
-	intent := &unstructured.Unstructured{}
+	return c.patchToUnstructuredData(obj, data)
+}
+
+func (c *Client) patchToUnstructuredData(obj client.Object, data []byte) (*unstructured.Unstructured, error) {
+	var intent unstructured.Unstructured
 	if err := json.Unmarshal(data, &intent.Object); err != nil {
 		jsonData, yamlErr := yaml.YAMLToJSON(data)
 		if yamlErr != nil {
-			return nil, fmt.Errorf("decoding %s patch: %w", patch.Type(), err)
+			return nil, fmt.Errorf("decoding patch: %w", err)
 		}
 		if jsonErr := json.Unmarshal(jsonData, &intent.Object); jsonErr != nil {
-			return nil, fmt.Errorf("decoding %s patch: %w", patch.Type(), jsonErr)
+			return nil, fmt.Errorf("decoding patch: %w", jsonErr)
 		}
 	}
 	gvk := c.objectGVK(obj)
@@ -489,7 +492,7 @@ func (c *Client) patchToUnstructured(obj client.Object, patch client.Patch) (*un
 	} else if intent.GetNamespace() != obj.GetNamespace() {
 		return nil, apierrors.NewBadRequest("apply patch namespace does not match the target object")
 	}
-	return intent, nil
+	return &intent, nil
 }
 
 func (c *Client) Status() client.SubResourceWriter {
@@ -508,27 +511,13 @@ func (c *subResourceClient) Update(ctx context.Context, obj client.Object, opts 
 }
 
 func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-	preconditions := ExtractStatusPatchPreconditions(opts)
-	op := event.PATCH
-	if patch.Type() == types.ApplyPatchType {
-		// Server-side apply uses PATCH with apply semantics; model it separately.
-		op = event.APPLY
+	patchOpts := &client.SubResourcePatchOptions{}
+	patchOpts.ApplyOptions(opts)
+	body := obj
+	if patchOpts.SubResourceBody != nil {
+		body = patchOpts.SubResourceBody
 	}
-	if op == event.PATCH {
-		extractMergePatchRV(obj, patch, &preconditions)
-	}
-	options := &EffectOptions{Subresource: "status", PatchType: patch.Type()}
-	if op != event.APPLY {
-		return c.wrapped.handleEffect(ctx, obj, op, &preconditions, options)
-	}
-	applyObj, err := c.wrapped.patchToUnstructured(obj, patch)
-	if err != nil {
-		return err
-	}
-	if err := c.wrapped.handleEffect(ctx, applyObj, op, &preconditions, options); err != nil {
-		return err
-	}
-	return c.wrapped.copyInto(obj, applyObj)
+	return c.wrapped.patch(ctx, obj, patch, ExtractStatusPatchPreconditions(opts), "status", body)
 }
 
 func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
@@ -538,7 +527,13 @@ func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub c
 
 func (c *subResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
 	preconditions := ExtractStatusApplyPreconditions(opts)
-	u, err := applyConfigToUnstructured(obj)
+	applyOpts := &client.SubResourceApplyOptions{}
+	applyOpts.ApplyOpts(opts)
+	body := obj
+	if applyOpts.SubResourceBody != nil {
+		body = applyOpts.SubResourceBody
+	}
+	u, err := applyConfigToUnstructured(body)
 	if err != nil {
 		return err
 	}
