@@ -260,6 +260,27 @@ func TestWidgetControllerConverges(t *testing.T) {
 ```
 
 
+### Running tests locally
+
+The default test target runs the repository unit and package tests. It does not run
+example modules or the generated Kubernetes end-to-end suite:
+
+```bash
+make test
+```
+
+Example modules are integration tests and may require external controller
+checkouts or other local infrastructure. Run them explicitly when their
+prerequisites are available:
+
+```bash
+make test-integration
+```
+
+The CI test target runs the package tests plus the example modules that do not
+require external local checkouts. The generated Kubernetes end-to-end suite is
+separate and requires a configured cluster.
+
 ## License
 
 This project is licensed under the terms of the [MIT License](LICENSE).
