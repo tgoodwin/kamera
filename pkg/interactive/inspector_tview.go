@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"maps"
@@ -24,6 +25,19 @@ import (
 
 // ErrReturnToCatalog indicates the user requested returning to the dump catalog.
 var ErrReturnToCatalog = errors.New("return to catalog")
+
+// lastGraphPDF is the only reference to the temp graph PDF: at most one exists at a time.
+var lastGraphPDF atomic.Pointer[string]
+
+func replaceGraphPDF(path *string) {
+	if prev := lastGraphPDF.Swap(path); prev != nil {
+		os.Remove(*prev)
+	}
+}
+
+func cleanupGraphPDF() {
+	replaceGraphPDF(nil)
+}
 
 // openStateDAGGraph builds a DAG from the given states, renders it to DOT format,
 // and opens it as a PDF using the system's default PDF viewer (Preview on macOS).
@@ -44,22 +58,29 @@ func openStateDAGGraph(states []tracecheck.ResultState) string {
 	if err != nil {
 		return fmt.Sprintf("create temp pdf: %v", err)
 	}
+	pdfPath := pdfFile.Name()
+	// Keep only one graph PDF at a time: this one replaces (and removes) the
+	// previous one, and the last one is removed when the inspector exits.
+	replaceGraphPDF(&pdfPath)
 
 	cmd := exec.Command("dot", "-Tpdf")
 	cmd.Stdin = strings.NewReader(dot)
 	cmd.Stdout = pdfFile
 	if err := cmd.Run(); err != nil {
 		_ = pdfFile.Close()
+		cleanupGraphPDF()
 		return fmt.Sprintf("render pdf: %v", err)
 	}
 
 	if err := pdfFile.Close(); err != nil {
+		cleanupGraphPDF()
 		return fmt.Sprintf("close pdf: %v", err)
 	}
 
-	openCmdArgs := OpenArgs(pdfFile.Name())
+	openCmdArgs := OpenArgs(pdfPath)
 	openCmd := exec.Command(openCmdArgs[0], openCmdArgs[1:]...)
 	if err := openCmd.Run(); err != nil {
+		cleanupGraphPDF()
 		return fmt.Sprintf("open pdf: %v", err)
 	}
 
@@ -159,6 +180,8 @@ type stepCache struct {
 // If allowEscToCatalog is true, pressing Esc at the top level returns ErrReturnToCatalog.
 // If the user requests a restart, the inspector exits and returns a RestartRequest to the caller.
 func RunStateInspectorTUIView(states []tracecheck.ResultState, resolver tracecheck.VersionManager, allowDump bool, cfg tracecheck.ExploreConfig, allowEscToCatalog bool) (*tracecheck.RestartRequest, error) {
+	// Remove the temp graph PDF opened with g (if any) when the inspector exits.
+	defer cleanupGraphPDF()
 	app := tview.NewApplication()
 	root, inspectResult, err := buildStateInspectorRoot(app, states, resolver, allowDump, cfg, allowEscToCatalog, func() {
 		app.Stop()
