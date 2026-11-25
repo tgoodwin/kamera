@@ -89,6 +89,8 @@ func RunDirectoryInspectorTUIView(entries []DumpCatalogEntry) error {
 	if len(entries) == 0 {
 		return fmt.Errorf("no dump entries available")
 	}
+	// Remove the temp graph PDF opened with g (if any) when the inspector exits.
+	defer cleanupGraphPDF()
 
 	app := tview.NewApplication()
 	pages := tview.NewPages()
