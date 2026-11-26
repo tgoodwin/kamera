@@ -46,7 +46,9 @@ func newKROExplorerBuilder() *tracecheck.ExplorerBuilder {
 	utilruntime.Must(networkingv1.AddToScheme(sch))
 	utilruntime.Must(v1alpha1.AddToScheme(sch))
 
-	builder := tracecheck.NewExplorerBuilder(sch)
+	applicationGraph := mustBuildGraph(buildQuickstartApplicationRGDTyped())
+	builder := tracecheck.NewExplorerBuilder(sch).WithCRD(applicationGraph.CRD)
+	registerKROApplySchemas(builder, applicationGraph)
 	builder.WithMaxDepth(60)
 
 	applicationGVR := schema.GroupVersionResource{
@@ -61,7 +63,7 @@ func newKROExplorerBuilder() *tracecheck.ExplorerBuilder {
 	// Wire real Instance (Application) controller
 	builder.WithReconciler(applicationControllerID, func(c client.Client) tracecheck.Reconciler {
 		log := ctrl.Log.WithName("application-controller")
-		appGraph := mustBuildGraph(buildQuickstartApplicationRGDTyped())
+		appGraph := applicationGraph
 		return newInstanceController(c, log, applicationGVR, appGraph)
 	}).For(kroDomainName+"/"+applicationKind).
 		Watches("apps/Deployment", enqueueApplicationFromManagedResource).
@@ -248,7 +250,7 @@ func enqueueApplicationFromManagedResource(obj *unstructured.Unstructured) []rec
 
 // buildQuickstartApplicationRGDTyped returns the typed RGD used for graph building.
 func buildQuickstartApplicationRGDTyped() *v1alpha1.ResourceGraphDefinition {
-	return generator.NewResourceGraphDefinition(resourceGraphDefinitionName,
+	rgd := generator.NewResourceGraphDefinition(resourceGraphDefinitionName,
 		generator.WithSchema(
 			applicationKind, "v1alpha1",
 			map[string]interface{}{
@@ -345,6 +347,10 @@ func buildQuickstartApplicationRGDTyped() *v1alpha1.ResourceGraphDefinition {
 			},
 		}, nil, []string{`${schema.spec.ingress.enabled}`}),
 	)
+	// The documented instance API is kro.run/v1alpha1; the generator's
+	// compact schema option leaves the group empty.
+	rgd.Spec.Schema.Group = kroDomainName
+	return rgd
 }
 
 // buildQuickstartApplicationRGD returns the RGD as unstructured for seeding state.

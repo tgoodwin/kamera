@@ -9,6 +9,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
+func TestKRORegistersSchemasForApplyTargets(t *testing.T) {
+	builder := newKROExplorerBuilder()
+	if _, err := builder.Build(); err != nil {
+		t.Fatalf("expected schema-backed builder to build: %v", err)
+	}
+}
+
 func TestScenariosFromInputsRequiresBuilder(t *testing.T) {
 	_, err := scenariosFromInputs(nil, []coverage.Input{{Name: "x"}})
 	if err == nil {

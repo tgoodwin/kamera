@@ -10,6 +10,16 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
+func TestCrossplaneXWidgetSchemaMatchesLegacyClusterScope(t *testing.T) {
+	builder := newCrossplaneExplorerBuilder()
+	if _, err := builder.Build(); err != nil {
+		t.Fatalf("expected schema-backed builder to build: %v", err)
+	}
+	if namespace := buildCompositeResource().GetNamespace(); namespace != "" {
+		t.Fatalf("expected cluster-scoped XWidget fixture, got namespace %q", namespace)
+	}
+}
+
 func TestScenariosFromInputsRequiresBuilder(t *testing.T) {
 	_, err := scenariosFromInputs(nil, []coverage.Input{{Name: "x"}})
 	if err == nil {

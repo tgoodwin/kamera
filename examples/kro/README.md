@@ -8,7 +8,8 @@ resulting `Application -> Deployment/Service/Ingress` reconciliation flow inside
 
 - A standalone Kamera example under `examples/kro`
 - A doc-derived harness for KRO's quick-start `Application` API
-- A way to explore resource ordering, drift repair, and instance updates for a small KRO-style graph
+- It registers the generated namespaced `Application` CRD and the documented Deployment, Service, and
+  Ingress apply targets from Kubernetes v1.35.0 OpenAPI v3 metadata.
 
 ## What this example is not
 

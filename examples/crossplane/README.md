@@ -1,7 +1,9 @@
 # Crossplane Composition Pipeline Example
 
 This example wires a minimal Crossplane Composition pipeline flow into Kamera. It focuses on
-Composition → CompositionRevision → XR reconciliation with a stubbed function pipeline.
+Composition → CompositionRevision → XR reconciliation with a stubbed function pipeline. The legacy
+`XWidget` CRD is cluster-scoped, matching Crossplane's generated legacy composite schema; claims remain
+namespace-scoped.
 
 ## What's missing vs real Crossplane
 
