@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/samber/lo"
+	"github.com/tgoodwin/kamera/pkg/apiserver"
 	"github.com/tgoodwin/kamera/pkg/event"
 	"github.com/tgoodwin/kamera/pkg/replay"
 	"github.com/tgoodwin/kamera/pkg/snapshot"
@@ -40,6 +41,7 @@ type Effect struct {
 	// sequence is assigned during materialization.
 	ResourceVersion int64  `json:"resourceVersion,omitempty"`
 	Subresource     string `json:"subresource,omitempty"`
+	Materialized    bool   `json:"materialized,omitempty"`
 
 	Precondition *replay.PreconditionInfo
 }
@@ -97,6 +99,14 @@ type manager struct {
 	effectVersions map[string]map[string]snapshot.VersionHash
 	// effectNextRVs is the next branch-local global sequence to assign.
 	effectNextRVs map[string]int64
+	// frameErrors retains setup errors until the exploration boundary observes them.
+	// A reconciler may swallow a client error, but an invalid simulation setup must
+	// still abort the frame rather than become a Kubernetes retry.
+	frameErrors map[string]error
+
+	schemaRegistry     *apiserver.Registry
+	requireSchemas     bool
+	requireApplySchema bool
 
 	// rvLookup maps VersionHash → integer resourceVersion.
 	// Set from the explorer's resourceVersions map.
@@ -240,6 +250,9 @@ func (m *manager) advanceEffectResourceVersion(frameID, resourceKey string, obj 
 }
 
 func resolveEffectVersion(versionManager VersionManager, currentVersion snapshot.VersionHash, exists bool, effect Effect) (snapshot.VersionHash, bool) {
+	if effect.Materialized {
+		return effect.Version, exists && effect.Version == currentVersion
+	}
 	if !exists {
 		if effect.OpType != event.CREATE && effect.OpType != event.APPLY {
 			return effect.Version, false
@@ -330,11 +343,27 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// this will insert a resourceKey into the resourceValidator store
-	if err := m.validateEffect(ctx, opType, obj, precondition, options); err != nil {
-		return err
+	var materialized bool
+	if event.IsWriteOp(opType) && opType != event.MARK_FOR_DELETION && opType != event.REMOVE {
+		var err error
+		var changed bool
+		materialized, changed, err = m.materializeSchemaWrite(ctx, obj, opType, precondition, options)
+		if err != nil {
+			return err
+		}
+		if materialized && !changed {
+			return nil
+		}
+	}
+	if !materialized {
+		if err := m.validateEffect(ctx, opType, obj, precondition, options); err != nil {
+			return err
+		}
 	}
 
+	if !materialized && opType == event.APPLY {
+		tag.EnsureDeterministicIdentity(obj)
+	}
 	gvk := ensureObjectGVK(obj, m.scheme)
 	kind := gvk.Kind
 
@@ -348,7 +377,13 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	}
 
 	frameID := replay.FrameIDFromContext(ctx)
-	u, err := util.ConvertToUnstructured(obj)
+	var u *unstructured.Unstructured
+	var err error
+	if materialized {
+		u, err = schemaResponseToUnstructured(obj, gvk)
+	} else {
+		u, err = util.ConvertToUnstructured(obj)
+	}
 	if err != nil {
 		return err
 	}
@@ -357,8 +392,12 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 	// OCC and return-value fidelity, but exclude it from content hashing.
 	u.SetResourceVersion("")
 
-	// publish the object versionHash
-	versionHash := m.Publish(u)
+	var versionHash snapshot.VersionHash
+	if materialized {
+		versionHash = m.versionStore.PublishWithStrategy(u, snapshot.ExactHash)
+	} else {
+		versionHash = m.Publish(u)
+	}
 
 	reffects, ok := m.effects[frameID]
 	if !ok {
@@ -370,14 +409,17 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 	key := snapshot.NewCompositeKeyWithGroup(gvk.Group, kind, obj.GetNamespace(), obj.GetName(), sleeveObjectID)
 	eff := newEffectWithOptions(key, versionHash, opType, precondition, options)
+	eff.Materialized = materialized
 	if opType == event.GET || opType == event.LIST {
 		reffects.reads = append(reffects.reads, eff)
 	} else {
 		resourceKey := canonicalResourceKeyString(gvk.Group, kind, obj.GetNamespace(), obj.GetName())
 		currentVersion, exists := m.effectVersions[frameID][resourceKey]
 		materializedVersion, noOp := resolveEffectVersion(m.versionStore, currentVersion, exists, eff)
-		if materialized := m.Resolve(materializedVersion); materialized != nil && (opType == event.CREATE || opType == event.UPDATE || opType == event.PATCH || opType == event.APPLY) {
-			obj.SetGeneration(util.GetObjectGeneration(materialized))
+		if !materialized && (opType == event.CREATE || opType == event.UPDATE || opType == event.PATCH || opType == event.APPLY) {
+			if resolved := m.Resolve(materializedVersion); resolved != nil {
+				obj.SetGeneration(util.GetObjectGeneration(resolved))
+			}
 		}
 		if noOp {
 			if rv := m.effectRVs[frameID][resourceKey]; rv > 0 {
@@ -403,8 +445,23 @@ func (m *manager) RecordEffect(ctx context.Context, obj client.Object, opType ev
 
 	return nil
 }
+func (m *manager) rememberFrameError(ctx context.Context, err error) {
+	if m.frameErrors == nil {
+		m.frameErrors = make(map[string]error)
+	}
+	frameID := replay.FrameIDFromContext(ctx)
+	if m.frameErrors[frameID] == nil {
+		m.frameErrors[frameID] = err
+	}
+}
 
 func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) error {
+	if m.effectVersions == nil {
+		m.effectVersions = make(map[string]map[string]snapshot.VersionHash)
+	}
+	if m.effectNextRVs == nil {
+		m.effectNextRVs = make(map[string]int64)
+	}
 	frameID := replay.FrameIDFromContext(ctx)
 	cKeys := lo.Keys(ov)
 	// holds objectID
@@ -416,6 +473,7 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 	rKeySet := util.NewSet[string]()
 	rvs := make(map[string]int64, len(ov))
 	versions := make(map[string]snapshot.VersionHash, len(ov))
+	baseRV := resourceVersionBaseFromContext(ctx)
 	for ck, vh := range ov {
 		primary := canonicalResourceKeyString(ck.ResourceKey.Group, ck.ResourceKey.Kind, ck.ResourceKey.Namespace, ck.ResourceKey.Name)
 		rKeySet.Add(primary)
@@ -431,27 +489,25 @@ func (m *manager) PrepareEffectContext(ctx context.Context, ov ObjectVersions) e
 	m.effectIKeys[frameID] = util.NewSet(iKeys...)
 	m.effectRVs[frameID] = rvs
 	m.effectVersions[frameID] = versions
-	baseRV := resourceVersionBaseFromContext(ctx)
 	if baseRV == 0 {
-		// Keep direct manager callers useful while production exploration always
-		// supplies the branch's authoritative state-event frontier.
 		for _, rv := range rvs {
-			if rv > baseRV {
-				baseRV = rv
-			}
+			baseRV = max(baseRV, rv)
 		}
 	}
 	m.effectNextRVs[frameID] = baseRV + 1
 	return nil
 }
-
 func (m *manager) CleanupEffectContext(ctx context.Context) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	frameID := replay.FrameIDFromContext(ctx)
 	delete(m.effectRKeys, frameID)
 	delete(m.effectIKeys, frameID)
 	delete(m.effectRVs, frameID)
 	delete(m.effectVersions, frameID)
 	delete(m.effectNextRVs, frameID)
+	delete(m.frameErrors, frameID)
 }
 
 func (m *manager) GetEffects(ctx context.Context) (Changes, error) {
@@ -463,6 +519,9 @@ func (m *manager) retrieveEffects(frameID string) (Changes, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if err := m.frameErrors[frameID]; err != nil {
+		return Changes{}, err
+	}
 	effects := m.effects[frameID]
 	out := make(ObjectVersions)
 	for _, eff := range effects.writes {
@@ -638,11 +697,11 @@ func (m *manager) validateEffect(ctx context.Context, op event.OperationType, ob
 			}
 			return nil
 		}
-
 		// APPLY implements upsert semantics - creates or updates as needed
 		if !rKeyExists {
 			// Add it for a new resource
 			rKeys.Add(resourceKey)
+			m.effectIKeys[frameID].Add(iKey)
 		}
 		// Existing resource just gets updated, no change to tracking state
 

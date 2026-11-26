@@ -18,6 +18,7 @@ import (
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composite"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/composition"
 	"github.com/crossplane/crossplane/v2/internal/controller/apiextensions/revision"
+	"github.com/crossplane/crossplane/v2/internal/xcrd"
 
 	"github.com/tgoodwin/kamera/pkg/coverage"
 	"github.com/tgoodwin/kamera/pkg/event"
@@ -25,6 +26,8 @@ import (
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/tracecheck"
 	sleevelog "github.com/tgoodwin/kamera/pkg/util/logger"
+	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -43,7 +46,14 @@ const (
 )
 
 func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
-	builder := tracecheck.NewExplorerBuilder(newScheme())
+	xrGV := schema.FromAPIVersionAndKind(xrAPIVersion, xrKind).GroupVersion()
+	xrGVK := xrGV.WithKind(xrKind)
+	claimGVK := xrGV.WithKind(claimKind)
+
+	builder := tracecheck.NewExplorerBuilder(newScheme()).
+		WithCRD(xWidgetCRD(xrGVK)).
+		WithResourceSchema(corev1.SchemeGroupVersion.WithKind("ConfigMap"), true, false, configMapOpenAPISchema()).
+		WithResourceSchema(corev1.SchemeGroupVersion.WithKind("Secret"), true, false, secretOpenAPISchema())
 	log := logging.NewLogrLogger(sleevelog.GetLogger(sleevelog.Debug))
 	recorder := newLogRecorder(log)
 
@@ -71,16 +81,13 @@ func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
 		composer := composite.NewFunctionComposer(c, c, runner)
 		return composite.NewReconciler(
 			c,
-			schema.GroupVersionKind{Group: "example.org", Version: "v1", Kind: xrKind},
+			xrGVK,
 			composite.WithComposer(composer),
 			composite.WithCompositeSchema(ucomposite.SchemaLegacy),
 			composite.WithLogger(log),
 			composite.WithRecorder(recorder),
 		)
-	}).ForGK(schema.GroupKind{Group: "example.org", Kind: xrKind})
-
-	claimGVK := schema.GroupVersionKind{Group: "example.org", Version: "v1", Kind: claimKind}
-	xrGVK := schema.GroupVersionKind{Group: "example.org", Version: "v1", Kind: xrKind}
+	}).ForGK(xrGVK.GroupKind())
 
 	builder.WithReconciler("ClaimReconciler", func(c client.Client) tracecheck.Reconciler {
 		return claim.NewReconciler(
@@ -100,6 +107,68 @@ func newCrossplaneExplorerBuilder() *tracecheck.ExplorerBuilder {
 		Watches("example.org/XWidget", claimXRToClaimMapper())
 
 	return builder
+}
+
+func xWidgetCRD(gvk schema.GroupVersionKind) *apiextensionsv1.CustomResourceDefinition {
+	// Crossplane supplies the legacy XR fields and their SSA topology. The
+	// harness only adds the status fields emitted by its function stub.
+	scope := v1.CompositeResourceScopeLegacyCluster
+	crd, err := xcrd.ForCompositeResource(&v1.CompositeResourceDefinition{
+		ObjectMeta: metav1.ObjectMeta{Name: "xwidgets." + gvk.Group},
+		Spec: v1.CompositeResourceDefinitionSpec{
+			Group: gvk.Group,
+			Scope: &scope,
+			Names: apiextensionsv1.CustomResourceDefinitionNames{Plural: "xwidgets", Kind: gvk.Kind},
+			Versions: []v1.CompositeResourceDefinitionVersion{{
+				Name: gvk.Version, Served: true, Referenceable: true,
+				Schema: &v1.CompositeResourceValidation{OpenAPIV3Schema: runtime.RawExtension{Raw: []byte(`{
+					"type": "object",
+					"properties": {"status": {"type": "object", "properties": {
+						"observedGeneration": {"type": "integer", "format": "int64"},
+						"phase": {"type": "string"}
+					}}}
+				}`)}},
+			}},
+		},
+	})
+	if err != nil {
+		panic(fmt.Sprintf("build XWidget CRD: %v", err))
+	}
+	return crd
+}
+
+func configMapOpenAPISchema() *apiextensionsv1.JSONSchemaProps {
+	return &apiextensionsv1.JSONSchemaProps{
+		Type: "object",
+		Properties: map[string]apiextensionsv1.JSONSchemaProps{
+			"data":       stringMapSchema(""),
+			"binaryData": stringMapSchema("byte"),
+			"immutable":  {Type: "boolean"},
+		},
+	}
+}
+
+func secretOpenAPISchema() *apiextensionsv1.JSONSchemaProps {
+	// Matches core/v1 Secret's OpenAPI field types; object metadata is supplied by the registry.
+	return &apiextensionsv1.JSONSchemaProps{
+		Type: "object",
+		Properties: map[string]apiextensionsv1.JSONSchemaProps{
+			"data":       stringMapSchema("byte"),
+			"stringData": stringMapSchema(""),
+			"immutable":  {Type: "boolean"},
+			"type":       {Type: "string"},
+		},
+	}
+}
+
+func stringMapSchema(format string) apiextensionsv1.JSONSchemaProps {
+	return apiextensionsv1.JSONSchemaProps{
+		Type: "object",
+		AdditionalProperties: &apiextensionsv1.JSONSchemaPropsOrBool{
+			Allows: true,
+			Schema: &apiextensionsv1.JSONSchemaProps{Type: "string", Format: format},
+		},
+	}
 }
 
 // deterministicNameGenerator generates a fixed name for XRs created by claims.
@@ -240,7 +309,6 @@ func buildCompositeResource() *unstructured.Unstructured {
 	xr.SetAPIVersion(xrAPIVersion)
 	xr.SetKind(xrKind)
 	xr.SetName("example")
-	xr.SetNamespace("default")
 	xr.Object["spec"] = map[string]any{
 		"compositionRef": map[string]any{
 			"name": compositionName,

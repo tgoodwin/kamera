@@ -161,8 +161,7 @@
           "apiVersion": "example.org/v1",
           "kind": "XWidget",
           "metadata": {
-            "name": "example",
-            "namespace": "default"
+            "name": "example"
           },
           "spec": {
             "compositionRef": {
@@ -192,8 +191,7 @@
           "apiVersion": "example.org/v1",
           "kind": "XWidget",
           "metadata": {
-            "name": "example",
-            "namespace": "default"
+            "name": "example"
           },
           "spec": {
             "compositionRef": {

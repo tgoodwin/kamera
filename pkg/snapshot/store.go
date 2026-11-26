@@ -14,6 +14,7 @@ type HashStrategy string
 const (
 	DefaultHash    HashStrategy = "default"
 	AnonymizedHash HashStrategy = "anonymized" // removes sleeve UID info
+	ExactHash      HashStrategy = "exact"      // preserves fields used by the schema write engine
 	ShapeHash      HashStrategy = "shape"      // stronger than anonymized, removes all nondeterministic info
 )
 
@@ -156,7 +157,9 @@ type Store struct {
 
 func NewStore() *Store {
 	store := &Store{
-		indices:        make(map[HashStrategy]map[VersionHash]*unstructured.Unstructured),
+		indices: map[HashStrategy]map[VersionHash]*unstructured.Unstructured{
+			ExactHash: make(map[VersionHash]*unstructured.Unstructured),
+		},
 		objectHashes:   make(map[string]map[HashStrategy]VersionHash),
 		hashGenerators: make(map[HashStrategy]Hasher),
 
@@ -211,7 +214,7 @@ func getObjectKey(obj *unstructured.Unstructured) string {
 	return fmt.Sprintf("%s/%s/%s/%s", group, kind, obj.GetNamespace(), obj.GetName())
 }
 
-func (s *Store) indexObject(obj *unstructured.Unstructured) error {
+func (s *Store) indexObject(obj *unstructured.Unstructured, strategy HashStrategy) error {
 	objCopy := obj.DeepCopy()
 	tag.EnsureDeterministicIdentity(objCopy)
 	objKey := getObjectKey(objCopy)
@@ -223,38 +226,42 @@ func (s *Store) indexObject(obj *unstructured.Unstructured) error {
 	// store all the hashes for this object in the same map
 	hashCollection := make(map[HashStrategy]VersionHash)
 
-	// allow for reverse lookups
-
-	for strategy, hasher := range s.hashGenerators {
+	if strategy == ExactHash {
+		hash := VersionHash{Value: "exact:" + stableHashString(objCopy.Object), Strategy: ExactHash}
+		if s.indices[ExactHash] == nil {
+			s.indices[ExactHash] = make(map[VersionHash]*unstructured.Unstructured)
+		}
+		s.indices[ExactHash][hash] = objCopy
+		s.objectHashes[objKey][ExactHash] = hash
+		hashCollection[ExactHash] = hash
+		s.crossRefIndex[hash.Value] = hashCollection
+	}
+	for kind, hasher := range s.hashGenerators {
 		hash, err := hasher.Hash(objCopy)
 		if err != nil {
-			return fmt.Errorf("failed to generate %s hash: %w", strategy, err)
+			return fmt.Errorf("failed to generate %s hash: %w", kind, err)
 		}
-
-		// put every hash "kind" into the same collection
-		hashCollection[strategy] = hash
-		// point every raw hash value to the collection
-		s.crossRefIndex[hash.Value] = hashCollection
-
-		// Store in indices
-		s.indices[strategy][hash] = objCopy
-
-		// this is used to look up the hash in PublishWithStrategy
-		// TODO refactor
-		s.objectHashes[objKey][strategy] = hash
+		hashCollection[kind] = hash
+		s.objectHashes[objKey][kind] = hash
+		// Publishing an exact version must not change a snapshot that still
+		// refers to a normalized key (for example, an imported trace).
+		if _, exists := s.indices[kind][hash]; strategy != ExactHash || !exists {
+			s.indices[kind][hash] = objCopy
+			s.crossRefIndex[hash.Value] = hashCollection
+		}
 	}
 	return nil
 }
 
 // Store an object with all registered hash strategies
 func (s *Store) StoreObject(obj *unstructured.Unstructured) error {
-	return s.indexObject(obj)
+	return s.indexObject(obj, DefaultHash)
 }
 
 func (s *Store) PublishWithStrategy(obj *unstructured.Unstructured, strategy HashStrategy) VersionHash {
 	// internally, we hash with every registered strategy, so that we always have every hash type
 	// for a given object. This is useful for cross-referencing between hash strategies.
-	if err := s.indexObject(obj); err != nil {
+	if err := s.indexObject(obj, strategy); err != nil {
 		panic(fmt.Sprintf("error storing object: %v", err))
 	}
 	objKey := getObjectKey(obj)

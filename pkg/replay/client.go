@@ -2,6 +2,7 @@ package replay
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"strings"
@@ -20,10 +21,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/yaml"
 )
 
 var logger logr.Logger
@@ -130,9 +131,8 @@ func init() {
 // RV and sets it as a precondition for conflict checking.
 //
 // We use unsafe.Pointer to read the unexported opts.OptimisticLock and from
-// fields on controller-runtime's mergeFromPatch struct. This avoids calling
-// patch.Data() which is too expensive to run on every PATCH (DeepCopy + double
-// JSON marshal per call). The required struct layout is asserted in init().
+// fields on controller-runtime's mergeFromPatch struct for the legacy write
+// path, which does not materialize patch bytes. The layout is asserted in init().
 func extractMergePatchRV(_ client.Object, patch client.Patch, preconditions *PreconditionInfo) {
 	if patch.Type() != types.MergePatchType && patch.Type() != types.StrategicMergePatchType {
 		return
@@ -178,7 +178,18 @@ func extractMergePatchRV(_ client.Object, patch client.Patch, preconditions *Pre
 
 func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType, preconditions *PreconditionInfo, options *EffectOptions) error {
 	// TODO validate preconditions
-	tag.EnsureDeterministicIdentity(obj)
+	if opType != event.APPLY {
+		tag.EnsureDeterministicIdentity(obj)
+	}
+	if preconditions != nil && preconditions.FieldManager == "" && opType != event.APPLY {
+		preconditions.FieldManager = c.reconcilerID
+	}
+	if event.IsWriteOp(opType) {
+		if options == nil {
+			options = &EffectOptions{}
+		}
+		options.ReconcilerID = c.reconcilerID
+	}
 	return c.recorder.RecordEffect(ctx, obj, opType, preconditions, options)
 }
 
@@ -229,7 +240,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
 	}
 
-		if err := c.handleEffect(ctx, frozenObj, event.GET, nil, nil); err != nil {
+	if err := c.handleEffect(ctx, frozenObj, event.GET, nil, nil); err != nil {
 		logger.V(1).Error(err,
 			"canonicalKind", canonicalKind,
 			"namespace", key.Namespace,
@@ -379,22 +390,33 @@ func (c *Client) DeleteAllOf(ctx context.Context, obj client.Object, opts ...cli
 }
 
 func (c *Client) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-	preconditions := ExtractPatchPreconditions(opts)
-	op := event.PATCH
-	if patch.Type() == types.ApplyPatchType {
-		// Server-side apply uses PATCH with apply semantics; model it separately.
-		op = event.APPLY
+	return c.patch(ctx, obj, patch, ExtractPatchPreconditions(opts), "", obj)
+}
+
+func (c *Client) patch(ctx context.Context, obj client.Object, patch client.Patch, preconditions PreconditionInfo, subresource string, body client.Object) error {
+	options := &EffectOptions{Subresource: subresource, PatchType: patch.Type()}
+	data, err := patch.Data(body)
+	if err != nil {
+		return fmt.Errorf("building %s patch: %w", patch.Type(), err)
 	}
-	if op == event.PATCH {
+	options.PatchData = data
+	if options.PatchType != types.ApplyPatchType {
 		extractMergePatchRV(obj, patch, &preconditions)
+		return c.handleEffect(ctx, obj, event.PATCH, &preconditions, options)
 	}
-	return c.handleEffect(ctx, obj, op, &preconditions, nil)
+	applyObj, err := c.patchToUnstructuredData(obj, data)
+	if err != nil {
+		return err
+	}
+	if err := c.handleEffect(ctx, applyObj, event.APPLY, &preconditions, options); err != nil {
+		return err
+	}
+	return c.copyInto(obj, applyObj)
 }
 
 // Apply models server-side apply operations introduced in controller-runtime v0.22+.
 func (c *Client) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 	preconditions := ExtractApplyPreconditions(opts)
-	// NOTE: We only record the APPLY effect; we do not materialize merged fields.
 	applyObj, err := applyConfigToUnstructured(obj)
 	if err != nil {
 		return err
@@ -420,27 +442,57 @@ func applyConfigToUnstructured(obj runtime.ApplyConfiguration) (*unstructured.Un
 		}
 	}
 
-	// Fall back to the typed apply configuration interface.
-	ac, ok := obj.(interface {
-		GetName() *string
-		GetNamespace() *string
-		GetKind() *string
-		GetAPIVersion() *string
-	})
-	if !ok {
-		return nil, fmt.Errorf("%T is a runtime.ApplyConfiguration but not an applyConfiguration", obj)
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling %T apply configuration: %w", obj, err)
 	}
-
 	u := &unstructured.Unstructured{}
-	if name := ptr.Deref(ac.GetName(), ""); name != "" {
-		u.SetName(name)
+	if err := json.Unmarshal(data, &u.Object); err != nil {
+		return nil, fmt.Errorf("decoding %T apply configuration: %w", obj, err)
 	}
-	if ns := ptr.Deref(ac.GetNamespace(), ""); ns != "" {
-		u.SetNamespace(ns)
-	}
-	u.SetKind(ptr.Deref(ac.GetKind(), ""))
-	u.SetAPIVersion(ptr.Deref(ac.GetAPIVersion(), ""))
 	return u, nil
+}
+
+func (c *Client) patchToUnstructured(obj client.Object, patch client.Patch) (*unstructured.Unstructured, error) {
+	data, err := patch.Data(obj)
+	if err != nil {
+		return nil, fmt.Errorf("building %s patch: %w", patch.Type(), err)
+	}
+	return c.patchToUnstructuredData(obj, data)
+}
+
+func (c *Client) patchToUnstructuredData(obj client.Object, data []byte) (*unstructured.Unstructured, error) {
+	var intent unstructured.Unstructured
+	if err := json.Unmarshal(data, &intent.Object); err != nil {
+		jsonData, yamlErr := yaml.YAMLToJSON(data)
+		if yamlErr != nil {
+			return nil, fmt.Errorf("decoding patch: %w", err)
+		}
+		if jsonErr := json.Unmarshal(jsonData, &intent.Object); jsonErr != nil {
+			return nil, fmt.Errorf("decoding patch: %w", jsonErr)
+		}
+	}
+	gvk := c.objectGVK(obj)
+	if intent.GetAPIVersion() == "" {
+		intent.SetAPIVersion(gvk.GroupVersion().String())
+	}
+	if intent.GetKind() == "" {
+		intent.SetKind(gvk.Kind)
+	}
+	if intent.GetAPIVersion() != gvk.GroupVersion().String() || intent.GetKind() != gvk.Kind {
+		return nil, apierrors.NewBadRequest("apply patch type or version does not match the target object")
+	}
+	if intent.GetName() == "" {
+		intent.SetName(obj.GetName())
+	} else if intent.GetName() != obj.GetName() {
+		return nil, apierrors.NewBadRequest("apply patch name does not match the target object")
+	}
+	if intent.GetNamespace() == "" {
+		intent.SetNamespace(obj.GetNamespace())
+	} else if intent.GetNamespace() != obj.GetNamespace() {
+		return nil, apierrors.NewBadRequest("apply patch namespace does not match the target object")
+	}
+	return &intent, nil
 }
 
 func (c *Client) Status() client.SubResourceWriter {
@@ -459,16 +511,13 @@ func (c *subResourceClient) Update(ctx context.Context, obj client.Object, opts 
 }
 
 func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-	preconditions := ExtractStatusPatchPreconditions(opts)
-	op := event.PATCH
-	if patch.Type() == types.ApplyPatchType {
-		// Server-side apply uses PATCH with apply semantics; model it separately.
-		op = event.APPLY
+	patchOpts := &client.SubResourcePatchOptions{}
+	patchOpts.ApplyOptions(opts)
+	body := obj
+	if patchOpts.SubResourceBody != nil {
+		body = patchOpts.SubResourceBody
 	}
-	if op == event.PATCH {
-		extractMergePatchRV(obj, patch, &preconditions)
-	}
-	return c.wrapped.handleEffect(ctx, obj, op, &preconditions, &EffectOptions{Subresource: "status"})
+	return c.wrapped.patch(ctx, obj, patch, ExtractStatusPatchPreconditions(opts), "status", body)
 }
 
 func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub client.Object, opts ...client.SubResourceCreateOption) error {
@@ -477,9 +526,16 @@ func (c *subResourceClient) Create(ctx context.Context, obj client.Object, sub c
 }
 
 func (c *subResourceClient) Apply(ctx context.Context, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
-	u, err := applyConfigToUnstructured(obj)
+	preconditions := ExtractStatusApplyPreconditions(opts)
+	applyOpts := &client.SubResourceApplyOptions{}
+	applyOpts.ApplyOpts(opts)
+	body := obj
+	if applyOpts.SubResourceBody != nil {
+		body = applyOpts.SubResourceBody
+	}
+	u, err := applyConfigToUnstructured(body)
 	if err != nil {
 		return err
 	}
-	return c.wrapped.handleEffect(ctx, u, event.APPLY, nil, &EffectOptions{Subresource: "status"})
+	return c.wrapped.handleEffect(ctx, u, event.APPLY, &preconditions, &EffectOptions{Subresource: "status", PatchType: types.ApplyPatchType})
 }

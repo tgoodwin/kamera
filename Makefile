@@ -20,16 +20,25 @@ binaries: kamera
 .PHONY: test
 test:
 	@echo "🧪 Running tests..."
-	go test ./...
-	@for dir in $(EXAMPLE_MODULE_DIRS); do \
+	@packages=$$(go list ./...) || exit $$?; \
+		go test $$(printf '%s\n' "$$packages" | grep -vxF github.com/tgoodwin/kamera/sleevectrl/test/e2e)
+
+.PHONY: test-integration
+test-integration:
+	@set -e; for dir in $(EXAMPLE_MODULE_DIRS); do \
 		echo "🧪 Running tests in $$dir..."; \
 		( cd $$dir && go test ./... ); \
 	done
 
+.PHONY: test-e2e
+test-e2e:
+	go test ./sleevectrl/test/e2e
+
 .PHONY: test-ci
 test-ci:
 	@echo "🧪 Running CI tests..."
-	go test ./...
+	@packages=$$(go list ./...) || exit $$?; \
+		go test $$(printf '%s\n' "$$packages" | grep -vxF github.com/tgoodwin/kamera/sleevectrl/test/e2e)
 	@echo "⏭️  Skipping example modules in CI test sweep: $(SKIPPED_CI_EXAMPLE_MODULE_DIRS)"
 	@for dir in $(CI_EXAMPLE_MODULE_DIRS); do \
 		echo "🧪 Running tests in $$dir..."; \

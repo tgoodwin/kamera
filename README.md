@@ -51,6 +51,30 @@ go run .
     eb.WithMaxDepth(100) // optional
     ```
 
+    For accurate Server-Side Apply behavior, also register the structural
+    schemas of resources that controllers write. A `runtime.Scheme` provides
+    Go types, but not Kubernetes merge topology:
+
+    ```go
+    eb.WithCRD(fooCRD) // preferred for CRDs
+    eb.WithResourceSchema(gvk, namespaced, hasStatus, openAPIV3Schema)
+    // WithOpenAPIV3 rejects documents without authoritative route metadata.
+
+    // APPLY always requires a registered schema; this also makes all other
+    // mutating writes fail closed.
+    eb.RequireSchemas()
+    ```
+
+    Registered, single-version resources use schema-aware SSA merging,
+    managed-field ownership, conflicts, force, omission, status isolation, and
+    generic metadata validation. APPLY to an unregistered GVK is always a
+    simulation setup error with registration guidance. Without `RequireSchemas`,
+    unregistered GVKs retain legacy behavior for non-apply writes to support
+    incremental migration. Non-apply patch ownership, dynamic and
+    multi-version CRDs, admission, CEL, and the complete API-server
+    validation/defaulting pipeline remain outside this milestone. See [Schema-backed API writes](docs/design/schema-backed-write-engine.md)
+    for the exact contract and limitations.
+
 4. **Register each controller-runtime reconciler.** Supply a factory that accepts a controller-runtime `client.Client`. The returned `ReconcilerBuilder` lets you chain `.For()` (primary resource) and `.Watches()` registrations. For non controller-runtime implementations, see [below](#using-non-controller-runtime-controllers).
 
     ```go
@@ -235,6 +259,27 @@ func TestWidgetControllerConverges(t *testing.T) {
 }
 ```
 
+
+### Running tests locally
+
+The default test target runs the repository unit and package tests. It does not run
+example modules or the generated Kubernetes end-to-end suite:
+
+```bash
+make test
+```
+
+Example modules are integration tests and may require external controller
+checkouts or other local infrastructure. Run them explicitly when their
+prerequisites are available:
+
+```bash
+make test-integration
+```
+
+The CI test target runs the package tests plus the example modules that do not
+require external local checkouts. The generated Kubernetes end-to-end suite is
+separate and requires a configured cluster.
 
 ## License
 

@@ -5,6 +5,8 @@ import "fmt"
 type Result struct {
 	ConvergedStates []ResultState
 	AbortedStates   []ResultState
+	// Error reports a fatal exploration failure, not a branch or reconcile error.
+	Error error
 }
 
 func (r *Result) Summarize() {
