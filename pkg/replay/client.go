@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-logr/logr"
 	"github.com/tgoodwin/kamera/pkg/event"
+	"github.com/tgoodwin/kamera/pkg/simclock"
 	"github.com/tgoodwin/kamera/pkg/tag"
 	"github.com/tgoodwin/kamera/pkg/util"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -179,6 +180,9 @@ func extractMergePatchRV(_ client.Object, patch client.Patch, preconditions *Pre
 func (c *Client) handleEffect(ctx context.Context, obj client.Object, opType event.OperationType, preconditions *PreconditionInfo, options *EffectOptions) error {
 	// TODO validate preconditions
 	tag.EnsureDeterministicIdentity(obj)
+	if options != nil && options.Subresource == "status" {
+		normalizeSimulatedConditionTimes(obj)
+	}
 	return c.recorder.RecordEffect(ctx, obj, opType, preconditions, options)
 }
 
@@ -229,7 +233,7 @@ func (c *Client) Get(ctx context.Context, key client.ObjectKey, obj client.Objec
 		return apierrors.NewNotFound(schema.GroupResource{Group: gvk.Group, Resource: gvk.Kind}, key.Name)
 	}
 
-		if err := c.handleEffect(ctx, frozenObj, event.GET, nil, nil); err != nil {
+	if err := c.handleEffect(ctx, frozenObj, event.GET, nil, nil); err != nil {
 		logger.V(1).Error(err,
 			"canonicalKind", canonicalKind,
 			"namespace", key.Namespace,
@@ -340,6 +344,19 @@ func matchesFieldSelector(obj *unstructured.Unstructured, sel fields.Selector) b
 
 // TODO create or set an ObjectID here
 func (c *Client) Create(ctx context.Context, obj client.Object, opts ...client.CreateOption) error {
+	creationTimestamp := obj.GetCreationTimestamp()
+	if creationTimestamp.Time.IsZero() {
+		// Kubernetes assigns CreationTimestamp on create. Use the simulated clock
+		// so time-based controller behavior remains deterministic during replay.
+		obj.SetCreationTimestamp(v1.NewTime(simclock.Now()))
+	} else {
+		log.FromContext(ctx).Error(nil, "object already has creationTimestamp on create",
+			"type", fmt.Sprintf("%T", obj),
+			"namespace", obj.GetNamespace(),
+			"name", obj.GetName(),
+			"creationTimestamp", creationTimestamp.Time,
+		)
+	}
 	preconditions := ExtractCreatePreconditions(opts)
 	return c.handleEffect(ctx, obj, event.CREATE, &preconditions, nil)
 }

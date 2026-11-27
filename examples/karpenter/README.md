@@ -10,10 +10,8 @@ Pending Pod → Provisioner → NodeClaim → Node registration.
   the time-seeded `test.RandomProviderID()`.
 - We simulate Node registration via `nodeRegistrar`, which creates a ready Node from
   the NodeClaim's ProviderID with labels, allocatable/capacity, and `NodeReady` condition.
-- Karpenter's full `nodeclaim.lifecycle` and `nodeclaim.consistency` controllers are
-  **not** used. They rely on `MatchingFields` queries (unsupported by the replay client)
-  and generate `RequeueAfter` results that create unbounded exploration depth. Instead,
-  a lightweight `nodeClaimLauncher` handles only the launch stage (`cp.Create()`).
+- Karpenter's `nodeclaim.lifecycle` controller runs in simulation mode. Node
+  registration remains a separately scheduled external kubelet/CCM event.
 
 ## Usage
 
@@ -84,7 +82,7 @@ pending work from simulation semantics (subscriptions/watches/dependencies).
 1. `state.pod` records the seeded pending pod in cluster state.
 2. `provisioner.trigger.pod` marks the pod for provisioning (batcher trigger).
 3. `provisioner` drains the batch and creates a `NodeClaim`.
-4. `nodeclaim.launcher` calls `cp.Create()` to assign a ProviderID and populate instance details.
+4. `nodeclaim.lifecycle` launches the NodeClaim, calling `cp.Create()` to assign a ProviderID and populate instance details.
 5. `nodeclaim.hydration` adds NodeClass labels to the NodeClaim.
 6. `node.registrar` creates a ready `Node` with the ProviderID, labels, and allocatable/capacity.
 7. State informers (`state.node`, `state.nodeclaim`) update the in-memory cluster state.
